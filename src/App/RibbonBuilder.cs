@@ -1,0 +1,83 @@
+using Bricscad.Ribbon;
+using Bricscad.Windows;
+
+namespace BricsCadRc.App
+{
+    public static class RibbonBuilder
+    {
+        private const string TabId = "RC_SLAB_TAB";
+
+        public static void Build()
+        {
+            RibbonControl ribbon = ComponentManager.Ribbon;
+            if (ribbon == null) return;
+
+            // Nie dodawaj zakladki jesli juz istnieje (np. po RELOADA)
+            if (ribbon.FindTab(TabId) != null) return;
+
+            RibbonTab tab = new RibbonTab
+            {
+                Title = "RC SLAB",
+                Id = TabId
+            };
+
+            tab.Panels.Add(BuildGeneratePanel());
+            tab.Panels.Add(BuildEditPanel());
+            tab.Panels.Add(BuildCountPanel());
+
+            ribbon.Tabs.Add(tab);
+        }
+
+        // ----------------------------------------------------------------
+        // Panel 1: ZBROJENIE (generowanie ukladow pretow)
+        // ----------------------------------------------------------------
+        private static RibbonPanel BuildGeneratePanel()
+        {
+            var src = new RibbonPanelSource { Title = "Zbrojenie", Id = "RC_PANEL_GEN" };
+
+            src.Items.Add(MakeButton("Generuj B1/B2", "RC_GENERATE_BOT", "Generuje uklad pretow - dolna warstwa (B1 i B2)"));
+            src.Items.Add(MakeButton("Generuj T1/T2", "RC_GENERATE_TOP", "Generuje uklad pretow - gorna warstwa (T1 i T2)"));
+
+            return new RibbonPanel { Source = src };
+        }
+
+        // ----------------------------------------------------------------
+        // Panel 2: EDYCJA pretow
+        // ----------------------------------------------------------------
+        private static RibbonPanel BuildEditPanel()
+        {
+            var src = new RibbonPanelSource { Title = "Edycja", Id = "RC_PANEL_EDIT" };
+
+            src.Items.Add(MakeButton("Edytuj pret", "RC_EDIT_BAR", "Edytuj rozstaw, liczbe lub opis wybranego preta"));
+            src.Items.Add(MakeButton("Repr. pret", "RC_SET_REPR_BAR", "Ustaw wybrany pret jako reprezentatywny (ukryj pozostale)"));
+            src.Items.Add(MakeButton("Pokaz wszystkie", "RC_SHOW_ALL_BARS", "Przywroc widocznosc wszystkich pretow w ukladzie"));
+
+            return new RibbonPanel { Source = src };
+        }
+
+        // ----------------------------------------------------------------
+        // Panel 3: BBS (zliczanie + tonaz)
+        // ----------------------------------------------------------------
+        private static RibbonPanel BuildCountPanel()
+        {
+            var src = new RibbonPanelSource { Title = "BBS", Id = "RC_PANEL_BBS" };
+
+            src.Items.Add(MakeButton("Zlicz prety", "RC_COUNT_BBS", "Zlicz prety i oblicz tonaz wg BS8666"));
+
+            return new RibbonPanel { Source = src };
+        }
+
+        // ----------------------------------------------------------------
+        private static RibbonButton MakeButton(string label, string command, string tooltip)
+        {
+            return new RibbonButton
+            {
+                Text = label,
+                CommandParameter = command,
+                ToolTip = tooltip,
+                Id = command,
+                ButtonStyle = RibbonButtonStyle.LargeWithText
+            };
+        }
+    }
+}

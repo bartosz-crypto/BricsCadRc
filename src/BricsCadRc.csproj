@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>BricsCadRc</AssemblyName>
+    <RootNamespace>BricsCadRc</RootNamespace>
+    <Nullable>disable</Nullable>
+    <LangVersion>9.0</LangVersion>
+    <!-- WPF support -->
+    <UseWPF>true</UseWPF>
+    <!-- Output directly to BricsCAD folder for easy testing -->
+    <!-- Change this path if BricsCAD is installed elsewhere -->
+    <OutputPath>..\bin\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BricsCAD V25 SDK - Copy Local = false (DLL-e muszą zostac w folderze BricsCAD) -->
+    <Reference Include="BrxMgd">
+      <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\BrxMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TD_Mgd">
+      <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\TD_Mgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Referencje .NET 4.8 bez koniecznosci instalacji Visual Studio -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
