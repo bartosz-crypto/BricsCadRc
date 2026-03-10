@@ -16,5 +16,8 @@ namespace BricsCadRc.Core
         public Point3d MaxPoint { get; set; }
 
         public int Count => BarIds.Count;
+
+        /// <summary>Punkty przyczepienia dotow na linii prowadzacej (lewy koniec kazdego preta poziomego / gorny pionowego).</summary>
+        public List<Point3d> LeaderTickPoints { get; set; } = new List<Point3d>();
     }
 }

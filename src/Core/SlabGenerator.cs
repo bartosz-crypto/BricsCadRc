@@ -100,6 +100,7 @@ namespace BricsCadRc.Core
                             new Point3d(segX0, y, 0),
                             new Point3d(segX1, y, 0));
                         result.BarIds.Add(line);
+                        result.LeaderTickPoints.Add(new Point3d(Math.Min(segX0, segX1), y, 0));
 
                         if (segX0 < barMinX) barMinX = segX0;
                         if (segX1 > barMaxX) barMaxX = segX1;
@@ -130,6 +131,7 @@ namespace BricsCadRc.Core
                             new Point3d(x, segY0, 0),
                             new Point3d(x, segY1, 0));
                         result.BarIds.Add(line);
+                        result.LeaderTickPoints.Add(new Point3d(x, Math.Max(segY0, segY1), 0));
 
                         if (x < barMinX) barMinX = x;
                         if (x > barMaxX) barMaxX = x;

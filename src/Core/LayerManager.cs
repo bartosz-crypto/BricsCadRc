@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Teigha.Colors;
 using Teigha.DatabaseServices;
 
@@ -14,8 +16,9 @@ namespace BricsCadRc.Core
         public const string BotLayer2 = "RC-SLAB-BOT-02";   // B2 — dolna kierunek 2
         public const string TopLayer1 = "RC-SLAB-TOP-01";   // T1 — gorna kierunek 1
         public const string TopLayer2 = "RC-SLAB-TOP-02";   // T2 — gorna kierunek 2
-        public const string AnnotLayer = "RC-SLAB-ANNOT";   // etykiety pretow (zolty — jak ASD)
-        public const string DimsLayer  = "RC-SLAB-DIMS";    // wymiarowanie (cyjan)
+        public const string AnnotLayer  = "RC-SLAB-ANNOT";    // etykiety pretow (zolty — jak ASD)
+        public const string DimsLayer   = "RC-SLAB-DIMS";    // wymiarowanie (cyjan)
+        public const string LeaderLayer = "RC-SLAB-LEADERS"; // linie prowadzace + doty (bialy — ACI 7)
 
         /// <summary>Nazwa stylu tekstu zgodna z ASD ("style1", font romans.shx).</summary>
         public const string AnnotTextStyle = "style1";
@@ -47,11 +50,15 @@ namespace BricsCadRc.Core
             EnsureLayer(tr, layerTable, BotLayer2,  4);   // cyjan      (B2 — ACI 4)
             EnsureLayer(tr, layerTable, TopLayer1,  1);   // czerwony   (T1 — ACI 1)
             EnsureLayer(tr, layerTable, TopLayer2,  6);   // magenta    (T2 — ACI 6)
-            EnsureLayer(tr, layerTable, AnnotLayer, 2);   // zolty      (etykiety — ACI 2, jak ASD)
-            EnsureLayer(tr, layerTable, DimsLayer,  4);   // cyjan      (wymiary)
+            EnsureLayer(tr, layerTable, AnnotLayer,  2);   // zolty      (etykiety — ACI 2, jak ASD)
+            EnsureLayer(tr, layerTable, DimsLayer,   4);   // cyjan      (wymiary)
+            EnsureLayer(tr, layerTable, LeaderLayer, 7);   // bialy      (linie prowadzace — ACI 7)
 
             // Styl tekstu "style1" z fontem romans.shx — identyczny jak ASD
             EnsureTextStyle(tr, db);
+
+            // Linetype _DOT dla linii prowadzacych
+            EnsureLinetype(tr, db, "_DOT");
 
             tr.Commit();
         }
@@ -72,6 +79,79 @@ namespace BricsCadRc.Core
             };
             table.Add(layer);
             tr.AddNewlyCreatedDBObject(layer, true);
+        }
+
+        // ----------------------------------------------------------------
+        // Linetypes
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Laduje linetype z pliku acad.lin (lub acadiso.lin) jesli nie jest jeszcze zaladowany.
+        /// Fallback: CENTER, potem CONTINUOUS (zawsze dostepny w BricsCAD).
+        /// </summary>
+        public static void EnsureLinetype(Transaction tr, Database db, string ltName)
+        {
+            var ltTable = (LinetypeTable)tr.GetObject(db.LinetypeTableId, OpenMode.ForRead);
+            if (ltTable.Has(ltName)) return;
+
+            // Sprobuj zaladowac z pliku definicji linetype
+            string[] candidates = { "acad.lin", "acadiso.lin" };
+            foreach (var fileName in candidates)
+            {
+                string path = FindSupportFile(db, fileName);
+                if (path == null) continue;
+                try
+                {
+                    db.LoadLineTypeFile(ltName, path);
+                    return;
+                }
+                catch { /* nie znaleziono w tym pliku — proba kolejnego */ }
+            }
+
+            // Fallback 1: CENTER (standardowy w BricsCAD)
+            if (!ltTable.Has("CENTER"))
+            {
+                foreach (var fileName in candidates)
+                {
+                    string path = FindSupportFile(db, fileName);
+                    if (path == null) continue;
+                    try { db.LoadLineTypeFile("CENTER", path); break; }
+                    catch { }
+                }
+            }
+            // Fallback 2: nic — CONTINUOUS bedzie uzyte przez AnnotationEngine
+        }
+
+        /// <summary>Szuka pliku w katalogu dokumentu, potem w PATH.</summary>
+        private static string FindSupportFile(Database db, string fileName)
+        {
+            // Katalog pliku rysunku
+            if (!string.IsNullOrEmpty(db.Filename))
+            {
+                string dir = Path.GetDirectoryName(db.Filename);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    string candidate = Path.Combine(dir, fileName);
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+
+            // Standardowe lokalizacje BricsCAD / AutoCAD Support
+            string[] searchDirs =
+            {
+                @"C:\Program Files\Bricsys\BricsCAD V24 en_US\Support",
+                @"C:\Program Files\Bricsys\BricsCAD V23 en_US\Support",
+                @"C:\Program Files\Bricsys\BricsCAD V25 en_US\Support",
+                @"C:\Program Files\AutoCAD 2024\Support",
+                @"C:\Program Files\AutoCAD 2023\Support",
+            };
+            foreach (var dir in searchDirs)
+            {
+                string path = Path.Combine(dir, fileName);
+                if (File.Exists(path)) return path;
+            }
+
+            return null;
         }
 
         // ----------------------------------------------------------------

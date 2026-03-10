@@ -27,10 +27,11 @@ namespace BricsCadRc.Core
             using var tr = db.TransactionManager.StartTransaction();
             var groupDict = (DBDictionary)tr.GetObject(db.GroupDictionaryId, OpenMode.ForWrite);
 
-            // Jesli grupa o tej nazwie juz istnieje — usun ja (re-generacja)
+            // Jesli grupa o tej nazwie juz istnieje — usun ja i wszystkie jej encje
             if (groupDict.Contains(groupName))
             {
                 var oldGroup = (Group)tr.GetObject(groupDict.GetAt(groupName), OpenMode.ForWrite);
+                EraseGroupEntities(tr, oldGroup);
                 oldGroup.Erase();
             }
 
@@ -43,6 +44,57 @@ namespace BricsCadRc.Core
 
             tr.Commit();
             return groupName;
+        }
+
+        /// <summary>
+        /// Tworzy osobna grupe dla annotacji (tekst + lider + doty) danej pozycji.
+        /// Nazwa: RC_BAR_001_ANNOT — niezalezna od grupy pretow.
+        /// </summary>
+        public static string CreateAnnotGroup(Database db, int positionNr, List<ObjectId> ids)
+        {
+            string groupName = $"{GroupPrefix}{positionNr:D3}_ANNOT";
+
+            using var tr = db.TransactionManager.StartTransaction();
+            var groupDict = (DBDictionary)tr.GetObject(db.GroupDictionaryId, OpenMode.ForWrite);
+
+            if (groupDict.Contains(groupName))
+            {
+                var oldGroup = (Group)tr.GetObject(groupDict.GetAt(groupName), OpenMode.ForWrite);
+                EraseGroupEntities(tr, oldGroup);
+                oldGroup.Erase();
+            }
+
+            var group = new Group(groupName, selectable: true);
+            groupDict.SetAt(groupName, group);
+            tr.AddNewlyCreatedDBObject(group, true);
+
+            foreach (var id in ids.Where(id => !id.IsNull))
+                group.Append(id);
+
+            tr.Commit();
+            return groupName;
+        }
+
+        /// <summary>
+        /// Usuwa wszystkie encje nalezace do grupy (wywolywac przed Group.Erase()).
+        /// </summary>
+        private static void EraseGroupEntities(Transaction tr, Group group)
+        {
+            try
+            {
+                var ids = group.GetAllEntityIds();
+                foreach (ObjectId id in ids)
+                {
+                    if (id.IsNull || id.IsErased) continue;
+                    try
+                    {
+                        var obj = tr.GetObject(id, OpenMode.ForWrite) as DBObject;
+                        obj?.Erase();
+                    }
+                    catch { /* encja juz usunieta lub zablokowana */ }
+                }
+            }
+            catch { }
         }
 
         /// <summary>

@@ -118,12 +118,22 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // 11. Dodaj annotacje tekstowa przy grupie pretow
-            var annotId = AnnotationEngine.CreateAnnotation(db, bar, genResult, horizontal);
+            // 11. Rysuj linie dystrybucyjna + doty + blok RC_ANNOT_nnn (ramie+tekst jako 1 encja)
+            var leaderResult = AnnotationEngine.CreateLeader(db, genResult, bar, horizontal, posNr);
 
-            // 12. Pogrupuj prety + annotacje w named Group BricsCAD
-            var allIds = new List<ObjectId>(genResult.BarIds) { annotId };
-            string groupName = GroupManager.CreateBarGroup(db, posNr, allIds);
+            // 12. Dwie grupy (styl ASD):
+            //   RC_BAR_001       = tylko prety (linie)
+            //   RC_BAR_001_ANNOT = jeden BlockRef RC_ANNOT_nnn
+            //                      zawiera: dist line + doty + ramie + tekst
+            //                      Calosc sie przesuwa razem (jak RBCR_ENDE_BARDDESC w ASD)
+            var barGroupIds = new List<ObjectId>(genResult.BarIds);
+            string groupName = GroupManager.CreateBarGroup(db, posNr, barGroupIds);
+
+            GroupManager.CreateAnnotGroup(db, posNr, leaderResult.ArmIds);
+
+            // Wlacz zaznaczanie grup (PICKSTYLE=1) — bez tego klik na czlon grupy
+            // zaznacza tylko ten element, a nie cala grupe ANNOT.
+            Application.SetSystemVariable("PICKSTYLE", 1);
 
             ed.WriteMessage($"\n[RC SLAB] Wygenerowano {genResult.Count} pretow. Mark: {bar.Mark}\n");
             ed.WriteMessage($"[RC SLAB] Warstwa: {LayerManager.GetLayerName(layerCode)} | Kierunek: {(horizontal ? "X" : "Y")} | Rozstaw: {spacing} mm | Otulina: {cover} mm\n");
