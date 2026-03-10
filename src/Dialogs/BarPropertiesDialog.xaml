@@ -1,0 +1,127 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.BarPropertiesDialog"
+    Title="Reinforcement description"
+    Width="440" Height="300"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0">
+
+    <Window.Resources>
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style x:Key="ValueStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Pasek opisu (niebieski jak w ASD) -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6" Margin="0,0,0,10">
+            <TextBlock x:Name="DescriptionText"
+                       Foreground="White"
+                       FontSize="15"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"/>
+        </Border>
+
+        <!-- Wiersz: Pozycja + Info -->
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="80"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="80"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Position:" Style="{StaticResource LabelStyle}"/>
+            <TextBox   Grid.Column="1" x:Name="PositionBox" IsReadOnly="True" Background="#EEEEEE"/>
+            <TextBlock Grid.Column="3" Text="Style:" Style="{StaticResource LabelStyle}"/>
+            <ComboBox  Grid.Column="4" x:Name="StyleCombo" Height="24" IsEnabled="False">
+                <ComboBoxItem Content="Style_1" IsSelected="True"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Siatka wlasciowosci -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
+            </Grid.RowDefinitions>
+
+            <!-- Kolumna 1 -->
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Number:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="CountText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Diameter [mm]:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="DiameterText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Spacing [mm]:" Style="{StaticResource LabelStyle}"/>
+            <TextBox   Grid.Row="2" Grid.Column="1" x:Name="SpacingBox"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Length A [mm]:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="LengthText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Total mass [kg]:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="MassText" Style="{StaticResource ValueStyle}"/>
+
+            <!-- Kolumna 2 -->
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="Reinforcement position:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="0" Grid.Column="3" x:Name="PositionText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Direction:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="1" Grid.Column="3" x:Name="DirectionText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="2" Text="User description:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="2" Grid.Column="3" x:Name="LayerCodeText" Style="{StaticResource ValueStyle}"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="2" Text="Layer:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="3" Grid.Column="3" x:Name="LayerNameText"
+                       Style="{StaticResource ValueStyle}" FontSize="11" TextWrapping="Wrap"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="2" Text="Shape code:" Style="{StaticResource LabelStyle}"/>
+            <TextBlock Grid.Row="4" Grid.Column="3" x:Name="ShapeCodeText" Style="{StaticResource ValueStyle}"/>
+        </Grid>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="0,10,0,0" FlowDirection="RightToLeft">
+            <Button Content="Close" Click="Close_Click" Margin="0,0,8,0"/>
+            <Button Content="Apply" Click="Apply_Click" Margin="0,0,8,0"
+                    Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

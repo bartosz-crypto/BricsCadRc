@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using BricsCadRc.Core;
@@ -93,28 +94,40 @@ namespace BricsCadRc.Commands
             var covResult = ed.GetDistance(covOpts);
             double cover = covResult.Status == PromptStatus.OK ? covResult.Value : defaultCover;
 
-            // 8. Zbuduj BarData i generuj
+            // 8. Numer pozycji — sekwencyjny, trwaly w rysunku
+            int posNr = PositionCounter.GetNext(db);
+
+            // 9. Zbuduj BarData (Mark w formacie ASD: H12-01-200)
             var bar = new BarData
             {
                 Diameter  = diameter,
                 Spacing   = spacing,
                 ShapeCode = "00",
                 Position  = position,
-                LayerCode = layerCode
+                LayerCode = layerCode,
+                Direction = horizontal ? "X" : "Y"
             };
-            bar.Mark = $"H{diameter}-{(int)spacing}-{layerCode}";
+            bar.Mark = $"H{diameter}-{posNr:D2}-{(int)spacing}";
 
-            // SlabGenerator sam otwiera polilinie we wlasnej transakcji
-            var ids = SlabGenerator.GenerateFromPolyline(db, selResult.ObjectId, bar, horizontal, cover);
+            // 10. Generuj prety (SlabGenerator otwiera polilinie we wlasnej transakcji)
+            var genResult = SlabGenerator.GenerateFromPolyline(db, selResult.ObjectId, bar, horizontal, cover);
 
-            if (ids.Count == 0)
+            if (genResult.Count == 0)
             {
                 ed.WriteMessage("\n[RC SLAB] Nie wygenerowano zadnych pretow — sprawdz rozmiar polilinii i otuline.\n");
                 return;
             }
 
-            ed.WriteMessage($"\n[RC SLAB] Wygenerowano {ids.Count} pretow. Mark: {bar.Mark}\n");
+            // 11. Dodaj annotacje tekstowa przy grupie pretow
+            var annotId = AnnotationEngine.CreateAnnotation(db, bar, genResult, horizontal);
+
+            // 12. Pogrupuj prety + annotacje w named Group BricsCAD
+            var allIds = new List<ObjectId>(genResult.BarIds) { annotId };
+            string groupName = GroupManager.CreateBarGroup(db, posNr, allIds);
+
+            ed.WriteMessage($"\n[RC SLAB] Wygenerowano {genResult.Count} pretow. Mark: {bar.Mark}\n");
             ed.WriteMessage($"[RC SLAB] Warstwa: {LayerManager.GetLayerName(layerCode)} | Kierunek: {(horizontal ? "X" : "Y")} | Rozstaw: {spacing} mm | Otulina: {cover} mm\n");
+            ed.WriteMessage($"[RC SLAB] Grupa: {groupName} | Opis: {bar.Count} {bar.Mark} {bar.LayerCode}\n");
         }
 
         // ----------------------------------------------------------------

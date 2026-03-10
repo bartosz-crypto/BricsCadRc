@@ -1,6 +1,7 @@
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using BricsCadRc.Core;
+using BricsCadRc.Dialogs;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
 
@@ -9,60 +10,87 @@ namespace BricsCadRc.Commands
     public class EditCommands
     {
         /// <summary>
-        /// RC_EDIT_BAR — uzytkownik klika pret, pojawia sie dialog edycji.
+        /// RC_EDIT_BAR — uzytkownik klika pret lub annotacje, otwiera sie dialog WPF.
         /// </summary>
         [CommandMethod("RC_EDIT_BAR", CommandFlags.Modal)]
         public void EditBar()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
-            var ed = doc.Editor;
-            var db = doc.Database;
+            var ed  = doc.Editor;
+            var db  = doc.Database;
 
-            // Wybierz pret
-            var selOpts = new PromptEntityOptions("\nWybierz pret do edycji: ");
-            selOpts.SetRejectMessage("\nTo nie jest pret RC SLAB.");
-            selOpts.AddAllowedClass(typeof(Line), true);
+            // Pozwol wybrac: linie (pret) lub tekst (annotacje)
+            var selOpts = new PromptEntityOptions("\nWybierz pret lub opis zbrojenia: ");
+            selOpts.SetRejectMessage("\nTo nie jest obiekt RC SLAB.");
+            selOpts.AddAllowedClass(typeof(Line),   true);
+            selOpts.AddAllowedClass(typeof(DBText), true);
             var selResult = ed.GetEntity(selOpts);
             if (selResult.Status != PromptStatus.OK) return;
 
             using var tr = db.TransactionManager.StartTransaction();
             var entity = (Entity)tr.GetObject(selResult.ObjectId, OpenMode.ForRead);
+            tr.Commit();
 
-            var bar = XDataHelper.Read(entity);
+            BarData bar      = null;
+            ObjectId annotId = ObjectId.Null;
+
+            // Sprawdz czy to annotacja
+            using (var tr2 = db.TransactionManager.StartTransaction())
+            {
+                var ent2 = (Entity)tr2.GetObject(selResult.ObjectId, OpenMode.ForRead);
+
+                if (ent2 is DBText)
+                {
+                    bar = AnnotationEngine.ReadAnnotXData(ent2);
+                    if (bar != null)
+                        annotId = selResult.ObjectId;
+                }
+                else
+                {
+                    bar = XDataHelper.Read(ent2);
+                }
+
+                tr2.Commit();
+            }
+
             if (bar == null)
             {
-                ed.WriteMessage("\nWybrana linia nie jest pretem RC SLAB.\n");
-                tr.Abort();
+                ed.WriteMessage("\nWybrany obiekt nie jest pretem ani opisem RC SLAB.\n");
                 return;
             }
 
-            ed.WriteMessage($"\n[RC SLAB] Pret: {bar.Mark} | Ø{bar.Diameter} | rozstaw: {bar.Spacing} mm | szt: {bar.Count}\n");
-
-            // Na razie prosta edycja przez konsole — pozniej zastapi to dialog WPF
-            var diaOpts = new PromptIntegerOptions($"\nNowa srednica [mm] <{bar.Diameter}>: ")
+            // Jesli kliknieto pret (nie annotacje) — sprobuj znalezc annotacje z tej samej grupy
+            if (annotId.IsNull)
             {
-                DefaultValue = bar.Diameter,
-                AllowNone = true
-            };
-            var diaResult = ed.GetInteger(diaOpts);
-            if (diaResult.Status == PromptStatus.OK)
-                bar.Diameter = diaResult.Value;
+                annotId = FindAnnotationByMark(db, bar.Mark);
+            }
 
-            var spacOpts = new PromptDistanceOptions($"\nNowy rozstaw [mm] <{bar.Spacing}>: ")
+            // Otworz dialog WPF
+            var dlg = new BarPropertiesDialog(bar, annotId, db);
+            Application.ShowModalWindow(dlg);
+        }
+
+        /// <summary>Szuka annotacji RC SLAB z podanym markiem w przestrzeni modelu.</summary>
+        private static ObjectId FindAnnotationByMark(Database db, string mark)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+
+            foreach (ObjectId id in space)
             {
-                DefaultValue = bar.Spacing,
-                AllowNone = true
-            };
-            var spacResult = ed.GetDistance(spacOpts);
-            if (spacResult.Status == PromptStatus.OK)
-                bar.Spacing = spacResult.Value;
+                var ent = tr.GetObject(id, OpenMode.ForRead) as DBText;
+                if (ent == null) continue;
 
-            // Zapisz zaktualizowane dane
-            entity.UpgradeOpen();
-            XDataHelper.Write(entity, bar);
+                var annot = AnnotationEngine.ReadAnnotXData(ent);
+                if (annot != null && annot.Mark == mark)
+                {
+                    tr.Commit();
+                    return id;
+                }
+            }
+
             tr.Commit();
-
-            ed.WriteMessage($"\n[RC SLAB] Zaktualizowano pret: {bar.Mark}\n");
+            return ObjectId.Null;
         }
 
         /// <summary>

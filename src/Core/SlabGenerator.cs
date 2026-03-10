@@ -23,15 +23,15 @@ namespace BricsCadRc.Core
         /// <param name="bar">Dane preta</param>
         /// <param name="horizontal">true = prety poziome (wzdluz X), false = pionowe (wzdluz Y)</param>
         /// <param name="cover">Otulina od krawedzi polilinii [mm / jednostki rysunku]</param>
-        /// <returns>Lista ObjectId wygenerowanych linii</returns>
-        public static List<ObjectId> GenerateFromPolyline(
+        /// <returns>Wynik generowania z lista ID i bounding boxem</returns>
+        public static SlabGenResult GenerateFromPolyline(
             Database db,
             ObjectId plineId,
             BarData bar,
             bool horizontal,
             double cover)
         {
-            var ids = new List<ObjectId>();
+            var result = new SlabGenResult();
 
             XDataHelper.EnsureAppIdRegistered(db);
             LayerManager.EnsureLayersExist(db);
@@ -47,7 +47,7 @@ namespace BricsCadRc.Core
                 readTr.Commit();
             }
 
-            if (vertices.Count < 3) return ids;
+            if (vertices.Count < 3) return result;
 
             // Oblicz bounding box
             double minX = double.MaxValue, minY = double.MaxValue;
@@ -67,7 +67,11 @@ namespace BricsCadRc.Core
             double y1 = maxY - cover;
 
             if (x0 >= x1 || y0 >= y1)
-                return ids; // Polilinia zbyt mala na zadana otuline
+                return result; // Polilinia zbyt mala na zadana otuline
+
+            // Bounding box wygenerowanych pretow
+            double barMinX = double.MaxValue, barMinY = double.MaxValue;
+            double barMaxX = double.MinValue, barMaxY = double.MinValue;
 
             using var tr = db.TransactionManager.StartTransaction();
             var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
@@ -95,7 +99,12 @@ namespace BricsCadRc.Core
                         var line = CreateBarLine(tr, space, barData, layerName,
                             new Point3d(segX0, y, 0),
                             new Point3d(segX1, y, 0));
-                        ids.Add(line);
+                        result.BarIds.Add(line);
+
+                        if (segX0 < barMinX) barMinX = segX0;
+                        if (segX1 > barMaxX) barMaxX = segX1;
+                        if (y < barMinY) barMinY = y;
+                        if (y > barMaxY) barMaxY = y;
                     }
                 }
             }
@@ -120,14 +129,26 @@ namespace BricsCadRc.Core
                         var line = CreateBarLine(tr, space, barData, layerName,
                             new Point3d(x, segY0, 0),
                             new Point3d(x, segY1, 0));
-                        ids.Add(line);
+                        result.BarIds.Add(line);
+
+                        if (x < barMinX) barMinX = x;
+                        if (x > barMaxX) barMaxX = x;
+                        if (segY0 < barMinY) barMinY = segY0;
+                        if (segY1 > barMaxY) barMaxY = segY1;
                     }
                 }
             }
 
             bar.Count = barIndex;
             tr.Commit();
-            return ids;
+
+            if (result.BarIds.Count > 0)
+            {
+                result.MinPoint = new Point3d(barMinX, barMinY, 0);
+                result.MaxPoint = new Point3d(barMaxX, barMaxY, 0);
+            }
+
+            return result;
         }
 
         // ----------------------------------------------------------------
