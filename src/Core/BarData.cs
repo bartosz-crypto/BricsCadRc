@@ -48,6 +48,15 @@ namespace BricsCadRc.Core
         /// </summary>
         public int RepresentativeFlag { get; set; } = 0;
 
+        /// <summary>Indeks kolejny preta w grupie (1..N) — potrzebny dla M07 BarFilter</summary>
+        public int BarIndex { get; set; } = 0;
+
+        /// <summary>Kierunek preta: "X" (poziome) lub "Y" (pionowe)</summary>
+        public string Direction { get; set; } = "X";
+
+        /// <summary>Czy pret ma zaklad (lap splice): 0 = nie, 1 = tak</summary>
+        public int IsLap { get; set; } = 0;
+
         // ----------------------------------------------------------------
         // Obliczenia wg BS8666
         // ----------------------------------------------------------------
