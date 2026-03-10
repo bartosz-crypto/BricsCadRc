@@ -87,13 +87,14 @@ namespace BricsCadRc.Core
 
             var dbText = new DBText
             {
-                TextString      = text,
-                Layer           = LayerManager.AnnotLayer,
-                Height          = DefaultTextHeight,
-                Position        = pos,
-                Rotation        = rotation,
-                HorizontalMode  = TextHorizontalMode.TextLeft,
-                VerticalMode    = TextVerticalMode.TextBase,
+                TextString     = text,
+                Layer          = LayerManager.AnnotLayer,
+                Height         = DefaultTextHeight,
+                Position       = pos,
+                Rotation       = rotation,
+                HorizontalMode = TextHorizontalMode.TextLeft,
+                VerticalMode   = TextVerticalMode.TextBase,
+                TextStyleId    = GetTextStyleId(db),   // "style1" z romans.shx jak ASD
             };
 
             space.AppendEntity(dbText);
@@ -104,6 +105,25 @@ namespace BricsCadRc.Core
 
             tr.Commit();
             return dbText.ObjectId;
+        }
+
+        // ----------------------------------------------------------------
+        // Pomocnicze
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Zwraca ObjectId stylu tekstu "style1". Jesli nie istnieje — zwraca Id stylu Standard.
+        /// </summary>
+        private static ObjectId GetTextStyleId(Database db)
+        {
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var styleTable = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+
+            if (styleTable.Has(LayerManager.AnnotTextStyle))
+                return styleTable[LayerManager.AnnotTextStyle];
+
+            // Fallback: styl Standard
+            return db.Textstyle;
         }
 
         // ----------------------------------------------------------------
