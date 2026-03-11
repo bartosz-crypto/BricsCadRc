@@ -162,6 +162,12 @@ namespace BricsCadRc.Core
             space.AppendEntity(blockRef);
             tr.AddNewlyCreatedDBObject(blockRef, true);
 
+            // Zapisz BarsSpan i ArmTotalLen w XData (potrzebne do gripu)
+            bar.BarsSpan   = horizontal
+                ? result.MaxPoint.Y - result.MinPoint.Y
+                : result.MaxPoint.X - result.MinPoint.X;
+            bar.ArmTotalLen = armTotalLen;
+
             WriteAnnotXData(blockRef, bar);
             return blockRef.ObjectId;
         }
@@ -326,7 +332,12 @@ namespace BricsCadRc.Core
         // XData
         // ----------------------------------------------------------------
 
-        private static void WriteAnnotXData(Entity entity, BarData bar)
+        // XData indices:
+        // [0] AppName  [1] Mark  [2] LayerCode  [3] Count  [4] Diameter
+        // [5] Spacing  [6] Direction  [7] Position  [8] LengthA
+        // [9] BarsSpan  [10] ArmTotalLen
+
+        internal static void WriteAnnotXData(Entity entity, BarData bar)
         {
             entity.XData = new ResultBuffer(
                 new TypedValue((int)DxfCode.ExtendedDataRegAppName,  AnnotAppName),
@@ -337,7 +348,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Spacing),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Direction),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Position),
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ArmTotalLen)
             );
         }
 
@@ -347,7 +360,7 @@ namespace BricsCadRc.Core
             if (xdata == null) return null;
             var v = xdata.AsArray();
             if (v.Length < 9) return null;
-            return new BarData
+            var bd = new BarData
             {
                 Mark      = (string)v[1].Value,
                 LayerCode = (string)v[2].Value,
@@ -358,6 +371,74 @@ namespace BricsCadRc.Core
                 Position  = (string)v[7].Value,
                 LengthA   = (double)v[8].Value
             };
+            if (v.Length >= 11)
+            {
+                bd.BarsSpan   = (double)v[9].Value;
+                bd.ArmTotalLen = (double)v[10].Value;
+            }
+            return bd;
+        }
+
+        // ----------------------------------------------------------------
+        // UpdateArmInBlock — rozciaga ramie grip-em "arm top"
+        // Wywolywane z AnnotGripOverrule; entity (blockref) jest juz otwarte
+        // do zapisu przez system grip-ow — nie otwieramy go ponownie w tr.
+        // ----------------------------------------------------------------
+        public static void UpdateArmInBlock(BlockReference br, double newArmTotalLen)
+        {
+            var bar = ReadAnnotXData(br);
+            if (bar == null || bar.BarsSpan <= 0) return;
+
+            string annotText  = $"{bar.Count} {bar.Mark} {bar.LayerCode}";
+            double textLen    = annotText.Length * TextCharWidth;
+            double newArmLen  = Math.Max(50.0, newArmTotalLen - textLen);
+            newArmTotalLen    = newArmLen + textLen;
+
+            // 1. Zaktualizuj XData bezposrednio na blockref (juz otwarty do zapisu)
+            bar.ArmTotalLen = newArmTotalLen;
+            WriteAnnotXData(br, bar);
+
+            // 2. Zaktualizuj geometrie wewnatrz BTR (nowa transakcja tylko dla BTR)
+            using var tr = br.Database.TransactionManager.StartTransaction();
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+
+            Line   armLine = null;
+            DBText armText = null;
+            foreach (ObjectId oid in btr)
+            {
+                if (oid.IsErased) continue;
+                var obj = tr.GetObject(oid, OpenMode.ForRead);
+                if (obj is Line ln && ln.Linetype == "Continuous" && armLine == null)
+                    armLine = ln;
+                else if (obj is DBText txt)
+                    armText = txt;
+            }
+
+            if (armLine != null)
+            {
+                armLine.UpgradeOpen();
+                if (bar.Direction == "X")
+                {
+                    armLine.StartPoint = new Point3d(0, bar.BarsSpan, 0);
+                    armLine.EndPoint   = new Point3d(0, bar.BarsSpan + newArmTotalLen, 0);
+                }
+                else
+                {
+                    armLine.StartPoint = new Point3d(0, 0, 0);
+                    armLine.EndPoint   = new Point3d(0, newArmTotalLen, 0);
+                }
+            }
+
+            if (armText != null)
+            {
+                armText.UpgradeOpen();
+                if (bar.Direction == "X")
+                    armText.Position = new Point3d(-TextArmOffset, bar.BarsSpan + newArmLen, 0);
+                else
+                    armText.Position = new Point3d(TextArmOffset, newArmLen, 0);
+            }
+
+            tr.Commit();
         }
 
         public static bool IsAnnotation(Entity entity)

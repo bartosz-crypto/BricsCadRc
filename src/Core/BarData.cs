@@ -57,6 +57,12 @@ namespace BricsCadRc.Core
         /// <summary>Czy pret ma zaklad (lap splice): 0 = nie, 1 = tak</summary>
         public int IsLap { get; set; } = 0;
 
+        /// <summary>Rozpiętość układu prętów w mm (barsH dla X, barsW dla Y) — zapisywana w XData annotacji</summary>
+        public double BarsSpan { get; set; }
+
+        /// <summary>Aktualna całkowita długość ramienia (ArmLength + długość tekstu) w mm — mutable przez grip</summary>
+        public double ArmTotalLen { get; set; }
+
         // ----------------------------------------------------------------
         // Obliczenia wg BS8666
         // ----------------------------------------------------------------
