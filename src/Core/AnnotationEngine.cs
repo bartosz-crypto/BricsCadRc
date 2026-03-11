@@ -289,19 +289,19 @@ namespace BricsCadRc.Core
             var bar = ReadAnnotXData(br);
             if (bar == null || bar.BarsSpan <= 0) return;
 
-            newArmTotalLen  = Math.Max(50.0, newArmTotalLen);
-            bar.ArmTotalLen = newArmTotalLen;
+            // Delta = rzeczywista zmiana dlugosci ramienia (po klampie)
+            double clampedNew = Math.Max(50.0, newArmTotalLen);
+            double delta      = clampedNew - bar.ArmTotalLen;
+            bar.ArmTotalLen   = clampedNew;
             WriteAnnotXData(br, bar);
 
             using var tr = br.Database.TransactionManager.StartTransaction();
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
 
-            // Identyfikacja ramienia po pozycji StartPoint (niezawodna, niezalezna od nazwy linetype)
             // Dist line: StartPoint.Y = 0,        EndPoint.Y = barsSpan
             // Arm line : StartPoint.Y = barsSpan, EndPoint.Y = barsSpan + armTotalLen
             double armStartY = bar.Direction == "X" ? bar.BarsSpan : bar.LengthA;
 
-            // Przesuniecie ramienia i tekstu — tekst podaza za koncem ramienia
             Line   armLine = null;
             DBText armText = null;
             foreach (ObjectId oid in btr)
@@ -319,19 +319,16 @@ namespace BricsCadRc.Core
             {
                 armLine.UpgradeOpen();
                 armLine.StartPoint = new Point3d(0, armStartY, 0);
-                armLine.EndPoint   = new Point3d(0, armStartY + newArmTotalLen, 0);
+                armLine.EndPoint   = new Point3d(0, armStartY + clampedNew, 0);
             }
 
             if (armText != null)
             {
-                // Tekst: poczatek = armTop - szacowana_dlugosc_tekstu (TextLeft = tekst rosnie w gore)
-                string annotText = $"{bar.Count} {bar.Mark} {bar.LayerCode}";
-                double textLen   = annotText.Length * TextCharWidth;
-                double textStartY = armStartY + newArmTotalLen - textLen;
+                // Tekst przesuwa sie o DOKLADNIE TYLE samo co ramie (delta)
+                // — unika bledow z szacowaniem TextCharWidth
                 armText.UpgradeOpen();
-                armText.Position = bar.Direction == "X"
-                    ? new Point3d(-TextArmOffset, textStartY, 0)
-                    : new Point3d( TextArmOffset, textStartY, 0);
+                var pos = armText.Position;
+                armText.Position = new Point3d(pos.X, pos.Y + delta, pos.Z);
             }
 
             tr.Commit();
