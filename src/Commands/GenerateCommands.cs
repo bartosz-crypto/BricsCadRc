@@ -108,19 +108,23 @@ namespace BricsCadRc.Commands
             };
             bar.Mark = $"H{diameter}-{posNr:D2}-{(int)spacing}";
 
-            // 10. Generuj caly uklad pretow jako jeden blok RC_SLAB_BARS_nnn
-            //     (prety + dist line + ramie + tekst — jak RBCR_EN_CONSTLINEMODULE w ASD)
-            var blockId = BarBlockEngine.Generate(db, selResult.ObjectId, bar, horizontal, cover, posNr);
+            // 10. Modul pretow — RC_SLAB_BARS_nnn (prety only, styl ASD RBCR_EN_CONSTLINEMODULE)
+            var barResult = BarBlockEngine.Generate(db, selResult.ObjectId, bar, horizontal, cover, posNr);
 
-            if (blockId == ObjectId.Null)
+            if (!barResult.IsValid)
             {
                 ed.WriteMessage("\n[RC SLAB] Nie wygenerowano zadnych pretow — sprawdz rozmiar polilinii i otuline.\n");
                 return;
             }
 
+            // 11. Modul annotacji — RC_ANNOT_nnn (dist line + romby + ramie + tekst)
+            //     Romby w pozycjach wzglednych (i*spacing) — niezalezne od world coords pretow.
+            //     Mozna przesuwac annotacje wzd. X bez utraty wyrownania z pretami.
+            AnnotationEngine.CreateLeader(db, barResult, bar, horizontal, posNr);
+
             ed.WriteMessage($"\n[RC SLAB] Wygenerowano {bar.Count} pretow. Mark: {bar.Mark}\n");
             ed.WriteMessage($"[RC SLAB] Warstwa: {LayerManager.GetLayerName(layerCode)} | Kierunek: {(horizontal ? "X" : "Y")} | Rozstaw: {spacing} mm | Otulina: {cover} mm\n");
-            ed.WriteMessage($"[RC SLAB] Blok: RC_SLAB_BARS_{posNr:D3} | Opis: {bar.Count} {bar.Mark} {bar.LayerCode}\n");
+            ed.WriteMessage($"[RC SLAB] Bloki: RC_SLAB_BARS_{posNr:D3} + RC_ANNOT_{posNr:D3} | Opis: {bar.Count} {bar.Mark} {bar.LayerCode}\n");
         }
 
         // ----------------------------------------------------------------
