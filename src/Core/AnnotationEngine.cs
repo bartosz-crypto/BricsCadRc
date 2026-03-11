@@ -63,9 +63,7 @@ namespace BricsCadRc.Core
 
             EnsureAppIdRegistered(db);
 
-            string annotText   = $"{bar.Count} {bar.Mark} {bar.LayerCode}";
-            double textExtentY = annotText.Length * TextCharWidth;
-            double armTotalLen = ArmLength + textExtentY;
+            double armTotalLen = ArmLength;   // tekst zwisa W DOL od konca ramienia (TextRight)
 
             bar.ArmTotalLen = armTotalLen;
 
@@ -161,15 +159,16 @@ namespace BricsCadRc.Core
             btr.AppendEntity(arm);
             tr.AddNewlyCreatedDBObject(arm, true);
 
-            // 4. Tekst
+            // 4. Tekst — koniec tekstu ("B1") zakotwiczony na szczycie ramienia (TextRight)
+            //    Tekst rośnie W DOL (ku rombow) gdy opis sie wydluza.
             var dbText = new DBText
             {
                 TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
                 Layer          = LayerManager.AnnotLayer,
                 Height         = DefaultTextHeight,
-                Position       = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0),
+                Position       = new Point3d(-TextArmOffset, barsSpan + armTotalLen, 0),
                 Rotation       = Math.PI / 2.0,
-                HorizontalMode = TextHorizontalMode.TextLeft,
+                HorizontalMode = TextHorizontalMode.TextRight,
                 VerticalMode   = TextVerticalMode.TextBase,
                 TextStyleId    = GetTextStyleId(db)
             };
@@ -218,15 +217,15 @@ namespace BricsCadRc.Core
             btr.AppendEntity(arm);
             tr.AddNewlyCreatedDBObject(arm, true);
 
-            // 4. Tekst
+            // 4. Tekst — koniec tekstu zakotwiczony na szczycie ramienia (TextRight)
             var dbText = new DBText
             {
                 TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
                 Layer          = LayerManager.AnnotLayer,
                 Height         = DefaultTextHeight,
-                Position       = new Point3d(TextArmOffset, barHeight + ArmLength, 0),
+                Position       = new Point3d(TextArmOffset, barHeight + armTotalLen, 0),
                 Rotation       = 0.0,
-                HorizontalMode = TextHorizontalMode.TextLeft,
+                HorizontalMode = TextHorizontalMode.TextRight,
                 VerticalMode   = TextVerticalMode.TextBase,
                 TextStyleId    = GetTextStyleId(db)
             };
@@ -259,11 +258,7 @@ namespace BricsCadRc.Core
             var bar = ReadAnnotXData(br);
             if (bar == null || bar.BarsSpan <= 0) return;
 
-            string annotText  = $"{bar.Count} {bar.Mark} {bar.LayerCode}";
-            double textLen    = annotText.Length * TextCharWidth;
-            double newArmLen  = Math.Max(50.0, newArmTotalLen - textLen);
-            newArmTotalLen    = newArmLen + textLen;
-
+            newArmTotalLen  = Math.Max(50.0, newArmTotalLen);
             bar.ArmTotalLen = newArmTotalLen;
             WriteAnnotXData(br, bar);
 
@@ -298,8 +293,8 @@ namespace BricsCadRc.Core
             {
                 armText.UpgradeOpen();
                 armText.Position = bar.Direction == "X"
-                    ? new Point3d(-TextArmOffset, armStartY + newArmLen, 0)
-                    : new Point3d( TextArmOffset, armStartY + newArmLen, 0);
+                    ? new Point3d(-TextArmOffset, armStartY + newArmTotalLen, 0)
+                    : new Point3d( TextArmOffset, armStartY + newArmTotalLen, 0);
             }
 
             tr.Commit();
