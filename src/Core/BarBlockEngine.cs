@@ -82,6 +82,7 @@ namespace BricsCadRc.Core
             bar.Count    = count;
             bar.LengthA  = barLength;
             bar.BarsSpan = barsSpan;
+            bar.Cover    = cover;
 
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
@@ -165,6 +166,83 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // GenerateFromBounds — jak Generate, ale bez polilinii.
+        // x0,y0,x1,y1 to juz granice po otulinie (obliczone przez wywolujacego).
+        // ----------------------------------------------------------------
+
+        public static BarBlockResult GenerateFromBounds(
+            Database db,
+            double   x0, double y0,
+            double   x1, double y1,
+            BarData  bar,
+            bool     horizontal,
+            int      posNr)
+        {
+            var empty = new BarBlockResult();
+            if (x0 >= x1 || y0 >= y1) return empty;
+
+            EnsureAppIdRegistered(db);
+            LayerManager.EnsureLayersExist(db);
+
+            double barLength, rawSpan;
+            if (horizontal) { barLength = x1 - x0; rawSpan = y1 - y0; }
+            else             { barLength = y1 - y0; rawSpan = x1 - x0; }
+
+            // Jesli bar.Count juz ustawiony (override z dialogu), wyrownaj spacing do rozpieci
+            if (bar.Count > 1)
+            {
+                // Zachowaj spacing i przelicz ile pretow faktycznie sie miesci (lub uzyj override)
+                // W tej wersji honorujemy bar.Count i bar.Spacing z zewnatrz
+            }
+            else
+            {
+                bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
+            }
+            double barsSpan = (bar.Count - 1) * bar.Spacing;
+
+            bar.LengthA  = barLength;
+            bar.BarsSpan = barsSpan;
+
+            using var tr = db.TransactionManager.StartTransaction();
+            var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
+
+            string blockName = $"RC_SLAB_BARS_{posNr:D3}";
+            if (blockTable.Has(blockName))
+            {
+                var oldBtr = (BlockTableRecord)tr.GetObject(blockTable[blockName], OpenMode.ForWrite);
+                if (oldBtr.GetBlockReferenceIds(true, false).Count == 0)
+                {
+                    EraseAllInBtr(tr, oldBtr);
+                    oldBtr.Erase();
+                }
+                else blockName = $"RC_SLAB_BARS_{posNr:D3}_{DateTime.Now.Ticks % 100000L}";
+            }
+
+            var btr   = new BlockTableRecord { Name = blockName };
+            var btrId = blockTable.Add(btr);
+            tr.AddNewlyCreatedDBObject(btr, true);
+
+            if (horizontal) BuildHorizontal(tr, btr, bar, barLength, bar.Count);
+            else             BuildVertical  (tr, btr, bar, barLength, bar.Count);
+
+            var insertPt = new Point3d(x0, y0, 0);
+            var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            space.AppendEntity(blockRef);
+            tr.AddNewlyCreatedDBObject(blockRef, true);
+
+            WriteXData(blockRef, bar);
+            tr.Commit();
+
+            return new BarBlockResult
+            {
+                BlockRefId = blockRef.ObjectId,
+                MinPoint   = new Point3d(x0, y0, 0),
+                MaxPoint   = new Point3d(x1, y1, 0)
+            };
+        }
+
+        // ----------------------------------------------------------------
         // RegenerateBarBlock — wywolywany przez grip span
         // ----------------------------------------------------------------
         public static void RegenerateBarBlock(BlockReference br, double newBarsSpan)
@@ -197,19 +275,35 @@ namespace BricsCadRc.Core
         // Pozycje gripow
         // ----------------------------------------------------------------
 
-        public static Point3d GripLateral(BlockReference br) => br.Position;
+        /// <summary>
+        /// Grip [0] — przesuniiety o otulinie PRZED pierwszym pretem.
+        /// Gdy uzytkownik dociagnie grip do krawedzi plyty, pierwszy pret
+        /// pozostaje w odleglosci cover od tej krawedzi (jak w ASD).
+        /// </summary>
+        public static Point3d GripLateral(BlockReference br, BarData bar)
+        {
+            var ins = br.Position;
+            double c = bar.Cover;
+            // X-bars: prety rozpinaja sie w Y, otulina w kierunku -Y (dol ukladu)
+            // Y-bars: prety rozpinaja sie w X, otulina w kierunku -X (lewy bok)
+            return bar.Direction == "X"
+                ? new Point3d(ins.X, ins.Y - c, 0)
+                : new Point3d(ins.X - c, ins.Y, 0);
+        }
 
         public static Point3d GripSpan(BlockReference br, BarData bar)
         {
             var ins = br.Position;
+            double c = bar.Cover;
+            // Grip na KRAWEDZI PLYTY za ostatnim pretem (ostatni pret + cover)
             return bar.Direction == "X"
-                ? new Point3d(ins.X, ins.Y + bar.BarsSpan, 0)
-                : new Point3d(ins.X + bar.BarsSpan, ins.Y, 0);
+                ? new Point3d(ins.X, ins.Y + bar.BarsSpan + c, 0)
+                : new Point3d(ins.X + bar.BarsSpan + c, ins.Y, 0);
         }
 
         // ----------------------------------------------------------------
         // XData: [0]AppName [1]Mark [2]LayerCode [3]Count [4]Diameter
-        //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan
+        //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan [10]Cover
         // ----------------------------------------------------------------
 
         public static void EnsureAppIdRegistered(Database db)
@@ -238,7 +332,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Direction),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Position),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Cover)
             );
         }
 
@@ -260,6 +355,7 @@ namespace BricsCadRc.Core
                 LengthA   = (double)v[8].Value
             };
             if (v.Length >= 10) bd.BarsSpan = (double)v[9].Value;
+            if (v.Length >= 11) bd.Cover    = (double)v[10].Value;
             return bd;
         }
 

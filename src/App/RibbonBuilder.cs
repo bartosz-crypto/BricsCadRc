@@ -21,11 +21,25 @@ namespace BricsCadRc.App
                 Id = TabId
             };
 
+            tab.Panels.Add(BuildBarPanel());
             tab.Panels.Add(BuildGeneratePanel());
             tab.Panels.Add(BuildEditPanel());
             tab.Panels.Add(BuildCountPanel());
 
             ribbon.Tabs.Add(tab);
+        }
+
+        // ----------------------------------------------------------------
+        // Panel 0: PRET (tworzenie pojedynczego preta + rozkład)
+        // ----------------------------------------------------------------
+        private static RibbonPanel BuildBarPanel()
+        {
+            var src = new RibbonPanelSource { Title = "Pret", Id = "RC_PANEL_BAR" };
+
+            src.Items.Add(MakeButton("Nowy pret",    "RC_BAR",          "Tworzy pojedynczy pret w widoku elewacji (FLOW 1)"));
+            src.Items.Add(MakeButton("Rozklad",      "RC_DISTRIBUTION", "Rozklada wybrany pret w planie (FLOW 2)"));
+
+            return new RibbonPanel { Source = src };
         }
 
         // ----------------------------------------------------------------

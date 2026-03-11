@@ -1,0 +1,148 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.BarElevationDialog"
+    Title="Reinforcement – Elevation"
+    Width="400" Height="370"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Naglowek -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6">
+            <TextBlock Text="Reinforcement – Elevation" Foreground="White"
+                       FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Margin="0"/>
+        </Border>
+
+        <!-- Diameter -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Diameter:"/>
+            <ComboBox Grid.Column="1" x:Name="DiameterCombo">
+                <ComboBoxItem Content="H6"  Tag="6"/>
+                <ComboBoxItem Content="H8"  Tag="8"/>
+                <ComboBoxItem Content="H10" Tag="10"/>
+                <ComboBoxItem Content="H12" Tag="12" IsSelected="True"/>
+                <ComboBoxItem Content="H16" Tag="16"/>
+                <ComboBoxItem Content="H20" Tag="20"/>
+                <ComboBoxItem Content="H25" Tag="25"/>
+                <ComboBoxItem Content="H32" Tag="32"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Shape code -->
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Shape code:"/>
+            <ComboBox Grid.Column="1" x:Name="ShapeCombo"
+                      SelectionChanged="ShapeCombo_SelectionChanged"/>
+        </Grid>
+
+        <!-- Layer -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Layer:"/>
+            <ComboBox Grid.Column="1" x:Name="LayerCombo">
+                <ComboBoxItem Content="B1 – Bottom dir. 1 (X)" Tag="B1" IsSelected="True"/>
+                <ComboBoxItem Content="B2 – Bottom dir. 2 (Y)" Tag="B2"/>
+                <ComboBoxItem Content="T1 – Top dir. 1 (X)"    Tag="T1"/>
+                <ComboBoxItem Content="T2 – Top dir. 2 (Y)"    Tag="T2"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Shape parameters header -->
+        <TextBlock Grid.Row="8" Text="Shape parameters:" FontWeight="SemiBold"/>
+
+        <!-- Param A (zawsze widoczny) -->
+        <Grid Grid.Row="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="A – length [mm]:"/>
+            <TextBox Grid.Column="1" x:Name="ParamABox" Text="3000"/>
+        </Grid>
+
+        <!-- Param B -->
+        <Grid Grid.Row="12" x:Name="RowB" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="B [mm]:"/>
+            <TextBox Grid.Column="1" x:Name="ParamBBox" Text="200"/>
+        </Grid>
+
+        <!-- Param C -->
+        <Grid Grid.Row="14" x:Name="RowC" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="C [mm]:"/>
+            <TextBox Grid.Column="1" x:Name="ParamCBox" Text="200"/>
+        </Grid>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="16" Orientation="Horizontal" HorizontalAlignment="Right"
+                    FlowDirection="RightToLeft" Margin="0,8,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
+            <Button Content="OK" Click="OK_Click"
+                    Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

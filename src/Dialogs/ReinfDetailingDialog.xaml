@@ -1,0 +1,81 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.ReinfDetailingDialog"
+    Title="Reinforcement detailing"
+    Width="340" Height="210"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Naglowek -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6">
+            <TextBlock Text="Reinforcement detailing" Foreground="White"
+                       FontSize="13" FontWeight="Bold" HorizontalAlignment="Center" Margin="0"/>
+        </Border>
+
+        <!-- Type -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Type:"/>
+            <TextBlock Grid.Column="1" Text="Linear" FontWeight="SemiBold"/>
+        </Grid>
+
+        <!-- Method -->
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Method:"/>
+            <TextBlock Grid.Column="1" Text="Module" FontWeight="SemiBold"/>
+        </Grid>
+
+        <!-- Viewing direction -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Viewing direction:"/>
+            <TextBlock Grid.Column="1" Text="Top" FontWeight="SemiBold"/>
+        </Grid>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right"
+                    FlowDirection="RightToLeft">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
+            <Button Content="OK" Click="OK_Click"
+                    Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

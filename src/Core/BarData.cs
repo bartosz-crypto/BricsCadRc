@@ -60,6 +60,9 @@ namespace BricsCadRc.Core
         /// <summary>Rozpiętość układu prętów w mm (barsH dla X, barsW dla Y) — zapisywana w XData annotacji</summary>
         public double BarsSpan { get; set; }
 
+        /// <summary>Otulina w mm uzyta przy generowaniu — offset gripa [0] od pierwszego preta</summary>
+        public double Cover { get; set; }
+
         /// <summary>Aktualna całkowita długość ramienia (ArmLength + długość tekstu) w mm — mutable przez grip</summary>
         public double ArmTotalLen { get; set; }
 

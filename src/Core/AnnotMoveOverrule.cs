@@ -21,12 +21,16 @@ namespace BricsCadRc.Core
     // ----------------------------------------------------------------
     public class AnnotGripOverrule : GripOverrule
     {
-        // Przechowuje ArmTotalLen z poczatku dragu (kluczowane po handle obiektu).
-        // BricsCAD przekazuje KUMULATYWNY offset od startu dragu (nie inkrementalny),
-        // wiec bez tego bufor XData rosnie eksponencjalnie.
-        // Czyszczone w GetGripPoints (poczatek nowej interakcji).
-        private static readonly Dictionary<long, double> _dragOrigArm
+        // BricsCAD przekazuje KUMULATYWNY offset od startu dragu (nie inkrementalny).
+        //
+        // _dragOrigArm  — ArmTotalLen sprzed dragu (annotacje, grip ramienia)
+        // _dragOrigPos  — pozycja bloku pretow sprzed dragu (grip [0], swobodny ruch)
+        //
+        // Czyszczone w GetGripPoints (poczatek nowej interakcji gripem).
+        private static readonly Dictionary<long, double>  _dragOrigArm
             = new Dictionary<long, double>();
+        private static readonly Dictionary<long, Point3d> _dragOrigPos
+            = new Dictionary<long, Point3d>();
 
         public override bool IsApplicable(RXObject overruledSubject)
         {
@@ -51,7 +55,10 @@ namespace BricsCadRc.Core
             var barBlock = BarBlockEngine.ReadXData(br);
             if (barBlock != null && barBlock.BarsSpan > 0)
             {
-                gripPoints.Add(BarBlockEngine.GripLateral(br));     // [0] lateral
+                // Nowa interakcja — wyczysc stan dragu pozycji
+                _dragOrigPos.Remove(br.ObjectId.Handle.Value);
+
+                gripPoints.Add(BarBlockEngine.GripLateral(br, barBlock)); // [0] krawedz plyty (cover offset)
                 gripPoints.Add(BarBlockEngine.GripSpan(br, barBlock)); // [1] span resize
                 return;
             }
@@ -66,10 +73,12 @@ namespace BricsCadRc.Core
                 var ins = br.Position;
                 gripPoints.Add(ins);  // [0] lateral
 
+                // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
+                // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
                 Point3d armTop = barAnnot.Direction == "X"
                     ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                    : new Point3d(ins.X, ins.Y + barAnnot.LengthA  + barAnnot.ArmTotalLen, 0);
-                gripPoints.Add(armTop);  // [1] arm top
+                    : new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0);
+                gripPoints.Add(armTop);  // [1] arm end
                 return;
             }
 
@@ -95,7 +104,10 @@ namespace BricsCadRc.Core
                 var barBlock = BarBlockEngine.ReadXData(br);
                 if (barBlock != null && barBlock.BarsSpan > 0)
                 {
-                    isGrip1 = IsNear(gd.GripPoint, BarBlockEngine.GripSpan(br, barBlock));
+                    // Grip [0] jest na krawedzi plyty (cover od insertion point), [1] na span
+                    bool nearSpan    = IsNear(gd.GripPoint, BarBlockEngine.GripSpan(br, barBlock));
+                    bool nearLateral = IsNear(gd.GripPoint, BarBlockEngine.GripLateral(br, barBlock));
+                    isGrip1 = nearSpan && !nearLateral;
                     break;
                 }
                 var barAnnot = AnnotationEngine.ReadAnnotXData(br);
@@ -104,7 +116,7 @@ namespace BricsCadRc.Core
                     var ins    = br.Position;
                     Point3d armTop = barAnnot.Direction == "X"
                         ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                        : new Point3d(ins.X, ins.Y + barAnnot.LengthA  + barAnnot.ArmTotalLen, 0);
+                        : new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0);
                     isGrip1 = IsNear(gd.GripPoint, armTop);
                     break;
                 }
@@ -145,10 +157,23 @@ namespace BricsCadRc.Core
                     double delta       = barBlock.Direction == "X" ? offset.Y : offset.X;
                     double newBarsSpan = Math.Max(barBlock.Spacing, barBlock.BarsSpan + delta);
                     BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
+                    // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
+                    var updatedBar = BarBlockEngine.ReadXData(br);
+                    if (updatedBar != null)
+                        AnnotationEngine.SyncAnnotation(br.Database, updatedBar);
                 }
                 else
                 {
-                    entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barBlock, offset)));
+                    // Grip [0]: swobodny ruch w dowolnym kierunku.
+                    // offset jest KUMULATYWNY — uzywamy origPos jako bazy (jak _dragOrigArm).
+                    long handle = br.ObjectId.Handle.Value;
+                    if (!_dragOrigPos.ContainsKey(handle))
+                        _dragOrigPos[handle] = br.Position;
+
+                    var origPos = _dragOrigPos[handle];
+                    var target  = new Point3d(origPos.X + offset.X, origPos.Y + offset.Y, origPos.Z);
+                    // delta = ile jeszcze trzeba przesunac od aktualnej pozycji do celu
+                    entity.TransformBy(Matrix3d.Displacement(target - br.Position));
                 }
                 return;
             }
@@ -165,7 +190,9 @@ namespace BricsCadRc.Core
                     if (!_dragOrigArm.ContainsKey(handle))
                         _dragOrigArm[handle] = barAnnot.ArmTotalLen;
 
-                    double newArmTotalLen = Math.Max(200.0, _dragOrigArm[handle] + offset.Y);
+                    // X: arm pionowe — drag w Y; Y: arm poziome — drag w X
+                    double delta = barAnnot.Direction == "X" ? offset.Y : offset.X;
+                    double newArmTotalLen = Math.Max(200.0, _dragOrigArm[handle] + delta);
                     AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
                 }
                 else
@@ -186,7 +213,11 @@ namespace BricsCadRc.Core
     }
 
     // ----------------------------------------------------------------
-    // TransformOverrule — ogranicza MOVE do osi zbrojenia
+    // TransformOverrule — ogranicza MOVE annotacji do osi zbrojenia.
+    // Blok pretow (RC_BAR_BLOCK): pass-through (swobodny ruch).
+    // UWAGA: IsApplicable zwraca true dla OBU typow — wewnatrz TransformBy
+    //        rozrozniamy i dla pretow wywolujemy base bez ograniczen.
+    //        (IsApplicable-only exclusion nie dziala niezawodnie w BRX.)
     // ----------------------------------------------------------------
     public class AnnotTransformOverrule : TransformOverrule
     {
@@ -204,6 +235,9 @@ namespace BricsCadRc.Core
         {
             var br = entity as BlockReference;
             if (br == null) { base.TransformBy(entity, transform); return; }
+
+            // Blok pretow: swobodny ruch — brak ograniczenia kierunku
+            if (BarBlockEngine.IsBarBlock(br)) { base.TransformBy(entity, transform); return; }
 
             string dir = null;
             var bb = BarBlockEngine.ReadXData(br);

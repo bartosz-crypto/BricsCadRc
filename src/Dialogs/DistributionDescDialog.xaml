@@ -1,0 +1,115 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.DistributionDescDialog"
+    Title="Reinforcement description"
+    Width="420" Height="320"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="0,0,12,0"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Podglad etykiety (niebieski pasek) -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6">
+            <TextBlock x:Name="PreviewText" Text="10 H12-13-200"
+                       Foreground="White" FontSize="14" FontWeight="Bold"
+                       HorizontalAlignment="Center" Margin="0"/>
+        </Border>
+
+        <!-- Number -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Number:"/>
+            <TextBox Grid.Column="1" x:Name="CountBox"
+                     TextChanged="Input_Changed"/>
+        </Grid>
+
+        <!-- Spacing -->
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Spacing [mm]:"/>
+            <TextBox Grid.Column="1" x:Name="SpacingBox"
+                     TextChanged="Input_Changed"/>
+        </Grid>
+
+        <!-- Suffix -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Suffix / description:"/>
+            <TextBox Grid.Column="1" x:Name="SuffixBox"
+                     TextChanged="Input_Changed"/>
+        </Grid>
+
+        <!-- Naglowek widocznosci -->
+        <TextBlock Grid.Row="8" Text="Bar visibility:" FontWeight="SemiBold"/>
+
+        <!-- 4 przyciski widocznosci (radio) -->
+        <StackPanel Grid.Row="10" Orientation="Horizontal">
+            <RadioButton x:Name="RadioAll" Content="All bars" GroupName="Visibility"
+                         IsChecked="True" Checked="Visibility_Changed"/>
+            <RadioButton x:Name="RadioMiddle" Content="Middle only" GroupName="Visibility"
+                         Checked="Visibility_Changed"/>
+            <RadioButton x:Name="RadioFirstLast" Content="First + Last" GroupName="Visibility"
+                         Checked="Visibility_Changed"/>
+            <RadioButton x:Name="RadioManual" Content="Manual" GroupName="Visibility"
+                         Checked="Visibility_Changed"/>
+        </StackPanel>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right"
+                    FlowDirection="RightToLeft" Margin="0,4,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
+            <Button Content="OK" Click="OK_Click"
+                    Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>
