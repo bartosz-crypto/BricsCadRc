@@ -173,6 +173,7 @@ namespace BricsCadRc.Core
             }
             catch { textLen = dbText.TextString.Length * TextCharWidth; }
 
+            bar.TextLen    = textLen;          // zapisane w XData — stale przez caly czas zycia bloku
             double armTotalLen = ArmLength + textLen;
 
             // 4. Ramie — koniec dokladnie przy "B1" (koniec tekstu)
@@ -247,6 +248,7 @@ namespace BricsCadRc.Core
             }
             catch { textLen = dbText.TextString.Length * TextCharWidth; }
 
+            bar.TextLen    = textLen;
             double armTotalLen = ArmLength + textLen;
 
             // 4. Ramie
@@ -289,9 +291,7 @@ namespace BricsCadRc.Core
             var bar = ReadAnnotXData(br);
             if (bar == null || bar.BarsSpan <= 0) return;
 
-            // Delta = rzeczywista zmiana dlugosci ramienia (po klampie)
             double clampedNew = Math.Max(50.0, newArmTotalLen);
-            double delta      = clampedNew - bar.ArmTotalLen;
             bar.ArmTotalLen   = clampedNew;
             WriteAnnotXData(br, bar);
 
@@ -301,6 +301,9 @@ namespace BricsCadRc.Core
             // Dist line: StartPoint.Y = 0,        EndPoint.Y = barsSpan
             // Arm line : StartPoint.Y = barsSpan, EndPoint.Y = barsSpan + armTotalLen
             double armStartY = bar.Direction == "X" ? bar.BarsSpan : bar.LengthA;
+
+            // textLen: stala dlugosc tekstu zmierzona przy tworzeniu bloku
+            double textLen = bar.TextLen > 10 ? bar.TextLen : (bar.ArmTotalLen - ArmLength);
 
             Line   armLine = null;
             DBText armText = null;
@@ -324,11 +327,13 @@ namespace BricsCadRc.Core
 
             if (armText != null)
             {
-                // Tekst przesuwa sie o DOKLADNIE TYLE samo co ramie (delta)
-                // — unika bledow z szacowaniem TextCharWidth
+                // Pozycja ABSOLUTNA: armStartY + newArmLen - textLen (niezaleznie od delty/rampy)
+                // textLen pochodzi z XData (stale od momentu tworzenia bloku)
+                double textStartY = armStartY + clampedNew - textLen;
                 armText.UpgradeOpen();
-                var pos = armText.Position;
-                armText.Position = new Point3d(pos.X, pos.Y + delta, pos.Z);
+                armText.Position = bar.Direction == "X"
+                    ? new Point3d(-TextArmOffset, textStartY, 0)
+                    : new Point3d( TextArmOffset, textStartY, 0);
             }
 
             tr.Commit();
@@ -359,7 +364,7 @@ namespace BricsCadRc.Core
         // XData
         // [0]AppName [1]Mark [2]LayerCode [3]Count [4]Diameter
         // [5]Spacing [6]Direction [7]Position [8]LengthA
-        // [9]BarsSpan [10]ArmTotalLen
+        // [9]BarsSpan [10]ArmTotalLen [11]TextLen (stala, z GeometricExtents)
         // ----------------------------------------------------------------
 
         internal static void WriteAnnotXData(Entity entity, BarData bar)
@@ -375,7 +380,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Position),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ArmTotalLen)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ArmTotalLen),
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.TextLen)
             );
         }
 
@@ -401,6 +407,7 @@ namespace BricsCadRc.Core
                 bd.BarsSpan    = (double)v[9].Value;
                 bd.ArmTotalLen = (double)v[10].Value;
             }
+            if (v.Length >= 12) bd.TextLen = (double)v[11].Value;
             return bd;
         }
 

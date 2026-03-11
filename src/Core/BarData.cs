@@ -63,6 +63,9 @@ namespace BricsCadRc.Core
         /// <summary>Aktualna całkowita długość ramienia (ArmLength + długość tekstu) w mm — mutable przez grip</summary>
         public double ArmTotalLen { get; set; }
 
+        /// <summary>Zmierzona dlugosc tekstu (z GeometricExtents) — stala po utworzeniu, uzywana w UpdateArmInBlock</summary>
+        public double TextLen { get; set; }
+
         // ----------------------------------------------------------------
         // Obliczenia wg BS8666
         // ----------------------------------------------------------------

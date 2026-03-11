@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -20,6 +21,13 @@ namespace BricsCadRc.Core
     // ----------------------------------------------------------------
     public class AnnotGripOverrule : GripOverrule
     {
+        // Przechowuje ArmTotalLen z poczatku dragu (kluczowane po handle obiektu).
+        // BricsCAD przekazuje KUMULATYWNY offset od startu dragu (nie inkrementalny),
+        // wiec bez tego bufor XData rosnie eksponencjalnie.
+        // Czyszczone w GetGripPoints (poczatek nowej interakcji).
+        private static readonly Dictionary<long, double> _dragOrigArm
+            = new Dictionary<long, double>();
+
         public override bool IsApplicable(RXObject overruledSubject)
         {
             try
@@ -52,6 +60,9 @@ namespace BricsCadRc.Core
             var barAnnot = AnnotationEngine.ReadAnnotXData(br);
             if (barAnnot != null && barAnnot.BarsSpan > 0 && barAnnot.ArmTotalLen > 0)
             {
+                // Wyczysc stan dragu — poczatek nowej interakcji z gripem
+                _dragOrigArm.Remove(br.ObjectId.Handle.Value);
+
                 var ins = br.Position;
                 gripPoints.Add(ins);  // [0] lateral
 
@@ -148,13 +159,18 @@ namespace BricsCadRc.Core
             {
                 if (isGrip1)
                 {
-                    double newArmTotalLen = Math.Max(200.0, barAnnot.ArmTotalLen + offset.Y);
+                    // BricsCAD przekazuje KUMULATYWNY offset od startu dragu.
+                    // Uzywamy origArm (sprzed dragu) jako bazy — bez akumulacji.
+                    long handle = br.ObjectId.Handle.Value;
+                    if (!_dragOrigArm.ContainsKey(handle))
+                        _dragOrigArm[handle] = barAnnot.ArmTotalLen;
+
+                    double newArmTotalLen = Math.Max(200.0, _dragOrigArm[handle] + offset.Y);
                     AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
                 }
                 else
                 {
-                    // Ruch TYLKO wzdluz osi pretow (X dla X-bars, Y dla Y-bars)
-                    // — Y annotacji jest zawsze zablokowane
+                    _dragOrigArm.Remove(br.ObjectId.Handle.Value);
                     entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barAnnot, offset)));
                 }
                 return;
