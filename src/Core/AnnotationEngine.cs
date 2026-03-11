@@ -63,10 +63,6 @@ namespace BricsCadRc.Core
 
             EnsureAppIdRegistered(db);
 
-            double armTotalLen = ArmLength;   // tekst zwisa W DOL od konca ramienia (TextRight)
-
-            bar.ArmTotalLen = armTotalLen;
-
             using var tr = db.TransactionManager.StartTransaction();
             var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
 
@@ -94,10 +90,12 @@ namespace BricsCadRc.Core
             var btrId = blockTable.Add(btr);
             tr.AddNewlyCreatedDBObject(btr, true);
 
-            if (horizontal)
-                BuildHorizontal(tr, btr, db, bar, ltName, armTotalLen);
-            else
-                BuildVertical(tr, btr, db, bar, ltName, armTotalLen);
+            // Build zwraca rzeczywiste armTotalLen zmierzone z GeometricExtents
+            double armTotalLen = horizontal
+                ? BuildHorizontal(tr, btr, db, bar, ltName)
+                : BuildVertical  (tr, btr, db, bar, ltName);
+
+            bar.ArmTotalLen = armTotalLen;
 
             // Punkt wstawienia: dla X-bars prawy bok pretow + offset
             Point3d insertPt = horizontal
@@ -118,18 +116,18 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // BuildHorizontal — prety poziome (Direction="X")
         //
-        // KLUCZOWA ZMIANA: romby sa w WZGLEDNYCH pozycjach (0, i*spacing)
-        // — nie zaleza od world-coordinates pretow.
-        // Przesuwanie bloku annotacji wzd. X nie zrywa wyrownania Y z pretami.
-        //
         //   Romb i : center=(0, i*spacing),  i=0..count-1
         //   Dist   : x=0, y: 0 → barsSpan   (linetype _DOT)
-        //   Arm    : x=0, y: barsSpan → barsSpan+armTotalLen
-        //   Tekst  : (-TextArmOffset, barsSpan+ArmLength), rot=90
+        //   Tekst  : (-TextArmOffset, barsSpan+ArmLength), rot=90, TextLeft
+        //            → tekst rosnie W GORE od barsSpan+ArmLength
+        //   Arm    : x=0, y: barsSpan → barsSpan+ArmLength+realTextLen
+        //            → koniec ramienia DOKLADNIE przy ostatnim znaku ("B1")
+        //
+        // Zwraca rzeczywiste armTotalLen (ArmLength + zmierzony textLen).
         // ----------------------------------------------------------------
-        private static void BuildHorizontal(
+        private static double BuildHorizontal(
             Transaction tr, BlockTableRecord btr, Database db,
-            BarData bar, string ltName, double armTotalLen)
+            BarData bar, string ltName)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
 
@@ -147,7 +145,37 @@ namespace BricsCadRc.Core
             for (int i = 0; i < bar.Count; i++)
                 AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
 
-            // 3. Ramie
+            // 3. Tekst — tworzony PRZED ramieniem, zeby zmierzyc jego dlugosc
+            //    TextLeft + rot=90: tekst rosnie ku wyzszym Y (w gore ekranu)
+            //    Pozycja = poczatek tekstu ("25"), koniec ("B1") najwyzej
+            var textPos = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0);
+            var dbText = new DBText
+            {
+                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
+                Layer          = LayerManager.AnnotLayer,
+                Height         = DefaultTextHeight,
+                Position       = textPos,
+                Rotation       = Math.PI / 2.0,
+                HorizontalMode = TextHorizontalMode.TextLeft,
+                VerticalMode   = TextVerticalMode.TextBase,
+                TextStyleId    = GetTextStyleId(db)
+            };
+            btr.AppendEntity(dbText);
+            tr.AddNewlyCreatedDBObject(dbText, true);
+
+            // Zmierz rzeczywista dlugosc tekstu z GeometricExtents
+            double textLen;
+            try
+            {
+                var ext = dbText.GeometricExtents;
+                textLen = ext.MaxPoint.Y - textPos.Y;
+                if (textLen <= 0) throw new InvalidOperationException();
+            }
+            catch { textLen = dbText.TextString.Length * TextCharWidth; }
+
+            double armTotalLen = ArmLength + textLen;
+
+            // 4. Ramie — koniec dokladnie przy "B1" (koniec tekstu)
             var arm = new Line(
                 new Point3d(0, barsSpan, 0),
                 new Point3d(0, barsSpan + armTotalLen, 0))
@@ -159,21 +187,7 @@ namespace BricsCadRc.Core
             btr.AppendEntity(arm);
             tr.AddNewlyCreatedDBObject(arm, true);
 
-            // 4. Tekst — koniec tekstu ("B1") zakotwiczony na szczycie ramienia (TextRight)
-            //    Tekst rośnie W DOL (ku rombow) gdy opis sie wydluza.
-            var dbText = new DBText
-            {
-                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
-                Layer          = LayerManager.AnnotLayer,
-                Height         = DefaultTextHeight,
-                Position       = new Point3d(-TextArmOffset, barsSpan + armTotalLen, 0),
-                Rotation       = Math.PI / 2.0,
-                HorizontalMode = TextHorizontalMode.TextRight,
-                VerticalMode   = TextVerticalMode.TextBase,
-                TextStyleId    = GetTextStyleId(db)
-            };
-            btr.AppendEntity(dbText);
-            tr.AddNewlyCreatedDBObject(dbText, true);
+            return armTotalLen;
         }
 
         // ----------------------------------------------------------------
@@ -181,12 +195,14 @@ namespace BricsCadRc.Core
         //
         //   Romb i : center=(i*spacing, 0),  i=0..count-1
         //   Dist   : y=barHeight, x: 0 → barsSpan   (linetype _DOT)
-        //   Arm    : x=0, y: barHeight → barHeight+armTotalLen
-        //   Tekst  : (TextArmOffset, barHeight+ArmLength), rot=0
+        //   Tekst  : (TextArmOffset, barHeight+ArmLength), rot=0, TextLeft
+        //   Arm    : x=0, y: barHeight → barHeight+ArmLength+realTextLen
+        //
+        // Zwraca rzeczywiste armTotalLen.
         // ----------------------------------------------------------------
-        private static void BuildVertical(
+        private static double BuildVertical(
             Transaction tr, BlockTableRecord btr, Database db,
-            BarData bar, string ltName, double armTotalLen)
+            BarData bar, string ltName)
         {
             double barsSpan  = (bar.Count - 1) * bar.Spacing;
             double barHeight = bar.LengthA;
@@ -205,7 +221,35 @@ namespace BricsCadRc.Core
             for (int i = 0; i < bar.Count; i++)
                 AddDot(tr, btr, new Point3d(i * bar.Spacing, barHeight, 0), DotRadius);
 
-            // 3. Ramie
+            // 3. Tekst — tworzony PRZED ramieniem
+            var textPos = new Point3d(TextArmOffset, barHeight + ArmLength, 0);
+            var dbText = new DBText
+            {
+                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
+                Layer          = LayerManager.AnnotLayer,
+                Height         = DefaultTextHeight,
+                Position       = textPos,
+                Rotation       = 0.0,
+                HorizontalMode = TextHorizontalMode.TextLeft,
+                VerticalMode   = TextVerticalMode.TextBase,
+                TextStyleId    = GetTextStyleId(db)
+            };
+            btr.AppendEntity(dbText);
+            tr.AddNewlyCreatedDBObject(dbText, true);
+
+            // Zmierz rzeczywista dlugosc tekstu
+            double textLen;
+            try
+            {
+                var ext = dbText.GeometricExtents;
+                textLen = ext.MaxPoint.X - textPos.X;
+                if (textLen <= 0) throw new InvalidOperationException();
+            }
+            catch { textLen = dbText.TextString.Length * TextCharWidth; }
+
+            double armTotalLen = ArmLength + textLen;
+
+            // 4. Ramie
             var arm = new Line(
                 new Point3d(0, barHeight, 0),
                 new Point3d(0, barHeight + armTotalLen, 0))
@@ -217,20 +261,7 @@ namespace BricsCadRc.Core
             btr.AppendEntity(arm);
             tr.AddNewlyCreatedDBObject(arm, true);
 
-            // 4. Tekst — koniec tekstu zakotwiczony na szczycie ramienia (TextRight)
-            var dbText = new DBText
-            {
-                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
-                Layer          = LayerManager.AnnotLayer,
-                Height         = DefaultTextHeight,
-                Position       = new Point3d(TextArmOffset, barHeight + armTotalLen, 0),
-                Rotation       = 0.0,
-                HorizontalMode = TextHorizontalMode.TextRight,
-                VerticalMode   = TextVerticalMode.TextBase,
-                TextStyleId    = GetTextStyleId(db)
-            };
-            btr.AppendEntity(dbText);
-            tr.AddNewlyCreatedDBObject(dbText, true);
+            return armTotalLen;
         }
 
         // ----------------------------------------------------------------
@@ -270,16 +301,17 @@ namespace BricsCadRc.Core
             // Arm line : StartPoint.Y = barsSpan, EndPoint.Y = barsSpan + armTotalLen
             double armStartY = bar.Direction == "X" ? bar.BarsSpan : bar.LengthA;
 
-            Line   armLine = null;
-            DBText armText = null;
+            // Przesuniecie ramienia — tekst pozostaje w miejscu (TextLeft, rosnie ku gorze)
+            Line armLine = null;
             foreach (ObjectId oid in btr)
             {
                 if (oid.IsErased) continue;
                 var obj = tr.GetObject(oid, OpenMode.ForRead);
                 if (obj is Line ln && Math.Abs(ln.StartPoint.Y - armStartY) < 1.0 && armLine == null)
+                {
                     armLine = ln;
-                else if (obj is DBText txt)
-                    armText = txt;
+                    break;
+                }
             }
 
             if (armLine != null)
@@ -287,14 +319,6 @@ namespace BricsCadRc.Core
                 armLine.UpgradeOpen();
                 armLine.StartPoint = new Point3d(0, armStartY, 0);
                 armLine.EndPoint   = new Point3d(0, armStartY + newArmTotalLen, 0);
-            }
-
-            if (armText != null)
-            {
-                armText.UpgradeOpen();
-                armText.Position = bar.Direction == "X"
-                    ? new Point3d(-TextArmOffset, armStartY + newArmTotalLen, 0)
-                    : new Point3d( TextArmOffset, armStartY + newArmTotalLen, 0);
             }
 
             tr.Commit();
