@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(unzip:*)",
+      "Bash(__NEW_LINE_47eb64ce91594aeb__ echo:*)",
+      "Bash(pdftotext:*)",
+      "Read(//c/Program Files/Bricsys/BricsCAD V25 en_US//**)",
+      "Read(//c/Program Files/Bricsys//**)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(dotnet:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python3:*)",
+      "Bash(cmd:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(where ODAFileConverter:*)",
+      "Bash(sort -k2 -rn)",
+      "Bash(/tmp/dxf_analysis.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(xargs -I{} sh -c 'strings \"\"{}\"\" 2>/dev/null | grep -l \"\"EntityOverrule\"\" 2>/dev/null || true')",
+      "Bash(cd \"C:\\\\Users\\\\Dell\\\\Desktop\\\\ClaudeCode\\\\BricsCadRc\" && powershell -Command \"Add-Type -Path 'lib/BrxMgd.dll'; [Teigha.DatabaseServices.GripOverrule].GetMethods\\(\\) | Where-Object { $_.Name -like '*Grip*' -or $_.Name -like '*GetGrip*' } | Select-Object Name, ToString | Format-Table\" 2>&1)",
+      "Bash(powershell -Command \"Add-Type -Path 'C:\\\\Program Files\\\\Bricsys\\\\BricsCAD V25 en_US\\\\BrxMgd.dll'; [Teigha.DatabaseServices.GripOverrule].GetMethods\\(\\) | Where-Object { $_.IsVirtual } | ForEach-Object { $_.ToString\\(\\) }\" 2>&1)",
+      "Bash(powershell -Command \"$dll = 'C:\\\\Program Files\\\\Bricsys\\\\BricsCAD V25 en_US\\\\BrxMgd.dll'; Add-Type -Path $dll; $t = [Teigha.DatabaseServices.GripOverrule]; $t.GetMethods\\(\\) | Where-Object IsVirtual | Select-Object -ExpandProperty Name\" 2>&1)",
+      "Bash(powershell -File - << 'EOF'\nAdd-Type -Path \"C:\\\\Program Files\\\\Bricsys\\\\BricsCAD V25 en_US\\\\BrxMgd.dll\"\n$t = [Teigha.DatabaseServices.GripOverrule]\n$t.GetMethods\\(\\) | Where-Object { $_.IsVirtual } | ForEach-Object { $_.ToString\\(\\) }\nEOF)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}
