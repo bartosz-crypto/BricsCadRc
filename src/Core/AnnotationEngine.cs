@@ -270,13 +270,18 @@ namespace BricsCadRc.Core
             using var tr = br.Database.TransactionManager.StartTransaction();
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
 
+            // Identyfikacja ramienia po pozycji StartPoint (niezawodna, niezalezna od nazwy linetype)
+            // Dist line: StartPoint.Y = 0,        EndPoint.Y = barsSpan
+            // Arm line : StartPoint.Y = barsSpan, EndPoint.Y = barsSpan + armTotalLen
+            double armStartY = bar.Direction == "X" ? bar.BarsSpan : bar.LengthA;
+
             Line   armLine = null;
             DBText armText = null;
             foreach (ObjectId oid in btr)
             {
                 if (oid.IsErased) continue;
                 var obj = tr.GetObject(oid, OpenMode.ForRead);
-                if (obj is Line ln && ln.Linetype == "Continuous" && armLine == null)
+                if (obj is Line ln && Math.Abs(ln.StartPoint.Y - armStartY) < 1.0 && armLine == null)
                     armLine = ln;
                 else if (obj is DBText txt)
                     armText = txt;
@@ -285,28 +290,22 @@ namespace BricsCadRc.Core
             if (armLine != null)
             {
                 armLine.UpgradeOpen();
-                if (bar.Direction == "X")
-                {
-                    armLine.StartPoint = new Point3d(0, bar.BarsSpan, 0);
-                    armLine.EndPoint   = new Point3d(0, bar.BarsSpan + newArmTotalLen, 0);
-                }
-                else
-                {
-                    armLine.StartPoint = new Point3d(0, bar.LengthA, 0);
-                    armLine.EndPoint   = new Point3d(0, bar.LengthA + newArmTotalLen, 0);
-                }
+                armLine.StartPoint = new Point3d(0, armStartY, 0);
+                armLine.EndPoint   = new Point3d(0, armStartY + newArmTotalLen, 0);
             }
 
             if (armText != null)
             {
                 armText.UpgradeOpen();
-                if (bar.Direction == "X")
-                    armText.Position = new Point3d(-TextArmOffset, bar.BarsSpan + newArmLen, 0);
-                else
-                    armText.Position = new Point3d(TextArmOffset, bar.LengthA + newArmLen, 0);
+                armText.Position = bar.Direction == "X"
+                    ? new Point3d(-TextArmOffset, armStartY + newArmLen, 0)
+                    : new Point3d( TextArmOffset, armStartY + newArmLen, 0);
             }
 
             tr.Commit();
+
+            // Wymus przerysowanie bloku (br jest otwarty do zapisu w grip-op)
+            try { br.RecordGraphicsModified(true); } catch { }
         }
 
         // ----------------------------------------------------------------
