@@ -301,17 +301,18 @@ namespace BricsCadRc.Core
             // Arm line : StartPoint.Y = barsSpan, EndPoint.Y = barsSpan + armTotalLen
             double armStartY = bar.Direction == "X" ? bar.BarsSpan : bar.LengthA;
 
-            // Przesuniecie ramienia — tekst pozostaje w miejscu (TextLeft, rosnie ku gorze)
-            Line armLine = null;
+            // Przesuniecie ramienia i tekstu — tekst podaza za koncem ramienia
+            Line   armLine = null;
+            DBText armText = null;
             foreach (ObjectId oid in btr)
             {
                 if (oid.IsErased) continue;
                 var obj = tr.GetObject(oid, OpenMode.ForRead);
                 if (obj is Line ln && Math.Abs(ln.StartPoint.Y - armStartY) < 1.0 && armLine == null)
-                {
                     armLine = ln;
-                    break;
-                }
+                else if (obj is DBText txt && armText == null)
+                    armText = txt;
+                if (armLine != null && armText != null) break;
             }
 
             if (armLine != null)
@@ -319,6 +320,18 @@ namespace BricsCadRc.Core
                 armLine.UpgradeOpen();
                 armLine.StartPoint = new Point3d(0, armStartY, 0);
                 armLine.EndPoint   = new Point3d(0, armStartY + newArmTotalLen, 0);
+            }
+
+            if (armText != null)
+            {
+                // Tekst: poczatek = armTop - szacowana_dlugosc_tekstu (TextLeft = tekst rosnie w gore)
+                string annotText = $"{bar.Count} {bar.Mark} {bar.LayerCode}";
+                double textLen   = annotText.Length * TextCharWidth;
+                double textStartY = armStartY + newArmTotalLen - textLen;
+                armText.UpgradeOpen();
+                armText.Position = bar.Direction == "X"
+                    ? new Point3d(-TextArmOffset, textStartY, 0)
+                    : new Point3d( TextArmOffset, textStartY, 0);
             }
 
             tr.Commit();
