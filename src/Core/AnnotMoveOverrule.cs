@@ -6,31 +6,32 @@ using Teigha.Runtime;
 namespace BricsCadRc.Core
 {
     // ----------------------------------------------------------------
-    // GripData dla annotacji — dwa rodzaje gripow:
-    //   IsArmEnd = false  → przesuwa CALY blok wzdluz osi pretow
-    //   IsArmEnd = true   → rozciaga TYLKO ramie (bez ruszania dotow)
-    // ----------------------------------------------------------------
-    internal class AnnotGripData : GripData
-    {
-        public bool IsArmEnd { get; set; }
-    }
-
-    // ----------------------------------------------------------------
-    // GripOverrule — dostarcza 2 gripy + obsluguje ich przeciaganie
+    // GripOverrule — 3 gripy dla RC_BAR_BLOCK, 2 dla starego RC_BAR_ANNOT
     //
-    // GetGripPoints uzywa starszego API Point3dCollection (BRX nie ma
-    // przeciazenia z GripDataCollection).
-    // Grip identyfikowany w MoveGripPointsAt po pozycji Y.
+    //  RC_BAR_BLOCK (nowy):
+    //    [0] insertion point      → ruch boczny wzdluz osi pretow
+    //    [1] koniec dist line     → rozciaga span (recalc bar count)
+    //    [2] koniec ramienia      → wydluzenie ramienia
+    //
+    //  RC_BAR_ANNOT (stary, backward compat):
+    //    [0] insertion point      → ruch boczny
+    //    [1] koniec ramienia      → wydluzenie ramienia
+    //
+    // UWAGA: BRX GetGripPoints ma tylko Point3dCollection API.
+    //        Gripy identyfikowane po pozycji w MoveGripPointsAt.
     // ----------------------------------------------------------------
     public class AnnotGripOverrule : GripOverrule
     {
         public override bool IsApplicable(RXObject overruledSubject)
         {
-            try { return overruledSubject is BlockReference br && AnnotationEngine.IsAnnotation(br); }
+            try
+            {
+                if (!(overruledSubject is BlockReference br)) return false;
+                return BarBlockEngine.IsBarBlock(br) || AnnotationEngine.IsAnnotation(br);
+            }
             catch { return false; }
         }
 
-        // Zwroc 2 gripy: [0] lateral (insertion point), [1] arm top
         public override void GetGripPoints(
             Entity entity,
             Point3dCollection gripPoints,
@@ -40,21 +41,29 @@ namespace BricsCadRc.Core
             var br = entity as BlockReference;
             if (br == null) { base.GetGripPoints(entity, gripPoints, snapModes, geometryIds); return; }
 
-            var bar = AnnotMoveOverrule.TryReadXData(br);
-            if (bar == null || bar.BarsSpan <= 0 || bar.ArmTotalLen <= 0)
+            // --- Nowy blok RC_BAR_BLOCK ---
+            var bar = BarBlockEngine.ReadXData(br);
+            if (bar != null && bar.BarsSpan > 0 && bar.ArmTotalLen > 0)
             {
-                base.GetGripPoints(entity, gripPoints, snapModes, geometryIds);
+                gripPoints.Add(BarBlockEngine.GripLateral(br));  // [0]
+                gripPoints.Add(BarBlockEngine.GripSpan(br, bar));  // [1]
+                gripPoints.Add(BarBlockEngine.GripArm(br, bar));   // [2]
                 return;
             }
 
-            // Grip 0: ruch boczny wzdluz osi pretow
-            gripPoints.Add(br.Position);
+            // --- Stary blok RC_BAR_ANNOT ---
+            var barOld = AnnotMoveOverrule.TryReadOldXData(br);
+            if (barOld != null && barOld.BarsSpan > 0 && barOld.ArmTotalLen > 0)
+            {
+                gripPoints.Add(br.Position);  // [0] lateral
+                gripPoints.Add(new Point3d(   // [1] arm top
+                    br.Position.X,
+                    br.Position.Y + barOld.BarsSpan + barOld.ArmTotalLen,
+                    0));
+                return;
+            }
 
-            // Grip 1: koniec ramienia (do rozciagania arm)
-            Point3d armTop = bar.Direction == "X"
-                ? new Point3d(br.Position.X, br.Position.Y + bar.BarsSpan + bar.ArmTotalLen, 0)
-                : new Point3d(br.Position.X, br.Position.Y + bar.ArmTotalLen, 0);
-            gripPoints.Add(armTop);
+            base.GetGripPoints(entity, gripPoints, snapModes, geometryIds);
         }
 
         public override void MoveGripPointsAt(
@@ -66,37 +75,101 @@ namespace BricsCadRc.Core
             var br = entity as BlockReference;
             if (br == null) { base.MoveGripPointsAt(entity, grips, offset, bitFlags); return; }
 
-            var bar = AnnotMoveOverrule.TryReadXData(br);
-            if (bar == null) { base.MoveGripPointsAt(entity, grips, offset, bitFlags); return; }
-
             foreach (GripData gd in grips)
             {
-                // Grip arm-end: jego Y jest znacznie powyzej punktu wstawienia
-                bool isArmEnd = gd.GripPoint.Y > br.Position.Y + 1.0;
-
-                if (isArmEnd)
+                // --- Nowy blok RC_BAR_BLOCK ---
+                var bar = BarBlockEngine.ReadXData(br);
+                if (bar != null && bar.BarsSpan > 0)
                 {
-                    double delta          = bar.Direction == "X" ? offset.Y : offset.X;
-                    double newArmTotalLen = Math.Max(200.0, bar.ArmTotalLen + delta);
-                    AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
+                    HandleNewBlock(entity, br, bar, gd, offset);
+                    continue;
                 }
-                else
+
+                // --- Stary blok RC_BAR_ANNOT ---
+                var barOld = AnnotMoveOverrule.TryReadOldXData(br);
+                if (barOld != null)
                 {
-                    var constrained = AnnotMoveOverrule.ConstrainOffset(br, offset);
-                    entity.TransformBy(Matrix3d.Displacement(constrained));
+                    HandleOldBlock(entity, br, barOld, gd, offset);
+                    continue;
                 }
             }
         }
+
+        // ----------------------------------------------------------------
+        // Obsluga nowego RC_BAR_BLOCK (3 gripy)
+        // ----------------------------------------------------------------
+        private static void HandleNewBlock(
+            Entity entity, BlockReference br, BarData bar, GripData gd, Vector3d offset)
+        {
+            var gripLateral = BarBlockEngine.GripLateral(br);
+            var gripSpan    = BarBlockEngine.GripSpan(br, bar);
+            var gripArm     = BarBlockEngine.GripArm(br, bar);
+
+            bool isSpan = IsNear(gd.GripPoint, gripSpan);
+            bool isArm  = IsNear(gd.GripPoint, gripArm);
+
+            if (isSpan)
+            {
+                // Rozciaganie span → recalculate bar count
+                double delta = bar.Direction == "X" ? offset.Y : offset.X;
+                double newBarsSpan = Math.Max(bar.Spacing, bar.BarsSpan + delta);
+                BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
+            }
+            else if (isArm)
+            {
+                // Wydluzanie ramienia
+                double delta = bar.Direction == "X" ? offset.Y : offset.Y;
+                double newArmTotalLen = Math.Max(200.0, bar.ArmTotalLen + delta);
+                BarBlockEngine.UpdateArm(br, newArmTotalLen);
+            }
+            else
+            {
+                // Ruch boczny wzdluz osi pretow (grip lateral lub nieznany)
+                var constrained = ConstrainOffset(bar, offset);
+                entity.TransformBy(Matrix3d.Displacement(constrained));
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Obsluga starego RC_BAR_ANNOT (2 gripy)
+        // ----------------------------------------------------------------
+        private static void HandleOldBlock(
+            Entity entity, BlockReference br, BarData bar, GripData gd, Vector3d offset)
+        {
+            bool isArm = gd.GripPoint.Y > br.Position.Y + 1.0;
+            if (isArm)
+            {
+                double delta = offset.Y;
+                double newArmTotalLen = Math.Max(200.0, bar.ArmTotalLen + delta);
+                AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
+            }
+            else
+            {
+                var constrained = ConstrainOffset(bar, offset);
+                entity.TransformBy(Matrix3d.Displacement(constrained));
+            }
+        }
+
+        private static bool IsNear(Point3d a, Point3d b) => (a - b).LengthSqrd < 4.0; // 2mm tolerancja
+
+        private static Vector3d ConstrainOffset(BarData bar, Vector3d offset)
+            => bar.Direction == "X"
+                ? new Vector3d(offset.X, 0, 0)
+                : new Vector3d(0, offset.Y, 0);
     }
 
     // ----------------------------------------------------------------
-    // TransformOverrule — ogranicza komende MOVE/STRETCH do osi zbrojenia
+    // TransformOverrule — ogranicza MOVE/STRETCH do osi zbrojenia
     // ----------------------------------------------------------------
     public class AnnotTransformOverrule : TransformOverrule
     {
         public override bool IsApplicable(RXObject overruledSubject)
         {
-            try { return overruledSubject is BlockReference br && AnnotationEngine.IsAnnotation(br); }
+            try
+            {
+                if (!(overruledSubject is BlockReference br)) return false;
+                return BarBlockEngine.IsBarBlock(br) || AnnotationEngine.IsAnnotation(br);
+            }
             catch { return false; }
         }
 
@@ -105,12 +178,20 @@ namespace BricsCadRc.Core
             var br = entity as BlockReference;
             if (br == null) { base.TransformBy(entity, transform); return; }
 
-            var bar = AnnotMoveOverrule.TryReadXData(br);
-            if (bar == null) { base.TransformBy(entity, transform); return; }
+            string direction = null;
+            var barNew = BarBlockEngine.ReadXData(br);
+            if (barNew != null) direction = barNew.Direction;
+            else
+            {
+                var barOld = AnnotMoveOverrule.TryReadOldXData(br);
+                if (barOld != null) direction = barOld.Direction;
+            }
 
-            var t = transform.Translation;
-            double tx = bar.Direction == "X" ? t.X : 0.0;
-            double ty = bar.Direction == "Y" ? t.Y : 0.0;
+            if (direction == null) { base.TransformBy(entity, transform); return; }
+
+            var t  = transform.Translation;
+            double tx = direction == "X" ? t.X : 0.0;
+            double ty = direction == "Y" ? t.Y : 0.0;
 
             var elems = new double[16];
             for (int row = 0; row < 4; row++)
@@ -160,20 +241,11 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
-        // Helpers wspoldzielone
+        // Helpers
         // ----------------------------------------------------------------
 
-        internal static Vector3d ConstrainOffset(BlockReference br, Vector3d offset)
-        {
-            if (br == null) return offset;
-            var bar = TryReadXData(br);
-            if (bar == null) return offset;
-            return bar.Direction == "X"
-                ? new Vector3d(offset.X, 0, 0)
-                : new Vector3d(0, offset.Y, 0);
-        }
-
-        internal static BarData TryReadXData(BlockReference br)
+        /// <summary>Czyta XData starego formatu RC_BAR_ANNOT (backward compat).</summary>
+        internal static BarData TryReadOldXData(BlockReference br)
         {
             try { return AnnotationEngine.ReadAnnotXData(br); }
             catch { return null; }
