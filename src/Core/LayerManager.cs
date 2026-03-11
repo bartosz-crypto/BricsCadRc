@@ -20,8 +20,8 @@ namespace BricsCadRc.Core
         public const string DimsLayer   = "RC-SLAB-DIMS";    // wymiarowanie (cyjan)
         public const string LeaderLayer = "RC-SLAB-LEADERS"; // linie prowadzace + doty (bialy — ACI 7)
 
-        /// <summary>Nazwa stylu tekstu zgodna z ASD ("style1", font romans.shx).</summary>
-        public const string AnnotTextStyle = "style1";
+        /// <summary>Nazwa stylu tekstu annotacji ("StandardNarrow", font txt.shx, XScale=0.70).</summary>
+        public const string AnnotTextStyle = "StandardNarrow";
 
         public static string GetLayerName(string layerCode)
         {
@@ -159,8 +159,8 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
 
         /// <summary>
-        /// Tworzy styl tekstu "style1" z fontem romans.shx (jak ASD).
-        /// Jesli romans.shx nie jest dostepny, uzywa domyslnego fonta BricsCAD.
+        /// Tworzy styl tekstu "StandardNarrow" (font txt.shx, XScale=0.70).
+        /// Jesli txt.shx nie jest dostepny, uzywa domyslnego fonta BricsCAD.
         /// </summary>
         private static void EnsureTextStyle(Transaction tr, Database db)
         {
@@ -172,9 +172,9 @@ namespace BricsCadRc.Core
             var style = new TextStyleTableRecord
             {
                 Name     = AnnotTextStyle,
-                FileName = "romans.shx",   // font ASD — musi byc dostepny w BricsCAD
-                TextSize = 0.0,            // 0 = wysokosc ustawiana per-obiekt
-                XScale   = 0.85,           // lekko skondensowany jak w ASD
+                FileName = "txt.shx",   // standardowy font CAD (wbudowany w BricsCAD)
+                TextSize = 0.0,         // 0 = wysokosc ustawiana per-obiekt
+                XScale   = 0.70,        // waski — Standard Narrow
             };
 
             styleTable.Add(style);

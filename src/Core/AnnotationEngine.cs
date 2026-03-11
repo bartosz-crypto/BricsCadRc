@@ -30,7 +30,7 @@ namespace BricsCadRc.Core
         public const double DefaultTextHeight = 125.0;
         public const double DotRadius         = 35.0;
         public const double ArmLength         = 500.0;
-        public const double TextCharWidth     = 80.0;
+        public const double TextCharWidth     = 65.0;   // txt.shx XScale=0.70 @ H=125
         public const double TextArmOffset     = 70.0;
 
         // Domyslna odleglosc annotacji od prawego boku pretow [mm]
