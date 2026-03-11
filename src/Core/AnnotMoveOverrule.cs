@@ -65,6 +65,9 @@ namespace BricsCadRc.Core
             base.GetGripPoints(entity, gripPoints, snapModes, geometryIds);
         }
 
+        // ----------------------------------------------------------------
+        // MoveGripPointsAt — wersja GripDataCollection (gdy BRX uzywa custom GripData)
+        // ----------------------------------------------------------------
         public override void MoveGripPointsAt(
             Entity entity,
             GripDataCollection grips,
@@ -74,29 +77,16 @@ namespace BricsCadRc.Core
             var br = entity as BlockReference;
             if (br == null) { base.MoveGripPointsAt(entity, grips, offset, bitFlags); return; }
 
+            // Wyznacz indeksy przeciaganych gripow po ich pozycji
+            bool isGrip1 = false;
             foreach (GripData gd in grips)
             {
-                // --- RC_BAR_BLOCK ---
                 var barBlock = BarBlockEngine.ReadXData(br);
                 if (barBlock != null && barBlock.BarsSpan > 0)
                 {
-                    var spanPt = BarBlockEngine.GripSpan(br, barBlock);
-                    bool isSpan = IsNear(gd.GripPoint, spanPt);
-
-                    if (isSpan)
-                    {
-                        double delta       = barBlock.Direction == "X" ? offset.Y : offset.X;
-                        double newBarsSpan = Math.Max(barBlock.Spacing, barBlock.BarsSpan + delta);
-                        BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
-                    }
-                    else
-                    {
-                        entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barBlock, offset)));
-                    }
-                    continue;
+                    isGrip1 = IsNear(gd.GripPoint, BarBlockEngine.GripSpan(br, barBlock));
+                    break;
                 }
-
-                // --- RC_BAR_ANNOT ---
                 var barAnnot = AnnotationEngine.ReadAnnotXData(br);
                 if (barAnnot != null)
                 {
@@ -104,20 +94,70 @@ namespace BricsCadRc.Core
                     Point3d armTop = barAnnot.Direction == "X"
                         ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
                         : new Point3d(ins.X, ins.Y + barAnnot.LengthA  + barAnnot.ArmTotalLen, 0);
-                    bool isArm = IsNear(gd.GripPoint, armTop);
-
-                    if (isArm)
-                    {
-                        double delta          = offset.Y;
-                        double newArmTotalLen = Math.Max(200.0, barAnnot.ArmTotalLen + delta);
-                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
-                    }
-                    else
-                    {
-                        entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barAnnot, offset)));
-                    }
-                    continue;
+                    isGrip1 = IsNear(gd.GripPoint, armTop);
+                    break;
                 }
+            }
+            ApplyGripMove(entity, br, offset, isGrip1);
+        }
+
+        // ----------------------------------------------------------------
+        // MoveGripPointsAt — wersja IntegerCollection (gdy BRX uzywa Point3dCollection grips)
+        // BRX wywoluje TE wersje po GetGripPoints(Point3dCollection), nie GripDataCollection!
+        // ----------------------------------------------------------------
+        public override void MoveGripPointsAt(
+            Entity entity,
+            IntegerCollection indices,
+            Vector3d offset)
+        {
+            var br = entity as BlockReference;
+            if (br == null) { base.MoveGripPointsAt(entity, indices, offset); return; }
+
+            bool isGrip1 = false;
+            foreach (int idx in indices)
+                if (idx == 1) { isGrip1 = true; break; }
+
+            ApplyGripMove(entity, br, offset, isGrip1);
+        }
+
+        // ----------------------------------------------------------------
+        // ApplyGripMove — wspolna logika dla obu wersji MoveGripPointsAt
+        // ----------------------------------------------------------------
+        private static void ApplyGripMove(Entity entity, BlockReference br, Vector3d offset, bool isGrip1)
+        {
+            // --- RC_BAR_BLOCK ---
+            var barBlock = BarBlockEngine.ReadXData(br);
+            if (barBlock != null && barBlock.BarsSpan > 0)
+            {
+                if (isGrip1)
+                {
+                    double delta       = barBlock.Direction == "X" ? offset.Y : offset.X;
+                    double newBarsSpan = Math.Max(barBlock.Spacing, barBlock.BarsSpan + delta);
+                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
+                }
+                else
+                {
+                    entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barBlock, offset)));
+                }
+                return;
+            }
+
+            // --- RC_BAR_ANNOT ---
+            var barAnnot = AnnotationEngine.ReadAnnotXData(br);
+            if (barAnnot != null)
+            {
+                if (isGrip1)
+                {
+                    double newArmTotalLen = Math.Max(200.0, barAnnot.ArmTotalLen + offset.Y);
+                    AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
+                }
+                else
+                {
+                    // Ruch TYLKO wzdluz osi pretow (X dla X-bars, Y dla Y-bars)
+                    // — Y annotacji jest zawsze zablokowane
+                    entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barAnnot, offset)));
+                }
+                return;
             }
         }
 
