@@ -100,12 +100,39 @@ namespace BricsCadRc.Commands
             // FEATURE F: Drugi punkt z podglądem prętów (TransientManager, nie prostokąt)
             var jig = new DistributionJig(pt1, sourceBar.LengthA);
             var jigResult = ed.Drag(jig);
-            // ClearTransients() wywoływane dopiero PO GenerateFromBounds — transienty
-            // pozostają widoczne przez cover/spacing/dialog aż do narysowania finalnych prętów
-            if (jigResult.Status != PromptStatus.OK) { jig.ClearTransients(); return; }
+            jig.ClearTransients();   // wyczyść transienty jiga — flip-preview przejmuje ekran
+            if (jigResult.Status != PromptStatus.OK) return;
             Point3d pt2         = jig.SecondPoint;
             bool edgeHorizontal = jig.EdgeHorizontal;
-            bool isFlipped      = jig.IsFlipped;
+
+            // FEATURE G: flip jako osobny krok po kliknięciu pt2
+            // Pokazujemy podgląd z aktualnym stanem, S toggleuje, Enter zatwierdza
+            bool isFlipped = false;
+            var flipTransients = new List<Line>();
+            while (true)
+            {
+                ClearBarPreview(flipTransients);
+                DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped,
+                    sourceBar.LengthA, flipTransients);
+
+                var flipOpts = new PromptKeywordOptions(
+                    isFlipped ? "\nFlip: pręty po drugiej stronie [S=cofnij/Enter=zatwierdź]: "
+                              : "\nFlip: [S=odwróć stronę/Enter=zatwierdź]: ")
+                {
+                    AllowNone = true
+                };
+                flipOpts.Keywords.Add("S");
+                var flipRes = ed.GetKeywords(flipOpts);
+
+                if (flipRes.Status == PromptStatus.Cancel)
+                {
+                    ClearBarPreview(flipTransients);
+                    return;
+                }
+                if (flipRes.Status != PromptStatus.OK) break;   // Enter = zatwierdź
+                if (flipRes.StringResult == "S") isFlipped = !isFlipped;
+            }
+            ClearBarPreview(flipTransients);
 
             // --- Krok 4: Pozycja pierwszego preta (otulina) ---
             var covOpts = new PromptDistanceOptions("\nPosition of first bar (mm) <40>: ")
@@ -140,14 +167,11 @@ namespace BricsCadRc.Commands
 
             if (x0 >= x1Bound || y0 >= y1Bound)
             {
-                jig.ClearTransients();
                 ed.WriteMessage("\nRange is too small for given cover. Aborted.\n");
                 return;
             }
 
             // --- Krok 5: Rozstaw z live preview (FEATURE H) ---
-            // JIG transienty zastąpione spacing preview — użytkownik widzi efekt od razu
-            jig.ClearTransients();
 
             double spacing = 200.0;
             var spacingTransients = new List<Line>();
@@ -221,9 +245,6 @@ namespace BricsCadRc.Commands
                 db, x0, y0, x1Bound, y1Bound,
                 sourceBar, horizontal, posNr);
 
-            // Usuń transienty JIG dopiero teraz — finalne pręty są już w bazie
-            jig.ClearTransients();
-
             if (!barResult.IsValid)
             {
                 ed.WriteMessage("\n[RC SLAB] Failed to generate distribution — check range and spacing.\n");
@@ -231,7 +252,11 @@ namespace BricsCadRc.Commands
             }
 
             // --- Krok 9: Annotacja ---
-            AnnotationEngine.CreateLeader(db, barResult, sourceBar, horizontal, posNr);
+            var annotResult = AnnotationEngine.CreateLeader(db, barResult, sourceBar, horizontal, posNr);
+
+            // Zapisz handle annotacji w XData bloku pretow — unikalny klucz dla SyncAnnotation
+            if (annotResult.BlockRefId != ObjectId.Null)
+                BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
             ed.WriteMessage(
                 $"\n[RC SLAB] Distribution created: {finalCount} bars  {sourceBar.Mark}\n" +
@@ -241,8 +266,53 @@ namespace BricsCadRc.Commands
         }
 
         // ================================================================
-        //  Helpers — TransientManager preview dla spacing (FEATURE H)
+        //  Helpers — TransientManager preview
         // ================================================================
+
+        /// <summary>
+        /// FEATURE G: rysuje podgląd flip — linie prostopadłe do krawędzi
+        /// po stronie wybranej przez isFlipped. Używane przez pętlę flip po jigu.
+        /// </summary>
+        private static void DrawFlipPreview(
+            Point3d pt1, Point3d pt2, bool edgeHorizontal, bool flipped,
+            double barLength, List<Line> transients)
+        {
+            const double cover = 40.0, spacing = 200.0;
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+
+            if (edgeHorizontal)
+            {
+                double edgeY   = (pt1.Y + pt2.Y) / 2.0;
+                double x0      = Math.Min(pt1.X, pt2.X) + cover;
+                double x1Bound = Math.Max(pt1.X, pt2.X) - cover;
+                double yStart  = flipped ? edgeY - barLength : edgeY;
+                double yEnd    = flipped ? edgeY             : edgeY + barLength;
+                if (x0 >= x1Bound) return;
+                for (double x = x0; x <= x1Bound + 0.5; x += spacing)
+                {
+                    double xc = Math.Min(x, x1Bound);
+                    AddPreviewLine(tm, vpIds, new Point3d(xc, yStart, 0), new Point3d(xc, yEnd, 0), transients);
+                    if (xc >= x1Bound) break;
+                }
+            }
+            else
+            {
+                double edgeX   = (pt1.X + pt2.X) / 2.0;
+                double y0      = Math.Min(pt1.Y, pt2.Y) + cover;
+                double y1Bound = Math.Max(pt1.Y, pt2.Y) - cover;
+                double xStart  = flipped ? edgeX - barLength : edgeX;
+                double xEnd    = flipped ? edgeX             : edgeX + barLength;
+                if (y0 >= y1Bound) return;
+                for (double y = y0; y <= y1Bound + 0.5; y += spacing)
+                {
+                    double yc = Math.Min(y, y1Bound);
+                    AddPreviewLine(tm, vpIds, new Point3d(xStart, yc, 0), new Point3d(xEnd, yc, 0), transients);
+                    if (yc >= y1Bound) break;
+                }
+            }
+            try { Application.UpdateScreen(); } catch { }
+        }
 
         private static void DrawBarPreview(bool horizontal,
             double x0, double y0, double x1, double y1,

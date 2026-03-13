@@ -383,7 +383,10 @@ namespace BricsCadRc.Core
 
         public static void SyncAnnotation(Database db, BarData updatedBar)
         {
-            var annotId = FindAnnotationIdByMark(db, updatedBar.Mark);
+            // Szukaj po AnnotHandle (unikalne dla kazdego rozkladu) — bez handle fallback na Mark
+            var annotId = !string.IsNullOrEmpty(updatedBar.AnnotHandle)
+                ? FindAnnotationIdByHandle(db, updatedBar.AnnotHandle)
+                : FindAnnotationIdByMark  (db, updatedBar.Mark);
             if (annotId == ObjectId.Null) return;
 
             // BarsSpan musi byc zgodne z nowym Count
@@ -417,6 +420,23 @@ namespace BricsCadRc.Core
 
             tr.Commit();
             try { annotBr.RecordGraphicsModified(true); } catch { }
+        }
+
+        /// <summary>
+        /// Szuka annotacji po hex-stringu handle'a ObjectId — O(1), unikalny klucz.
+        /// Uzywane gdy RC_BAR_BLOCK ma zapisany AnnotHandle (od momentu utworzenia annotacji).
+        /// </summary>
+        private static ObjectId FindAnnotationIdByHandle(Database db, string handleHex)
+        {
+            try
+            {
+                long val = Convert.ToInt64(handleHex.TrimStart('0').PadLeft(1, '0'), 16);
+                var  h   = new Handle(val);
+                if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
+                    return id;
+            }
+            catch { }
+            return ObjectId.Null;
         }
 
         private static ObjectId FindAnnotationIdByMark(Database db, string mark)

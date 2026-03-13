@@ -69,6 +69,15 @@ namespace BricsCadRc.Core
         /// <summary>Zmierzona dlugosc tekstu (z GeometricExtents) — stala po utworzeniu, uzywana w UpdateArmInBlock</summary>
         public double TextLen { get; set; }
 
+        /// <summary>
+        /// Handle (hex string) bloku RC_ANNOT powiazanego z tym ukladem pretow.
+        /// Zapisywany w XData RC_BAR_BLOCK po utworzeniu annotacji.
+        /// Uzywany przez SyncAnnotation do unikalnego odnalezienia wlasciwej annotacji
+        /// (zamiast wyszukiwania po Mark, ktore moze znalezc zly blok gdy ten sam pret
+        /// jest rozlozony wiele razy).
+        /// </summary>
+        public string AnnotHandle { get; set; } = "";
+
         // ----------------------------------------------------------------
         // Obliczenia wg BS8666
         // ----------------------------------------------------------------

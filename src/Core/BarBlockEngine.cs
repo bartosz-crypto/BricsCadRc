@@ -303,7 +303,8 @@ namespace BricsCadRc.Core
 
         // ----------------------------------------------------------------
         // XData: [0]AppName [1]Mark [2]LayerCode [3]Count [4]Diameter
-        //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan [10]Cover
+        //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan
+        //        [10]Cover  [11]AnnotHandle (hex string bloku RC_ANNOT)
         // ----------------------------------------------------------------
 
         public static void EnsureAppIdRegistered(Database db)
@@ -333,7 +334,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Position),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Cover)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Cover),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.AnnotHandle ?? "")
             );
         }
 
@@ -354,9 +356,31 @@ namespace BricsCadRc.Core
                 Position  = (string)v[7].Value,
                 LengthA   = (double)v[8].Value
             };
-            if (v.Length >= 10) bd.BarsSpan = (double)v[9].Value;
-            if (v.Length >= 11) bd.Cover    = (double)v[10].Value;
+            if (v.Length >= 10) bd.BarsSpan     = (double)v[9].Value;
+            if (v.Length >= 11) bd.Cover        = (double)v[10].Value;
+            if (v.Length >= 12) bd.AnnotHandle  = (string)v[11].Value;
             return bd;
+        }
+
+        /// <summary>
+        /// Zapisuje handle annotacji w XData bloku pretow — wywolywane po CreateLeader.
+        /// Umozliwia SyncAnnotation znalezienie WLASCIWEJ annotacji bez szukania po Mark.
+        /// </summary>
+        public static void LinkAnnotation(Database db, ObjectId barBlockId, ObjectId annotId)
+        {
+            if (barBlockId.IsNull || annotId.IsNull) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var br = tr.GetObject(barBlockId, OpenMode.ForWrite) as BlockReference;
+                if (br == null) { tr.Commit(); return; }
+                var bar = ReadXData(br);
+                if (bar == null) { tr.Commit(); return; }
+                bar.AnnotHandle = annotId.Handle.Value.ToString("X8");
+                WriteXData(br, bar);
+                tr.Commit();
+            }
+            catch { }
         }
 
         public static bool IsBarBlock(Entity entity)
