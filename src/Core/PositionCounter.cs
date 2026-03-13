@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
 
@@ -43,6 +44,56 @@ namespace BricsCadRc.Core
 
             tr.Commit();
             return next;
+        }
+
+        /// <summary>
+        /// Zwraca zbiór wszystkich numerów pozycji już użytych w rysunku
+        /// (skanuje RC_SINGLE_BAR i RC_BAR_BLOCK w model space).
+        /// </summary>
+        public static HashSet<int> GetUsedPositionNumbers(Database db)
+        {
+            var used = new HashSet<int>();
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(
+                SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+
+            foreach (ObjectId oid in ms)
+            {
+                try
+                {
+                    var ent = (Entity)tr.GetObject(oid, OpenMode.ForRead);
+
+                    // RC_SINGLE_BAR (polilinia preta)
+                    var singleBar = SingleBarEngine.ReadBarXData(ent);
+                    if (singleBar != null)
+                    {
+                        int n = SingleBarEngine.ExtractPosNr(singleBar.Mark);
+                        if (n > 0) used.Add(n);
+                        continue;
+                    }
+
+                    // RC_BAR_BLOCK (blok rozkładu)
+                    if (ent is BlockReference br)
+                    {
+                        var blockData = BarBlockEngine.ReadXData(br);
+                        if (blockData != null)
+                        {
+                            int n = SingleBarEngine.ExtractPosNr(blockData.Mark);
+                            if (n > 0) used.Add(n);
+                        }
+                    }
+                }
+                catch { }
+            }
+            return used;
+        }
+
+        /// <summary>Zwraca pierwszy wolny numer >= preferred nie będący w used.</summary>
+        public static int GetNextFreeFrom(HashSet<int> used, int preferred)
+        {
+            int n = preferred > 0 ? preferred : 1;
+            while (used.Contains(n)) n++;
+            return n;
         }
 
         /// <summary>Resetuje licznik do 0 (np. przy zaczynaniu nowego projektu).</summary>

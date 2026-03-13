@@ -47,6 +47,26 @@ namespace BricsCadRc.Commands
             if (Application.ShowModalWindow(posDlg) != true) return;
 
             int posNr = posDlg.PositionNumber;
+
+            // --- Walidacja: czy numer pozycji jest wolny ---
+            var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
+            while (usedNrs.Contains(posNr))
+            {
+                int nextFree = PositionCounter.GetNextFreeFrom(usedNrs, posNr + 1);
+                ed.WriteMessage($"\n[RC SLAB] Position {posNr} is already in use. Next free: {nextFree}.");
+
+                var nrOpts = new PromptIntegerOptions(
+                    $"\nAccept position {nextFree} [Enter] or enter new number: ")
+                {
+                    AllowNone  = true,
+                    LowerLimit = 1,
+                    UpperLimit = 9999
+                };
+                var nrResult = ed.GetInteger(nrOpts);
+                if (nrResult.Status == PromptStatus.Cancel) return;
+                posNr = nrResult.Status == PromptStatus.None ? nextFree : nrResult.Value;
+            }
+
             barData.Mark = $"H{barData.Diameter}-{posNr:D2}";
 
             // --- Krok 5: Wstaw polilinie i etykiete ---
