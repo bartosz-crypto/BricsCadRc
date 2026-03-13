@@ -209,11 +209,17 @@ namespace BricsCadRc.Commands
             // --- Krok 5: Rozstaw z live preview ---
             // UWAGA: brak DefaultValue — Enter zwraca None, nie OK-z-defaultem (nieskończona pętla)
             double spacing = 200.0;
+
+            // Inicjalizacja: narysuj pierwszy podgląd spacing, usuń flip preview (double-buffer)
+            {
+                var old = liveTransients;
+                liveTransients = new List<Line>();
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
+                ClearBarPreview(old);
+            }
+
             while (true)
             {
-                ClearBarPreview(liveTransients);
-                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
-
                 var spacOpts = new PromptDistanceOptions($"\nSpacing (mm) <{(int)spacing}>: ")
                 {
                     AllowNone     = true,
@@ -229,7 +235,12 @@ namespace BricsCadRc.Commands
                 }
                 if (spacResult.Status != PromptStatus.OK) break;  // Enter (None) = zatwierdź
 
+                // Nowy spacing: double-buffer → brak flicker
                 spacing = spacResult.Value;
+                var oldT = liveTransients;
+                liveTransients = new List<Line>();
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
+                ClearBarPreview(oldT);
             }
             // liveTransients widoczne — NIE czyścimy
 
