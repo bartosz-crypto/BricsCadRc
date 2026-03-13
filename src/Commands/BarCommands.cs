@@ -132,17 +132,14 @@ namespace BricsCadRc.Commands
             var liveTransients = new List<Line>();
 
             // FEATURE G: flip jako osobny krok po kliknięciu pt2
-            bool isFlipped   = false;
-            bool jigCleared  = false;
+            bool isFlipped = false;
+
+            // Inicjalizacja: narysuj najpierw, potem usuń transienty jiga → brak luki wizualnej
+            DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped, sourceBar.LengthA, liveTransients);
+            jig.ClearTransients();
+
             while (true)
             {
-                // Pierwsza iteracja: zastąp transienty jiga swoimi
-                if (!jigCleared) { jig.ClearTransients(); jigCleared = true; }
-
-                ClearBarPreview(liveTransients);
-                DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped,
-                    sourceBar.LengthA, liveTransients);
-
                 var flipOpts = new PromptKeywordOptions(
                     isFlipped ? "\nFlip: pręty po drugiej stronie [S=cofnij/Enter=zatwierdź]: "
                               : "\nFlip: [S=odwróć stronę/Enter=zatwierdź]: ")
@@ -158,7 +155,16 @@ namespace BricsCadRc.Commands
                     return;
                 }
                 if (flipRes.Status != PromptStatus.OK) break;   // Enter = zatwierdź
-                if (flipRes.StringResult == "S") isFlipped = !isFlipped;
+
+                if (flipRes.StringResult == "S")
+                {
+                    isFlipped = !isFlipped;
+                    // Double-buffer: nowe linie dodane PRZED usunięciem starych → brak flicker
+                    var oldTransients = liveTransients;
+                    liveTransients = new List<Line>();
+                    DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped, sourceBar.LengthA, liveTransients);
+                    ClearBarPreview(oldTransients);
+                }
             }
             // liveTransients widoczne — NIE czyścimy
 
