@@ -363,6 +363,60 @@ namespace BricsCadRc.Core
             => entity.GetXDataForApplication(XAppName) != null;
 
         // ----------------------------------------------------------------
+        // FindDistributionsByPosNr — szuka wszystkich RC_BAR_BLOCK dla danego posNr
+        // ----------------------------------------------------------------
+
+        public static List<ObjectId> FindDistributionsByPosNr(Database db, int posNr)
+        {
+            var result = new List<ObjectId>();
+            if (posNr <= 0) return result;
+
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+            foreach (ObjectId oid in space)
+            {
+                if (oid.IsErased) continue;
+                if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
+                var xd = ReadXData(br);
+                if (xd == null) continue;
+                if (SingleBarEngine.ExtractPosNr(xd.Mark) == posNr)
+                    result.Add(oid);
+            }
+            return result;
+        }
+
+        // ----------------------------------------------------------------
+        // UpdateBarLength — przebudowuje linie prętów w BTR z nową długością
+        // ----------------------------------------------------------------
+
+        public static bool UpdateBarLength(Database db, ObjectId blockRefId, double newLengthA)
+        {
+            if (blockRefId.IsNull || blockRefId.IsErased) return false;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var br = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+                if (br == null) { tr.Commit(); return false; }
+
+                var bar = ReadXData(br);
+                if (bar == null) { tr.Commit(); return false; }
+
+                bar.LengthA = newLengthA;
+                WriteXData(br, bar);
+
+                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                EraseAllInBtr(tr, btr);
+
+                if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, newLengthA, bar.Count);
+                else                      BuildVertical  (tr, btr, bar, newLengthA, bar.Count);
+
+                tr.Commit();
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // ----------------------------------------------------------------
         // Helpers
         // ----------------------------------------------------------------
 

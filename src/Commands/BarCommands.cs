@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using BricsCadRc.Core;
 using BricsCadRc.Dialogs;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
+using Teigha.GraphicsInterface;
 using Teigha.Runtime;
+using Polyline = Teigha.DatabaseServices.Polyline;
 
 namespace BricsCadRc.Commands
 {
@@ -88,19 +91,21 @@ namespace BricsCadRc.Commands
             var detailDlg = new ReinfDetailingDialog();
             if (Application.ShowModalWindow(detailDlg) != true) return;
 
-            // --- Krok 3: Zakres rozkładu (dwa punkty) ---
-            var pt1Opts = new PromptPointOptions("\nFirst point of distribution range: ");
+            // --- Krok 3: Zakres rozkładu — pierwszy punkt krawędzi ---
+            var pt1Opts = new PromptPointOptions("\nFirst point along edge: ");
             var pt1Result = ed.GetPoint(pt1Opts);
             if (pt1Result.Status != PromptStatus.OK) return;
             Point3d pt1 = pt1Result.Value;
 
-            var pt2Opts = new PromptCornerOptions("\nSecond point of distribution range: ", pt1);
-            var pt2Result = ed.GetCorner(pt2Opts);
-            if (pt2Result.Status != PromptStatus.OK) return;
-            Point3d pt2 = pt2Result.Value;
-
-            double minX = Math.Min(pt1.X, pt2.X), maxX = Math.Max(pt1.X, pt2.X);
-            double minY = Math.Min(pt1.Y, pt2.Y), maxY = Math.Max(pt1.Y, pt2.Y);
+            // FEATURE F: Drugi punkt z podglądem prętów (TransientManager, nie prostokąt)
+            var jig = new DistributionJig(pt1, sourceBar.LengthA);
+            var jigResult = ed.Drag(jig);
+            // ClearTransients() wywoływane dopiero PO GenerateFromBounds — transienty
+            // pozostają widoczne przez cover/spacing/dialog aż do narysowania finalnych prętów
+            if (jigResult.Status != PromptStatus.OK) { jig.ClearTransients(); return; }
+            Point3d pt2         = jig.SecondPoint;
+            bool edgeHorizontal = jig.EdgeHorizontal;
+            bool isFlipped      = jig.IsFlipped;
 
             // --- Krok 4: Pozycja pierwszego preta (otulina) ---
             var covOpts = new PromptDistanceOptions("\nPosition of first bar (mm) <40>: ")
@@ -113,42 +118,68 @@ namespace BricsCadRc.Commands
             var covResult = ed.GetDistance(covOpts);
             double cover = covResult.Status == PromptStatus.OK ? covResult.Value : 40;
 
-            // --- Krok 5: Rozstaw ---
-            var spacOpts = new PromptDistanceOptions("\nSpacing (mm) <200>: ")
-            {
-                DefaultValue  = 200,
-                AllowNone     = true,
-                AllowNegative = false,
-                AllowZero     = false
-            };
-            var spacResult = ed.GetDistance(spacOpts);
-            double spacing = spacResult.Status == PromptStatus.OK ? spacResult.Value : 200;
-
-            // Kierunek: B1/T1 → poziome (X), B2/T2 → pionowe (Y)
-            bool horizontal = (sourceBar.LayerCode == "B1" || sourceBar.LayerCode == "T1");
-
-            // Granice po otulinie (cover tylko w kierunku rozkladania, dlugosc preta = pelna szerokosc)
+            // Kierunek prętów + granice (zależne od cover, NIE od spacing — obliczane tu)
+            bool horizontal = !edgeHorizontal;
             double x0, y0, x1Bound, y1Bound;
-            if (horizontal)
+            if (edgeHorizontal)
             {
-                x0      = minX;            // dlugosc preta — bez otuliny
-                x1Bound = maxX;
-                y0      = minY + cover;    // pierwsze pret na +cover od krawedzi
-                y1Bound = maxY - cover;    // ostatni pret na -cover od krawedzi
+                double edgeY = (pt1.Y + pt2.Y) / 2.0;
+                x0      = Math.Min(pt1.X, pt2.X) + cover;
+                x1Bound = Math.Max(pt1.X, pt2.X) - cover;
+                if (isFlipped) { y0 = edgeY - sourceBar.LengthA; y1Bound = edgeY; }
+                else           { y0 = edgeY;                     y1Bound = edgeY + sourceBar.LengthA; }
             }
             else
             {
-                x0      = minX + cover;
-                x1Bound = maxX - cover;
-                y0      = minY;
-                y1Bound = maxY;
+                double edgeX = (pt1.X + pt2.X) / 2.0;
+                y0      = Math.Min(pt1.Y, pt2.Y) + cover;
+                y1Bound = Math.Max(pt1.Y, pt2.Y) - cover;
+                if (isFlipped) { x0 = edgeX - sourceBar.LengthA; x1Bound = edgeX; }
+                else           { x0 = edgeX;                     x1Bound = edgeX + sourceBar.LengthA; }
             }
 
             if (x0 >= x1Bound || y0 >= y1Bound)
             {
+                jig.ClearTransients();
                 ed.WriteMessage("\nRange is too small for given cover. Aborted.\n");
                 return;
             }
+
+            // --- Krok 5: Rozstaw z live preview (FEATURE H) ---
+            // JIG transienty zastąpione spacing preview — użytkownik widzi efekt od razu
+            jig.ClearTransients();
+
+            double spacing = 200.0;
+            var spacingTransients = new List<Line>();
+
+            // Pętla: rysuj → zapytaj → jeśli Enter (brak wartości) → wyjdź do dialogu
+            // UWAGA: nie ustawiamy DefaultValue — BricsCAD zwraca OK z defaultem zamiast None,
+            //        co powoduje nieskończoną pętlę. Brak DefaultValue → Enter = PromptStatus.None.
+            while (true)
+            {
+                // Rysuj preview z aktualnym spacingiem (na początku pętli jak w pseudokodzie)
+                ClearBarPreview(spacingTransients);
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, spacingTransients);
+
+                var spacOpts = new PromptDistanceOptions($"\nSpacing (mm) <{(int)spacing}>: ")
+                {
+                    AllowNone     = true,
+                    AllowNegative = false,
+                    AllowZero     = false
+                    // Brak DefaultValue — Enter zwraca None, nie OK-z-defaultem
+                };
+                var spacResult = ed.GetDistance(spacOpts);
+
+                if (spacResult.Status == PromptStatus.Cancel)
+                {
+                    ClearBarPreview(spacingTransients);
+                    return;
+                }
+                if (spacResult.Status != PromptStatus.OK) break;  // Enter (None) = zatwierdź
+
+                spacing = spacResult.Value;  // nowa wartość → pętla rysuje od nowa
+            }
+            ClearBarPreview(spacingTransients);
 
             // Auto count
             double rawSpan = horizontal ? (y1Bound - y0) : (x1Bound - x0);
@@ -190,6 +221,9 @@ namespace BricsCadRc.Commands
                 db, x0, y0, x1Bound, y1Bound,
                 sourceBar, horizontal, posNr);
 
+            // Usuń transienty JIG dopiero teraz — finalne pręty są już w bazie
+            jig.ClearTransients();
+
             if (!barResult.IsValid)
             {
                 ed.WriteMessage("\n[RC SLAB] Failed to generate distribution — check range and spacing.\n");
@@ -204,6 +238,120 @@ namespace BricsCadRc.Commands
                 $"[RC SLAB] Layer: {LayerManager.GetLayerName(sourceBar.LayerCode)} | " +
                 $"Direction: {(horizontal ? "X" : "Y")} | " +
                 $"Spacing: {finalSpacing} mm | Cover: {cover} mm\n");
+        }
+
+        // ================================================================
+        //  Helpers — TransientManager preview dla spacing (FEATURE H)
+        // ================================================================
+
+        private static void DrawBarPreview(bool horizontal,
+            double x0, double y0, double x1, double y1,
+            double spacing, List<Line> transients)
+        {
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+
+            if (horizontal)
+            {
+                // Pręty poziome: linie od x0 do x1, rozmieszczone co spacing w Y
+                for (double y = y0; y <= y1 + 0.5; y += spacing)
+                {
+                    double yc = Math.Min(y, y1);
+                    AddPreviewLine(tm, vpIds, new Point3d(x0, yc, 0), new Point3d(x1, yc, 0), transients);
+                    if (yc >= y1) break;
+                }
+            }
+            else
+            {
+                // Pręty pionowe: linie od y0 do y1, rozmieszczone co spacing w X
+                for (double x = x0; x <= x1 + 0.5; x += spacing)
+                {
+                    double xc = Math.Min(x, x1);
+                    AddPreviewLine(tm, vpIds, new Point3d(xc, y0, 0), new Point3d(xc, y1, 0), transients);
+                    if (xc >= x1) break;
+                }
+            }
+            try { Application.UpdateScreen(); } catch { }
+        }
+
+        private static void AddPreviewLine(TransientManager tm, IntegerCollection vpIds,
+            Point3d p1, Point3d p2, List<Line> transients)
+        {
+            var line = new Line(p1, p2) { ColorIndex = 5 };
+            try
+            {
+                tm.AddTransient(line, TransientDrawingMode.DirectTopmost, 128, vpIds);
+                transients.Add(line);
+            }
+            catch { line.Dispose(); }
+        }
+
+        private static void ClearBarPreview(List<Line> transients)
+        {
+            if (transients.Count == 0) return;
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+            foreach (var line in transients)
+            {
+                try { tm.EraseTransient(line, vpIds); line.Dispose(); } catch { }
+            }
+            transients.Clear();
+        }
+
+        // ================================================================
+        //  RC_UPDATE_BAR — aktualizuje długość prętów po edycji polilinii
+        // ================================================================
+
+        [CommandMethod("RC_UPDATE_BAR", CommandFlags.Modal)]
+        public void UpdateBar()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc.Editor;
+            var db  = doc.Database;
+
+            // Wybierz polilinie preta
+            var selOpts = new PromptEntityOptions("\nSelect bar polyline to update (RC_BAR): ");
+            selOpts.SetRejectMessage("\nNot a polyline — select a bar created with RC_BAR.");
+            selOpts.AddAllowedClass(typeof(Polyline), true);
+            var selResult = ed.GetEntity(selOpts);
+            if (selResult.Status != PromptStatus.OK) return;
+
+            // Odczytaj geometrie i XData
+            BarData bar      = null;
+            double newLength = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var pline = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Polyline;
+                if (pline == null) { ed.WriteMessage("\nNot a polyline.\n"); tr.Commit(); return; }
+                bar = SingleBarEngine.ReadBarXData(pline);
+                if (bar == null) { ed.WriteMessage("\nNo RC bar data on selected polyline.\n"); tr.Commit(); return; }
+                newLength = pline.Length;
+                tr.Commit();
+            }
+
+            double oldLength = bar.LengthA;
+            ed.WriteMessage($"\n[RC_UPDATE_BAR] Mark={bar.Mark}  old={oldLength:F0} mm  new={newLength:F0} mm\n");
+
+            // Zaktualizuj XData na polilinii
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var pline = tr.GetObject(selResult.ObjectId, OpenMode.ForWrite) as Polyline;
+                bar.LengthA = newLength;
+                SingleBarEngine.WriteXData(pline, bar);
+                tr.Commit();
+            }
+
+            // Znajdz i przerysuj powiazane rozklady
+            int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
+            var distIds = BarBlockEngine.FindDistributionsByPosNr(db, posNr);
+            ed.WriteMessage($"[RC_UPDATE_BAR] Found {distIds.Count} distribution(s) for pos {posNr}.\n");
+
+            int updated = 0;
+            foreach (var id in distIds)
+                if (BarBlockEngine.UpdateBarLength(db, id, newLength)) updated++;
+
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+            ed.WriteMessage($"[RC_UPDATE_BAR] Done: {updated}/{distIds.Count} distributions updated. LengthA: {oldLength:F0} → {newLength:F0} mm\n");
         }
     }
 }

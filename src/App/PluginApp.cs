@@ -20,11 +20,15 @@ namespace BricsCadRc.App
             // Ogranicz ruch blokow RC_ANNOT_nnn do osi kierunku zbrojenia (X lub Y)
             AnnotMoveOverrule.Register();
 
+            // Auto-aktualizacja rozkładów po rozciągnięciu polilinii pręta (FEATURE E)
+            BarGeometryWatcher.Register();
+
             RibbonBuilder.Build();
         }
 
         public void Terminate()
         {
+            BarGeometryWatcher.Unregister();
             AnnotMoveOverrule.Unregister();
         }
     }
