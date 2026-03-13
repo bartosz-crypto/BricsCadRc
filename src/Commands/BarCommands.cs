@@ -275,18 +275,10 @@ namespace BricsCadRc.Commands
             sourceBar.Mark      = baseMark + (string.IsNullOrEmpty(suffix) ? "" : " " + suffix);
             sourceBar.Cover     = cover;
 
-            // --- Krok 7: Pozycja etykiety (opcjonalna — Enter = auto) ---
-            var lblOpts = new PromptPointOptions("\nClick label position (Enter = automatic): ")
-            {
-                AllowNone = true
-            };
-            var lblResult = ed.GetPoint(lblOpts);
-            // lblResult.Status == PromptStatus.None = Enter (auto pozycja), OK = kliknieto
-
             // Usuń live preview — zaraz pojawią się finalne pręty
             ClearBarPreview(liveTransients);
 
-            // --- Krok 8: Generuj blok rozkladu pretow ---
+            // --- Krok 7: Generuj blok rozkladu pretow ---
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1Bound, y1Bound,
                 sourceBar, horizontal, posNr);
@@ -297,8 +289,26 @@ namespace BricsCadRc.Commands
                 return;
             }
 
+            // --- Krok 8: FEATURE I — interaktywne umieszczanie etykiety ---
+            // barsSpan = długość dist line = (count-1)*finalSpacing
+            double barsSpan    = (double)(finalCount - 1) * finalSpacing;
+            double barMinCoord = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
+            // Start kursora: obok prawego/górnego brzegu prętów (poza blokiem)
+            Point3d labelStart = horizontal
+                ? new Point3d(x1Bound + 300, y0, 0)   // X-bars: start na prawo od prętów, na dole
+                : new Point3d(x0, y1Bound + 300, 0);  // Y-bars: start powyżej prętów, na lewo
+            var labelJig    = new AnnotLeaderJig(labelStart, horizontal, barsSpan, barMinCoord);
+            var labelResult = ed.Drag(labelJig);
+            labelJig.ClearTransients();
+
+            // OK = użytkownik kliknął; None/Cancel = auto pozycja (pręty zostają)
+            Point3d? insertOverride = labelResult.Status == PromptStatus.OK
+                ? labelJig.InsertPt
+                : (Point3d?)null;
+
             // --- Krok 9: Annotacja ---
-            var annotResult = AnnotationEngine.CreateLeader(db, barResult, sourceBar, horizontal, posNr);
+            var annotResult = AnnotationEngine.CreateLeader(
+                db, barResult, sourceBar, horizontal, posNr, insertOverride);
 
             // Zapisz handle annotacji w XData bloku pretow — unikalny klucz dla SyncAnnotation
             if (annotResult.BlockRefId != ObjectId.Null)
