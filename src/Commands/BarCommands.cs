@@ -120,20 +120,28 @@ namespace BricsCadRc.Commands
             // FEATURE F: Drugi punkt z podglądem prętów (TransientManager, nie prostokąt)
             var jig = new DistributionJig(pt1, sourceBar.LengthA);
             var jigResult = ed.Drag(jig);
-            jig.ClearTransients();   // wyczyść transienty jiga — flip-preview przejmuje ekran
-            if (jigResult.Status != PromptStatus.OK) return;
+            if (jigResult.Status != PromptStatus.OK)
+            {
+                jig.ClearTransients();   // Escape podczas jigu
+                return;
+            }
             Point3d pt2         = jig.SecondPoint;
             bool edgeHorizontal = jig.EdgeHorizontal;
 
+            // liveTransients — widoczne od flip aż do GenerateFromBounds (FEATURE F)
+            var liveTransients = new List<Line>();
+
             // FEATURE G: flip jako osobny krok po kliknięciu pt2
-            // Pokazujemy podgląd z aktualnym stanem, S toggleuje, Enter zatwierdza
-            bool isFlipped = false;
-            var flipTransients = new List<Line>();
+            bool isFlipped   = false;
+            bool jigCleared  = false;
             while (true)
             {
-                ClearBarPreview(flipTransients);
+                // Pierwsza iteracja: zastąp transienty jiga swoimi
+                if (!jigCleared) { jig.ClearTransients(); jigCleared = true; }
+
+                ClearBarPreview(liveTransients);
                 DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped,
-                    sourceBar.LengthA, flipTransients);
+                    sourceBar.LengthA, liveTransients);
 
                 var flipOpts = new PromptKeywordOptions(
                     isFlipped ? "\nFlip: pręty po drugiej stronie [S=cofnij/Enter=zatwierdź]: "
@@ -146,13 +154,13 @@ namespace BricsCadRc.Commands
 
                 if (flipRes.Status == PromptStatus.Cancel)
                 {
-                    ClearBarPreview(flipTransients);
+                    ClearBarPreview(liveTransients);
                     return;
                 }
                 if (flipRes.Status != PromptStatus.OK) break;   // Enter = zatwierdź
                 if (flipRes.StringResult == "S") isFlipped = !isFlipped;
             }
-            ClearBarPreview(flipTransients);
+            // liveTransients widoczne — NIE czyścimy
 
             // --- Krok 4: Pozycja pierwszego preta (otulina) ---
             var covOpts = new PromptDistanceOptions("\nPosition of first bar (mm) <40>: ")
@@ -187,43 +195,37 @@ namespace BricsCadRc.Commands
 
             if (x0 >= x1Bound || y0 >= y1Bound)
             {
+                ClearBarPreview(liveTransients);
                 ed.WriteMessage("\nRange is too small for given cover. Aborted.\n");
                 return;
             }
 
-            // --- Krok 5: Rozstaw z live preview (FEATURE H) ---
-
+            // --- Krok 5: Rozstaw z live preview ---
+            // UWAGA: brak DefaultValue — Enter zwraca None, nie OK-z-defaultem (nieskończona pętla)
             double spacing = 200.0;
-            var spacingTransients = new List<Line>();
-
-            // Pętla: rysuj → zapytaj → jeśli Enter (brak wartości) → wyjdź do dialogu
-            // UWAGA: nie ustawiamy DefaultValue — BricsCAD zwraca OK z defaultem zamiast None,
-            //        co powoduje nieskończoną pętlę. Brak DefaultValue → Enter = PromptStatus.None.
             while (true)
             {
-                // Rysuj preview z aktualnym spacingiem (na początku pętli jak w pseudokodzie)
-                ClearBarPreview(spacingTransients);
-                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, spacingTransients);
+                ClearBarPreview(liveTransients);
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
 
                 var spacOpts = new PromptDistanceOptions($"\nSpacing (mm) <{(int)spacing}>: ")
                 {
                     AllowNone     = true,
                     AllowNegative = false,
                     AllowZero     = false
-                    // Brak DefaultValue — Enter zwraca None, nie OK-z-defaultem
                 };
                 var spacResult = ed.GetDistance(spacOpts);
 
                 if (spacResult.Status == PromptStatus.Cancel)
                 {
-                    ClearBarPreview(spacingTransients);
+                    ClearBarPreview(liveTransients);
                     return;
                 }
                 if (spacResult.Status != PromptStatus.OK) break;  // Enter (None) = zatwierdź
 
-                spacing = spacResult.Value;  // nowa wartość → pętla rysuje od nowa
+                spacing = spacResult.Value;
             }
-            ClearBarPreview(spacingTransients);
+            // liveTransients widoczne — NIE czyścimy
 
             // Auto count
             double rawSpan = horizontal ? (y1Bound - y0) : (x1Bound - x0);
@@ -235,10 +237,14 @@ namespace BricsCadRc.Commands
 
             string baseMark = $"H{sourceBar.Diameter}-{posNr:D2}-{(int)spacing}";
 
-            // --- Krok 6: Dialog "Reinforcement description" dla rozkładu ---
+            // --- Krok 6: Dialog "Reinforcement description" (liveTransients widoczne w tle) ---
             sourceBar.Spacing = spacing;
             var descDlg = new DistributionDescDialog(sourceBar, autoCount, spacing, baseMark);
-            if (Application.ShowModalWindow(descDlg) != true) return;
+            if (Application.ShowModalWindow(descDlg) != true)
+            {
+                ClearBarPreview(liveTransients);
+                return;
+            }
 
             // Zastosuj nadpisania z dialogu
             int    finalCount   = descDlg.BarCount;
@@ -259,6 +265,9 @@ namespace BricsCadRc.Commands
             };
             var lblResult = ed.GetPoint(lblOpts);
             // lblResult.Status == PromptStatus.None = Enter (auto pozycja), OK = kliknieto
+
+            // Usuń live preview — zaraz pojawią się finalne pręty
+            ClearBarPreview(liveTransients);
 
             // --- Krok 8: Generuj blok rozkladu pretow ---
             var barResult = BarBlockEngine.GenerateFromBounds(
