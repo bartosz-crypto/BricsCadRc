@@ -27,11 +27,13 @@ namespace BricsCadRc.Core
         {
             return layerCode switch
             {
-                "B1" => BotLayer1,
-                "B2" => BotLayer2,
-                "T1" => TopLayer1,
-                "T2" => TopLayer2,
-                _    => BotLayer1
+                "B1"  => BotLayer1,
+                "B2"  => BotLayer2,
+                "T1"  => TopLayer1,
+                "T2"  => TopLayer2,
+                "BOT" => BotLayer1,   // nowy format — Bottom Layer
+                "TOP" => TopLayer1,   // nowy format — Top Layer
+                _     => BotLayer1
             };
         }
 

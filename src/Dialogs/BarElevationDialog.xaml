@@ -97,10 +97,8 @@
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Layer:"/>
             <ComboBox Grid.Column="1" x:Name="LayerCombo">
-                <ComboBoxItem Content="B1 – Bottom dir. 1 (X)" Tag="B1" IsSelected="True"/>
-                <ComboBoxItem Content="B2 – Bottom dir. 2 (Y)" Tag="B2"/>
-                <ComboBoxItem Content="T1 – Top dir. 1 (X)"    Tag="T1"/>
-                <ComboBoxItem Content="T2 – Top dir. 2 (Y)"    Tag="T2"/>
+                <ComboBoxItem Content="Bottom Layer" Tag="BOT" IsSelected="True"/>
+                <ComboBoxItem Content="Top Layer"    Tag="TOP"/>
             </ComboBox>
         </Grid>
 

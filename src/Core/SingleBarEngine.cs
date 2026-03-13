@@ -204,7 +204,8 @@ namespace BricsCadRc.Core
                 LayerCode = (string)v[7].Value,
                 Position  = v.Length >= 9 ? (string)v[8].Value : "BOT"
             };
-            bd.Direction = (bd.LayerCode == "B1" || bd.LayerCode == "T1") ? "X" : "Y";
+            bd.Direction = (bd.LayerCode == "B1" || bd.LayerCode == "T1") ? "X" :
+                           (bd.LayerCode == "B2" || bd.LayerCode == "T2") ? "Y" : "X";
             return bd;
         }
 

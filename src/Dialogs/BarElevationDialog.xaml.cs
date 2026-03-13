@@ -86,9 +86,9 @@ namespace BricsCadRc.Dialogs
                 LengthA   = a,
                 LengthB   = b,
                 LengthC   = c,
-                LayerCode = layerCode,
-                Position  = layerCode.StartsWith("B") ? "BOT" : "TOP",
-                Direction = (layerCode == "B1" || layerCode == "T1") ? "X" : "Y"
+                LayerCode = layerCode,          // "BOT" lub "TOP"
+                Position  = layerCode == "BOT" ? "BOT" : "TOP",
+                Direction = "X"                 // domyslnie X; nadpisywane przez RC_DISTRIBUTION
             };
 
             DialogResult = true;
