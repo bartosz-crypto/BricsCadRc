@@ -68,7 +68,9 @@ namespace BricsCadRc.Core
             if (barAnnot != null && barAnnot.BarsSpan > 0 && barAnnot.ArmTotalLen > 0)
             {
                 // Wyczysc stan dragu — poczatek nowej interakcji z gripem
-                _dragOrigArm.Remove(br.ObjectId.Handle.Value);
+                long hv = br.ObjectId.Handle.Value;
+                _dragOrigArm.Remove(hv);
+                _dragOrigPos.Remove(hv);
 
                 var ins = br.Position;
                 gripPoints.Add(ins);  // [0] lateral
@@ -197,8 +199,21 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    _dragOrigArm.Remove(br.ObjectId.Handle.Value);
-                    entity.TransformBy(Matrix3d.Displacement(ConstrainOffset(barAnnot, offset)));
+                    // Grip [0]: ruch boczny wzdłuż osi prętów.
+                    // offset jest KUMULATYWNY — tak samo jak dla RC_BAR_BLOCK grip[0].
+                    long handle = br.ObjectId.Handle.Value;
+                    _dragOrigArm.Remove(handle);
+                    if (!_dragOrigPos.ContainsKey(handle))
+                        _dragOrigPos[handle] = br.Position;
+
+                    var origPos = _dragOrigPos[handle];
+                    // Ogranicz ruch do osi zbrojenia, licząc od origPos (nie od aktualnej pozycji)
+                    double targetX = barAnnot.Direction == "X"
+                        ? origPos.X + offset.X : origPos.X;
+                    double targetY = barAnnot.Direction == "Y"
+                        ? origPos.Y + offset.Y : origPos.Y;
+                    var target = new Point3d(targetX, targetY, origPos.Z);
+                    entity.TransformBy(Matrix3d.Displacement(target - br.Position));
                 }
                 return;
             }

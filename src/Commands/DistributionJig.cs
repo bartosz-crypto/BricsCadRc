@@ -63,12 +63,12 @@ namespace BricsCadRc.Commands
 
             var res = prompts.AcquirePoint(opts);
 
-            // FEATURE G: klawisz S → przełącz flip i odśwież bez zmiany punktu
+            // FEATURE G: klawisz S → przełącz flip, odśwież in-place przez UpdateTransient
             if (res.Status == PromptStatus.Keyword && res.StringResult == "S")
             {
                 _flipped = !_flipped;
-                RefreshTransients();
-                return SamplerStatus.OK;
+                FlipTransients();
+                return SamplerStatus.NoChange;  // nie wywołuj WorldDraw — transienty już widoczne
             }
 
             if (res.Status != PromptStatus.OK)
@@ -92,19 +92,16 @@ namespace BricsCadRc.Commands
         }
 
         // ----------------------------------------------------------------
-        // RefreshTransients — czyści stare i rysuje nowe linie podglądu
+        // ComputePreviewPositions — oblicza (start, end) dla każdej linii podglądu
         // ----------------------------------------------------------------
 
-        private void RefreshTransients()
+        private List<Tuple<Point3d, Point3d>> ComputePreviewPositions()
         {
-            ClearTransients();
+            var result = new List<Tuple<Point3d, Point3d>>();
 
             double dx = _pt2.X - _pt1.X;
             double dy = _pt2.Y - _pt1.Y;
             _edgeHorizontal = Math.Abs(dx) >= Math.Abs(dy);
-
-            var tm    = TransientManager.CurrentTransientManager;
-            var vpIds = new IntegerCollection();
 
             if (_edgeHorizontal)
             {
@@ -114,14 +111,12 @@ namespace BricsCadRc.Commands
                 double yStart  = _flipped ? edgeY - _barLength : edgeY;
                 double yEnd    = _flipped ? edgeY              : edgeY + _barLength;
 
-                if (x0 >= x1Bound) return;
+                if (x0 >= x1Bound) return result;
 
                 for (double x = x0; x <= x1Bound + 0.5; x += PreviewSpacing)
                 {
                     double xc = Math.Min(x, x1Bound);
-                    AddTransientLine(tm, vpIds,
-                        new Point3d(xc, yStart, 0),
-                        new Point3d(xc, yEnd,   0));
+                    result.Add(Tuple.Create(new Point3d(xc, yStart, 0), new Point3d(xc, yEnd, 0)));
                     if (xc >= x1Bound) break;
                 }
             }
@@ -133,19 +128,66 @@ namespace BricsCadRc.Commands
                 double xStart  = _flipped ? edgeX - _barLength : edgeX;
                 double xEnd    = _flipped ? edgeX              : edgeX + _barLength;
 
-                if (y0 >= y1Bound) return;
+                if (y0 >= y1Bound) return result;
 
                 for (double y = y0; y <= y1Bound + 0.5; y += PreviewSpacing)
                 {
                     double yc = Math.Min(y, y1Bound);
-                    AddTransientLine(tm, vpIds,
-                        new Point3d(xStart, yc, 0),
-                        new Point3d(xEnd,   yc, 0));
+                    result.Add(Tuple.Create(new Point3d(xStart, yc, 0), new Point3d(xEnd, yc, 0)));
                     if (yc >= y1Bound) break;
                 }
             }
 
-            // Wymuś odświeżenie ekranu — transienty muszą być widoczne natychmiast
+            return result;
+        }
+
+        // ----------------------------------------------------------------
+        // RefreshTransients — czyści stare i rysuje nowe linie (przy ruchu kursora)
+        // ----------------------------------------------------------------
+
+        private void RefreshTransients()
+        {
+            ClearTransients();
+
+            var positions = ComputePreviewPositions();
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+
+            foreach (var pos in positions)
+                AddTransientLine(tm, vpIds, pos.Item1, pos.Item2);
+
+            try { Application.UpdateScreen(); } catch { }
+        }
+
+        // ----------------------------------------------------------------
+        // FlipTransients — aktualizuje istniejące transienty in-place przez UpdateTransient.
+        // Używane przy S-flip: nie ma erase/add — BricsCAD nie resetuje viewport.
+        // ----------------------------------------------------------------
+
+        private void FlipTransients()
+        {
+            var positions = ComputePreviewPositions();
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+
+            if (positions.Count == _transients.Count && _transients.Count > 0)
+            {
+                // Ta sama liczba linii — zaktualizuj geometrię in-place
+                for (int i = 0; i < _transients.Count; i++)
+                {
+                    _transients[i].StartPoint = positions[i].Item1;
+                    _transients[i].EndPoint   = positions[i].Item2;
+                    try { tm.UpdateTransient(_transients[i], vpIds); } catch { }
+                }
+            }
+            else
+            {
+                // Liczba się zmieniła (np. jeszcze nie ma transientów) — pełny refresh
+                ClearTransients();
+                foreach (var pos in positions)
+                    AddTransientLine(tm, vpIds, pos.Item1, pos.Item2);
+            }
+
             try { Application.UpdateScreen(); } catch { }
         }
 
