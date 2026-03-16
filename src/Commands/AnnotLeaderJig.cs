@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using BricsCadRc.Core;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.GraphicsInterface;
@@ -8,49 +9,58 @@ using Teigha.GraphicsInterface;
 namespace BricsCadRc.Commands
 {
     /// <summary>
-    /// FEATURE I: Interaktywne umieszczanie etykiety po GenerateFromBounds.
-    ///
-    /// Kursor jest constrainowany do osi prostopadłej do prętów:
-    ///   X-bars (horizontal=true) : kursor może się ruszać swobodnie w X,
-    ///                              Y jest zablokowane do barMinCoord (Y pierwszego pręta)
-    ///   Y-bars (horizontal=false): kursor może się ruszać swobodnie w Y,
-    ///                              X jest zablokowane do barMinCoord (X pierwszego pręta)
-    ///
-    /// Dzięki temu romby dist line są zawsze wyrównane do prętów niezależnie od
-    /// gdzie kliknie użytkownik — tak jak w ASD.
-    ///
-    /// InsertPt = constrained cursor → poprawny insertPt dla CreateLeader.
+    /// FEATURE J: Interaktywne umieszczanie etykiety — podgląd złamanego leadera.
+    /// Geometria obliczana przez AnnotLeaderGeometry (testowalny, bez BricsCAD API).
     /// </summary>
     internal class AnnotLeaderJig : DrawJig
     {
-        readonly bool   _horizontal;
-        readonly double _barsSpan;
-        readonly double _armPreviewLen;
-        readonly double _barMinCoord;   // Y pierwszego pręta (X-bars) lub X pierwszego pręta (Y-bars)
+        readonly Point3d _anchorPt;
+        readonly double  _barsSpan;
+        readonly double  _armPreviewLen;
+        readonly double  _barMinCoordH;     // MinPoint.Y prętów (dla X-bars)
+        readonly double  _barMinCoordV;     // MinPoint.X prętów (dla Y-bars)
+        readonly bool    _barsHorizontal;   // orientacja prętów — STAŁA
 
+        bool    _leaderHorizontal;          // kierunek etykiety — aktualizowany przez Compute
         Point3d _cursor;
         readonly List<Line> _transients = new List<Line>();
 
-        /// <summary>Constrained cursor = poprawny insertPt dla CreateLeader.</summary>
-        public Point3d InsertPt => _cursor;
+        /// <summary>Punkt wstawienia bloku annotacji po kliknięciu.</summary>
+        public Point3d InsertPt
+        {
+            get
+            {
+                var p = AnnotLeaderGeometry.ComputeInsertPt(
+                    _cursor.X, _cursor.Y,
+                    _anchorPt.X, _anchorPt.Y,
+                    _barMinCoordH, _barMinCoordV,
+                    _barsHorizontal, _barsSpan);
+                return new Point3d(p.X, p.Y, 0);
+            }
+        }
 
-        /// <param name="startCursor">Pozycja startowa kursora (np. obok bloku prętów).</param>
-        /// <param name="horizontal">true = X-bars (dist line pionowa), false = Y-bars (pozioma).</param>
-        /// <param name="barsSpan">Długość dist line = (count-1)*spacing.</param>
-        /// <param name="barMinCoord">MinPoint.Y dla X-bars lub MinPoint.X dla Y-bars (wyrównanie romby).</param>
-        /// <param name="armPreviewLen">Szacunkowa długość ramienia + tekstu.</param>
+        /// <summary>Kierunek etykiety — ustalony po zakończeniu jiga.</summary>
+        public bool LeaderHorizontal => _leaderHorizontal;
+
+        /// <summary>Etykieta idzie w prawo (cursor.X >= anchorPt.X).</summary>
+        public bool LeaderRight => _cursor.X >= _anchorPt.X;
+
         public AnnotLeaderJig(
-            Point3d startCursor,
-            bool    horizontal,
+            Point3d anchorPt,
             double  barsSpan,
-            double  barMinCoord,
+            double  barMinCoordH,
+            double  barMinCoordV,
+            bool    horizontal,
             double  armPreviewLen = 700.0)
         {
-            _horizontal    = horizontal;
-            _barsSpan      = barsSpan;
-            _barMinCoord   = barMinCoord;
-            _armPreviewLen = armPreviewLen;
-            _cursor        = Constrain(startCursor);
+            _anchorPt         = anchorPt;
+            _barsSpan         = barsSpan;
+            _barMinCoordH     = barMinCoordH;
+            _barMinCoordV     = barMinCoordV;
+            _barsHorizontal   = horizontal;
+            _leaderHorizontal = horizontal;
+            _armPreviewLen    = armPreviewLen;
+            _cursor           = anchorPt;
         }
 
         protected override SamplerStatus Sampler(JigPrompts prompts)
@@ -61,23 +71,14 @@ namespace BricsCadRc.Commands
             var res = prompts.AcquirePoint(opts);
             if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
 
-            var constrained = Constrain(res.Value);
-            if (_cursor.IsEqualTo(constrained, Tolerance.Global)) return SamplerStatus.NoChange;
+            if (_cursor.IsEqualTo(res.Value, Tolerance.Global)) return SamplerStatus.NoChange;
 
-            _cursor = constrained;
+            _cursor = res.Value;
             RefreshTransients();
             return SamplerStatus.OK;
         }
 
         protected override bool WorldDraw(WorldDraw draw) => true;
-
-        /// <summary>Constrainuje punkt do właściwej osi.</summary>
-        private Point3d Constrain(Point3d p)
-        {
-            return _horizontal
-                ? new Point3d(p.X, _barMinCoord, 0)   // X-bars: X swobodnie, Y=barMinCoord
-                : new Point3d(_barMinCoord, p.Y, 0);  // Y-bars: Y swobodnie, X=barMinCoord
-        }
 
         private void RefreshTransients()
         {
@@ -85,24 +86,27 @@ namespace BricsCadRc.Commands
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
 
-            Point3d distEnd, armEnd;
-            if (_horizontal)
-            {
-                // X-bars: dist line pionowa w górę od kursora, ramię dalej w górę
-                distEnd = new Point3d(_cursor.X, _cursor.Y + _barsSpan,                0);
-                armEnd  = new Point3d(_cursor.X, _cursor.Y + _barsSpan + _armPreviewLen, 0);
-            }
-            else
-            {
-                // Y-bars: dist line pozioma w prawo od kursora, ramię dalej w prawo
-                distEnd = new Point3d(_cursor.X + _barsSpan,                _cursor.Y, 0);
-                armEnd  = new Point3d(_cursor.X + _barsSpan + _armPreviewLen, _cursor.Y, 0);
-            }
+            var pts = AnnotLeaderGeometry.Compute(
+                _anchorPt.X, _anchorPt.Y,
+                _barsSpan,
+                _cursor.X, _cursor.Y,
+                _barsHorizontal,
+                _armPreviewLen);
 
-            // Dist line (kolor 7 = biały, jak LeaderLayer)
-            AddLine(tm, vpIds, _cursor, distEnd, 7);
-            // Ramię (kolor 2 = żółty, jak AnnotLayer)
-            AddLine(tm, vpIds, distEnd, armEnd,  2);
+            // Aktualizuj kierunek etykiety na podstawie obliczonej geometrii
+            double dx = System.Math.Abs(_cursor.X - _anchorPt.X);
+            double dy = System.Math.Abs(_cursor.Y - _anchorPt.Y);
+            _leaderHorizontal = !(dy > dx * 2.0);
+
+            AddLine(tm, vpIds,
+                new Point3d(pts.DistPreviewStart.X, pts.DistPreviewStart.Y, 0),
+                new Point3d(pts.Seg1Start.X,         pts.Seg1Start.Y,        0), 7);
+            AddLine(tm, vpIds,
+                new Point3d(pts.Seg1Start.X, pts.Seg1Start.Y, 0),
+                new Point3d(pts.Seg1End.X,   pts.Seg1End.Y,   0), 7);
+            AddLine(tm, vpIds,
+                new Point3d(pts.Seg1End.X, pts.Seg1End.Y, 0),
+                new Point3d(pts.ArmEnd.X,  pts.ArmEnd.Y,  0), 2);
 
             try { Application.UpdateScreen(); } catch { }
         }

@@ -289,26 +289,33 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // --- Krok 8: FEATURE I — interaktywne umieszczanie etykiety ---
+            // --- Krok 8: FEATURE J — interaktywne umieszczanie etykiety (dowolny kierunek) ---
             // barsSpan = długość dist line = (count-1)*finalSpacing
-            double barsSpan    = (double)(finalCount - 1) * finalSpacing;
-            double barMinCoord = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
-            // Start kursora: obok prawego/górnego brzegu prętów (poza blokiem)
-            Point3d labelStart = horizontal
-                ? new Point3d(x1Bound + 300, y0, 0)   // X-bars: start na prawo od prętów, na dole
-                : new Point3d(x0, y1Bound + 300, 0);  // Y-bars: start powyżej prętów, na lewo
-            var labelJig    = new AnnotLeaderJig(labelStart, horizontal, barsSpan, barMinCoord);
+            double barsSpan = (double)(finalCount - 1) * finalSpacing;
+            // anchorPt = centrum rozkładu prętów — punkt odniesienia dla wykrywania kierunku
+            Point3d anchorPt = new Point3d(
+                (barResult.MinPoint.X + barResult.MaxPoint.X) / 2.0,
+                (barResult.MinPoint.Y + barResult.MaxPoint.Y) / 2.0, 0);
+            var labelJig    = new AnnotLeaderJig(
+                anchorPt, barsSpan,
+                barResult.MinPoint.Y,   // barMinCoordH — dla leadera pionowego
+                barResult.MinPoint.X,   // barMinCoordV — dla leadera poziomego
+                horizontal);            // defaultHorizontal = kierunek prętów
             var labelResult = ed.Drag(labelJig);
             labelJig.ClearTransients();
 
-            // OK = użytkownik kliknął; None/Cancel = auto pozycja (pręty zostają)
-            Point3d? insertOverride = labelResult.Status == PromptStatus.OK
-                ? labelJig.InsertPt
-                : (Point3d?)null;
+            // OK = użytkownik kliknął; None/Cancel = auto pozycja
+            bool    leaderHorizontal = labelResult.Status == PromptStatus.OK
+                ? labelJig.LeaderHorizontal : horizontal;
+            bool    leaderRight      = labelResult.Status == PromptStatus.OK
+                ? labelJig.LeaderRight : true;
+            Point3d? insertOverride  = labelResult.Status == PromptStatus.OK
+                ? labelJig.InsertPt : (Point3d?)null;
 
             // --- Krok 9: Annotacja ---
             var annotResult = AnnotationEngine.CreateLeader(
-                db, barResult, sourceBar, horizontal, posNr, insertOverride);
+                db, barResult, sourceBar, leaderHorizontal, posNr, insertOverride,
+                barsHorizontal: horizontal, leaderRight: leaderRight);
 
             // Zapisz handle annotacji w XData bloku pretow — unikalny klucz dla SyncAnnotation
             if (annotResult.BlockRefId != ObjectId.Null)

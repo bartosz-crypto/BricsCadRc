@@ -69,6 +69,12 @@ namespace BricsCadRc.Core
         /// <summary>Zmierzona dlugosc tekstu (z GeometricExtents) — stala po utworzeniu, uzywana w UpdateArmInBlock</summary>
         public double TextLen { get; set; }
 
+        /// <summary>Czy etykieta wychodzi z boku rozkładu (true) czy z góry/dołu (false)</summary>
+        public bool LeaderHorizontal { get; set; }
+
+        /// <summary>Czy etykieta wychodzi w prawo (true) lub w lewo (false) — dotyczy leaderHorizontal=true</summary>
+        public bool LeaderRight { get; set; } = true;
+
         /// <summary>
         /// Handle (hex string) bloku RC_ANNOT powiazanego z tym ukladem pretow.
         /// Zapisywany w XData RC_BAR_BLOCK po utworzeniu annotacji.

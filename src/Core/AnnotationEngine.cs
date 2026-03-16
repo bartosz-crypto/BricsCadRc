@@ -55,8 +55,11 @@ namespace BricsCadRc.Core
             Database db,
             BarBlockEngine.BarBlockResult barResult,
             BarData bar,
-            bool horizontal,
-            int posNr)
+            bool leaderHorizontal,
+            int posNr,
+            Point3d? customInsertPt = null,
+            bool barsHorizontal = true,
+            bool leaderRight = true)
         {
             var res = new LeaderResult();
             if (!barResult.IsValid || bar.Count == 0) return res;
@@ -90,19 +93,30 @@ namespace BricsCadRc.Core
             var btrId = blockTable.Add(btr);
             tr.AddNewlyCreatedDBObject(btr, true);
 
-            // Build zwraca rzeczywiste armTotalLen zmierzone z GeometricExtents
-            double armTotalLen = horizontal
-                ? BuildHorizontal(tr, btr, db, bar, ltName)
+            // barsHorizontal decyduje o geometrii prętów (BuildHorizontal vs BuildVertical)
+            double armTotalLen = barsHorizontal
+                ? BuildHorizontal(tr, btr, db, bar, ltName, leaderHorizontal, leaderRight)
                 : BuildVertical  (tr, btr, db, bar, ltName);
 
             bar.ArmTotalLen = armTotalLen;
 
-            // Punkt wstawienia:
-            //   X-bars: prawy bok pretow + offset boczny (arm idzie w gore)
-            //   Y-bars: lewy-gorny naroznik pretow (arm idzie w prawo, ponizej ramienia prety)
-            Point3d insertPt = horizontal
+            // Punkt wstawienia: customInsertPt (klik użytkownika) lub auto (wg kierunku prętów)
+            Point3d insertPt = customInsertPt ?? (barsHorizontal
                 ? new Point3d(barResult.MaxPoint.X + AnnotDefaultOffset, barResult.MinPoint.Y, 0)
-                : new Point3d(barResult.MinPoint.X, barResult.MaxPoint.Y, 0);
+                : new Point3d(barResult.MinPoint.X, barResult.MaxPoint.Y, 0));
+
+            // Dla X-bars z boku: X = krawędź rozkładu, Y = dół rozkładu + otulina
+            if (barsHorizontal && leaderHorizontal && customInsertPt.HasValue)
+            {
+                bool cursorRight = customInsertPt.Value.X >= (barResult.MinPoint.X + barResult.MaxPoint.X) / 2.0;
+                insertPt = new Point3d(
+                    cursorRight ? barResult.MaxPoint.X : barResult.MinPoint.X,
+                    barResult.MinPoint.Y,
+                    0);
+            }
+
+            bar.LeaderHorizontal = leaderHorizontal;
+            bar.LeaderRight      = leaderRight;
 
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
             space.AppendEntity(blockRef);
@@ -129,11 +143,11 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static double BuildHorizontal(
             Transaction tr, BlockTableRecord btr, Database db,
-            BarData bar, string ltName)
+            BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line
+            // 1. Dist line — zawsze pionowa
             var distLine = new Line(new Point3d(0, 0, 0), new Point3d(0, barsSpan, 0))
             {
                 Layer      = LayerManager.LeaderLayer,
@@ -147,48 +161,92 @@ namespace BricsCadRc.Core
             for (int i = 0; i < bar.Count; i++)
                 AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
 
-            // 3. Tekst — tworzony PRZED ramieniem, zeby zmierzyc jego dlugosc
-            //    TextLeft + rot=90: tekst rosnie ku wyzszym Y (w gore ekranu)
-            //    Pozycja = poczatek tekstu ("25"), koniec ("B1") najwyzej
-            var textPos = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0);
-            var dbText = new DBText
-            {
-                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
-                Layer          = LayerManager.AnnotLayer,
-                Height         = DefaultTextHeight,
-                Position       = textPos,
-                Rotation       = Math.PI / 2.0,
-                HorizontalMode = TextHorizontalMode.TextLeft,
-                VerticalMode   = TextVerticalMode.TextBase,
-                TextStyleId    = GetTextStyleId(db)
-            };
-            btr.AppendEntity(dbText);
-            tr.AddNewlyCreatedDBObject(dbText, true);
+            double armTotalLen;
 
-            // Zmierz rzeczywista dlugosc tekstu z GeometricExtents
-            double textLen;
-            try
+            if (!leaderHorizontal)
             {
-                var ext = dbText.GeometricExtents;
-                textLen = ext.MaxPoint.Y - textPos.Y;
-                if (textLen <= 0) throw new InvalidOperationException();
+                // Etykieta z góry/dołu — geometria pionowa (oryginalna)
+                // tekst obrócony 90°, ramię w górę od końca dist line
+                var textPos = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0);
+                var dbText = new DBText
+                {
+                    TextString     = $"{bar.Count} {bar.Mark}",
+                    Layer          = LayerManager.AnnotLayer,
+                    Height         = DefaultTextHeight,
+                    Position       = textPos,
+                    Rotation       = Math.PI / 2.0,
+                    HorizontalMode = TextHorizontalMode.TextLeft,
+                    VerticalMode   = TextVerticalMode.TextBase,
+                    TextStyleId    = GetTextStyleId(db)
+                };
+                btr.AppendEntity(dbText);
+                tr.AddNewlyCreatedDBObject(dbText, true);
+
+                double textLen;
+                try
+                {
+                    var ext = dbText.GeometricExtents;
+                    textLen = ext.MaxPoint.Y - textPos.Y;
+                    if (textLen <= 0) throw new InvalidOperationException();
+                }
+                catch { textLen = dbText.TextString.Length * TextCharWidth; }
+
+                bar.TextLen = textLen;
+                armTotalLen = ArmLength + textLen;
+
+                var arm = new Line(
+                    new Point3d(0, barsSpan, 0),
+                    new Point3d(0, barsSpan + armTotalLen, 0))
+                {
+                    Layer      = LayerManager.LeaderLayer,
+                    LineWeight = LineWeight.LineWeight018,
+                    Linetype   = "Continuous"
+                };
+                btr.AppendEntity(arm);
+                tr.AddNewlyCreatedDBObject(arm, true);
             }
-            catch { textLen = dbText.TextString.Length * TextCharWidth; }
-
-            bar.TextLen    = textLen;          // zapisane w XData — stale przez caly czas zycia bloku
-            double armTotalLen = ArmLength + textLen;
-
-            // 4. Ramie — koniec dokladnie przy "B1" (koniec tekstu)
-            var arm = new Line(
-                new Point3d(0, barsSpan, 0),
-                new Point3d(0, barsSpan + armTotalLen, 0))
+            else
             {
-                Layer      = LayerManager.LeaderLayer,
-                LineWeight = LineWeight.LineWeight018,
-                Linetype   = "Continuous"
-            };
-            btr.AppendEntity(arm);
-            tr.AddNewlyCreatedDBObject(arm, true);
+                // Etykieta z boku — geometria pozioma
+                double midY  = barsSpan / 2.0;
+                double armLen = ArmLength;
+                double hDir  = leaderRight ? 1.0 : -1.0;
+
+                var textPos = new Point3d(hDir * armLen, midY + TextArmOffset, 0);
+                var dbText = new DBText
+                {
+                    TextString     = $"{bar.Count} {bar.Mark}",
+                    Layer          = LayerManager.AnnotLayer,
+                    Height         = DefaultTextHeight,
+                    HorizontalMode = leaderRight
+                                     ? TextHorizontalMode.TextLeft
+                                     : TextHorizontalMode.TextRight,
+                    VerticalMode   = TextVerticalMode.TextBase,
+                    Position       = textPos,
+                    AlignmentPoint = textPos,
+                    Rotation       = 0.0,
+                    TextStyleId    = GetTextStyleId(db)
+                };
+                btr.AppendEntity(dbText);
+                tr.AddNewlyCreatedDBObject(dbText, true);
+
+                double textLen = dbText.TextString.Length * TextCharWidth;
+
+                bar.TextLen = textLen;
+                armTotalLen = armLen + TextArmOffset + textLen;
+
+                var arm = new Line(
+                    new Point3d(0, midY, 0),
+                    new Point3d(hDir * armTotalLen, midY, 0))
+                {
+                    Layer      = LayerManager.LeaderLayer,
+                    LineWeight = LineWeight.LineWeight018,
+                    Linetype   = "Continuous"
+                };
+                btr.AppendEntity(arm);
+                tr.AddNewlyCreatedDBObject(arm, true);
+
+            }
 
             return armTotalLen;
         }
@@ -234,7 +292,7 @@ namespace BricsCadRc.Core
             var textPos = new Point3d(barsSpan + ArmLength, TextArmOffset, 0);
             var dbText = new DBText
             {
-                TextString     = $"{bar.Count} {bar.Mark} {bar.LayerCode}",
+                TextString     = $"{bar.Count} {bar.Mark}",
                 Layer          = LayerManager.AnnotLayer,
                 Height         = DefaultTextHeight,
                 Position       = textPos,
@@ -307,9 +365,9 @@ namespace BricsCadRc.Core
             using var tr = br.Database.TransactionManager.StartTransaction();
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
 
-            // X: arm pionowe przy x=0, startuje od y=barsSpan w gore
-            // Y: arm poziome przy y=0, startuje od x=barsSpan w prawo
-            double textLen = bar.TextLen > 10 ? bar.TextLen : (bar.ArmTotalLen - ArmLength);
+            double textLen  = bar.TextLen > 10 ? bar.TextLen : (bar.ArmTotalLen - ArmLength);
+            bool   xHoriz   = bar.Direction == "X" && bar.LeaderHorizontal;
+            double midY     = bar.BarsSpan / 2.0;
 
             Line   armLine = null;
             DBText armText = null;
@@ -319,18 +377,23 @@ namespace BricsCadRc.Core
                 var obj = tr.GetObject(oid, OpenMode.ForRead);
                 if (obj is Line ln && armLine == null)
                 {
-                    if (bar.Direction == "X")
+                    if (xHoriz)
+                    {
+                        // Arm poziome X-bars: Start.X ≈ 0, Start.Y ≈ barsSpan/2
+                        if (Math.Abs(ln.StartPoint.X) < 1.0
+                            && Math.Abs(ln.StartPoint.Y - midY) < 2.0)
+                            armLine = ln;
+                    }
+                    else if (bar.Direction == "X")
                     {
                         // Arm pionowe: Start.Y = barsSpan, End.Y > barsSpan
-                        // Dist line ma Start.Y = 0 — nie pasuje
                         if (Math.Abs(ln.StartPoint.Y - bar.BarsSpan) < 1.0
                             && ln.EndPoint.Y > bar.BarsSpan + 1.0)
                             armLine = ln;
                     }
                     else
                     {
-                        // Arm poziome: Start.Y = 0, Start.X = barsSpan (> 0)
-                        // Dist line ma Start.X = 0 — nie pasuje
+                        // Arm poziome Y-bars: Start.Y = 0, Start.X = barsSpan (> 0)
                         if (Math.Abs(ln.StartPoint.Y) < 1.0 && ln.StartPoint.X > 1.0)
                             armLine = ln;
                     }
@@ -343,7 +406,13 @@ namespace BricsCadRc.Core
             if (armLine != null)
             {
                 armLine.UpgradeOpen();
-                if (bar.Direction == "X")
+                if (xHoriz)
+                {
+                    double hDir        = bar.LeaderRight ? 1.0 : -1.0;
+                    armLine.StartPoint = new Point3d(0, midY, 0);
+                    armLine.EndPoint   = new Point3d(hDir * clampedNew, midY, 0);
+                }
+                else if (bar.Direction == "X")
                 {
                     armLine.StartPoint = new Point3d(0, bar.BarsSpan, 0);
                     armLine.EndPoint   = new Point3d(0, bar.BarsSpan + clampedNew, 0);
@@ -358,17 +427,24 @@ namespace BricsCadRc.Core
             if (armText != null)
             {
                 armText.UpgradeOpen();
-                if (bar.Direction == "X")
+                if (xHoriz)
                 {
-                    // Tekst pionowy (rot=90°): koniec ramienia - textLen = poczatek tekstu
+                    double hDir       = bar.LeaderRight ? 1.0 : -1.0;
+                    double textStartX = hDir * (clampedNew - bar.TextLen - TextArmOffset);
+                    armText.Position       = new Point3d(textStartX, midY + TextArmOffset, 0);
+                    armText.AlignmentPoint = new Point3d(textStartX, midY + TextArmOffset, 0);
+                }
+                else if (bar.Direction == "X")
+                {
+                    // Tekst pionowy (rot=90°): poczatek tekstu = koniec ramienia - textLen
                     double textStartY = bar.BarsSpan + clampedNew - textLen;
-                    armText.Position = new Point3d(-TextArmOffset, textStartY, 0);
+                    armText.Position  = new Point3d(-TextArmOffset, textStartY, 0);
                 }
                 else
                 {
-                    // Tekst poziomy (rot=0°): koniec ramienia - textLen = poczatek tekstu
+                    // Tekst poziomy (rot=0°): poczatek tekstu = koniec ramienia - textLen
                     double textStartX = bar.BarsSpan + clampedNew - textLen;
-                    armText.Position = new Point3d(textStartX, TextArmOffset, 0);
+                    armText.Position  = new Point3d(textStartX, TextArmOffset, 0);
                 }
             }
 
@@ -475,7 +551,7 @@ namespace BricsCadRc.Core
         // XData
         // [0]AppName [1]Mark [2]LayerCode [3]Count [4]Diameter
         // [5]Spacing [6]Direction [7]Position [8]LengthA
-        // [9]BarsSpan [10]ArmTotalLen [11]TextLen (stala, z GeometricExtents)
+        // [9]BarsSpan [10]ArmTotalLen [11]TextLen [12]LeaderHorizontal [13]LeaderRight
         // ----------------------------------------------------------------
 
         internal static void WriteAnnotXData(Entity entity, BarData bar)
@@ -492,7 +568,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ArmTotalLen),
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.TextLen)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.TextLen),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderHorizontal ? 1 : 0)),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderRight ? 1 : 0))
             );
         }
 
@@ -519,6 +597,8 @@ namespace BricsCadRc.Core
                 bd.ArmTotalLen = (double)v[10].Value;
             }
             if (v.Length >= 12) bd.TextLen = (double)v[11].Value;
+            if (v.Length >= 13) bd.LeaderHorizontal = (short)v[12].Value == 1;
+            if (v.Length >= 14) bd.LeaderRight       = (short)v[13].Value == 1;
             return bd;
         }
 

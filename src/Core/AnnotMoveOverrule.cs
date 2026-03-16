@@ -77,9 +77,16 @@ namespace BricsCadRc.Core
 
                 // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
                 // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
-                Point3d armTop = barAnnot.Direction == "X"
-                    ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                    : new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0);
+                Point3d armTop;
+                if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                    armTop = new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0);
+                else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
+                {
+                    double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
+                    armTop = new Point3d(ins.X + hDir * barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
+                }
+                else
+                    armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
                 gripPoints.Add(armTop);  // [1] arm end
                 return;
             }
@@ -115,10 +122,17 @@ namespace BricsCadRc.Core
                 var barAnnot = AnnotationEngine.ReadAnnotXData(br);
                 if (barAnnot != null)
                 {
-                    var ins    = br.Position;
-                    Point3d armTop = barAnnot.Direction == "X"
-                        ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                        : new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0);
+                    var ins = br.Position;
+                    Point3d armTop;
+                    if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                        armTop = new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0);
+                    else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
+                    {
+                        double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        armTop = new Point3d(ins.X + hDir * barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
+                    }
+                    else
+                        armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
                     isGrip1 = IsNear(gd.GripPoint, armTop);
                     break;
                 }
@@ -192,9 +206,12 @@ namespace BricsCadRc.Core
                     if (!_dragOrigArm.ContainsKey(handle))
                         _dragOrigArm[handle] = barAnnot.ArmTotalLen;
 
-                    // X: arm pionowe — drag w Y; Y: arm poziome — drag w X
-                    double delta = barAnnot.Direction == "X" ? offset.Y : offset.X;
-                    double newArmTotalLen = Math.Max(200.0, _dragOrigArm[handle] + delta);
+                    // X pionowe: drag w Y; X poziome (leaderHorizontal): drag w X*hDir; Y: drag w X
+                    double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
+                    double delta = (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                        ? offset.Y
+                        : offset.X * hDir;
+                    double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength, _dragOrigArm[handle] + delta);
                     AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
                 }
                 else
@@ -208,10 +225,12 @@ namespace BricsCadRc.Core
 
                     var origPos = _dragOrigPos[handle];
                     // Ogranicz ruch do osi zbrojenia, licząc od origPos (nie od aktualnej pozycji)
-                    double targetX = barAnnot.Direction == "X"
-                        ? origPos.X + offset.X : origPos.X;
-                    double targetY = barAnnot.Direction == "Y"
-                        ? origPos.Y + offset.Y : origPos.Y;
+                    double targetX = (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
+                        ? origPos.X   // leaderHorizontal: X zablokowany (ramię kontroluje dystans)
+                        : origPos.X + offset.X;
+                    double targetY = (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                        ? origPos.Y   // pionowy leader: Y zablokowany
+                        : origPos.Y + offset.Y;
                     var target = new Point3d(targetX, targetY, origPos.Z);
                     entity.TransformBy(Matrix3d.Displacement(target - br.Position));
                 }
