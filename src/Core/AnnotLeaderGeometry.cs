@@ -97,6 +97,42 @@ namespace BricsCadRc.Core
             return result;
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // Czysta logika geometrii bloku annotacji — testowalna bez BRX
+        // ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Oblicza armTotalLen = długość od początku ramienia do końca tekstu.
+        /// Dla obu trybów: arm kończy się dokładnie przy ostatnim znaku tekstu.
+        /// </summary>
+        public static double ComputeArmTotalLen(double armLength, double textLen)
+            => armLength + textLen;
+
+        /// <summary>
+        /// Pozycja X początku tekstu dla leaderHorizontal=True.
+        /// Dla TextLeft  (hDir= 1): textStartX + textLen = hDir*armTotalLen (koniec arm)
+        /// Dla TextRight (hDir=-1): textStartX - textLen = hDir*armTotalLen (koniec arm)
+        /// W obu przypadkach: hDir*(armTotalLen - textLen).
+        /// </summary>
+        public static double ComputeTextStartX(double hDir, double armTotalLen, double textLen)
+            => hDir * (armTotalLen - textLen);
+
+        /// <summary>
+        /// Ogranicza wektor translacji do dopuszczalnej osi dla bloku annotacji.
+        ///   dir="X", leaderHorizontal=True  → tylko Y (arm boczny, ruch góra-dół wzdłuż prętów)
+        ///   dir="X", leaderHorizontal=False → tylko X (arm pionowy, ruch lewo-prawo)
+        ///   dir="Y"                         → tylko Y
+        /// </summary>
+        public static (double tx, double ty) ConstrainTranslation(
+            string dir, bool isLeaderHorizontal, double tx, double ty)
+        {
+            if (dir == "X" && isLeaderHorizontal)
+                return (0.0, ty);
+            if (dir == "X")
+                return (tx, 0.0);
+            return (0.0, ty);   // dir == "Y"
+        }
+
         /// <summary>Oblicza InsertPt bloku annotacji po kliknięciu użytkownika.</summary>
         public static Pt ComputeInsertPt(
             double cursorX, double cursorY,

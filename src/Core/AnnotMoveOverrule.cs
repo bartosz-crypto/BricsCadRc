@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -82,8 +83,9 @@ namespace BricsCadRc.Core
                     armTop = new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0);
                 else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
                 {
-                    double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
-                    armTop = new Point3d(ins.X + hDir * barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
+                    double currentMidY = AnnotationEngine.GetArmMidY(br);
+                    double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
+                    armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY, 0);
                 }
                 else
                     armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
@@ -128,8 +130,9 @@ namespace BricsCadRc.Core
                         armTop = new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0);
                     else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
                     {
-                        double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
-                        armTop = new Point3d(ins.X + hDir * barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
+                        double currentMidY2 = AnnotationEngine.GetArmMidY(br);
+                        double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY2, 0);
                     }
                     else
                         armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
@@ -212,6 +215,23 @@ namespace BricsCadRc.Core
                         ? offset.Y
                         : offset.X * hDir;
                     double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength, _dragOrigArm[handle] + delta);
+
+                    if (barAnnot.LeaderHorizontal)
+                    {
+                        // Grip[1] dla leaderHorizontal: X zmienia długość arm, Y przesuwa arm w bloku
+                        if (!_dragOrigPos.ContainsKey(handle))
+                        {
+                            var barForMid = AnnotationEngine.ReadAnnotXData(br);
+                            double initMidY = (barForMid != null && !double.IsNaN(barForMid.ArmMidY))
+                                ? barForMid.ArmMidY
+                                : AnnotationEngine.GetArmMidY(br);
+                            _dragOrigPos[handle] = new Point3d(0, initMidY, 0);
+                        }
+                        double newMidY = _dragOrigPos[handle].Y + offset.Y;
+                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidY);
+                        return;
+                    }
+                    // dla !leaderHorizontal: zostaje stara logika UpdateArmInBlock
                     AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
                 }
                 else
@@ -228,11 +248,12 @@ namespace BricsCadRc.Core
                     double targetX = (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
                         ? origPos.X   // leaderHorizontal: X zablokowany (ramię kontroluje dystans)
                         : origPos.X + offset.X;
-                    double targetY = (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
-                        ? origPos.Y   // pionowy leader: Y zablokowany
+                    double targetY = (barAnnot.Direction == "X")
+                        ? origPos.Y   // X-bars: Y zawsze zablokowany (romby muszą trafiać w pręty)
                         : origPos.Y + offset.Y;
                     var target = new Point3d(targetX, targetY, origPos.Z);
-                    entity.TransformBy(Matrix3d.Displacement(target - br.Position));
+                    br.UpgradeOpen();
+                    br.Position = new Point3d(targetX, targetY, origPos.Z);
                 }
                 return;
             }
@@ -281,8 +302,13 @@ namespace BricsCadRc.Core
             if (dir == null) { base.TransformBy(entity, transform); return; }
 
             var t = transform.Translation;
-            double tx = dir == "X" ? t.X : 0.0;
-            double ty = dir == "Y" ? t.Y : 0.0;
+
+            // leaderHorizontal (arm boczny dla X-bars): blokujemy X, przepuszczamy Y
+            bool isLeaderHorizontal = false;
+            var barAnnotLH = AnnotationEngine.ReadAnnotXData(br);
+            if (barAnnotLH != null) isLeaderHorizontal = barAnnotLH.LeaderHorizontal;
+
+            var (tx, ty) = AnnotLeaderGeometry.ConstrainTranslation(dir, isLeaderHorizontal, t.X, t.Y);
 
             var elems = new double[16];
             for (int row = 0; row < 4; row++)

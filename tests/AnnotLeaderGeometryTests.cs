@@ -155,5 +155,119 @@ namespace BricsCadRc.Tests
             Assert.That(pt.X, Is.EqualTo(cursorX), "InsertPt.X = cursor.X");
             Assert.That(pt.Y, Is.EqualTo(BarMinH),  "InsertPt.Y = barMinCoordH (dolna krawędź prętów)");
         }
+
+        // ─────────────────────────────────────────────────────────────────
+        // FIX 1 — ArmTotalLen: arm kończy się przy końcu tekstu
+        // ─────────────────────────────────────────────────────────────────
+
+        [Test]
+        public void ArmTotalLen_IsArmLengthPlusTextLen()
+        {
+            // Arrange
+            double armLength = 500.0;
+            double textLen   = 200.0;
+
+            // Act
+            double result = ComputeArmTotalLen(armLength, textLen);
+
+            // Assert
+            Assert.That(result, Is.EqualTo(700.0));
+        }
+
+        [Test]
+        public void ArmTotalLen_DoesNotIncludeTextArmOffset()
+        {
+            // Arrange — TextArmOffset=70 NIE wchodzi do armTotalLen
+            const double TextArmOffset = 70.0;
+            double armLength = 500.0;
+            double textLen   = 150.0;
+
+            // Act
+            double result = ComputeArmTotalLen(armLength, textLen);
+
+            // Assert
+            Assert.That(result, Is.Not.EqualTo(armLength + TextArmOffset + textLen),
+                "armTotalLen nie powinno zawierać TextArmOffset");
+            Assert.That(result, Is.EqualTo(armLength + textLen));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // FIX 2 — TextStartX: koniec tekstu = koniec linii arm
+        // ─────────────────────────────────────────────────────────────────
+
+        [Test]
+        public void TextStartX_LeaderRight_TextEndAlignsWithArmEnd()
+        {
+            // Arrange
+            double hDir        = 1.0;   // leaderRight
+            double armTotalLen = 700.0;
+            double textLen     = 200.0;
+            double armEndX     = hDir * armTotalLen;  // = 700
+
+            // Act
+            double textStartX = ComputeTextStartX(hDir, armTotalLen, textLen);
+
+            // Assert: TextLeft → text end = textStartX + textLen
+            double textEndX = textStartX + textLen;
+            Assert.That(textEndX, Is.EqualTo(armEndX).Within(0.001),
+                "Prawy koniec tekstu powinien być przy końcu linii arm");
+        }
+
+        [Test]
+        public void TextStartX_LeaderLeft_TextEndAlignsWithArmEnd()
+        {
+            // Arrange
+            double hDir        = -1.0;  // leaderLeft
+            double armTotalLen = 700.0;
+            double textLen     = 200.0;
+            double armEndX     = hDir * armTotalLen;  // = -700
+
+            // Act
+            double textStartX = ComputeTextStartX(hDir, armTotalLen, textLen);
+
+            // Assert: TextRight → Position = right edge, left edge = textStartX - textLen
+            double textLeftEdge = textStartX - textLen;
+            Assert.That(textLeftEdge, Is.EqualTo(armEndX).Within(0.001),
+                "Lewy koniec tekstu (TextRight) powinien być przy końcu linii arm");
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // FIX 3 — ConstrainTranslation: leaderHorizontal przepuszcza Y
+        // ─────────────────────────────────────────────────────────────────
+
+        [Test]
+        public void ConstrainTranslation_XBars_Normal_LocksY_AllowsX()
+        {
+            // Arrange: X-bars, etykieta z góry/dołu — ruch boczny (X)
+            // Act
+            var (tx, ty) = ConstrainTranslation("X", isLeaderHorizontal: false, tx: 100, ty: 50);
+
+            // Assert
+            Assert.That(tx, Is.EqualTo(100), "X dozwolony dla normalnego lidera");
+            Assert.That(ty, Is.EqualTo(0.0), "Y zablokowany dla normalnego lidera");
+        }
+
+        [Test]
+        public void ConstrainTranslation_XBars_LeaderHorizontal_LocksX_AllowsY()
+        {
+            // Arrange: X-bars, etykieta z boku — ruch góra-dół (Y) wzdłuż prętów
+            // Act
+            var (tx, ty) = ConstrainTranslation("X", isLeaderHorizontal: true, tx: 100, ty: 50);
+
+            // Assert
+            Assert.That(tx, Is.EqualTo(0.0), "X zablokowany dla leaderHorizontal");
+            Assert.That(ty, Is.EqualTo(50),  "Y przepuszczony dla leaderHorizontal");
+        }
+
+        [Test]
+        public void ConstrainTranslation_YBars_LocksX_AllowsY()
+        {
+            // Act
+            var (tx, ty) = ConstrainTranslation("Y", isLeaderHorizontal: false, tx: 100, ty: 50);
+
+            // Assert
+            Assert.That(tx, Is.EqualTo(0.0), "X zablokowany dla Y-bars");
+            Assert.That(ty, Is.EqualTo(50),  "Y dozwolony dla Y-bars");
+        }
     }
 }

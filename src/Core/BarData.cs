@@ -75,6 +75,9 @@ namespace BricsCadRc.Core
         /// <summary>Czy etykieta wychodzi w prawo (true) lub w lewo (false) — dotyczy leaderHorizontal=true</summary>
         public bool LeaderRight { get; set; } = true;
 
+        /// <summary>Pozycja Y linii arm w układzie lokalnym bloku. -1 = użyj BarsSpan/2.</summary>
+        public double ArmMidY { get; set; } = double.NaN;
+
         /// <summary>
         /// Handle (hex string) bloku RC_ANNOT powiazanego z tym ukladem pretow.
         /// Zapisywany w XData RC_BAR_BLOCK po utworzeniu annotacji.
