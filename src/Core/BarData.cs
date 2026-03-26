@@ -36,6 +36,12 @@ namespace BricsCadRc.Core
         /// <summary>Wymiar E w mm</summary>
         public double LengthE { get; set; }
 
+        /// <summary>Obliczona lub ręcznie nadpisana długość całkowita pręta w mm.</summary>
+        public double TotalLength { get; set; }
+
+        /// <summary>True gdy użytkownik ręcznie nadpisał obliczoną długość całkowitą.</summary>
+        public bool LengthOverridden { get; set; }
+
         /// <summary>Pozycja: "BOT" lub "TOP"</summary>
         public string Position { get; set; } = "BOT";
 
@@ -86,6 +92,31 @@ namespace BricsCadRc.Core
         /// jest rozlozony wiele razy).
         /// </summary>
         public string AnnotHandle { get; set; } = "";
+
+        /// <summary>Handle (hex) etykiety MLeader powiązanej z prętem (FLOW 1). "" jeśli brak.</summary>
+        public string LabelHandle { get; set; } = "";
+
+        /// <summary>
+        /// Po której stronie linii rozkładu rysuje się symbol (okrąg lub haczyk).
+        /// "Left" = startPt, "Right" = endPt, "Both" = oba końce.
+        /// Dotyczy rozkładu (RC_DISTRIBUTION): L-bar → Left/Right; U-bar → Left/Right/Both.
+        /// </summary>
+        public string SymbolSide { get; set; } = "Right";
+
+        /// <summary>"Auto" lub "Manual" — jak wybrano długość widoku rozkładu.</summary>
+        public string ViewingDirection { get; set; } = "Auto";
+
+        /// <summary>Indeks segmentu polilinii użyty w trybie Manual (-1 = Auto).</summary>
+        public int ViewSegmentIndex { get; set; } = -1;
+
+        /// <summary>
+        /// Kierunek haczyka L-bar (prostopadle do linii rozkładu): "Up" lub "Down".
+        /// "Up" = CCW 90° od kierunku linii; "Down" = CW 90°.
+        /// </summary>
+        public string SymbolDirection { get; set; } = "Up";
+
+        /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
+        public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 
         // ----------------------------------------------------------------
         // Obliczenia wg BS8666

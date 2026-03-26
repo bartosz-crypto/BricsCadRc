@@ -24,6 +24,9 @@
   <ItemGroup>
     <!-- Kompiluje czystą geometrię bezpośrednio — brak zależności od BricsCAD API -->
     <Compile Include="..\src\Core\AnnotLeaderGeometry.cs" />
+    <Compile Include="..\src\Core\BarShape.cs" />
+    <Compile Include="..\src\Core\ShapeCodeLibrary.cs" />
+    <Compile Include="..\src\Core\BarGeometryBuilder.cs" />
   </ItemGroup>
 
 </Project>

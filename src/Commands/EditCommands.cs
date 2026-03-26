@@ -3,7 +3,9 @@ using Bricscad.EditorInput;
 using BricsCadRc.Core;
 using BricsCadRc.Dialogs;
 using Teigha.DatabaseServices;
+using Teigha.Geometry;
 using Teigha.Runtime;
+using Polyline = Teigha.DatabaseServices.Polyline;
 
 namespace BricsCadRc.Commands
 {
@@ -90,6 +92,140 @@ namespace BricsCadRc.Commands
             }
 
             tr.Commit();
+            return ObjectId.Null;
+        }
+
+        /// <summary>
+        /// RC_EDIT_DISTRIBUTION — edytuje istniejący rozkład prętów (RC_BAR_BLOCK).
+        /// Otwiera dialog "Reinforcement detailing" z aktualnymi wartościami,
+        /// pozwala zmienić Viewing Direction i przebudowuje blok.
+        /// </summary>
+        [CommandMethod("RC_EDIT_DISTRIBUTION", CommandFlags.Modal)]
+        public void EditDistribution()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc.Editor;
+            var db  = doc.Database;
+
+            // Krok 1: wybierz rozkład — dowolny entity, potem ResolveBarBlock przez XData/OwnerId
+            // Nie używamy AddAllowedClass (powoduje "Use SetRejectMessage first!" w BRX gdy typ nie pasuje)
+            ObjectId blockRefId = ObjectId.Null;
+            BarData  bar        = null;
+
+            while (true)
+            {
+                var selOpts = new PromptEntityOptions("\nSelect distribution to edit: ");
+                var selResult = ed.GetEntity(selOpts);
+
+                if (selResult.Status != PromptStatus.OK) return;
+
+                using var tr = db.TransactionManager.StartTransaction();
+                var ent = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Entity;
+                if (ent != null)
+                    blockRefId = ResolveBarBlock(ent, tr);
+                tr.Commit();
+
+                if (!blockRefId.IsNull)
+                {
+                    using var tr2 = db.TransactionManager.StartTransaction();
+                    var br2 = tr2.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                    bar = BarBlockEngine.ReadXData(br2);
+                    tr2.Commit();
+                }
+
+                if (bar != null) break;
+
+                ed.WriteMessage("\nTo nie jest rozkład RC — kliknij na linię rozkładu prętów.\n");
+                blockRefId = ObjectId.Null;
+            }
+
+            // Krok 2: dialog z aktualnymi wartościami
+            var dlg = new ReinfDetailingDialog(bar.ViewingDirection ?? "Auto");
+            if (Application.ShowModalWindow(dlg) != true) return;
+
+            // Krok 3: oblicz nową długość widoku
+            double newBarLength;
+            string newViewDir;
+            int    newSegIdx;
+
+            if (dlg.IsManualViewingDirection)
+            {
+                // Manual: użytkownik wskazuje pręt źródłowy i klika segment
+                var barSelOpts = new PromptEntityOptions(
+                    "\nSelect source bar polyline for manual segment [Esc=Auto]: ")
+                    { AllowNone = true };
+                var barSel = ed.GetEntity(barSelOpts);
+
+                if (barSel.Status == PromptStatus.OK)
+                {
+                    newBarLength = BarCommands.GetViewLengthManual(ed, db, barSel.ObjectId, bar);
+                    if (newBarLength <= 0)
+                    {
+                        // Escape podczas kliknięcia segmentu → fallback Auto
+                        newBarLength = BarCommands.GetViewLength(bar);
+                        newViewDir   = "Auto";
+                        newSegIdx    = -1;
+                    }
+                    else
+                    {
+                        newViewDir = "Manual";
+                        newSegIdx  = bar.ViewSegmentIndex;
+                    }
+                }
+                else
+                {
+                    // Escape przy wyborze pręta → fallback Auto
+                    newBarLength = BarCommands.GetViewLength(bar);
+                    newViewDir   = "Auto";
+                    newSegIdx    = -1;
+                }
+            }
+            else
+            {
+                newBarLength = BarCommands.GetViewLength(bar);
+                newViewDir   = "Auto";
+                newSegIdx    = -1;
+            }
+
+            // Krok 4: przebuduj blok
+            BarBlockEngine.RebuildWithNewViewLength(db, blockRefId, newBarLength, newViewDir, newSegIdx);
+
+            ed.WriteMessage(
+                $"\n[RC SLAB] Distribution updated: {bar.Count} bars {bar.Mark}" +
+                $"  viewLength={newBarLength:F0}mm  viewingDir={newViewDir}\n");
+        }
+
+        // ----------------------------------------------------------------
+        // ResolveBarBlock — z dowolnie klikniętego entity zwraca ObjectId
+        // BlockReference z XData RC_BAR_BLOCK (lub ObjectId.Null jeśli nie znaleziono).
+        //
+        // Przypadki:
+        //   1. Użytkownik kliknął samego BlockReference (RC_BAR_BLOCK w model space)
+        //   2. Użytkownik kliknął Line/Circle wewnątrz BTR RC_SLAB_BARS_* — szukamy
+        //      BlockReference przez GetBlockReferenceIds na rodzicu BTR
+        // ----------------------------------------------------------------
+        private static ObjectId ResolveBarBlock(Entity selectedEnt, Transaction tr)
+        {
+            // Przypadek 1: bezpośrednio BlockReference z RC_BAR_BLOCK XData
+            if (selectedEnt is BlockReference directBr)
+            {
+                if (BarBlockEngine.ReadXData(directBr) != null)
+                    return directBr.ObjectId;
+            }
+
+            // Przypadek 2: entity wewnątrz BTR RC_SLAB_BARS_*
+            var ownerBtr = tr.GetObject(selectedEnt.OwnerId, OpenMode.ForRead) as BlockTableRecord;
+            if (ownerBtr == null || !ownerBtr.Name.StartsWith("RC_SLAB_BARS_"))
+                return ObjectId.Null;
+
+            var refs = ownerBtr.GetBlockReferenceIds(true, false);
+            foreach (ObjectId refId in refs)
+            {
+                var br = tr.GetObject(refId, OpenMode.ForRead) as BlockReference;
+                if (br != null && BarBlockEngine.ReadXData(br) != null)
+                    return refId;
+            }
+
             return ObjectId.Null;
         }
 

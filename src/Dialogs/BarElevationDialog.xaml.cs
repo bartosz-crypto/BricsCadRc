@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using BricsCadRc.Core;
-using BricsCadRc.ShapeCodes;
 
 namespace BricsCadRc.Dialogs
 {
@@ -13,82 +13,191 @@ namespace BricsCadRc.Dialogs
     {
         public BarData Result { get; private set; }
 
+        private BarShape _selectedShape;
+        private bool     _lengthOverridden;
+
+        // Tablice RowA..RowE i LabelA..LabelE inicjalizowane po InitializeComponent
+        private Grid[]      _paramRows;
+        private TextBlock[] _paramLabels;
+        private TextBox[]   _paramBoxes;
+
         public BarElevationDialog()
         {
             InitializeComponent();
-            PopulateShapeCodes();
+
+            _paramRows   = new[] { RowA, RowB, RowC, RowD, RowE };
+            _paramLabels = new[] { LabelA, LabelB, LabelC, LabelD, LabelE };
+            _paramBoxes  = new[] { ParamABox, ParamBBox, ParamCBox, ParamDBox, ParamEBox };
+
+            // Domyślny kształt: 00 Straight
+            SelectShape(ShapeCodeLibrary.Get("00"), paramValues: null);
         }
 
-        private void PopulateShapeCodes()
+        // ── Wybór kształtu przez ShapePickerDialog ───────────────────────────
+
+        private void ShapeBtn_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var sc in ShapeCodeLibrary.All)
+            var dlg = new ShapePickerDialog();
+            if (dlg.ShowDialog() != true) return;
+
+            // Synchronizuj Diameter z wybranym w ShapePickerDialog
+            int pickedDia = (int)dlg.Diameter;
+            foreach (ComboBoxItem item in DiameterCombo.Items)
             {
-                var item = new ComboBoxItem
+                if (item.Tag is string tag && int.TryParse(tag, out int d) && d == pickedDia)
                 {
-                    Content = $"{sc.Code}  –  {sc.Description}",
-                    Tag     = sc.Code
-                };
-                ShapeCombo.Items.Add(item);
+                    DiameterCombo.SelectedItem = item;
+                    break;
+                }
             }
-            ShapeCombo.SelectedIndex = 0;
+
+            SelectShape(dlg.SelectedShape, dlg.ParameterValues);
         }
 
-        private void ShapeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void SelectShape(BarShape shape, double[] paramValues)
         {
-            if (ShapeCombo.SelectedItem == null) return;
-            var code = (string)((ComboBoxItem)ShapeCombo.SelectedItem).Tag;
-            var sc   = ShapeCodeLibrary.GetByCode(code);
-            if (sc == null) return;
+            if (shape == null) return;
+            _selectedShape = shape;
 
-            RowB.Visibility = sc.NeedsB ? Visibility.Visible : Visibility.Collapsed;
-            RowC.Visibility = sc.NeedsC ? Visibility.Visible : Visibility.Collapsed;
+            ShapeBtn.Content = $"[{shape.Code}] {shape.Name} ▼";
+
+            UpdateParamRows(shape);
+
+            // Pre-wypełnij pola jeśli mamy wartości (np. z ShapePickerDialog)
+            if (paramValues != null)
+            {
+                for (int i = 0; i < _paramBoxes.Length && i < paramValues.Length; i++)
+                    _paramBoxes[i].Text = paramValues[i].ToString("F0", CultureInfo.InvariantCulture);
+            }
+
+            // Reset override i przelicz długość
+            OverrideCheck.IsChecked = false;
+            _lengthOverridden       = false;
+            TotalLengthBox.IsReadOnly = true;
+            TotalLengthBox.Background = System.Windows.Media.Brushes.WhiteSmoke;
+
+            UpdateLength();
         }
+
+        private void UpdateParamRows(BarShape shape)
+        {
+            for (int i = 0; i < _paramRows.Length; i++)
+            {
+                bool show = i < shape.Parameters.Length;
+                _paramRows[i].Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                if (show)
+                    _paramLabels[i].Text = $"{shape.Parameters[i]} [mm]:";
+            }
+        }
+
+        // ── Live obliczanie długości ─────────────────────────────────────────
+
+        private void ParamBox_TextChanged(object sender, TextChangedEventArgs e) => UpdateLength();
+
+        private void DiameterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateLength();
+
+        private void TotalLengthBox_TextChanged(object sender, TextChangedEventArgs e) { /* handled by override check */ }
+
+        private void OverrideCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            _lengthOverridden         = OverrideCheck.IsChecked == true;
+            TotalLengthBox.IsReadOnly = !_lengthOverridden;
+            TotalLengthBox.Background = _lengthOverridden
+                ? System.Windows.Media.Brushes.White
+                : System.Windows.Media.Brushes.WhiteSmoke;
+
+            if (!_lengthOverridden)
+                UpdateLength();
+        }
+
+        private void UpdateLength()
+        {
+            if (_lengthOverridden || _selectedShape == null || _paramBoxes == null) return;
+
+            int paramCount = _selectedShape.Parameters.Length;
+            var values     = new double[paramCount];
+
+            for (int i = 0; i < paramCount; i++)
+            {
+                string txt = _paramBoxes[i].Text ?? "";
+                if (!double.TryParse(txt, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double v) || v <= 0)
+                {
+                    TotalLengthBox.Text = "";
+                    return;
+                }
+                values[i] = v;
+            }
+
+            try
+            {
+                double len = _selectedShape.CalculateTotalLength(values, GetDiameter());
+                TotalLengthBox.Text = len.ToString("F0", CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                TotalLengthBox.Text = "";
+            }
+        }
+
+        private int GetDiameter()
+        {
+            if (DiameterCombo.SelectedItem is ComboBoxItem item
+                && int.TryParse((string)item.Tag, out int d))
+                return d;
+            return 12;
+        }
+
+        // ── OK / Cancel ──────────────────────────────────────────────────────
 
         private void OK_Click(object sender, RoutedEventArgs e)
         {
-            if (!double.TryParse(ParamABox.Text, out double a) || a <= 0)
+            if (_selectedShape == null)
             {
-                MessageBox.Show("Invalid value for A.", "RC SLAB",
+                MessageBox.Show("Select a shape code.", "RC BAR",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            double b = 0, c = 0;
+            int paramCount = _selectedShape.Parameters.Length;
+            var paramVals  = new double[5]; // A..E
 
-            if (RowB.Visibility == Visibility.Visible)
+            for (int i = 0; i < paramCount; i++)
             {
-                if (!double.TryParse(ParamBBox.Text, out b) || b <= 0)
+                if (!double.TryParse(_paramBoxes[i].Text, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double v) || v <= 0)
                 {
-                    MessageBox.Show("Invalid value for B.", "RC SLAB",
+                    MessageBox.Show($"Invalid value for {_selectedShape.Parameters[i]}.", "RC BAR",
                         MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+                paramVals[i] = v;
             }
 
-            if (RowC.Visibility == Visibility.Visible)
+            if (!double.TryParse(TotalLengthBox.Text, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double totalLen) || totalLen <= 0)
             {
-                if (!double.TryParse(ParamCBox.Text, out c) || c <= 0)
-                {
-                    MessageBox.Show("Invalid value for C.", "RC SLAB",
-                        MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
+                MessageBox.Show("Total length could not be calculated. Fill in all parameters.", "RC BAR",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
 
-            int    diameter  = int.Parse((string)((ComboBoxItem)DiameterCombo.SelectedItem).Tag);
-            string shapeCode = (string)((ComboBoxItem)ShapeCombo.SelectedItem).Tag;
             string layerCode = (string)((ComboBoxItem)LayerCombo.SelectedItem).Tag;
 
             Result = new BarData
             {
-                Diameter  = diameter,
-                ShapeCode = shapeCode,
-                LengthA   = a,
-                LengthB   = b,
-                LengthC   = c,
-                LayerCode = layerCode,          // "BOT" lub "TOP"
-                Position  = layerCode == "BOT" ? "BOT" : "TOP",
-                Direction = "X"                 // domyslnie X; nadpisywane przez RC_DISTRIBUTION
+                Diameter         = GetDiameter(),
+                ShapeCode        = _selectedShape.Code,
+                LengthA          = paramVals[0],
+                LengthB          = paramVals[1],
+                LengthC          = paramVals[2],
+                LengthD          = paramVals[3],
+                LengthE          = paramVals[4],
+                TotalLength      = totalLen,
+                LengthOverridden = _lengthOverridden,
+                LayerCode        = layerCode,
+                Position         = layerCode == "BOT" ? "BOT" : "TOP",
+                Direction        = "X"
             };
 
             DialogResult = true;

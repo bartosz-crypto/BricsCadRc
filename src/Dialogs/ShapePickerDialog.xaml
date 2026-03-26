@@ -1,0 +1,156 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.ShapePickerDialog"
+    Title="Shape Picker – BS8666"
+    Width="490" Height="670"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0"
+    Loaded="Window_Loaded">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Nagłówek -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6">
+            <TextBlock Text="Shape Picker – BS8666" Foreground="White"
+                       FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Margin="0"/>
+        </Border>
+
+        <!-- Sekcja środkowa -->
+        <StackPanel Grid.Row="1" Margin="0,10,0,0">
+
+            <!-- Grid miniaturek -->
+            <ScrollViewer MaxHeight="224" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <UniformGrid x:Name="ShapeGrid" Columns="4"/>
+            </ScrollViewer>
+
+            <Separator Margin="0,10,0,10"/>
+
+            <!-- Średnica -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Diameter:"/>
+                <ComboBox Grid.Column="1" x:Name="DiameterCombo"
+                          SelectionChanged="DiameterCombo_SelectionChanged">
+                    <ComboBoxItem Content="H8"  Tag="8"/>
+                    <ComboBoxItem Content="H10" Tag="10"/>
+                    <ComboBoxItem Content="H12" Tag="12" IsSelected="True"/>
+                    <ComboBoxItem Content="H16" Tag="16"/>
+                    <ComboBoxItem Content="H20" Tag="20"/>
+                    <ComboBoxItem Content="H25" Tag="25"/>
+                    <ComboBoxItem Content="H32" Tag="32"/>
+                    <ComboBoxItem Content="H40" Tag="40"/>
+                </ComboBox>
+            </Grid>
+
+            <!-- Nagłówek parametrów -->
+            <TextBlock Text="Shape parameters:" FontWeight="SemiBold" Margin="0,10,0,0"/>
+
+            <!-- Param A (zawsze widoczny) -->
+            <Grid x:Name="RowA" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="LabelA" Text="A [mm]:"/>
+                <TextBox   Grid.Column="1" x:Name="ParamA" TextChanged="ParamBox_TextChanged"/>
+            </Grid>
+
+            <!-- Param B -->
+            <Grid x:Name="RowB" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="LabelB" Text="B [mm]:"/>
+                <TextBox   Grid.Column="1" x:Name="ParamB" TextChanged="ParamBox_TextChanged"/>
+            </Grid>
+
+            <!-- Param C -->
+            <Grid x:Name="RowC" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="LabelC" Text="C [mm]:"/>
+                <Grid Grid.Column="1">
+                    <TextBox x:Name="ParamC" TextChanged="ParamBox_TextChanged"/>
+                    <TextBlock x:Name="PlaceholderC"
+                               IsHitTestVisible="False"
+                               Foreground="Gray" FontStyle="Italic" FontSize="11"
+                               Margin="6,0,0,0" VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
+                </Grid>
+            </Grid>
+
+            <!-- Param D -->
+            <Grid x:Name="RowD" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="LabelD" Text="D [mm]:"/>
+                <TextBox   Grid.Column="1" x:Name="ParamD" TextChanged="ParamBox_TextChanged"/>
+            </Grid>
+
+            <!-- Param E -->
+            <Grid x:Name="RowE" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" x:Name="LabelE" Text="E [mm]:"/>
+                <TextBox   Grid.Column="1" x:Name="ParamE" TextChanged="ParamBox_TextChanged"/>
+            </Grid>
+
+            <!-- Długość całkowita -->
+            <TextBlock x:Name="TotalLengthLabel"
+                       Text="Total length: –"
+                       FontWeight="SemiBold" FontSize="12"
+                       Foreground="#1E5FA8"
+                       Margin="0,10,0,0"/>
+        </StackPanel>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                    FlowDirection="RightToLeft" Margin="0,10,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
+            <Button x:Name="OkButton" Content="OK" Click="OK_Click"
+                    IsEnabled="False" Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

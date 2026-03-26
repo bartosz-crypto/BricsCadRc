@@ -90,20 +90,30 @@ namespace BricsCadRc.Core
                     // 1. Odczytaj aktualną długość i mark
                     double newLength;
                     string mark;
+                    string shapeCode;
                     using (var tr = db.TransactionManager.StartTransaction())
                     {
                         var pline = tr.GetObject(oid, OpenMode.ForRead) as Polyline;
                         if (pline == null) { tr.Commit(); continue; }
                         var bar = SingleBarEngine.ReadBarXData(pline);
                         if (bar == null) { tr.Commit(); continue; }
-                        newLength = pline.Length;
+                        shapeCode = bar.ShapeCode ?? "00";
                         mark      = bar.Mark;
+
+                        // Tylko shape 00/99 (prosta) — dla innych pline.Length ≠ parametr A
+                        if (shapeCode != "00" && shapeCode != "99")
+                        {
+                            tr.Commit();
+                            continue;
+                        }
+
+                        newLength = pline.Length;
                         // Pomiń jeśli zmiana < 1mm (numeryczna niedokładność)
                         if (Math.Abs(newLength - bar.LengthA) < 1.0) { tr.Commit(); continue; }
                         tr.Commit();
                     }
 
-                    // 2. Zaktualizuj XData.LengthA na polilinii
+                    // 2. Zaktualizuj XData.LengthA na polilinii (tylko shape 00/99)
                     using (var tr = db.TransactionManager.StartTransaction())
                     {
                         var pline = tr.GetObject(oid, OpenMode.ForWrite) as Polyline;

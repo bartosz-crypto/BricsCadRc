@@ -40,9 +40,10 @@ namespace BricsCadRc.ShapeCodes
             new ShapeCode
             {
                 Code = "21",
-                Description = "L-shape (zagiecie na jednym koncu)",
+                Description = "U-bar / stirrup (A = lewe ramie, B = szerokosc, C = prawe ramie)",
                 NeedsB = true,
-                TotalLengthFormula = "A + B - 0.5d"
+                NeedsC = true,
+                TotalLengthFormula = "A + B + C - r - 2d"
             },
             new ShapeCode
             {
@@ -79,7 +80,7 @@ namespace BricsCadRc.ShapeCodes
                 Code = "51",
                 Description = "Strzup zamkniety",
                 NeedsB = true,
-                TotalLengthFormula = "2(A + B) - 3d"
+                TotalLengthFormula = "2(A + B + C) - 2.5r - 5d"
             },
             new ShapeCode
             {

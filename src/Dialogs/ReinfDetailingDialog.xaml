@@ -67,7 +67,11 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Viewing direction:"/>
-            <TextBlock Grid.Column="1" Text="Top" FontWeight="SemiBold"/>
+            <ComboBox x:Name="CbViewingDirection" Grid.Column="1"
+                      SelectedIndex="0" FontSize="12" Height="24">
+                <ComboBoxItem Content="Auto"/>
+                <ComboBoxItem Content="Manual"/>
+            </ComboBox>
         </Grid>
 
         <!-- Przyciski -->

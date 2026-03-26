@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     x:Class="BricsCadRc.Dialogs.BarElevationDialog"
     Title="Reinforcement – Elevation"
-    Width="400" Height="370"
+    Width="400" Height="480"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterScreen"
     Background="#F0F0F0">
@@ -34,23 +34,29 @@
 
     <Grid Margin="14">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 0: Header -->
             <RowDefinition Height="10"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 2: Diameter -->
             <RowDefinition Height="6"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 4: Shape button -->
             <RowDefinition Height="6"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 6: Layer -->
             <RowDefinition Height="10"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 8: "Shape parameters:" header -->
             <RowDefinition Height="6"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 10: Param A -->
             <RowDefinition Height="6"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 12: Param B -->
             <RowDefinition Height="6"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 14: Param C -->
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>   <!-- 16: Param D -->
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>   <!-- 18: Param E -->
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>   <!-- 20: Total length -->
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>   <!-- 22: Buttons -->
         </Grid.RowDefinitions>
 
         <!-- Naglowek -->
@@ -66,7 +72,8 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Diameter:"/>
-            <ComboBox Grid.Column="1" x:Name="DiameterCombo">
+            <ComboBox Grid.Column="1" x:Name="DiameterCombo"
+                      SelectionChanged="DiameterCombo_SelectionChanged">
                 <ComboBoxItem Content="H6"  Tag="6"/>
                 <ComboBoxItem Content="H8"  Tag="8"/>
                 <ComboBoxItem Content="H10" Tag="10"/>
@@ -78,15 +85,18 @@
             </ComboBox>
         </Grid>
 
-        <!-- Shape code -->
+        <!-- Shape button -->
         <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="140"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Shape code:"/>
-            <ComboBox Grid.Column="1" x:Name="ShapeCombo"
-                      SelectionChanged="ShapeCombo_SelectionChanged"/>
+            <Button Grid.Column="1" x:Name="ShapeBtn"
+                    Content="[00] Straight ▼"
+                    HorizontalContentAlignment="Left"
+                    Padding="6,0"
+                    Click="ShapeBtn_Click"/>
         </Grid>
 
         <!-- Layer -->
@@ -105,14 +115,15 @@
         <!-- Shape parameters header -->
         <TextBlock Grid.Row="8" Text="Shape parameters:" FontWeight="SemiBold"/>
 
-        <!-- Param A (zawsze widoczny) -->
-        <Grid Grid.Row="10">
+        <!-- Param A -->
+        <Grid Grid.Row="10" x:Name="RowA">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="140"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="A – length [mm]:"/>
-            <TextBox Grid.Column="1" x:Name="ParamABox" Text="3000"/>
+            <TextBlock Grid.Column="0" x:Name="LabelA" Text="A [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="ParamABox" Text="3000"
+                       TextChanged="ParamBox_TextChanged"/>
         </Grid>
 
         <!-- Param B -->
@@ -121,8 +132,9 @@
                 <ColumnDefinition Width="140"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="B [mm]:"/>
-            <TextBox Grid.Column="1" x:Name="ParamBBox" Text="200"/>
+            <TextBlock Grid.Column="0" x:Name="LabelB" Text="B [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="ParamBBox" Text="200"
+                       TextChanged="ParamBox_TextChanged"/>
         </Grid>
 
         <!-- Param C -->
@@ -131,12 +143,53 @@
                 <ColumnDefinition Width="140"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="C [mm]:"/>
-            <TextBox Grid.Column="1" x:Name="ParamCBox" Text="200"/>
+            <TextBlock Grid.Column="0" x:Name="LabelC" Text="C [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="ParamCBox" Text="200"
+                       TextChanged="ParamBox_TextChanged"/>
+        </Grid>
+
+        <!-- Param D -->
+        <Grid Grid.Row="16" x:Name="RowD" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="LabelD" Text="D [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="ParamDBox" Text="200"
+                       TextChanged="ParamBox_TextChanged"/>
+        </Grid>
+
+        <!-- Param E -->
+        <Grid Grid.Row="18" x:Name="RowE" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="LabelE" Text="E [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="ParamEBox" Text="200"
+                       TextChanged="ParamBox_TextChanged"/>
+        </Grid>
+
+        <!-- Total length -->
+        <Grid Grid.Row="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Total length [mm]:"/>
+            <TextBox   Grid.Column="1" x:Name="TotalLengthBox"
+                       IsReadOnly="True" Background="#F5F5F5"
+                       TextChanged="TotalLengthBox_TextChanged"/>
+            <CheckBox  Grid.Column="2" x:Name="OverrideCheck"
+                       Content="Override" VerticalAlignment="Center"
+                       Margin="8,0,0,0"
+                       Checked="OverrideCheck_Changed"
+                       Unchecked="OverrideCheck_Changed"/>
         </Grid>
 
         <!-- Przyciski -->
-        <StackPanel Grid.Row="16" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="22" Orientation="Horizontal" HorizontalAlignment="Right"
                     FlowDirection="RightToLeft" Margin="0,8,0,0">
             <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
             <Button Content="OK" Click="OK_Click"

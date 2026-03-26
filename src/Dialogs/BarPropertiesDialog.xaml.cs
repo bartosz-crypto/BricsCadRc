@@ -81,7 +81,7 @@ namespace BricsCadRc.Dialogs
                 // Aktualizuj tekst annotacji
                 if (entity is DBText dbText)
                 {
-                    dbText.TextString = $"{_bar.Count} {_bar.Mark} {_bar.LayerCode}";
+                    dbText.TextString = $"{_bar.Count} {_bar.Mark}";
                 }
 
                 // Aktualizuj XData annotacji

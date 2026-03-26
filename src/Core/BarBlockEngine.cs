@@ -133,14 +133,18 @@ namespace BricsCadRc.Core
         {
             string barLayer = LayerManager.GetLayerName(bar.LayerCode);
             var    lw       = DiameterToLineWeight(bar.Diameter);
+            var    cat      = GetSymbolCat(bar.ShapeCode);
 
             for (int i = 0; i < count; i++)
             {
-                double y = i * bar.Spacing;
-                var line = new Line(new Point3d(0, y, 0), new Point3d(barWidth, y, 0))
-                    { Layer = barLayer, LineWeight = lw };
+                double y   = i * bar.Spacing;
+                var    ptS = new Point3d(0, y, 0);
+                var    ptE = new Point3d(barWidth, y, 0);
+                var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
+                AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
+                              bar.SymbolSide, bar.SymbolDirection);
             }
         }
 
@@ -154,15 +158,139 @@ namespace BricsCadRc.Core
         {
             string barLayer = LayerManager.GetLayerName(bar.LayerCode);
             var    lw       = DiameterToLineWeight(bar.Diameter);
+            var    cat      = GetSymbolCat(bar.ShapeCode);
 
             for (int i = 0; i < count; i++)
             {
-                double x = i * bar.Spacing;
-                var line = new Line(new Point3d(x, 0, 0), new Point3d(x, barHeight, 0))
-                    { Layer = barLayer, LineWeight = lw };
+                double x   = i * bar.Spacing;
+                var    ptS = new Point3d(x, 0, 0);
+                var    ptE = new Point3d(x, barHeight, 0);
+                var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
+                AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
+                              bar.SymbolSide, bar.SymbolDirection);
             }
+        }
+
+        // ── Symbol category lookup ─────────────────────────────────────────
+
+        private static readonly HashSet<string> _linkCodes =
+            new HashSet<string> { "51","63","34","35","36","41","46","47" };
+        private static readonly HashSet<string> _ubarCodes =
+            new HashSet<string> { "21","13","12","22","23","24","25","26" };
+        private static readonly HashSet<string> _lbarCodes =
+            new HashSet<string> { "11","14","15","27","28","29","31" };
+
+        public enum BarSymbolCategory { Straight, Link, UBar, LBar }
+
+        private static BarSymbolCategory GetSymbolCat(string code) =>
+            code != null && _linkCodes.Contains(code) ? BarSymbolCategory.Link  :
+            code != null && _ubarCodes.Contains(code) ? BarSymbolCategory.UBar  :
+            code != null && _lbarCodes.Contains(code) ? BarSymbolCategory.LBar  :
+            BarSymbolCategory.Straight;
+
+        /// <summary>Zwraca kategorię symbolu pręta w rzucie z góry.</summary>
+        public static BarSymbolCategory GetSymbolCategory(string shapeCode)
+            => GetSymbolCat(shapeCode);
+
+        /// <summary>
+        /// Dodaje symbol na końcach linii preta w rzucie z góry.
+        ///   Link     → okrąg r=35 na OBU końcach
+        ///   UBar     → okrąg r=35; symbolSide: Left=startPt / Right=endPt / Both=oba
+        ///   LBar     → linia 45° dl.100mm; symbolSide: Left/Right; symbolDir: Up/Down
+        ///   Straight → brak symbolu
+        /// </summary>
+        private static void AddBarSymbols(
+            Transaction tr, BlockTableRecord btr, string layer,
+            BarSymbolCategory cat, Point3d startPt, Point3d endPt,
+            string symbolSide, string symbolDir)
+        {
+            const double SymR    = 35.0;
+            const double HookLen = 100.0;
+            const double Cos45   = 0.7071067811865476;
+
+            switch (cat)
+            {
+                case BarSymbolCategory.Link:
+                    AppendCircle(tr, btr, layer, startPt, SymR);
+                    AppendCircle(tr, btr, layer, endPt,   SymR);
+                    break;
+
+                case BarSymbolCategory.UBar:
+                {
+                    string side = string.IsNullOrEmpty(symbolSide) ? "Right" : symbolSide;
+                    if (side == "Left"  || side == "Both") AppendCircle(tr, btr, layer, startPt, SymR);
+                    if (side == "Right" || side == "Both") AppendCircle(tr, btr, layer, endPt,   SymR);
+                    break;
+                }
+
+                case BarSymbolCategory.LBar:
+                {
+                    // Jednostkowy kierunek linii (startPt → endPt)
+                    double dx  = endPt.X - startPt.X;
+                    double dy  = endPt.Y - startPt.Y;
+                    double len = Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 1e-9) break;
+                    double ux = dx / len, uy = dy / len;
+
+                    // Kierunek prostopadły: Up = CCW 90° = (-uy, ux);  Down = CW 90° = (uy, -ux)
+                    bool   isUp = string.IsNullOrEmpty(symbolDir) || symbolDir != "Down";
+                    double px   = isUp ? -uy :  uy;
+                    double py   = isUp ?  ux : -ux;
+
+                    // Baza haka i składowe kierunkowe zależne od strony
+                    bool    isLeft = !string.IsNullOrEmpty(symbolSide) && symbolSide == "Left";
+                    Point3d hookBase;
+                    double  bx, by;
+                    if (isLeft)
+                    {
+                        hookBase = startPt;
+                        // Przy lewym końcu: hak biegnie WZDŁUŻ (do przodu) + prostopadle → kąt ostry
+                        bx = ux * Cos45 + px * Cos45;
+                        by = uy * Cos45 + py * Cos45;
+                    }
+                    else   // Right (domyślnie)
+                    {
+                        hookBase = endPt;
+                        // Przy prawym końcu: hak COFA SIĘ (wstecz) + prostopadle → kąt ostry
+                        bx = -ux * Cos45 + px * Cos45;
+                        by = -uy * Cos45 + py * Cos45;
+                    }
+
+                    var hookTip  = new Point3d(hookBase.X + HookLen * bx,
+                                               hookBase.Y + HookLen * by, 0);
+
+                    try
+                    {
+                        var dbgEd = Bricscad.ApplicationServices.Application
+                            .DocumentManager.MdiActiveDocument?.Editor;
+                        dbgEd?.WriteMessage(
+                            $"\n[DEBUG L-BAR] startPt=({startPt.X:F1},{startPt.Y:F1})" +
+                            $" endPt=({endPt.X:F1},{endPt.Y:F1})" +
+                            $" lineDirection=({dx:F3},{dy:F3})\n");
+                        dbgEd?.WriteMessage(
+                            $"[DEBUG L-BAR] hookBasePt=({hookBase.X:F1},{hookBase.Y:F1})" +
+                            $" hookEndPt=({hookTip.X:F1},{hookTip.Y:F1})\n");
+                    }
+                    catch { }
+
+                    var hookLine = new Line(hookBase, hookTip) { Layer = layer };
+                    btr.AppendEntity(hookLine);
+                    tr.AddNewlyCreatedDBObject(hookLine, true);
+                    break;
+                }
+
+                // Straight: brak symbolu
+            }
+        }
+
+        private static void AppendCircle(Transaction tr, BlockTableRecord btr,
+            string layer, Point3d center, double radius)
+        {
+            var circle = new Circle(center, Vector3d.ZAxis, radius) { Layer = layer };
+            btr.AppendEntity(circle);
+            tr.AddNewlyCreatedDBObject(circle, true);
         }
 
         // ----------------------------------------------------------------
@@ -272,6 +400,35 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // RebuildWithNewViewLength — zmienia długość prętów (viewLength) i przebudowuje BTR.
+        // Wywoływane przez RC_EDIT_DISTRIBUTION po zmianie Viewing Direction.
+        // ----------------------------------------------------------------
+        public static void RebuildWithNewViewLength(
+            Database db, ObjectId blockRefId,
+            double newBarLength, string viewingDirection, int viewSegmentIndex)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var br  = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+            if (br == null) { tr.Commit(); return; }
+
+            var bar = ReadXData(br);
+            if (bar == null) { tr.Commit(); return; }
+
+            bar.LengthA          = newBarLength;
+            bar.ViewingDirection = viewingDirection ?? "Auto";
+            bar.ViewSegmentIndex = viewSegmentIndex;
+            WriteXData(br, bar);
+
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            EraseAllInBtr(tr, btr);
+
+            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
+            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // Pozycje gripow
         // ----------------------------------------------------------------
 
@@ -305,6 +462,7 @@ namespace BricsCadRc.Core
         // XData: [0]AppName [1]Mark [2]LayerCode [3]Count [4]Diameter
         //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan
         //        [10]Cover  [11]AnnotHandle (hex string bloku RC_ANNOT)
+        //        [12]ShapeCode  [13]SymbolSide  [14]SymbolDirection
         // ----------------------------------------------------------------
 
         public static void EnsureAppIdRegistered(Database db)
@@ -335,7 +493,12 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Cover),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.AnnotHandle ?? "")
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.AnnotHandle     ?? ""),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.ShapeCode       ?? "00"),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolSide        ?? "Right"),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolDirection   ?? "Up"),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.ViewingDirection  ?? "Auto"),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.ViewSegmentIndex)
             );
         }
 
@@ -356,9 +519,14 @@ namespace BricsCadRc.Core
                 Position  = (string)v[7].Value,
                 LengthA   = (double)v[8].Value
             };
-            if (v.Length >= 10) bd.BarsSpan     = (double)v[9].Value;
-            if (v.Length >= 11) bd.Cover        = (double)v[10].Value;
-            if (v.Length >= 12) bd.AnnotHandle  = (string)v[11].Value;
+            if (v.Length >= 10) bd.BarsSpan    = (double)v[9].Value;
+            if (v.Length >= 11) bd.Cover       = (double)v[10].Value;
+            if (v.Length >= 12) bd.AnnotHandle = (string)v[11].Value;
+            if (v.Length >= 13) bd.ShapeCode        = (string)v[12].Value;
+            if (v.Length >= 14) bd.SymbolSide       = (string)v[13].Value;
+            if (v.Length >= 15) bd.SymbolDirection  = (string)v[14].Value;
+            if (v.Length >= 16) bd.ViewingDirection = (string)v[15].Value;
+            if (v.Length >= 17) bd.ViewSegmentIndex = (short)v[16].Value;
             return bd;
         }
 
