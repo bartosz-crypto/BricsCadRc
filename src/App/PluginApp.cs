@@ -23,11 +23,15 @@ namespace BricsCadRc.App
             // Auto-aktualizacja rozkładów po rozciągnięciu polilinii pręta (FEATURE E)
             BarGeometryWatcher.Register();
 
+            // Snap grotu MLeadera (etykieta RC_BAR) z powrotem na pręt po edycji
+            RcMLeaderOverrule.Register();
+
             RibbonBuilder.Build();
         }
 
         public void Terminate()
         {
+            RcMLeaderOverrule.Unregister();
             BarGeometryWatcher.Unregister();
             AnnotMoveOverrule.Unregister();
         }

@@ -117,6 +117,24 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // GetDistributionAxisMidPoint — środek linii rozkładu w układzie świata
+        // ----------------------------------------------------------------
+        public static Point3d GetDistributionAxisMidPoint(
+            BarBlockEngine.BarBlockResult barResult, bool horizontal)
+        {
+            if (horizontal)
+                return new Point3d(
+                    barResult.MaxPoint.X,
+                    barResult.MinPoint.Y + (barResult.MaxPoint.Y - barResult.MinPoint.Y) / 2.0,
+                    0);
+            else
+                return new Point3d(
+                    barResult.MinPoint.X + (barResult.MaxPoint.X - barResult.MinPoint.X) / 2.0,
+                    barResult.MaxPoint.Y,
+                    0);
+        }
+
+        // ----------------------------------------------------------------
         // BuildHorizontal — prety poziome (Direction="X")
         //
         //   Romb i : center=(0, i*spacing),  i=0..count-1

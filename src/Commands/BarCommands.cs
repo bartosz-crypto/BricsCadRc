@@ -417,22 +417,19 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // --- Krok 8: FEATURE J — interaktywne umieszczanie etykiety (dowolny kierunek) ---
-            // barsSpan = długość dist line = (count-1)*finalSpacing
+            // --- Krok 8: FEATURE J — interaktywne umieszczanie etykiety ---
             double barsSpan = (double)(finalCount - 1) * finalSpacing;
-            // anchorPt = centrum rozkładu prętów — punkt odniesienia dla wykrywania kierunku
             Point3d anchorPt = new Point3d(
                 (barResult.MinPoint.X + barResult.MaxPoint.X) / 2.0,
                 (barResult.MinPoint.Y + barResult.MaxPoint.Y) / 2.0, 0);
             var labelJig    = new AnnotLeaderJig(
                 anchorPt, barsSpan,
-                barResult.MinPoint.Y,   // barMinCoordH — dla leadera pionowego
-                barResult.MinPoint.X,   // barMinCoordV — dla leadera poziomego
-                horizontal);            // defaultHorizontal = kierunek prętów
+                barResult.MinPoint.Y,
+                barResult.MinPoint.X,
+                horizontal);
             var labelResult = ed.Drag(labelJig);
             labelJig.ClearTransients();
 
-            // OK = użytkownik kliknął; None/Cancel = auto pozycja
             bool    leaderHorizontal = labelResult.Status == PromptStatus.OK
                 ? labelJig.LeaderHorizontal : horizontal;
             bool    leaderRight      = labelResult.Status == PromptStatus.OK

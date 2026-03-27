@@ -133,7 +133,7 @@ namespace BricsCadRc.Core
         {
             string barLayer = LayerManager.GetLayerName(bar.LayerCode);
             var    lw       = DiameterToLineWeight(bar.Diameter);
-            var    cat      = GetSymbolCat(bar.ShapeCode);
+            var    cat      = ResolveSymbolCat(bar);
 
             for (int i = 0; i < count; i++)
             {
@@ -158,7 +158,7 @@ namespace BricsCadRc.Core
         {
             string barLayer = LayerManager.GetLayerName(bar.LayerCode);
             var    lw       = DiameterToLineWeight(bar.Diameter);
-            var    cat      = GetSymbolCat(bar.ShapeCode);
+            var    cat      = ResolveSymbolCat(bar);
 
             for (int i = 0; i < count; i++)
             {
@@ -193,6 +193,21 @@ namespace BricsCadRc.Core
         /// <summary>Zwraca kategorię symbolu pręta w rzucie z góry.</summary>
         public static BarSymbolCategory GetSymbolCategory(string shapeCode)
             => GetSymbolCat(shapeCode);
+
+        /// <summary>
+        /// Zwraca kategorię symbolu z uwzględnieniem pola SymbolType z XData.
+        /// "None"   → Straight, "Circle" → UBar, "Hook" → LBar, "Auto" → z kodu kształtu.
+        /// </summary>
+        private static BarSymbolCategory ResolveSymbolCat(BarData bar)
+        {
+            switch (bar.SymbolType)
+            {
+                case "None":   return BarSymbolCategory.Straight;
+                case "Circle": return BarSymbolCategory.UBar;
+                case "Hook":   return BarSymbolCategory.LBar;
+                default:       return GetSymbolCat(bar.ShapeCode);
+            }
+        }
 
         /// <summary>
         /// Dodaje symbol na końcach linii preta w rzucie z góry.
@@ -400,6 +415,35 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // RebuildBarEndStyle — zmienia SymbolType/SymbolSide/SymbolDirection i przebudowuje BTR.
+        // Wywoływane przez RC_BAR_END.
+        // ----------------------------------------------------------------
+        public static void RebuildBarEndStyle(
+            Database db, ObjectId blockRefId,
+            string symType, string symSide, string symDir)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var br = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+            if (br == null) { tr.Commit(); return; }
+
+            var bar = ReadXData(br);
+            if (bar == null) { tr.Commit(); return; }
+
+            bar.SymbolType      = symType;
+            bar.SymbolSide      = symSide;
+            bar.SymbolDirection = symDir;
+            WriteXData(br, bar);
+
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            EraseAllInBtr(tr, btr);
+
+            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
+            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // RebuildWithNewViewLength — zmienia długość prętów (viewLength) i przebudowuje BTR.
         // Wywoływane przez RC_EDIT_DISTRIBUTION po zmianie Viewing Direction.
         // ----------------------------------------------------------------
@@ -463,6 +507,7 @@ namespace BricsCadRc.Core
         //        [5]Spacing [6]Direction [7]Position [8]LengthA [9]BarsSpan
         //        [10]Cover  [11]AnnotHandle (hex string bloku RC_ANNOT)
         //        [12]ShapeCode  [13]SymbolSide  [14]SymbolDirection
+        //        [15]ViewingDirection  [16]ViewSegmentIndex  [17]SymbolType  [18]SourceBarHandle
         // ----------------------------------------------------------------
 
         public static void EnsureAppIdRegistered(Database db)
@@ -498,7 +543,11 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolSide        ?? "Right"),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolDirection   ?? "Up"),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.ViewingDirection  ?? "Auto"),
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.ViewSegmentIndex)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.ViewSegmentIndex),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolType        ?? "Auto"), // [17]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SourceBarHandle   ?? ""),    // [18]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelPolyHandle   ?? ""),    // [19]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? "")     // [20]
             );
         }
 
@@ -527,6 +576,10 @@ namespace BricsCadRc.Core
             if (v.Length >= 15) bd.SymbolDirection  = (string)v[14].Value;
             if (v.Length >= 16) bd.ViewingDirection = (string)v[15].Value;
             if (v.Length >= 17) bd.ViewSegmentIndex = (short)v[16].Value;
+            if (v.Length >= 18) bd.SymbolType       = (string)v[17].Value;
+            if (v.Length >= 19) bd.SourceBarHandle  = (string)v[18].Value;
+            if (v.Length >= 20) bd.LabelPolyHandle  = (string)v[19].Value;
+            if (v.Length >= 21) bd.LabelTextHandle  = (string)v[20].Value;
             return bd;
         }
 
@@ -546,6 +599,28 @@ namespace BricsCadRc.Core
                 if (bar == null) { tr.Commit(); return; }
                 bar.AnnotHandle = annotId.Handle.Value.ToString("X8");
                 WriteXData(br, bar);
+                tr.Commit();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Zapisuje handle'e Polyline i DBText etykiety nowego stylu w XData rozkładu.
+        /// Działa zarówno dla BlockReference (RC_SLAB_BARS) jak i Polyline (ViewingDirection="Any").
+        /// </summary>
+        public static void StoreLabelHandles(Database db, ObjectId barEntityId, ObjectId polyId, ObjectId textId)
+        {
+            if (barEntityId.IsNull) return;
+            try
+            {
+                using var tr  = db.TransactionManager.StartTransaction();
+                var ent = tr.GetObject(barEntityId, OpenMode.ForWrite) as Entity;
+                if (ent == null) { tr.Commit(); return; }
+                var bar = ReadXData(ent);
+                if (bar == null) { tr.Commit(); return; }
+                bar.LabelPolyHandle = polyId.IsNull ? "" : polyId.Handle.Value.ToString("X8");
+                bar.LabelTextHandle = textId.IsNull ? "" : textId.Handle.Value.ToString("X8");
+                WriteXData(ent, bar);
                 tr.Commit();
             }
             catch { }

@@ -84,6 +84,12 @@ namespace BricsCadRc.Core
         /// <summary>Pozycja Y linii arm w układzie lokalnym bloku. -1 = użyj BarsSpan/2.</summary>
         public double ArmMidY { get; set; } = double.NaN;
 
+        /// <summary>Punkt końcowy tekstu w układzie lokalnym bloku X (dla etykiety z złamaniem). 0 = brak.</summary>
+        public double TextEndLocalX { get; set; } = 0.0;
+
+        /// <summary>Punkt końcowy tekstu w układzie lokalnym bloku Y (dla etykiety z złamaniem). 0 = brak.</summary>
+        public double TextEndLocalY { get; set; } = 0.0;
+
         /// <summary>
         /// Handle (hex string) bloku RC_ANNOT powiazanego z tym ukladem pretow.
         /// Zapisywany w XData RC_BAR_BLOCK po utworzeniu annotacji.
@@ -103,7 +109,21 @@ namespace BricsCadRc.Core
         /// </summary>
         public string SymbolSide { get; set; } = "Right";
 
-        /// <summary>"Auto" lub "Manual" — jak wybrano długość widoku rozkładu.</summary>
+        /// <summary>
+        /// Override symbolu końca pręta: "Auto" = z kodu kształtu, "None" / "Circle" / "Hook" = explicit.
+        /// </summary>
+        public string SymbolType { get; set; } = "Auto";
+
+        /// <summary>Handle źródłowej polilinii pręta (RC_SINGLE_BAR) — tylko dla ViewingDirection="Any".</summary>
+        public string SourceBarHandle { get; set; } = "";
+
+        /// <summary>Handle (hex) Polyline etykiety nowego stylu (DistAnnotEngine). "" jeśli brak.</summary>
+        public string LabelPolyHandle { get; set; } = "";
+
+        /// <summary>Handle (hex) DBText etykiety nowego stylu (DistAnnotEngine). "" jeśli brak.</summary>
+        public string LabelTextHandle { get; set; } = "";
+
+        /// <summary>"Auto" / "Manual" / "Any" — jak wybrano długość widoku rozkładu.</summary>
         public string ViewingDirection { get; set; } = "Auto";
 
         /// <summary>Indeks segmentu polilinii użyty w trybie Manual (-1 = Auto).</summary>

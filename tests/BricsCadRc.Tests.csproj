@@ -27,6 +27,7 @@
     <Compile Include="..\src\Core\BarShape.cs" />
     <Compile Include="..\src\Core\ShapeCodeLibrary.cs" />
     <Compile Include="..\src\Core\BarGeometryBuilder.cs" />
+    <Compile Include="..\src\Core\MLeaderSnapGeometry.cs" />
   </ItemGroup>
 
 </Project>

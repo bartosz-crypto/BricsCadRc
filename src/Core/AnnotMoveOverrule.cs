@@ -79,7 +79,12 @@ namespace BricsCadRc.Core
                 // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
                 // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
                 Point3d armTop;
-                if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                // Etykieta z złamaniem: grip[1] przy końcu tekstu (TextEndLocal)
+                if (barAnnot.TextEndLocalX != 0.0 || barAnnot.TextEndLocalY != 0.0)
+                {
+                    armTop = new Point3d(ins.X + barAnnot.TextEndLocalX, ins.Y + barAnnot.TextEndLocalY, 0);
+                }
+                else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
                     armTop = new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0);
                 else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
                 {

@@ -65,6 +65,7 @@ namespace BricsCadRc.App
 
             src.Items.Add(MakeButton("Edytuj pret",     "RC_EDIT_BAR",           "Edytuj rozstaw, liczbe lub opis wybranego preta"));
             src.Items.Add(MakeButton("Edytuj rozklad",  "RC_EDIT_DISTRIBUTION",  "Edytuj viewing direction istniejacego rozkladu pretow"));
+            src.Items.Add(MakeButton("Koniec preta",    "RC_BAR_END",            "Edytuj symbol konca preta w rozkladzie (None/Circle/Hook)"));
             src.Items.Add(MakeButton("Aktualizuj",      "RC_UPDATE_BAR",         "Aktualizuje dlugosc pretow w rozkladach po edycji geometrii polilinii"));
             src.Items.Add(MakeButton("Repr. pret",      "RC_SET_REPR_BAR",       "Ustaw wybrany pret jako reprezentatywny (ukryj pozostale)"));
             src.Items.Add(MakeButton("Pokaz wszystkie", "RC_SHOW_ALL_BARS",      "Przywroc widocznosc wszystkich pretow w ukladzie"));

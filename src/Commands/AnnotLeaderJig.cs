@@ -45,6 +45,9 @@ namespace BricsCadRc.Commands
         /// <summary>Etykieta idzie w prawo (cursor.X >= anchorPt.X).</summary>
         public bool LeaderRight => _cursor.X >= _anchorPt.X;
 
+        /// <summary>Ostatnia pozycja kursora — używana jako punkt złamania (bend).</summary>
+        public Point3d LastCursorPt => _cursor;
+
         public AnnotLeaderJig(
             Point3d anchorPt,
             double  barsSpan,
