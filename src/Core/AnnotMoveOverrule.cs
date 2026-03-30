@@ -74,7 +74,11 @@ namespace BricsCadRc.Core
                 _dragOrigPos.Remove(hv);
 
                 var ins = br.Position;
-                gripPoints.Add(ins);  // [0] lateral
+                // Grip[0]: środek dist line (nie insertPt)
+                Point3d grip0 = (barAnnot.Direction == "X")
+                    ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0, 0)
+                    : new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0);
+                gripPoints.Add(grip0);  // [0] lateral
 
                 // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
                 // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
@@ -95,6 +99,11 @@ namespace BricsCadRc.Core
                 else
                     armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
                 gripPoints.Add(armTop);  // [1] arm end
+
+                var edGrip = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
+                edGrip?.WriteMessage($"\n[DEBUG GRIPS] grip[0]=({grip0.X:F1},{grip0.Y:F1}) grip[1]=({armTop.X:F1},{armTop.Y:F1})" +
+                                     $" leaderH={barAnnot.LeaderHorizontal} leaderRight={barAnnot.LeaderRight}" +
+                                     $" ins=({ins.X:F1},{ins.Y:F1}) armTotalLen={barAnnot.ArmTotalLen:F1} midY={AnnotationEngine.GetArmMidY(br):F1}");
                 return;
             }
 
@@ -161,8 +170,14 @@ namespace BricsCadRc.Core
             if (br == null) { base.MoveGripPointsAt(entity, indices, offset); return; }
 
             bool isGrip1 = false;
+            var idxList = new System.Text.StringBuilder();
             foreach (int idx in indices)
-                if (idx == 1) { isGrip1 = true; break; }
+            {
+                idxList.Append(idx).Append(',');
+                if (idx == 1) isGrip1 = true;
+            }
+            Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
+                .WriteMessage($"\n[DEBUG GRIPS] MoveGripPointsAt indices=[{idxList}] isGrip1={isGrip1} offset=({offset.X:F1},{offset.Y:F1})");
 
             ApplyGripMove(entity, br, offset, isGrip1);
         }
@@ -223,7 +238,7 @@ namespace BricsCadRc.Core
 
                     if (barAnnot.LeaderHorizontal)
                     {
-                        // Grip[1] dla leaderHorizontal: X zmienia długość arm, Y przesuwa arm w bloku
+                        // Grip[1] dla leaderHorizontal: X zmienia długość arm, Y przesuwa kink (midY)
                         if (!_dragOrigPos.ContainsKey(handle))
                         {
                             var barForMid = AnnotationEngine.ReadAnnotXData(br);
@@ -232,7 +247,11 @@ namespace BricsCadRc.Core
                                 : AnnotationEngine.GetArmMidY(br);
                             _dragOrigPos[handle] = new Point3d(0, initMidY, 0);
                         }
-                        double newMidY = _dragOrigPos[handle].Y + offset.Y;
+                        double newMidY  = _dragOrigPos[handle].Y + offset.Y;
+                        double hDirDbg  = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        double armEndX  = hDirDbg * newArmTotalLen;
+                        Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
+                            .WriteMessage($"\n[DEBUG HORIZ GRIP] gripDelta.X={offset.X:F1} gripDelta.Y={offset.Y:F1} newMidY={newMidY:F1} newArmEndX={armEndX:F1}");
                         AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidY);
                         return;
                     }
@@ -249,12 +268,13 @@ namespace BricsCadRc.Core
                         _dragOrigPos[handle] = br.Position;
 
                     var origPos = _dragOrigPos[handle];
-                    // Ogranicz ruch do osi zbrojenia, licząc od origPos (nie od aktualnej pozycji)
-                    double targetX = (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
-                        ? origPos.X   // leaderHorizontal: X zablokowany (ramię kontroluje dystans)
-                        : origPos.X + offset.X;
+                    // X-bars: X wolny (wzdłuż pręta), Y zablokowany
+                    // Y-bars: Y wolny, X zablokowany
+                    double targetX = (barAnnot.Direction == "X")
+                        ? origPos.X + offset.X
+                        : origPos.X;
                     double targetY = (barAnnot.Direction == "X")
-                        ? origPos.Y   // X-bars: Y zawsze zablokowany (romby muszą trafiać w pręty)
+                        ? origPos.Y
                         : origPos.Y + offset.Y;
                     var target = new Point3d(targetX, targetY, origPos.Z);
                     br.UpgradeOpen();

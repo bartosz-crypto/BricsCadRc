@@ -63,10 +63,14 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    // Etykieta z boku: wychodzi z dist line na wysokości kursora
-                    result.Seg1Start = new Pt(anchorX, cursorY);
-                    result.Seg1End   = new Pt(cursorX, cursorY);
-                    result.ArmEnd    = new Pt(cursorX, cursorY + vDir * armLen);
+                    // Etykieta z boku — zagięte ramię: pionowy stem od środka dist line, potem poziomy arm
+                    // Seg1Start = środek dist line (barsSpan/2 od góry)
+                    // Seg1End   = punkt zagięcia na wysokości kursora
+                    // ArmEnd    = kursor (koniec poziomego arm)
+                    double centerY = anchorY - barsSpan / 2.0;
+                    result.Seg1Start = new Pt(anchorX, centerY);
+                    result.Seg1End   = new Pt(anchorX, cursorY);
+                    result.ArmEnd    = new Pt(cursorX, cursorY);
                 }
             }
             else
@@ -119,18 +123,16 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Ogranicza wektor translacji do dopuszczalnej osi dla bloku annotacji.
-        ///   dir="X", leaderHorizontal=True  → tylko Y (arm boczny, ruch góra-dół wzdłuż prętów)
-        ///   dir="X", leaderHorizontal=False → tylko X (arm pionowy, ruch lewo-prawo)
-        ///   dir="Y"                         → tylko Y
+        ///   dir="X"  → tylko X (ruch wzdłuż pręta), Y zablokowany
+        ///   dir="Y"  → tylko Y, X zablokowany
+        /// leaderHorizontal nie zmienia osi ruchu — etykieta zawsze przesuwa się wzdłuż pręta.
         /// </summary>
         public static (double tx, double ty) ConstrainTranslation(
             string dir, bool isLeaderHorizontal, double tx, double ty)
         {
-            if (dir == "X" && isLeaderHorizontal)
-                return (0.0, ty);
             if (dir == "X")
-                return (tx, 0.0);
-            return (0.0, ty);   // dir == "Y"
+                return (tx, 0.0);   // X-bars: ruch wzdłuż X, Y zablokowany
+            return (0.0, ty);       // Y-bars: ruch wzdłuż Y, X zablokowany
         }
 
         /// <summary>Oblicza InsertPt bloku annotacji po kliknięciu użytkownika.</summary>

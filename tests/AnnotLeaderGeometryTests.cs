@@ -61,24 +61,27 @@ namespace BricsCadRc.Tests
         // CASE 2: X-bars, kursor Z BOKU (leaderVertical=False)
         // ─────────────────────────────────────────────────────────────────
         [Test]
-        public void XBars_CursorSide_LeaderExitsFromSideOfDist()
+        public void XBars_CursorSide_LeaderBentStemThenHorizontalArm()
         {
+            // Nowa geometria: pionowy stem od środka dist line → punkt zagięcia → poziomy arm
             double cursorX = AnchorX_H + 2000; // wyraźnie w bok
-            double cursorY = AnchorY_H - 1200; // gdzieś w połowie dist line
+            double cursorY = AnchorY_H - 600;  // powyżej środka dist line (środek = AnchorY_H - 1200)
 
             var pts = Compute(AnchorX_H, AnchorY_H, BarsSpan_H, cursorX, cursorY, barsHorizontal: true, Arm);
 
-            // Seg1Start powinien być na dist line na wysokości kursora
+            double centerY = AnchorY_H - BarsSpan_H / 2.0; // 2451 - 1200 = 1251
+
+            // Seg1Start = środek dist line
             Assert.That(pts.Seg1Start.X, Is.EqualTo(AnchorX_H), "Seg1Start.X na dist line");
-            Assert.That(pts.Seg1Start.Y, Is.EqualTo(cursorY), "Seg1Start.Y = cursor.Y (poziomy wyjazd z dist)");
+            Assert.That(pts.Seg1Start.Y, Is.EqualTo(centerY).Within(1), "Seg1Start.Y = środek dist line");
 
-            // Seg1End powinien iść poziomo do kursora
-            Assert.That(pts.Seg1End.X, Is.EqualTo(cursorX), "Seg1End.X = cursor.X");
-            Assert.That(pts.Seg1End.Y, Is.EqualTo(cursorY), "Seg1End poziomo — Y bez zmian");
+            // Seg1End = punkt zagięcia (stem pionowy do cursor Y)
+            Assert.That(pts.Seg1End.X, Is.EqualTo(AnchorX_H), "Seg1End.X na dist line (stem pionowy)");
+            Assert.That(pts.Seg1End.Y, Is.EqualTo(cursorY), "Seg1End.Y = cursor.Y (punkt zagięcia)");
 
-            // ArmEnd powinien iść pionowo od Seg1End
-            Assert.That(pts.ArmEnd.X, Is.EqualTo(cursorX), "Arm pionowy — X bez zmian");
-            Assert.That(pts.ArmEnd.Y, Is.Not.EqualTo(cursorY).Within(1), "Arm odchodzi w górę/dół");
+            // ArmEnd = kursor (arm poziomy)
+            Assert.That(pts.ArmEnd.X, Is.EqualTo(cursorX), "ArmEnd.X = cursor.X (koniec poziomego arm)");
+            Assert.That(pts.ArmEnd.Y, Is.EqualTo(cursorY), "ArmEnd.Y = cursor.Y (arm poziomy)");
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -248,15 +251,13 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void ConstrainTranslation_XBars_LeaderHorizontal_LocksX_AllowsY()
+        public void ConstrainTranslation_XBars_LeaderHorizontal_AllowsX_LocksY()
         {
-            // Arrange: X-bars, etykieta z boku — ruch góra-dół (Y) wzdłuż prętów
-            // Act
+            // X-bars, etykieta z boku — grip[0] przesuwa wzdłuż pręta (oś X wolna, Y zablokowany)
             var (tx, ty) = ConstrainTranslation("X", isLeaderHorizontal: true, tx: 100, ty: 50);
 
-            // Assert
-            Assert.That(tx, Is.EqualTo(0.0), "X zablokowany dla leaderHorizontal");
-            Assert.That(ty, Is.EqualTo(50),  "Y przepuszczony dla leaderHorizontal");
+            Assert.That(tx, Is.EqualTo(100), "X wolny — ruch wzdłuż pręta");
+            Assert.That(ty, Is.EqualTo(0.0), "Y zablokowany");
         }
 
         [Test]

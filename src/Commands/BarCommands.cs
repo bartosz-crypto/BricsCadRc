@@ -417,25 +417,87 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // --- Krok 8: FEATURE J — interaktywne umieszczanie etykiety ---
+            // --- Krok 8: 3-stage label placement ---
             double barsSpan = (double)(finalCount - 1) * finalSpacing;
-            Point3d anchorPt = new Point3d(
-                (barResult.MinPoint.X + barResult.MaxPoint.X) / 2.0,
-                (barResult.MinPoint.Y + barResult.MaxPoint.Y) / 2.0, 0);
-            var labelJig    = new AnnotLeaderJig(
-                anchorPt, barsSpan,
-                barResult.MinPoint.Y,
-                barResult.MinPoint.X,
-                horizontal);
-            var labelResult = ed.Drag(labelJig);
-            labelJig.ClearTransients();
 
-            bool    leaderHorizontal = labelResult.Status == PromptStatus.OK
-                ? labelJig.LeaderHorizontal : horizontal;
-            bool    leaderRight      = labelResult.Status == PromptStatus.OK
-                ? labelJig.LeaderRight : true;
-            Point3d? insertOverride  = labelResult.Status == PromptStatus.OK
-                ? labelJig.InsertPt : (Point3d?)null;
+            bool     leaderHorizontal = false;
+            bool     leaderRight      = true;
+            Point3d? insertOverride   = null;
+
+            if (horizontal) // X-bars: 3-etapowy JIG
+            {
+                double minY = barResult.MinPoint.Y;
+                double dotR = AnnotationEngine.DotRadius;
+
+                // ── ETAP 1: pozycja etykiety wzdłuż pręta (ось X) ──────────
+                var jig1 = new AnnotLabelPositionJig(
+                    minY, barResult.MaxPoint.X, barsSpan, finalSpacing, finalCount, true, dotR);
+                var res1 = ed.Drag(jig1);
+                jig1.ClearTransients();
+                if (res1.Status == PromptStatus.Cancel) return;
+
+                if (res1.Status == PromptStatus.OK)
+                {
+                    double  labelX     = jig1.LabelPos;
+                    var     distCenter = new Point3d(labelX, minY + barsSpan / 2.0, 0);
+                    insertOverride     = new Point3d(labelX, minY, 0);
+
+                    // ── ETAP 2: kierunek etykiety ───────────────────────────
+                    var jig2 = new AnnotLabelDirectionJig(
+                        distCenter, labelX, minY, barsSpan, true, dotR, finalCount, finalSpacing);
+                    var res2 = ed.Drag(jig2);
+                    jig2.ClearTransients();
+                    if (res2.Status == PromptStatus.Cancel) return;
+
+                    if (res2.Status == PromptStatus.OK)
+                    {
+                        var direction = jig2.Direction;
+                        var kinkPt    = jig2.KinkPt;
+
+                        if (direction == LabelDirection.Left || direction == LabelDirection.Right)
+                        {
+                            // Poziome ramię od środka — brak ETAP 3
+                            leaderHorizontal  = true;
+                            leaderRight       = (direction == LabelDirection.Right);
+                            sourceBar.ArmMidY = barsSpan / 2.0;
+                        }
+                        else // Up/Down: ETAP 3 — złamanie lub zatwierdzenie
+                        {
+                            var jig3 = new AnnotLabelBendJig(
+                                distCenter, kinkPt,
+                                labelX, minY, barsSpan, true, dotR, finalCount, finalSpacing);
+                            var res3 = ed.Drag(jig3);
+                            jig3.ClearTransients();
+                            if (res3.Status == PromptStatus.Cancel) return;
+
+                            if (res3.Status == PromptStatus.OK)
+                            {
+                                // Klik = złamanie w bok
+                                leaderHorizontal  = true;
+                                leaderRight       = jig3.CursorPt.X >= labelX;
+                                // ArmMidY w układzie lokalnym bloku: kinkPt - insertPt (nie minY!)
+                                sourceBar.ArmMidY = kinkPt.Y - insertOverride.Value.Y;
+                                ed.WriteMessage($"\n[DEBUG ARMMIDY] kinkPt.Y={kinkPt.Y:F1} minY={minY:F1} insertPt.Y={insertOverride.Value.Y:F1} barsSpan={barsSpan:F1} ArmMidY={sourceBar.ArmMidY:F1}" +
+                                                $"\n[DEBUG] insertPt.Y={insertOverride.Value.Y:F1} vs minY={minY:F1} – czy są różne? {(Math.Abs(insertOverride.Value.Y - minY) > 0.01 ? "TAK" : "NIE")}");
+
+                            }
+                            // else Enter = prosta pionowa etykieta (leaderHorizontal=false)
+                        }
+                    }
+                    else
+                    {
+                        // Enter po ETAP 2 = prosta pionowa bez kierunku
+                        leaderHorizontal = false;
+                    }
+                }
+                // else Enter po ETAP 1 = auto placement (insertOverride=null, leaderHorizontal=false)
+            }
+            else // Y-bars: auto placement
+            {
+                leaderHorizontal = false;
+                leaderRight      = true;
+                insertOverride   = null;
+            }
 
             // --- Krok 9: Annotacja ---
             var annotResult = AnnotationEngine.CreateLeader(
