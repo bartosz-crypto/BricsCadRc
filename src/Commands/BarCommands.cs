@@ -422,29 +422,37 @@ namespace BricsCadRc.Commands
 
             bool     leaderHorizontal = false;
             bool     leaderRight      = true;
+            bool     leaderUp         = true;
             Point3d? insertOverride   = null;
 
-            if (horizontal) // X-bars: 3-etapowy JIG
+            // ── 3-etapowy JIG — wspólna logika dla X-bars i Y-bars ──────────
+            // X-bars (horizontal=true):  minFixed=minY, basePos=maxX, freeAxis=X
+            // Y-bars (horizontal=false): minFixed=minX, basePos=maxY, freeAxis=Y
             {
-                double minY = barResult.MinPoint.Y;
-                double dotR = AnnotationEngine.DotRadius;
+                double minFixed = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
+                double basePos  = horizontal ? barResult.MaxPoint.X : barResult.MaxPoint.Y;
+                double dotR     = AnnotationEngine.DotRadius;
 
-                // ── ETAP 1: pozycja etykiety wzdłuż pręta (ось X) ──────────
+                // ── ETAP 1: pozycja dist line ──────────────────────────────
                 var jig1 = new AnnotLabelPositionJig(
-                    minY, barResult.MaxPoint.X, barsSpan, finalSpacing, finalCount, true, dotR);
+                    minFixed, basePos, barsSpan, finalSpacing, finalCount, horizontal, dotR);
                 var res1 = ed.Drag(jig1);
                 jig1.ClearTransients();
                 if (res1.Status == PromptStatus.Cancel) return;
 
                 if (res1.Status == PromptStatus.OK)
                 {
-                    double  labelX     = jig1.LabelPos;
-                    var     distCenter = new Point3d(labelX, minY + barsSpan / 2.0, 0);
-                    insertOverride     = new Point3d(labelX, minY, 0);
+                    double  labelPos   = jig1.LabelPos;
+                    Point3d distCenter = horizontal
+                        ? new Point3d(labelPos,                        minFixed + barsSpan / 2.0, 0)
+                        : new Point3d(minFixed + barsSpan / 2.0, labelPos,                        0);
+                    insertOverride = horizontal
+                        ? new Point3d(labelPos, minFixed, 0)
+                        : new Point3d(minFixed,  labelPos, 0);
 
-                    // ── ETAP 2: kierunek etykiety ───────────────────────────
+                    // ── ETAP 2: kierunek etykiety ──────────────────────────
                     var jig2 = new AnnotLabelDirectionJig(
-                        distCenter, labelX, minY, barsSpan, true, dotR, finalCount, finalSpacing);
+                        distCenter, labelPos, minFixed, barsSpan, horizontal, dotR, finalCount, finalSpacing);
                     var res2 = ed.Drag(jig2);
                     jig2.ClearTransients();
                     if (res2.Status == PromptStatus.Cancel) return;
@@ -453,56 +461,69 @@ namespace BricsCadRc.Commands
                     {
                         var direction = jig2.Direction;
                         var kinkPt    = jig2.KinkPt;
+                        leaderUp = (direction != LabelDirection.Down);
 
-                        if (direction == LabelDirection.Left || direction == LabelDirection.Right)
+                        // "Prosty" kierunek = prostopadle do dist line — brak ETAP 3
+                        // X-bars: Left/Right są prostopadłe do pionowej dist line
+                        // Y-bars: Up/Down są prostopadłe do poziomej dist line
+                        bool isSimple = horizontal
+                            ? (direction == LabelDirection.Left  || direction == LabelDirection.Right)
+                            : (direction == LabelDirection.Up    || direction == LabelDirection.Down);
+
+                        if (isSimple)
                         {
-                            // Poziome ramię od środka — brak ETAP 3
                             leaderHorizontal  = true;
-                            leaderRight       = (direction == LabelDirection.Right);
+                            leaderRight       = horizontal
+                                ? (direction == LabelDirection.Right)
+                                : true;  // dla Y-bars: nieużywane przy leaderVertical=true
                             sourceBar.ArmMidY = barsSpan / 2.0;
                         }
-                        else // Up/Down: ETAP 3 — złamanie lub zatwierdzenie
+                        else // wzdłuż dist line: ETAP 3 — złamanie lub prosta
                         {
+                            // Dla Y-bars wzdłuż dist line: ustaw leaderRight z kierunku Left/Right
+                            if (!horizontal)
+                                leaderRight = (direction == LabelDirection.Right);
+
                             var jig3 = new AnnotLabelBendJig(
                                 distCenter, kinkPt,
-                                labelX, minY, barsSpan, true, dotR, finalCount, finalSpacing);
+                                labelPos, minFixed, barsSpan, horizontal, dotR, finalCount, finalSpacing);
                             var res3 = ed.Drag(jig3);
                             jig3.ClearTransients();
                             if (res3.Status == PromptStatus.Cancel) return;
 
                             if (res3.Status == PromptStatus.OK)
                             {
-                                // Klik = złamanie w bok
-                                leaderHorizontal  = true;
-                                leaderRight       = jig3.CursorPt.X >= labelX;
-                                // ArmMidY w układzie lokalnym bloku: kinkPt - insertPt (nie minY!)
-                                sourceBar.ArmMidY = kinkPt.Y - insertOverride.Value.Y;
-                                ed.WriteMessage($"\n[DEBUG ARMMIDY] kinkPt.Y={kinkPt.Y:F1} minY={minY:F1} insertPt.Y={insertOverride.Value.Y:F1} barsSpan={barsSpan:F1} ArmMidY={sourceBar.ArmMidY:F1}" +
-                                                $"\n[DEBUG] insertPt.Y={insertOverride.Value.Y:F1} vs minY={minY:F1} – czy są różne? {(Math.Abs(insertOverride.Value.Y - minY) > 0.01 ? "TAK" : "NIE")}");
-
+                                // Klik = złamanie
+                                leaderHorizontal = true;
+                                if (horizontal)
+                                {
+                                    // X-bars: kink pionowy, ramię poziome → leaderRight z X kursora
+                                    leaderRight       = jig3.CursorPt.X >= labelPos;
+                                    sourceBar.ArmMidY = kinkPt.Y - insertOverride.Value.Y;
+                                }
+                                else
+                                {
+                                    // Y-bars: kink poziomy, ramię pionowe → leaderUp z Y kursora
+                                    leaderUp          = jig3.CursorPt.Y >= labelPos;
+                                    sourceBar.ArmMidY = kinkPt.X - insertOverride.Value.X;
+                                }
                             }
-                            // else Enter = prosta pionowa etykieta (leaderHorizontal=false)
+                            // else Enter = prosta wzdłuż osi (leaderHorizontal=false)
                         }
                     }
                     else
                     {
-                        // Enter po ETAP 2 = prosta pionowa bez kierunku
+                        // Enter po ETAP 2 = prosta etykieta bez kierunku
                         leaderHorizontal = false;
                     }
                 }
                 // else Enter po ETAP 1 = auto placement (insertOverride=null, leaderHorizontal=false)
             }
-            else // Y-bars: auto placement
-            {
-                leaderHorizontal = false;
-                leaderRight      = true;
-                insertOverride   = null;
-            }
 
             // --- Krok 9: Annotacja ---
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, sourceBar, leaderHorizontal, posNr, insertOverride,
-                barsHorizontal: horizontal, leaderRight: leaderRight);
+                barsHorizontal: horizontal, leaderRight: leaderRight, leaderUp: leaderUp);
 
             // Zapisz handle annotacji w XData bloku pretow — unikalny klucz dla SyncAnnotation
             if (annotResult.BlockRefId != ObjectId.Null)

@@ -1,0 +1,96 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="BricsCadRc.Dialogs.BarEndStyleDialog"
+    Title="Bar End Style"
+    Width="340" Height="260"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterScreen"
+    Background="#F0F0F0">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="MinWidth" Value="80"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Naglowek -->
+        <Border Grid.Row="0" Background="#1E5FA8" CornerRadius="3" Padding="8,6">
+            <TextBlock Text="Bar End Style" Foreground="White"
+                       FontSize="13" FontWeight="Bold" HorizontalAlignment="Center" Margin="0"/>
+        </Border>
+
+        <!-- Symbol type -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Symbol type:"/>
+            <ComboBox x:Name="CbSymbolType" Grid.Column="1"
+                      SelectedIndex="0" FontSize="12" Height="24"
+                      SelectionChanged="CbSymbolType_SelectionChanged">
+                <ComboBoxItem Content="None"/>
+                <ComboBoxItem Content="Circle"/>
+                <ComboBoxItem Content="Hook"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Side -->
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Side:"/>
+            <ComboBox x:Name="CbSide" Grid.Column="1"
+                      SelectedIndex="1" FontSize="12" Height="24">
+                <ComboBoxItem Content="Left"/>
+                <ComboBoxItem Content="Right"/>
+                <ComboBoxItem Content="Both"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Hook direction -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TbHookDir" Grid.Column="0" Text="Hook direction:"/>
+            <ComboBox x:Name="CbHookDir" Grid.Column="1"
+                      SelectedIndex="0" FontSize="12" Height="24">
+                <ComboBoxItem Content="Up"/>
+                <ComboBoxItem Content="Down"/>
+            </ComboBox>
+        </Grid>
+
+        <!-- Przyciski -->
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right"
+                    FlowDirection="RightToLeft">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
+            <Button Content="OK" Click="OK_Click"
+                    Background="#1E5FA8" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

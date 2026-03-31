@@ -84,6 +84,9 @@ namespace BricsCadRc.Core
         /// <summary>Pozycja Y linii arm w układzie lokalnym bloku. -1 = użyj BarsSpan/2.</summary>
         public double ArmMidY { get; set; } = double.NaN;
 
+        /// <summary>Kierunek etykiety pionowej: true=góra (default), false=dół.</summary>
+        public bool LeaderUp { get; set; } = true;
+
         /// <summary>Punkt końcowy tekstu w układzie lokalnym bloku X (dla etykiety z złamaniem). 0 = brak.</summary>
         public double TextEndLocalX { get; set; } = 0.0;
 

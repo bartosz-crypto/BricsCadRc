@@ -73,7 +73,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(x, _minFixed + _barsSpan, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
             }
             else
             {
@@ -83,7 +83,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(_minFixed + _barsSpan, y, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
             }
 
             try { Application.UpdateScreen(); } catch { }
@@ -97,12 +97,18 @@ namespace BricsCadRc.Commands
             catch { ln.Dispose(); }
         }
 
-        void AddDiamond(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
+        void AddCirclePreview(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
         {
-            AddLine(tm, vpIds, new Point3d(c.X,     c.Y + r, 0), new Point3d(c.X + r, c.Y,     0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X + r, c.Y,     0), new Point3d(c.X,     c.Y - r, 0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X,     c.Y - r, 0), new Point3d(c.X - r, c.Y,     0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X - r, c.Y,     0), new Point3d(c.X,     c.Y + r, 0), 7);
+            int segments = 8;
+            for (int s = 0; s < segments; s++)
+            {
+                double a1 = 2 * Math.PI * s       / segments;
+                double a2 = 2 * Math.PI * (s + 1) / segments;
+                AddLine(tm, vpIds,
+                    new Point3d(c.X + r * Math.Cos(a1), c.Y + r * Math.Sin(a1), 0),
+                    new Point3d(c.X + r * Math.Cos(a2), c.Y + r * Math.Sin(a2), 0),
+                    7);
+            }
         }
 
         public void ClearTransients()
@@ -215,7 +221,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(x, _minFixed + _barsSpan, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
             }
             else
             {
@@ -224,7 +230,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(_minFixed + _barsSpan, y, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
             }
         }
 
@@ -236,12 +242,18 @@ namespace BricsCadRc.Commands
             catch { ln.Dispose(); }
         }
 
-        void AddDiamond(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
+        void AddCirclePreview(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
         {
-            AddLine(tm, vpIds, new Point3d(c.X,     c.Y + r, 0), new Point3d(c.X + r, c.Y,     0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X + r, c.Y,     0), new Point3d(c.X,     c.Y - r, 0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X,     c.Y - r, 0), new Point3d(c.X - r, c.Y,     0), 7);
-            AddLine(tm, vpIds, new Point3d(c.X - r, c.Y,     0), new Point3d(c.X,     c.Y + r, 0), 7);
+            int segments = 8;
+            for (int s = 0; s < segments; s++)
+            {
+                double a1 = 2 * Math.PI * s       / segments;
+                double a2 = 2 * Math.PI * (s + 1) / segments;
+                AddLine(tm, vpIds,
+                    new Point3d(c.X + r * Math.Cos(a1), c.Y + r * Math.Sin(a1), 0),
+                    new Point3d(c.X + r * Math.Cos(a2), c.Y + r * Math.Sin(a2), 0),
+                    7);
+            }
         }
 
         public void ClearTransients()
@@ -319,12 +331,20 @@ namespace BricsCadRc.Commands
             // Dist line (zamrożona)
             DrawDistLine(tm, vpIds);
 
-            // Zamrożony pionowy segment (kolor 2)
-            AddLine(tm, vpIds, _centerPt, _kinkPt, 2);
-
-            // Podgląd poziomego ramienia od _kinkPt do cursor (kolor 3 = zielony)
-            var armEnd = new Point3d(_cursor.X, _kinkPt.Y, 0);
-            AddLine(tm, vpIds, _kinkPt, armEnd, 3);
+            if (_horizontal)
+            {
+                // X-bars: stem pionowy (centerPt → kinkPt), ramię poziome
+                AddLine(tm, vpIds, _centerPt, _kinkPt, 2);
+                var armEnd = new Point3d(_cursor.X, _kinkPt.Y, 0);
+                AddLine(tm, vpIds, _kinkPt, armEnd, 2);
+            }
+            else
+            {
+                // Y-bars: stem poziomy (centerPt → kinkPt), ramię pionowe
+                AddLine(tm, vpIds, _centerPt, _kinkPt, 2);
+                var armEnd = new Point3d(_kinkPt.X, _cursor.Y, 0);
+                AddLine(tm, vpIds, _kinkPt, armEnd, 2);
+            }
 
             try { Application.UpdateScreen(); } catch { }
         }
