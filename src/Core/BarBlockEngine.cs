@@ -473,6 +473,36 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // RebuildWithNewLayout — zmienia Count/Spacing/Cover i przebudowuje BTR.
+        // Wywoływane przez RC_EDIT_DISTRIBUTION (EditDistributionDialog).
+        // ----------------------------------------------------------------
+        public static void RebuildWithNewLayout(
+            Database db, ObjectId blockRefId,
+            int newCount, double newSpacing, double newCover)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var br = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+            if (br == null) { tr.Commit(); return; }
+
+            var bar = ReadXData(br);
+            if (bar == null) { tr.Commit(); return; }
+
+            bar.Count    = newCount;
+            bar.Spacing  = newSpacing;
+            bar.Cover    = newCover;
+            bar.BarsSpan = (newCount - 1) * newSpacing;
+            WriteXData(br, bar);
+
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            EraseAllInBtr(tr, btr);
+
+            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, newCount);
+            else                      BuildVertical  (tr, btr, bar, bar.LengthA, newCount);
+
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // Pozycje gripow
         // ----------------------------------------------------------------
 
@@ -599,6 +629,19 @@ namespace BricsCadRc.Core
                 if (bar == null) { tr.Commit(); return; }
                 bar.AnnotHandle = annotId.Handle.Value.ToString("X8");
                 WriteXData(br, bar);
+
+                // Referencja wsteczna: RC_BAR_ANNOT zna swój RC_BAR_BLOCK
+                var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                if (annotBr != null)
+                {
+                    var annotBar = AnnotationEngine.ReadAnnotXData(annotBr);
+                    if (annotBar != null)
+                    {
+                        annotBar.SourceBlockHandle = barBlockId.Handle.Value.ToString("X8");
+                        AnnotationEngine.WriteAnnotXData(annotBr, annotBar);
+                    }
+                }
+
                 tr.Commit();
             }
             catch { }

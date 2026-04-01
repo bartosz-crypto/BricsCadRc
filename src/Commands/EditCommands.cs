@@ -97,8 +97,7 @@ namespace BricsCadRc.Commands
 
         /// <summary>
         /// RC_EDIT_DISTRIBUTION — edytuje istniejący rozkład prętów (RC_BAR_BLOCK).
-        /// Otwiera dialog "Reinforcement detailing" z aktualnymi wartościami,
-        /// pozwala zmienić Viewing Direction i przebudowuje blok.
+        /// Otwiera dialog z polami Count/Spacing/Cover i przebudowuje blok.
         /// </summary>
         [CommandMethod("RC_EDIT_DISTRIBUTION", CommandFlags.Modal)]
         public void EditDistribution()
@@ -107,30 +106,31 @@ namespace BricsCadRc.Commands
             var ed  = doc.Editor;
             var db  = doc.Database;
 
-            // Krok 1: wybierz rozkład — dowolny entity, potem ResolveBarBlock przez XData/OwnerId
-            // Nie używamy AddAllowedClass (powoduje "Use SetRejectMessage first!" w BRX gdy typ nie pasuje)
+            // Krok 1 — wybierz rozkład (dowolny entity z BTR RC_SLAB_BARS_*)
             ObjectId blockRefId = ObjectId.Null;
             BarData  bar        = null;
 
             while (true)
             {
-                var selOpts = new PromptEntityOptions("\nSelect distribution to edit: ");
+                var selOpts = new PromptEntityOptions("\nWybierz rozkład do edycji: ");
                 var selResult = ed.GetEntity(selOpts);
-
                 if (selResult.Status != PromptStatus.OK) return;
 
-                using var tr = db.TransactionManager.StartTransaction();
-                var ent = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Entity;
-                if (ent != null)
-                    blockRefId = ResolveBarBlock(ent, tr);
-                tr.Commit();
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var ent = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Entity;
+                    if (ent != null) blockRefId = ResolveBarBlock(ent, tr);
+                    tr.Commit();
+                }
 
                 if (!blockRefId.IsNull)
                 {
-                    using var tr2 = db.TransactionManager.StartTransaction();
-                    var br2 = tr2.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
-                    bar = BarBlockEngine.ReadXData(br2);
-                    tr2.Commit();
+                    using (var tr2 = db.TransactionManager.StartTransaction())
+                    {
+                        var br2 = tr2.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                        bar = BarBlockEngine.ReadXData(br2);
+                        tr2.Commit();
+                    }
                 }
 
                 if (bar != null) break;
@@ -139,60 +139,30 @@ namespace BricsCadRc.Commands
                 blockRefId = ObjectId.Null;
             }
 
-            // Krok 2: dialog z aktualnymi wartościami
-            var dlg = new ReinfDetailingDialog(bar.ViewingDirection ?? "Auto");
+            // Krok 2 — otwórz dialog z aktualnymi wartościami
+            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover);
             if (Application.ShowModalWindow(dlg) != true) return;
 
-            // Krok 3: oblicz nową długość widoku
-            double newBarLength;
-            string newViewDir;
-            int    newSegIdx;
+            // Krok 3 — przebuduj blok z nowymi wartościami
+            BarBlockEngine.RebuildWithNewLayout(db, blockRefId,
+                dlg.ResultCount, dlg.ResultSpacing, dlg.ResultCover);
 
-            if (dlg.IsManualViewingDirection)
+            // Krok 4 — zaktualizuj annotację (nowy BarsSpan)
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Manual: użytkownik wskazuje pręt źródłowy i klika segment
-                var barSelOpts = new PromptEntityOptions(
-                    "\nSelect source bar polyline for manual segment [Esc=Auto]: ")
-                    { AllowNone = true };
-                var barSel = ed.GetEntity(barSelOpts);
-
-                if (barSel.Status == PromptStatus.OK)
+                var br = tr.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                if (br != null)
                 {
-                    newBarLength = BarCommands.GetViewLengthManual(ed, db, barSel.ObjectId, bar);
-                    if (newBarLength <= 0)
-                    {
-                        // Escape podczas kliknięcia segmentu → fallback Auto
-                        newBarLength = BarCommands.GetViewLength(bar);
-                        newViewDir   = "Auto";
-                        newSegIdx    = -1;
-                    }
-                    else
-                    {
-                        newViewDir = "Manual";
-                        newSegIdx  = bar.ViewSegmentIndex;
-                    }
+                    var updatedBar = BarBlockEngine.ReadXData(br);
+                    if (updatedBar != null)
+                        AnnotationEngine.SyncAnnotation(db, updatedBar);
                 }
-                else
-                {
-                    // Escape przy wyborze pręta → fallback Auto
-                    newBarLength = BarCommands.GetViewLength(bar);
-                    newViewDir   = "Auto";
-                    newSegIdx    = -1;
-                }
+                tr.Commit();
             }
-            else
-            {
-                newBarLength = BarCommands.GetViewLength(bar);
-                newViewDir   = "Auto";
-                newSegIdx    = -1;
-            }
-
-            // Krok 4: przebuduj blok
-            BarBlockEngine.RebuildWithNewViewLength(db, blockRefId, newBarLength, newViewDir, newSegIdx);
 
             ed.WriteMessage(
-                $"\n[RC SLAB] Distribution updated: {bar.Count} bars {bar.Mark}" +
-                $"  viewLength={newBarLength:F0}mm  viewingDir={newViewDir}\n");
+                $"\nRozkład {bar.Mark} zaktualizowany: {dlg.ResultCount} szt. co {dlg.ResultSpacing:F0} mm.\n");
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
         }
 
         // ----------------------------------------------------------------
@@ -291,6 +261,108 @@ namespace BricsCadRc.Commands
 
             tr.Commit();
             ed.WriteMessage($"\n[RC SLAB] Ustawiono pret reprezentatywny dla grupy '{targetMark}'. Ukryto: {hidden}, widocznych: {shown}\n");
+        }
+
+        /// <summary>
+        /// RC_EDIT_LABEL — edytuje treść etykiety rozkładu (Count, Mark, Diameter, Spacing).
+        /// Aktualizuje XData RC_BAR_ANNOT i TextString DBText wewnątrz BTR.
+        /// </summary>
+        [CommandMethod("RC_EDIT_LABEL", CommandFlags.Modal)]
+        public void EditLabel()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+
+            // Krok 1 — wybierz blok annotacji
+            var selOpts = new PromptEntityOptions("\nWybierz etykietę rozkładu: ");
+            selOpts.SetRejectMessage("\nTo nie jest etykieta rozkładu RC.");
+            selOpts.AddAllowedClass(typeof(BlockReference), false);
+            var selRes = ed.GetEntity(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            // Krok 2 — odczytaj XData RC_BAR_ANNOT
+            BarData bar;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
+                if (br == null) { tr.Abort(); return; }
+                bar = AnnotationEngine.ReadAnnotXData(br);
+                tr.Commit();
+            }
+            if (bar == null)
+            { ed.WriteMessage("\nNie znaleziono danych etykiety."); return; }
+
+            // Krok 3 — otwórz dialog
+            var dlg = new EditLabelDialog(bar.Count, bar.Mark, bar.Diameter, bar.Spacing);
+            if (Application.ShowModalWindow(dlg) != true) return;
+
+            // Krok 4 — zaktualizuj XData i DBText w BTR
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
+                if (br == null) { tr.Abort(); return; }
+
+                bar.Count   = dlg.ResultCount;
+                bar.Mark    = dlg.ResultMark;
+                bar.Spacing = dlg.ResultSpacing;
+                // bar.Diameter — nie zmieniamy, pochodzi z pręta
+
+                AnnotationEngine.WriteAnnotXData(br, bar);
+
+                // Zaktualizuj TextString w DBText wewnątrz BTR
+                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                foreach (ObjectId oid in btr)
+                {
+                    if (oid.IsErased) continue;
+                    var obj = tr.GetObject(oid, OpenMode.ForRead);
+                    if (obj is DBText txt)
+                    {
+                        txt.UpgradeOpen();
+                        txt.TextString = $"{bar.Count} {bar.Mark}";
+                        break;  // tylko pierwszy DBText
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage($"\nEtykieta zaktualizowana: {dlg.ResultCount} {dlg.ResultMark}\n");
+
+            // DEBUG — odczyt po tr.Commit() żeby sprawdzić czy TextString faktycznie się zapisał
+            using (var trDbg = db.TransactionManager.StartTransaction())
+            {
+                var brDbg = trDbg.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
+                if (brDbg != null)
+                {
+                    var btrDbg = (BlockTableRecord)trDbg.GetObject(brDbg.BlockTableRecord, OpenMode.ForRead);
+                    string foundText = null;
+                    int    txtCount  = 0;
+                    foreach (ObjectId oid in btrDbg)
+                    {
+                        if (oid.IsErased) continue;
+                        var obj = trDbg.GetObject(oid, OpenMode.ForRead);
+                        if (obj is DBText txt)
+                        {
+                            txtCount++;
+                            if (foundText == null) foundText = txt.TextString;
+                        }
+                    }
+                    ed.WriteMessage($"\n[DEBUG RC_EDIT_LABEL] DBText w BTR: {txtCount}  " +
+                                    $"pierwszy TextString=\"{foundText ?? "(null)"}\"");
+                }
+                trDbg.Commit();
+            }
+
+            // Wymusz odświeżenie renderowania bloku
+            using (var trRefresh = db.TransactionManager.StartTransaction())
+            {
+                var brRefresh = trRefresh.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
+                brRefresh?.RecordGraphicsModified(true);
+                trRefresh.Commit();
+            }
+
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
         }
 
         /// <summary>

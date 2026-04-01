@@ -120,6 +120,9 @@ namespace BricsCadRc.Core
         /// <summary>Handle źródłowej polilinii pręta (RC_SINGLE_BAR) — tylko dla ViewingDirection="Any".</summary>
         public string SourceBarHandle { get; set; } = "";
 
+        /// <summary>Handle (hex) bloku RC_BAR_BLOCK powiązanego z tym RC_BAR_ANNOT. "" jeśli brak.</summary>
+        public string SourceBlockHandle { get; set; } = "";
+
         /// <summary>Handle (hex) Polyline etykiety nowego stylu (DistAnnotEngine). "" jeśli brak.</summary>
         public string LabelPolyHandle { get; set; } = "";
 

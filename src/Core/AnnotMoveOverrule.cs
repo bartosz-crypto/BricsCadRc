@@ -137,8 +137,34 @@ namespace BricsCadRc.Core
                     double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
                     armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY, 0);
                 }
+                else if (barAnnot.Direction == "Y" && !barAnnot.LeaderHorizontal)
+                {
+                    // Y-bars, etykieta lewo/prawo — arm poziomy
+                    armTop = barAnnot.LeaderRight
+                        ? new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0)
+                        : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, ins.Y, 0);
+                }
+                else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
+                {
+                    // Y-bars, etykieta lewo/prawo — arm pionowy ze złamaniem
+                    double currentMidX = !double.IsNaN(barAnnot.ArmMidY)
+                        ? barAnnot.ArmMidY
+                        : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
+                    double vDir2 = barAnnot.LeaderUp ? 1.0 : -1.0;
+                    armTop = new Point3d(
+                        ins.X + currentMidX,
+                        ins.Y + vDir2 * barAnnot.ArmTotalLen,
+                        0);
+                }
                 else
-                    armTop = new Point3d(ins.X + barAnnot.ArmTotalLen, ins.Y + barAnnot.BarsSpan / 2.0, 0);
+                {
+                    // Y-bars, etykieta lewo/prawo — arm poziomy, uwzględnij kierunek
+                    double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
+                    armTop = new Point3d(
+                        ins.X + hDir2 * barAnnot.ArmTotalLen,
+                        ins.Y + barAnnot.BarsSpan / 2.0,
+                        0);
+                }
                 gripPoints.Add(armTop);  // [1] arm end
 
                 var edGrip = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
@@ -264,40 +290,37 @@ namespace BricsCadRc.Core
             {
                 if (isGrip1)
                 {
-                    // ArmTotalLen/ArmMidY/ArmOffsetX czytamy świeżo z XData na każde wywołanie.
                     double hDir       = barAnnot.LeaderRight ? 1.0 : -1.0;
+                    double vDir       = barAnnot.LeaderUp    ? 1.0 : -1.0;
                     double origArmLen = barAnnot.ArmTotalLen;
 
-                    // --- Transient preview (live podczas dragu) ---
                     ClearGripTransients();
                     var ins = br.Position;
 
-                    if (barAnnot.LeaderHorizontal)
+                    if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
                     {
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength, origArmLen + offset.X * hDir);
+                        // X-bars, etykieta lewo/prawo — stem pionowy + arm poziomy
+                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
+                            origArmLen + offset.X * hDir);
                         double origMidY = !double.IsNaN(barAnnot.ArmMidY)
                             ? barAnnot.ArmMidY
                             : AnnotationEngine.GetArmMidY(br);
                         double newMidY = origMidY + offset.Y;
 
-                        // stem pionowy: środek dist line → kink
                         AddGripTransientLine(
                             new Point3d(ins.X,                         ins.Y + barAnnot.BarsSpan / 2.0, 0),
-                            new Point3d(ins.X,                         ins.Y + newMidY,                 0));
-                        // arm poziomy: kink → koniec arm
+                            new Point3d(ins.X,                         ins.Y + newMidY,                  0));
                         AddGripTransientLine(
-                            new Point3d(ins.X,                         ins.Y + newMidY, 0),
-                            new Point3d(ins.X + hDir * newArmTotalLen, ins.Y + newMidY, 0));
+                            new Point3d(ins.X,                         ins.Y + newMidY,                  0),
+                            new Point3d(ins.X + hDir * newArmTotalLen, ins.Y + newMidY,                  0));
 
-                        Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
-                            .WriteMessage($"\n[DEBUG HORIZ GRIP] gripDelta.X={offset.X:F1} gripDelta.Y={offset.Y:F1} newMidY={newMidY:F1} newArmEndX={hDir * newArmTotalLen:F1}");
                         AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidY);
                     }
-                    else if (barAnnot.Direction == "X")
+                    else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
                     {
-                        // X-vert: Y → rozciąga arm (kierunek zależy od LeaderUp); X → przesuwa cały blok
-                        double dirY = barAnnot.LeaderUp ? 1.0 : -1.0;
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength, origArmLen + offset.Y * dirY);
+                        // X-bars, etykieta góra/dół — arm pionowy
+                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
+                            origArmLen + offset.Y * vDir);
                         double armEndY = barAnnot.LeaderUp
                             ? ins.Y + barAnnot.BarsSpan + newArmTotalLen
                             : ins.Y + barAnnot.BarsSpan / 2.0 - newArmTotalLen;
@@ -305,18 +328,42 @@ namespace BricsCadRc.Core
                             new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0, 0),
                             new Point3d(ins.X, armEndY,                          0));
                         AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
-                        // X przesuwa cały blok — identycznie jak grip[0]
                         if (Math.Abs(offset.X) > 0.01)
                             entity.TransformBy(Matrix3d.Displacement(new Vector3d(offset.X, 0, 0)));
                     }
+                    else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
+                    {
+                        // Y-bars, etykieta góra/dół — stem poziomy + arm pionowy
+                        double origMidX = !double.IsNaN(barAnnot.ArmMidY)
+                            ? barAnnot.ArmMidY
+                            : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
+                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
+                            origArmLen + offset.Y * vDir);
+                        double newMidX = origMidX + offset.X;
+
+                        AddGripTransientLine(
+                            new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0),
+                            new Point3d(ins.X + newMidX,                  ins.Y, 0));
+                        AddGripTransientLine(
+                            new Point3d(ins.X + newMidX, ins.Y,                         0),
+                            new Point3d(ins.X + newMidX, ins.Y + vDir * newArmTotalLen,  0));
+
+                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidX);
+                    }
                     else
                     {
-                        // Y-bars: arm poziomy
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength, origArmLen + offset.X * hDir);
+                        // Y-bars, etykieta lewo/prawo — arm poziomy
+                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
+                            origArmLen + offset.X * hDir);
+                        Point3d armEnd = barAnnot.LeaderRight
+                            ? new Point3d(ins.X + barAnnot.BarsSpan + newArmTotalLen, ins.Y, 0)
+                            : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - newArmTotalLen, ins.Y, 0);
                         AddGripTransientLine(
-                            new Point3d(ins.X + barAnnot.BarsSpan,                  ins.Y, 0),
-                            new Point3d(ins.X + barAnnot.BarsSpan + newArmTotalLen, ins.Y, 0));
+                            new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0),
+                            armEnd);
                         AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
+                        if (Math.Abs(offset.Y) > 0.01)
+                            entity.TransformBy(Matrix3d.Displacement(new Vector3d(0, offset.Y, 0)));
                     }
 
                     try { Application.UpdateScreen(); } catch { }
@@ -507,6 +554,68 @@ namespace BricsCadRc.Core
     }
 
     // ----------------------------------------------------------------
+    // EraseOverrule — gdy RC_BAR_BLOCK jest usuwany, automatycznie
+    // usuwa powiązany RC_BAR_ANNOT (jeśli istnieje i nie jest już usunięty).
+    // SetXDataFilter("RC_BAR_BLOCK") ogranicza działanie tylko do bloków z tą XData.
+    // ----------------------------------------------------------------
+    internal class BarBlockEraseOverrule : ObjectOverrule
+    {
+        public override void Erase(DBObject dbObject, bool erasing)
+        {
+            base.Erase(dbObject, erasing);
+
+            if (!erasing) return;
+            if (!(dbObject is BlockReference br)) return;
+
+            var db = br.Database;
+            if (db == null) return;
+
+            string annotHandle = ReadAnnotHandle(br);
+            if (string.IsNullOrEmpty(annotHandle)) return;
+
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+
+                if (!long.TryParse(annotHandle, NumberStyles.HexNumber, null, out long hVal))
+                { tr.Commit(); return; }
+
+                var handle = new Handle(hVal);
+                if (!db.TryGetObjectId(handle, out ObjectId annotId)
+                    || annotId.IsNull || !annotId.IsValid || annotId.IsErased)
+                { tr.Commit(); return; }
+
+                var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                if (annotBr == null) { tr.Commit(); return; }
+
+                annotBr.Erase(true);
+                tr.Commit();
+            }
+            catch { /* nie przerywaj głównego usuwania */ }
+        }
+
+        public new void SetCustomFilter()
+        {
+            this.SetXDataFilter("RC_BAR_BLOCK");
+        }
+
+        private static string ReadAnnotHandle(BlockReference br)
+        {
+            var rxd = br.GetXDataForApplication("RC_BAR_BLOCK");
+            if (rxd == null) return null;
+            foreach (TypedValue tv in rxd)
+            {
+                if (tv.TypeCode != (int)DxfCode.ExtendedDataAsciiString) continue;
+                var s = tv.Value?.ToString() ?? "";
+                if (s.Length == 8 && s.All(c =>
+                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
+                    return s;
+            }
+            return null;
+        }
+    }
+
+    // ----------------------------------------------------------------
     // Menedzer rejestracji
     // ----------------------------------------------------------------
     public static class AnnotMoveOverrule
@@ -514,6 +623,7 @@ namespace BricsCadRc.Core
         private static AnnotGripOverrule            _grip;
         private static AnnotTransformOverrule       _transform;
         private static BarBlockTransformOverrule    _barBlockTransform;
+        private static BarBlockEraseOverrule        _barBlockErase;
 
         public static void Register()
         {
@@ -521,11 +631,14 @@ namespace BricsCadRc.Core
             _grip               = new AnnotGripOverrule();
             _transform          = new AnnotTransformOverrule();
             _barBlockTransform  = new BarBlockTransformOverrule();
+            _barBlockErase      = new BarBlockEraseOverrule();
             var cls = RXObject.GetClass(typeof(BlockReference));
             Overrule.AddOverrule(cls, _grip,               false);
             Overrule.AddOverrule(cls, _transform,           false);
             Overrule.AddOverrule(cls, _barBlockTransform,   false);
+            Overrule.AddOverrule(cls, _barBlockErase,       false);
             _barBlockTransform.SetCustomFilter();
+            _barBlockErase.SetCustomFilter();
             Overrule.Overruling = true;
         }
 
@@ -533,9 +646,11 @@ namespace BricsCadRc.Core
         {
             if (_grip == null) return;
             var cls = RXObject.GetClass(typeof(BlockReference));
+            Overrule.RemoveOverrule(cls, _barBlockErase);
             Overrule.RemoveOverrule(cls, _barBlockTransform);
             Overrule.RemoveOverrule(cls, _transform);
             Overrule.RemoveOverrule(cls, _grip);
+            _barBlockErase.Dispose();     _barBlockErase     = null;
             _barBlockTransform.Dispose(); _barBlockTransform = null;
             _transform.Dispose();         _transform         = null;
             _grip.Dispose();              _grip              = null;

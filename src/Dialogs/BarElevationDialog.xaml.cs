@@ -33,6 +33,40 @@ namespace BricsCadRc.Dialogs
             SelectShape(ShapeCodeLibrary.Get("00"), paramValues: null);
         }
 
+        // ── Wypełnienie dialogu istniejącymi danymi (RC_EDIT_BAR) ───────────
+
+        public void LoadExisting(BarData bar)
+        {
+            // Ustaw średnicę
+            foreach (ComboBoxItem item in DiameterCombo.Items)
+            {
+                if (item.Tag?.ToString() == bar.Diameter.ToString())
+                { DiameterCombo.SelectedItem = item; break; }
+            }
+
+            // Ustaw shape + wypełnij pola parametrów (SelectShape obsługuje wszystko)
+            var shape = ShapeCodeLibrary.Get(bar.ShapeCode);
+            double[] pvals = { bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE };
+            SelectShape(shape ?? ShapeCodeLibrary.Get("00"), pvals);
+
+            // Override długości — SelectShape resetuje flagę, więc ustawiamy po nim
+            if (bar.LengthOverridden)
+            {
+                OverrideCheck.IsChecked   = true;
+                _lengthOverridden         = true;
+                TotalLengthBox.IsReadOnly = false;
+                TotalLengthBox.Background = System.Windows.Media.Brushes.White;
+                TotalLengthBox.Text       = bar.TotalLength.ToString("F0", CultureInfo.InvariantCulture);
+            }
+
+            // Ustaw warstwę
+            foreach (ComboBoxItem item in LayerCombo.Items)
+            {
+                if (item.Tag?.ToString() == bar.LayerCode)
+                { LayerCombo.SelectedItem = item; break; }
+            }
+        }
+
         // ── Wybór kształtu przez ShapePickerDialog ───────────────────────────
 
         private void ShapeBtn_Click(object sender, RoutedEventArgs e)

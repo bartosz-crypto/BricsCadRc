@@ -981,5 +981,127 @@ namespace BricsCadRc.Commands
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
             ed.WriteMessage($"[RC_UPDATE_BAR] Done: {updated}/{distIds.Count} distributions updated. LengthA: {oldLength:F0} → {newLength:F0} mm\n");
         }
+
+        // ================================================================
+        //  RC_EDIT_BAR — edycja shape code i/lub parametrów istniejącego pręta
+        // ================================================================
+
+        [CommandMethod("RC_EDIT_BAR", CommandFlags.Modal)]
+        public void EditBar()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+
+            // Krok 1 — wybierz pręt
+            var selOpts = new PromptEntityOptions("\nWybierz pręt do edycji: ");
+            selOpts.SetRejectMessage("\nTo nie jest pręt RC.");
+            selOpts.AddAllowedClass(typeof(Polyline), false);
+            var selRes = ed.GetEntity(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            BarData  bar    = null;
+            ObjectId editId = selRes.ObjectId;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var pline = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as Polyline;
+                if (pline == null) { tr.Abort(); return; }
+
+                bar = SingleBarEngine.ReadBarXData(pline);
+                if (bar == null)
+                {
+                    // Może to być towarzysząca poly — szukaj głównej przez RC_BAR_LINK
+                    var primaryId = SingleBarEngine.ResolvePrimaryId(pline);
+                    if (!primaryId.IsNull)
+                    {
+                        editId = primaryId;
+                        var primary = tr.GetObject(primaryId, OpenMode.ForRead) as Polyline;
+                        if (primary != null) bar = SingleBarEngine.ReadBarXData(primary);
+                    }
+                }
+                tr.Commit();
+            }
+
+            if (bar == null)
+            {
+                ed.WriteMessage("\nNie znaleziono danych pręta.");
+                return;
+            }
+
+            // Krok 2 — otwórz dialog z aktualnymi wartościami
+            var dlg = new BarElevationDialog();
+            dlg.LoadExisting(bar);
+            if (Application.ShowModalWindow(dlg) != true) return;
+            var updated = dlg.Result;
+
+            // Zachowaj niezmienne pola z oryginału
+            updated.Mark        = bar.Mark;
+            updated.LayerCode   = bar.LayerCode;
+            updated.Position    = bar.Position;
+            updated.Direction   = bar.Direction;
+            updated.LabelHandle = bar.LabelHandle;
+
+            // Krok 3 — zapisz XData i przebuduj geometrię
+            using (var tr2 = db.TransactionManager.StartTransaction())
+            {
+                var plineRw = tr2.GetObject(editId, OpenMode.ForWrite) as Polyline;
+                if (plineRw == null) { tr2.Abort(); return; }
+                SingleBarEngine.WriteXData(plineRw, updated);
+                tr2.Commit();
+            }
+
+            SingleBarEngine.RebuildCompanions(db, editId, updated);
+
+            // Krok 3b — napraw grot strzałki etykiety pręta (geometria się zmieniła)
+            using (var trFix = db.TransactionManager.StartTransaction())
+            {
+                var plineFix = trFix.GetObject(editId, OpenMode.ForRead) as Polyline;
+                if (plineFix != null && !string.IsNullOrEmpty(updated.LabelHandle))
+                {
+                    if (long.TryParse(updated.LabelHandle,
+                            System.Globalization.NumberStyles.HexNumber,
+                            null, out long lblHVal))
+                    {
+                        var lblHandle = new Handle(lblHVal);
+                        if (db.TryGetObjectId(lblHandle, out ObjectId lblId)
+                            && !lblId.IsNull && !lblId.IsErased)
+                        {
+                            var ml = trFix.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                            if (ml != null)
+                            {
+                                try
+                                {
+                                    var leaderIdxs = ml.GetLeaderIndexes();
+                                    if (leaderIdxs != null && leaderIdxs.Count > 0)
+                                    {
+                                        int li       = (int)leaderIdxs[0];
+                                        var lineIdxs = ml.GetLeaderLineIndexes(li);
+                                        if (lineIdxs != null && lineIdxs.Count > 0)
+                                        {
+                                            int lni        = (int)lineIdxs[0];
+                                            var currentTip = ml.GetFirstVertex(lni);
+                                            var newTip     = plineFix.GetClosestPointTo(currentTip, false);
+                                            ml.SetFirstVertex(lni, newTip);
+                                        }
+                                    }
+                                }
+                                catch { /* nie przerywaj jeśli MLeader nie ma leaderów */ }
+                            }
+                        }
+                    }
+                }
+                trFix.Commit();
+            }
+
+            // Krok 4 — aktualizuj powiązane rozkłady
+            int posNr      = SingleBarEngine.ExtractPosNr(updated.Mark);
+            var distribIds = BarBlockEngine.FindDistributionsByPosNr(db, posNr);
+            foreach (var id in distribIds)
+                BarBlockEngine.UpdateBarLength(db, id, updated.LengthA);
+
+            ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+        }
     }
 }

@@ -387,14 +387,19 @@ namespace BricsCadRc.Core
 
             // Przebuduj wierzchołki in-place
             pline.UpgradeOpen();
-            while (pline.NumberOfVertices > 0)
-                pline.RemoveVertexAt(0);
+            int oldCount = pline.NumberOfVertices;
+
+            // Dodaj nowe wierzchołki na końcu
             for (int i = 0; i < lPts.Count; i++)
             {
                 double wx = startPoint.X + lPts[i].X;
                 double wy = startPoint.Y + lPts[i].Y;
-                pline.AddVertexAt(i, new Point2d(wx, wy), 0, 0, 0);
+                pline.AddVertexAt(oldCount + i, new Point2d(wx, wy), 0, 0, 0);
             }
+
+            // Usuń stare wierzchołki od początku (indeks 0 przesuwa się po każdym usunięciu)
+            for (int i = 0; i < oldCount; i++)
+                pline.RemoveVertexAt(0);
             pline.ConstantWidth = bar.Diameter;
             pline.Closed = _closedShapes.Contains(shape.Code);
 
