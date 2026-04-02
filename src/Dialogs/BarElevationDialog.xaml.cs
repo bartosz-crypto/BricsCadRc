@@ -12,6 +12,7 @@ namespace BricsCadRc.Dialogs
     public partial class BarElevationDialog : Window
     {
         public BarData Result { get; private set; }
+        public string ResultPosNr { get; private set; } = "01";
 
         private BarShape _selectedShape;
         private bool     _lengthOverridden;
@@ -21,13 +22,15 @@ namespace BricsCadRc.Dialogs
         private TextBlock[] _paramLabels;
         private TextBox[]   _paramBoxes;
 
-        public BarElevationDialog()
+        public BarElevationDialog(int suggestedNr = 1)
         {
             InitializeComponent();
 
             _paramRows   = new[] { RowA, RowB, RowC, RowD, RowE };
             _paramLabels = new[] { LabelA, LabelB, LabelC, LabelD, LabelE };
             _paramBoxes  = new[] { ParamABox, ParamBBox, ParamCBox, ParamDBox, ParamEBox };
+
+            PosNrBox.Text = suggestedNr.ToString("D2");
 
             // Domyślny kształt: 00 Straight
             SelectShape(ShapeCodeLibrary.Get("00"), paramValues: null);
@@ -43,6 +46,10 @@ namespace BricsCadRc.Dialogs
                 if (item.Tag?.ToString() == bar.Diameter.ToString())
                 { DiameterCombo.SelectedItem = item; break; }
             }
+
+            // Ustaw posNr z Mark
+            var seg = bar.Mark.Split('-');
+            PosNrBox.Text = seg.Length >= 2 ? seg[1] : "01";
 
             // Ustaw shape + wypełnij pola parametrów (SelectShape obsługuje wszystko)
             var shape = ShapeCodeLibrary.Get(bar.ShapeCode);
@@ -192,6 +199,10 @@ namespace BricsCadRc.Dialogs
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+
+            if (!int.TryParse(PosNrBox.Text, out int pnr) || pnr < 1 || pnr > 99)
+            { MessageBox.Show("Numer pozycji musi być liczbą 1-99."); return; }
+            ResultPosNr = pnr.ToString("D2");
 
             int paramCount = _selectedShape.Parameters.Length;
             var paramVals  = new double[5]; // A..E

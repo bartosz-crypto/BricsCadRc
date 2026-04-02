@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 
 namespace BricsCadRc.Dialogs
@@ -8,6 +9,11 @@ namespace BricsCadRc.Dialogs
         public double ResultSpacing { get; private set; }
         public double ResultCover   { get; private set; }
 
+        public Action<int, double, double> OnPreview    { get; set; }
+        public bool                        PreviewApplied { get; private set; } = false;
+
+        private System.Windows.Threading.DispatcherTimer _debounce;
+
         public EditDistributionDialog(string mark, int count, double spacing, double cover)
         {
             InitializeComponent();
@@ -16,8 +22,9 @@ namespace BricsCadRc.Dialogs
             SpacingBox.Text = spacing.ToString("F0");
             CoverBox.Text   = cover.ToString("F0");
             UpdateSpan();
-            CountBox.TextChanged   += (s, e) => UpdateSpan();
-            SpacingBox.TextChanged += (s, e) => UpdateSpan();
+            CountBox.TextChanged   += (s, e) => { UpdateSpan(); SchedulePreview(); };
+            SpacingBox.TextChanged += (s, e) => { UpdateSpan(); SchedulePreview(); };
+            CoverBox.TextChanged   += (s, e) => SchedulePreview();
         }
 
         void UpdateSpan()
@@ -27,6 +34,29 @@ namespace BricsCadRc.Dialogs
                 SpanLabel.Text = $"{(c - 1) * sp:F0}";
             else
                 SpanLabel.Text = "—";
+        }
+
+        void Preview_Click(object sender, RoutedEventArgs e)
+        {
+            if (!int.TryParse(CountBox.Text, out int c) || c < 1) return;
+            if (!double.TryParse(SpacingBox.Text, out double sp) || sp <= 0) return;
+            if (!double.TryParse(CoverBox.Text, out double cv) || cv < 0) return;
+
+            PreviewApplied = true;
+            OnPreview?.Invoke(c, sp, cv);
+        }
+
+        void SchedulePreview()
+        {
+            _debounce?.Stop();
+            _debounce = new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromMilliseconds(600) };
+            _debounce.Tick += (s, e) =>
+            {
+                _debounce.Stop();
+                Preview_Click(s, null!);
+            };
+            _debounce.Start();
         }
 
         void OK_Click(object sender, RoutedEventArgs e)

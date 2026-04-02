@@ -29,45 +29,36 @@ namespace BricsCadRc.Commands
             var ed  = doc.Editor;
             var db  = doc.Database;
 
-            // --- Krok 1: Dialog "Reinforcement – Elevation" ---
-            var elevDlg = new BarElevationDialog();
+            // Krok 1 — oblicz sugerowany wolny numer pozycji
+            var usedNrs   = PositionCounter.GetUsedPositionNumbers(db);
+            int suggested = PositionCounter.GetNextFreeFrom(usedNrs, PositionCounter.GetNext(db));
+
+            // Krok 2 — dialog z kształtem, średnicą, wymiarami i numerem pozycji
+            var elevDlg = new BarElevationDialog(suggested);
             if (Application.ShowModalWindow(elevDlg) != true) return;
             var barData = elevDlg.Result;
             if (barData == null) return;
 
-            // --- Krok 2 & 3: Wstaw pret w Model Space ---
-            var ptOpts = new PromptPointOptions("\nClick insertion point for bar: ");
+            // Krok 3 — punkt wstawienia
+            var ptOpts   = new PromptPointOptions("\nClick insertion point for bar: ");
             var ptResult = ed.GetPoint(ptOpts);
             if (ptResult.Status != PromptStatus.OK) return;
             Point3d insertPt = ptResult.Value;
 
-            // --- Krok 4: Dialog "Reinforcement description" (numer pozycji) ---
-            int suggestedNr = PositionCounter.GetNext(db);
-            var posDlg = new BarPositionDialog(barData, suggestedNr);
-            if (Application.ShowModalWindow(posDlg) != true) return;
-
-            int posNr = posDlg.PositionNumber;
-
-            // --- Walidacja: czy numer pozycji jest wolny ---
-            var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
-            while (usedNrs.Contains(posNr))
+            // Walidacja unikalności numeru pozycji
+            if (!int.TryParse(elevDlg.ResultPosNr, out int posNr)) posNr = suggested;
+            int safePosNr = PositionCounter.GetNextFreeFrom(usedNrs, posNr);
+            if (safePosNr != posNr)
             {
-                int nextFree = PositionCounter.GetNextFreeFrom(usedNrs, posNr + 1);
-                ed.WriteMessage($"\n[RC SLAB] Position {posNr} is already in use. Next free: {nextFree}.");
-
-                var nrOpts = new PromptIntegerOptions(
-                    $"\nAccept position {nextFree} [Enter] or enter new number: ")
-                {
-                    AllowNone  = true,
-                    LowerLimit = 1,
-                    UpperLimit = 9999
-                };
-                var nrResult = ed.GetInteger(nrOpts);
-                if (nrResult.Status == PromptStatus.Cancel) return;
-                posNr = nrResult.Status == PromptStatus.None ? nextFree : nrResult.Value;
+                var conflictDlg = new BarPositionConflictDialog(posNr, safePosNr);
+                if (Application.ShowModalWindow(conflictDlg) != true) return;
+                posNr = conflictDlg.ResultPosNr;
+                // Upewnij się że wybrany numer też jest wolny
+                posNr = PositionCounter.GetNextFreeFrom(usedNrs, posNr);
             }
 
             barData.Mark = $"H{barData.Diameter}-{posNr:D2}";
+            PositionCounter.Increment(db, posNr);
 
             // --- Krok 5: Wstaw polilinię pręta ---
             ObjectId barId = SingleBarEngine.PlaceBar(db, barData, insertPt);
@@ -105,7 +96,7 @@ namespace BricsCadRc.Commands
                 tr.Commit();
             }
 
-            string labelText = $"{posNr:D2} {barData.Mark}";
+            string labelText = barData.Mark;  // np. "H12-01"
             ObjectId labelId = SingleBarEngine.PlaceBarLabel(db, arrowTip, textPt, labelText, barId);
 
             // Zapisz handle MLeadera w XData pręta (umożliwia RC_FIX_LABEL)
@@ -528,6 +519,32 @@ namespace BricsCadRc.Commands
             // Zapisz handle annotacji w XData bloku pretow — unikalny klucz dla SyncAnnotation
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
+
+            // Zaktualizuj etykietę pręta — dodaj liczbę prętów z rozkładu
+            if (!string.IsNullOrEmpty(sourceBar.LabelHandle))
+            {
+                using var trBarLbl = db.TransactionManager.StartTransaction();
+                if (long.TryParse(sourceBar.LabelHandle,
+                        System.Globalization.NumberStyles.HexNumber,
+                        null, out long barLblHVal))
+                {
+                    var h = new Handle(barLblHVal);
+                    if (db.TryGetObjectId(h, out ObjectId barLblId) && !barLblId.IsErased)
+                    {
+                        var ml = trBarLbl.GetObject(barLblId, OpenMode.ForWrite) as MLeader;
+                        if (ml?.ContentType == ContentType.MTextContent)
+                        {
+                            var mt = ml.MText?.Clone() as MText;
+                            if (mt != null)
+                            {
+                                mt.Contents = $"{finalCount} {sourceBar.Mark}";
+                                ml.MText    = mt;
+                            }
+                        }
+                    }
+                }
+                trBarLbl.Commit();
+            }
 
             ed.WriteMessage(
                 $"\n[RC SLAB] Distribution created: {finalCount} bars  {sourceBar.Mark}\n" +
@@ -1036,7 +1053,9 @@ namespace BricsCadRc.Commands
             var updated = dlg.Result;
 
             // Zachowaj niezmienne pola z oryginału
-            updated.Mark        = bar.Mark;
+            // Przebuduj Mark z nową średnicą i posNr z dialogu — format H{dia}-{posNr}
+            string posNrStr = dlg.ResultPosNr;
+            updated.Mark    = $"H{updated.Diameter}-{posNrStr}";
             updated.LayerCode   = bar.LayerCode;
             updated.Position    = bar.Position;
             updated.Direction   = bar.Direction;
@@ -1092,6 +1111,60 @@ namespace BricsCadRc.Commands
                     }
                 }
                 trFix.Commit();
+            }
+
+            // Krok 3c — zaktualizuj tekst etykiety pręta (MLeader)
+            if (!string.IsNullOrEmpty(updated.LabelHandle))
+            {
+                using var trLabel = db.TransactionManager.StartTransaction();
+
+                // Spróbuj obu formatów — hex i decimal
+                ObjectId lblId = ObjectId.Null;
+                bool found = false;
+
+                // Próba 1: hex
+                if (long.TryParse(updated.LabelHandle,
+                        System.Globalization.NumberStyles.HexNumber,
+                        null, out long lblHValHex))
+                {
+                    var h = new Handle(lblHValHex);
+                    if (db.TryGetObjectId(h, out ObjectId idHex) && !idHex.IsNull && !idHex.IsErased)
+                    { lblId = idHex; found = true; }
+                }
+
+                // Próba 2: decimal
+                if (!found && long.TryParse(updated.LabelHandle,
+                        System.Globalization.NumberStyles.Integer,
+                        null, out long lblHValDec))
+                {
+                    var h = new Handle(lblHValDec);
+                    if (db.TryGetObjectId(h, out ObjectId idDec) && !idDec.IsNull && !idDec.IsErased)
+                    { lblId = idDec; found = true; }
+                }
+
+                if (!found) { trLabel.Commit(); }
+                else
+                {
+                    var ml = trLabel.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                    if (ml != null && ml.ContentType == ContentType.MTextContent)
+                    {
+                        var segments    = updated.Mark.Split('-');
+                        string lblPosNr = segments.Length >= 2 ? segments[1] : "01";
+                        string newLabel = updated.Mark;  // np. "H16-01"
+
+                        var mt = ml.MText;
+                        if (mt != null)
+                        {
+                            mt = mt.Clone() as MText;
+                            if (mt != null)
+                            {
+                                mt.Contents = newLabel;
+                                ml.MText    = mt;
+                            }
+                        }
+                    }
+                    trLabel.Commit();
+                }
             }
 
             // Krok 4 — aktualizuj powiązane rozkłady

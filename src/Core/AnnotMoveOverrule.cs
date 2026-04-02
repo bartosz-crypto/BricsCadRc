@@ -37,6 +37,8 @@ namespace BricsCadRc.Core
             = new Dictionary<long, double>();
         private static readonly Dictionary<long, Point3d> _dragOrigPos
             = new Dictionary<long, Point3d>();
+        private static readonly Dictionary<long, Point3d> _annotDragStart
+            = new Dictionary<long, Point3d>();
 
         // Transienty podglądu dragu arm — czyszczone przed każdym nowym wywołaniem MoveGripPointsAt
         // i przy GetGripPoints (nowa interakcja).
@@ -93,6 +95,8 @@ namespace BricsCadRc.Core
             {
                 // Nowa interakcja — wyczysc stan dragu pozycji
                 _dragOrigPos.Remove(br.ObjectId.Handle.Value);
+                _annotDragStart.Remove(br.ObjectId.Handle.Value);
+                _annotDragStart.Remove(0L);  // wyczyść też cache klonu z poprzedniego drag
 
                 gripPoints.Add(BarBlockEngine.GripLateral(br, barBlock)); // [0] krawedz plyty (cover offset)
                 gripPoints.Add(BarBlockEngine.GripSpan(br, barBlock)); // [1] span resize
@@ -270,16 +274,60 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    // Grip [0]: swobodny ruch w dowolnym kierunku.
-                    // offset jest KUMULATYWNY — uzywamy origPos jako bazy (jak _dragOrigArm).
                     long handle = br.ObjectId.Handle.Value;
                     if (!_dragOrigPos.ContainsKey(handle))
                         _dragOrigPos[handle] = br.Position;
-
                     var origPos = _dragOrigPos[handle];
                     var target  = new Point3d(origPos.X + offset.X, origPos.Y + offset.Y, origPos.Z);
-                    // delta = ile jeszcze trzeba przesunac od aktualnej pozycji do celu
-                    entity.TransformBy(Matrix3d.Displacement(target - br.Position));
+                    var disp    = target - br.Position;
+
+                    // Wyłącz auto-sync annotacji w BarBlockTransformOverrule (używamy własnej logiki)
+                    AnnotOverruleState.InGripDrag = true;
+                    entity.TransformBy(Matrix3d.Displacement(disp));
+                    AnnotOverruleState.InGripDrag = false;
+
+                    // handle=0 → klon BricsCAD (rubber-band preview) → synchronizuj annotację
+                    // handle≠0 → prawdziwy obiekt (final commit) → annotacja już na miejscu, pomijamy
+                    bool isPreviewClone = (handle == 0);
+
+                    if (isPreviewClone)
+                    {
+                        if (!string.IsNullOrEmpty(barBlock.AnnotHandle) &&
+                            long.TryParse(barBlock.AnnotHandle,
+                                System.Globalization.NumberStyles.HexNumber,
+                                null, out long annotHVal))
+                        {
+                            var annotHandle2 = new Handle(annotHVal);
+                            if (br.Database.TryGetObjectId(annotHandle2, out ObjectId annotId2)
+                                && !annotId2.IsNull && !annotId2.IsErased)
+                            {
+                                using var trAnnot = br.Database.TransactionManager.StartTransaction();
+                                var annotBr2 = trAnnot.GetObject(annotId2, OpenMode.ForWrite) as BlockReference;
+                                if (annotBr2 != null)
+                                {
+                                    if (!_annotDragStart.ContainsKey(handle))
+                                        _annotDragStart[handle] = annotBr2.Position;
+
+                                    var origAnnotPos = _annotDragStart[handle];
+
+                                    AnnotOverruleState.BypassConstraint = true;
+                                    try
+                                    {
+                                        annotBr2.Position = new Point3d(
+                                            origAnnotPos.X + offset.X,
+                                            origAnnotPos.Y + offset.Y,
+                                            origAnnotPos.Z);
+                                    }
+                                    finally
+                                    {
+                                        AnnotOverruleState.BypassConstraint = false;
+                                    }
+                                }
+                                trAnnot.Commit();
+                            }
+                        }
+                    }
+                    // else: final commit z prawdziwym handle — annotacja jest już na miejscu z preview
                 }
                 return;
             }
@@ -412,6 +460,7 @@ namespace BricsCadRc.Core
     internal static class AnnotOverruleState
     {
         public static bool BypassConstraint { get; set; } = false;
+        public static bool InGripDrag       { get; set; } = false;
     }
 
     // ----------------------------------------------------------------
@@ -488,40 +537,37 @@ namespace BricsCadRc.Core
         {
             base.TransformBy(entity, transform);
 
+            if (AnnotOverruleState.InGripDrag) return;
+
             if (!(entity is BlockReference br)) return;
 
-            var db  = br.Database;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (db == null || doc == null) return;
+            var db = br.Database;
+            if (db == null) return;
 
             string annotHandle = ReadAnnotHandle(br);
             if (string.IsNullOrEmpty(annotHandle)) return;
+
+            var translation = transform.Translation;
+            if (translation.Length < 0.001) return;
 
             try
             {
                 using var tr = db.TransactionManager.StartTransaction();
 
-                if (!long.TryParse(annotHandle, NumberStyles.HexNumber, null, out long hVal))
-                { tr.Commit(); return; }
+                if (!long.TryParse(annotHandle,
+                        NumberStyles.HexNumber, null, out long hVal)) { tr.Commit(); return; }
 
                 var handle = new Handle(hVal);
                 if (!db.TryGetObjectId(handle, out ObjectId annotId)
-                    || annotId.IsNull || !annotId.IsValid)
-                { tr.Commit(); return; }
+                    || annotId.IsNull || !annotId.IsValid) { tr.Commit(); return; }
 
                 var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
                 if (annotBr == null) { tr.Commit(); return; }
 
-                // Ustaw flagę — AnnotTransformOverrule nie będzie constraintował tego ruchu
+                // MOVE/COPY — stosujemy ten sam transform co na bar block
                 AnnotOverruleState.BypassConstraint = true;
-                try
-                {
-                    annotBr.TransformBy(transform);
-                }
-                finally
-                {
-                    AnnotOverruleState.BypassConstraint = false;
-                }
+                try { annotBr.TransformBy(transform); }
+                finally { AnnotOverruleState.BypassConstraint = false; }
 
                 tr.Commit();
             }

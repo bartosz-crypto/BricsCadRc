@@ -96,6 +96,38 @@ namespace BricsCadRc.Core
             return n;
         }
 
+        /// <summary>
+        /// Aktualizuje przechowywany licznik do max(current, posNr),
+        /// żeby kolejna sugestia startowała po użytym numerze.
+        /// </summary>
+        public static void Increment(Database db, int posNr)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+            int current = 0;
+            if (nod.Contains(DictKey))
+            {
+                var xrec = (Xrecord)tr.GetObject(nod.GetAt(DictKey), OpenMode.ForWrite);
+                var vals = xrec.Data?.AsArray();
+                if (vals != null && vals.Length > 0)
+                    current = (short)vals[0].Value;
+                if (posNr > current)
+                    xrec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int16, (short)posNr));
+            }
+            else
+            {
+                var xrec = new Xrecord
+                {
+                    Data = new ResultBuffer(new TypedValue((int)DxfCode.Int16, (short)posNr))
+                };
+                nod.SetAt(DictKey, xrec);
+                tr.AddNewlyCreatedDBObject(xrec, true);
+            }
+
+            tr.Commit();
+        }
+
         /// <summary>Resetuje licznik do 0 (np. przy zaczynaniu nowego projektu).</summary>
         public static void Reset(Database db)
         {

@@ -953,7 +953,15 @@ namespace BricsCadRc.Core
             // Zachowaj ArmTotalLen z istniejacych XData (uzytkownik mogl zmienic grip)
             var existingAnnot = ReadAnnotXData(annotBr);
             if (existingAnnot != null)
-                updatedBar.ArmTotalLen = existingAnnot.ArmTotalLen;
+            {
+                // Zachowaj całą geometrię leadera — użytkownik mógł ją zmieniać gripami
+                updatedBar.ArmTotalLen      = existingAnnot.ArmTotalLen;
+                updatedBar.LeaderHorizontal = existingAnnot.LeaderHorizontal;
+                updatedBar.LeaderRight      = existingAnnot.LeaderRight;
+                updatedBar.LeaderUp         = existingAnnot.LeaderUp;
+                updatedBar.ArmMidY          = existingAnnot.ArmMidY;
+                updatedBar.TextLen          = existingAnnot.TextLen;
+            }
 
             var btr = (BlockTableRecord)tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite);
 

@@ -1,3 +1,4 @@
+using System;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using BricsCadRc.Core;
@@ -139,13 +140,139 @@ namespace BricsCadRc.Commands
                 blockRefId = ObjectId.Null;
             }
 
-            // Krok 2 — otwórz dialog z aktualnymi wartościami
-            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover);
-            if (Application.ShowModalWindow(dlg) != true) return;
+            // Lokalna metoda pomocnicza — przebudowuje blok + Mark + annotację
+            void ApplyPreview(int count, double spacing, double cover)
+            {
+                BarBlockEngine.RebuildWithNewLayout(db, blockRefId, count, spacing, cover);
 
-            // Krok 3 — przebuduj blok z nowymi wartościami
+                using var trP = db.TransactionManager.StartTransaction();
+                var brP = trP.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+                if (brP != null)
+                {
+                    var bP = BarBlockEngine.ReadXData(brP);
+                    if (bP != null)
+                    {
+                        var mp = bar.Mark.Split(' ');
+                        var cp = mp[0].Split('-');
+                        string sfx = mp.Length > 1 ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
+                        bP.Mark    = cp.Length >= 2 ? $"{cp[0]}-{cp[1]}-{(int)spacing}{sfx}" : bar.Mark;
+                        bP.Count   = count;
+                        bP.Spacing = spacing;
+                        BarBlockEngine.WriteXData(brP, bP);
+                    }
+                }
+                trP.Commit();
+
+                using var trS = db.TransactionManager.StartTransaction();
+                var brS = trS.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                var bS  = brS != null ? BarBlockEngine.ReadXData(brS) : null;
+                trS.Commit();
+                if (bS != null) AnnotationEngine.SyncAnnotation(db, bS);
+
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            }
+
+            // Zachowaj oryginalne wartości do ewentualnego przywrócenia
+            int    origCount   = bar.Count;
+            double origSpacing = bar.Spacing;
+            double origCover   = bar.Cover;
+
+            // Krok 2 — dialog z live preview
+            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover);
+            dlg.OnPreview = (c, sp, cv) => ApplyPreview(c, sp, cv);
+
+            bool confirmed = Application.ShowModalWindow(dlg) == true;
+
+            if (!confirmed)
+            {
+                if (dlg.PreviewApplied)
+                {
+                    ApplyPreview(origCount, origSpacing, origCover);
+                }
+                return;
+            }
+
+            // Krok 3 — przebuduj blok z wartościami z dialogu
             BarBlockEngine.RebuildWithNewLayout(db, blockRefId,
                 dlg.ResultCount, dlg.ResultSpacing, dlg.ResultCover);
+
+            // Krok 3b — zaktualizuj Mark jeśli zmienił się rozstaw (format H{dia}-{posNr}-{spacing})
+            if (Math.Abs(dlg.ResultSpacing - bar.Spacing) > 0.1 || dlg.ResultCount != bar.Count)
+            {
+                using var trMark = db.TransactionManager.StartTransaction();
+                var brMark = trMark.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+                if (brMark != null)
+                {
+                    var barMark = BarBlockEngine.ReadXData(brMark);
+                    if (barMark != null)
+                    {
+                        // Wyodrębnij H{dia}-{posNr} z aktualnego Mark (przed spacing)
+                        // Format: "H12-01-200" lub "H12-01-200 B1"
+                        var markParts  = bar.Mark.Split(' ');
+                        var coreParts  = markParts[0].Split('-');  // ["H12","01","200"]
+                        string suffix  = markParts.Length > 1
+                            ? " " + string.Join(" ", markParts, 1, markParts.Length - 1)
+                            : "";
+                        string baseNew = coreParts.Length >= 2
+                            ? $"{coreParts[0]}-{coreParts[1]}-{(int)dlg.ResultSpacing}"
+                            : bar.Mark;
+                        barMark.Mark    = baseNew + suffix;
+                        barMark.Count   = dlg.ResultCount;
+                        barMark.Spacing = dlg.ResultSpacing;
+                        BarBlockEngine.WriteXData(brMark, barMark);
+                    }
+                }
+                trMark.Commit();
+            }
+
+            // Krok 3c — zaktualizuj etykietę pręta źródłowego
+            using (var trSrc = db.TransactionManager.StartTransaction())
+            {
+                var brSrc = trSrc.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                if (brSrc != null)
+                {
+                    var barSrc = BarBlockEngine.ReadXData(brSrc);
+                    if (barSrc != null && !string.IsNullOrEmpty(barSrc.SourceBarHandle))
+                    {
+                        if (long.TryParse(barSrc.SourceBarHandle,
+                                System.Globalization.NumberStyles.HexNumber,
+                                null, out long srcHVal))
+                        {
+                            var srcHandle = new Handle(srcHVal);
+                            if (db.TryGetObjectId(srcHandle, out ObjectId srcId) && !srcId.IsErased)
+                            {
+                                var srcPline = trSrc.GetObject(srcId, OpenMode.ForRead) as Polyline;
+                                var srcBar   = srcPline != null ? SingleBarEngine.ReadBarXData(srcPline) : null;
+                                if (srcBar != null && !string.IsNullOrEmpty(srcBar.LabelHandle))
+                                {
+                                    if (long.TryParse(srcBar.LabelHandle,
+                                            System.Globalization.NumberStyles.HexNumber,
+                                            null, out long lblHVal))
+                                    {
+                                        var lblHandle = new Handle(lblHVal);
+                                        if (db.TryGetObjectId(lblHandle, out ObjectId lblId) && !lblId.IsErased)
+                                        {
+                                            var ml = trSrc.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                                            if (ml?.ContentType == ContentType.MTextContent)
+                                            {
+                                                var mt = ml.MText?.Clone() as MText;
+                                                if (mt != null)
+                                                {
+                                                    var updMark = BarBlockEngine.ReadXData(
+                                                        trSrc.GetObject(blockRefId, OpenMode.ForRead) as BlockReference);
+                                                    mt.Contents = $"{dlg.ResultCount} {updMark?.Mark ?? srcBar.Mark}";
+                                                    ml.MText    = mt;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                trSrc.Commit();
+            }
 
             // Krok 4 — zaktualizuj annotację (nowy BarsSpan)
             using (var tr = db.TransactionManager.StartTransaction())
@@ -360,6 +487,66 @@ namespace BricsCadRc.Commands
                 var brRefresh = trRefresh.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
                 brRefresh?.RecordGraphicsModified(true);
                 trRefresh.Commit();
+            }
+
+            // Przelicz armTotalLen na podstawie nowej długości tekstu i zaktualizuj arm
+            using (var trArm = db.TransactionManager.StartTransaction())
+            {
+                var brArm = trArm.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
+                if (brArm != null)
+                {
+                    var barArm = AnnotationEngine.ReadAnnotXData(brArm);
+                    if (barArm != null)
+                    {
+                        var btrArm = (BlockTableRecord)trArm.GetObject(brArm.BlockTableRecord, OpenMode.ForRead);
+                        double newTextLen = 0;
+                        foreach (ObjectId oid in btrArm)
+                        {
+                            if (oid.IsErased) continue;
+                            var obj = trArm.GetObject(oid, OpenMode.ForRead);
+                            if (obj is DBText txt)
+                            {
+                                try
+                                {
+                                    var ext = txt.GeometricExtents;
+                                    if (System.Math.Abs(txt.Rotation - System.Math.PI / 2.0) < 0.01)
+                                        newTextLen = System.Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y);
+                                    else
+                                        newTextLen = System.Math.Abs(ext.MaxPoint.X - ext.MinPoint.X);
+                                }
+                                catch
+                                {
+                                    newTextLen = txt.TextString.Length * AnnotationEngine.TextCharWidth;
+                                }
+                                break;
+                            }
+                        }
+
+                        if (newTextLen > 0)
+                        {
+                            double newArmTotalLen = AnnotationEngine.ArmLength + newTextLen;
+
+                            // Zaktualizuj TextLen w XData — UpdateArmInBlock czyta go do pozycjonowania tekstu
+                            barArm.TextLen = newTextLen;
+                            using (var trTextLen = db.TransactionManager.StartTransaction())
+                            {
+                                var brTextLen = trTextLen.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
+                                if (brTextLen != null)
+                                    AnnotationEngine.WriteAnnotXData(brTextLen, barArm);
+                                trTextLen.Commit();
+                            }
+
+                            trArm.Commit();
+                            AnnotationEngine.UpdateArmInBlock(brArm, newArmTotalLen);
+                        }
+                        else
+                        {
+                            trArm.Commit();
+                        }
+                    }
+                    else trArm.Commit();
+                }
+                else trArm.Commit();
             }
 
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }

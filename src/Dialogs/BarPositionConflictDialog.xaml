@@ -1,0 +1,21 @@
+<Window x:Class="BricsCadRc.Dialogs.BarPositionConflictDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Konflikt numeru pozycji" Width="320" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
+    <StackPanel Margin="16">
+        <TextBlock x:Name="MessageLabel" TextWrapping="Wrap" Margin="0,0,0,12"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Nowy numer pozycji:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Column="1" x:Name="PosNrBox" VerticalAlignment="Center"/>
+        </Grid>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Anuluj" Width="80" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
+            <Button Content="OK"     Width="80" IsDefault="True"  Click="OK_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
