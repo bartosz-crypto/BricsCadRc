@@ -50,8 +50,8 @@ namespace BricsCadRc.Core
             // Kolory pretow jak w ASD — preta na niebiesko, etykiety zolto
             EnsureLayer(tr, layerTable, BotLayer1,  5);   // niebieski  (B1 — ACI 5)
             EnsureLayer(tr, layerTable, BotLayer2,  5);   // niebieski  (B2 — ACI 5, jak B1 — ASD konwencja)
-            EnsureLayer(tr, layerTable, TopLayer1,  1);   // czerwony   (T1 — ACI 1)
-            EnsureLayer(tr, layerTable, TopLayer2,  1);   // czerwony   (T2 — ACI 1, jak T1)
+            EnsureLayer(tr, layerTable, TopLayer1,  5);   // niebieski  (T1 — ACI 5)
+            EnsureLayer(tr, layerTable, TopLayer2,  5);   // niebieski  (T2 — ACI 5)
             EnsureLayer(tr, layerTable, AnnotLayer,  2);   // zolty      (etykiety — ACI 2, jak ASD)
             EnsureLayer(tr, layerTable, DimsLayer,   4);   // cyjan      (wymiary)
             EnsureLayer(tr, layerTable, LeaderLayer, 7);   // bialy      (linie prowadzace — ACI 7)

@@ -226,52 +226,12 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 3c — zaktualizuj etykietę pręta źródłowego
-            using (var trSrc = db.TransactionManager.StartTransaction())
             {
+                using var trSrc = db.TransactionManager.StartTransaction();
                 var brSrc = trSrc.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
-                if (brSrc != null)
-                {
-                    var barSrc = BarBlockEngine.ReadXData(brSrc);
-                    if (barSrc != null && !string.IsNullOrEmpty(barSrc.SourceBarHandle))
-                    {
-                        if (long.TryParse(barSrc.SourceBarHandle,
-                                System.Globalization.NumberStyles.HexNumber,
-                                null, out long srcHVal))
-                        {
-                            var srcHandle = new Handle(srcHVal);
-                            if (db.TryGetObjectId(srcHandle, out ObjectId srcId) && !srcId.IsErased)
-                            {
-                                var srcPline = trSrc.GetObject(srcId, OpenMode.ForRead) as Polyline;
-                                var srcBar   = srcPline != null ? SingleBarEngine.ReadBarXData(srcPline) : null;
-                                if (srcBar != null && !string.IsNullOrEmpty(srcBar.LabelHandle))
-                                {
-                                    if (long.TryParse(srcBar.LabelHandle,
-                                            System.Globalization.NumberStyles.HexNumber,
-                                            null, out long lblHVal))
-                                    {
-                                        var lblHandle = new Handle(lblHVal);
-                                        if (db.TryGetObjectId(lblHandle, out ObjectId lblId) && !lblId.IsErased)
-                                        {
-                                            var ml = trSrc.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                                            if (ml?.ContentType == ContentType.MTextContent)
-                                            {
-                                                var mt = ml.MText?.Clone() as MText;
-                                                if (mt != null)
-                                                {
-                                                    var updMark = BarBlockEngine.ReadXData(
-                                                        trSrc.GetObject(blockRefId, OpenMode.ForRead) as BlockReference);
-                                                    mt.Contents = $"{dlg.ResultCount} {updMark?.Mark ?? srcBar.Mark}";
-                                                    ml.MText    = mt;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                var barSrc = brSrc != null ? BarBlockEngine.ReadXData(brSrc) : null;
                 trSrc.Commit();
+                AnnotationEngine.UpdateBarLabelCount(db, barSrc?.SourceBarHandle ?? "");
             }
 
             // Krok 4 — zaktualizuj annotację (nowy BarsSpan)
@@ -421,8 +381,14 @@ namespace BricsCadRc.Commands
             { ed.WriteMessage("\nNie znaleziono danych etykiety."); return; }
 
             // Krok 3 — otwórz dialog
-            var dlg = new EditLabelDialog(bar.Count, bar.Mark, bar.Diameter, bar.Spacing);
+            var dlg = new EditLabelDialog(bar.Count, bar.Mark, bar.Diameter, bar.Spacing, bar.VisibilityMode);
             if (Application.ShowModalWindow(dlg) != true) return;
+
+            // Obsługa Manual — user klika pręty
+            string newVisibleIndices = bar.VisibleIndices ?? "";
+            if (dlg.ResultVisibility == BarVisibilityMode.Manual)
+                newVisibleIndices = SelectVisibleBarsManually(doc, db, selRes.ObjectId, bar)
+                                    ?? bar.VisibleIndices ?? "";
 
             // Krok 4 — zaktualizuj XData i DBText w BTR
             using (var tr = db.TransactionManager.StartTransaction())
@@ -430,9 +396,11 @@ namespace BricsCadRc.Commands
                 var br = tr.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
                 if (br == null) { tr.Abort(); return; }
 
-                bar.Count   = dlg.ResultCount;
-                bar.Mark    = dlg.ResultMark;
-                bar.Spacing = dlg.ResultSpacing;
+                bar.Count          = dlg.ResultCount;
+                bar.Mark           = dlg.ResultMark;
+                bar.Spacing        = dlg.ResultSpacing;
+                bar.VisibilityMode = dlg.ResultVisibility;
+                bar.VisibleIndices = newVisibleIndices;
                 // bar.Diameter — nie zmieniamy, pochodzi z pręta
 
                 AnnotationEngine.WriteAnnotXData(br, bar);
@@ -455,6 +423,53 @@ namespace BricsCadRc.Commands
             }
 
             ed.WriteMessage($"\nEtykieta zaktualizowana: {dlg.ResultCount} {dlg.ResultMark}\n");
+
+            // Przebuduj blok prętów jeśli znamy SourceBlockHandle (visibility mogła się zmienić)
+            if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
+            {
+                try
+                {
+                    long hVal = Convert.ToInt64(bar.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                    if (db.TryGetObjectId(new Handle(hVal), out ObjectId barBlockId) && !barBlockId.IsNull)
+                        BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, newVisibleIndices);
+                }
+                catch { }
+            }
+
+            // Przebuduj annotację (kółka na dist line) z nową widocznością
+            using (var trSync = db.TransactionManager.StartTransaction())
+            {
+                // Znajdź RC_BAR_BLOCK przez SourceBlockHandle z annotacji
+                var annotBrSync = trSync.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
+                if (annotBrSync != null)
+                {
+                    var barAnnotSync = AnnotationEngine.ReadAnnotXData(annotBrSync);
+                    if (barAnnotSync != null && !string.IsNullOrEmpty(barAnnotSync.SourceBlockHandle))
+                    {
+                        if (long.TryParse(barAnnotSync.SourceBlockHandle,
+                                System.Globalization.NumberStyles.HexNumber,
+                                null, out long sbHVal))
+                        {
+                            var sbHandle = new Handle(sbHVal);
+                            if (db.TryGetObjectId(sbHandle, out ObjectId sbId) && !sbId.IsErased)
+                            {
+                                var barBlockBr   = trSync.GetObject(sbId, OpenMode.ForRead) as BlockReference;
+                                var barBlockData = barBlockBr != null ? BarBlockEngine.ReadXData(barBlockBr) : null;
+                                if (barBlockData != null)
+                                {
+                                    trSync.Commit();
+                                    AnnotationEngine.SyncAnnotation(db, barBlockData);
+                                }
+                                else trSync.Commit();
+                            }
+                            else trSync.Commit();
+                        }
+                        else trSync.Commit();
+                    }
+                    else trSync.Commit();
+                }
+                else trSync.Commit();
+            }
 
             // DEBUG — odczyt po tr.Commit() żeby sprawdzić czy TextString faktycznie się zapisał
             using (var trDbg = db.TransactionManager.StartTransaction())
@@ -550,6 +565,53 @@ namespace BricsCadRc.Commands
             }
 
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+        }
+
+        private static string SelectVisibleBarsManually(
+            Document doc, Database db, ObjectId annotId, BarData bar)
+        {
+            var ed = doc.Editor;
+            ed.WriteMessage("\nKliknij pręty które mają być widoczne (toggle). Enter = zatwierdź.");
+
+            var selectedIndices = new System.Collections.Generic.HashSet<int>();
+
+            while (true)
+            {
+                var opts = new PromptPointOptions("\nKliknij pręt (Enter = koniec): ");
+                opts.AllowNone = true;
+                var res = ed.GetPoint(opts);
+                if (res.Status == PromptStatus.None || res.Status == PromptStatus.Cancel) break;
+                if (res.Status != PromptStatus.OK) break;
+
+                using var tr = db.TransactionManager.StartTransaction();
+                var annotBr = tr.GetObject(annotId, OpenMode.ForRead) as BlockReference;
+                if (annotBr != null)
+                {
+                    var barData = AnnotationEngine.ReadAnnotXData(annotBr);
+                    if (barData != null && barData.Spacing > 0)
+                    {
+                        var inv   = annotBr.BlockTransform.Inverse();
+                        var local = res.Value.TransformBy(inv);
+
+                        double coord   = barData.Direction == "X" ? local.Y : local.X;
+                        int    nearest = (int)Math.Round(coord / barData.Spacing);
+                        nearest = Math.Max(0, Math.Min(barData.Count - 1, nearest));
+
+                        if (selectedIndices.Contains(nearest))
+                            selectedIndices.Remove(nearest);
+                        else
+                            selectedIndices.Add(nearest);
+
+                        ed.WriteMessage($"\n  Pręt {nearest + 1} {(selectedIndices.Contains(nearest) ? "zaznaczony" : "odznaczony")}. Zaznaczonych: {selectedIndices.Count}");
+                    }
+                }
+                tr.Commit();
+            }
+
+            if (selectedIndices.Count == 0) return null;
+            var sorted = new System.Collections.Generic.List<int>(selectedIndices);
+            sorted.Sort();
+            return string.Join(",", sorted);
         }
 
         /// <summary>

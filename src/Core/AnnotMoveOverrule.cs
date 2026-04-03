@@ -270,7 +270,12 @@ namespace BricsCadRc.Core
                     // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
                     var updatedBar = BarBlockEngine.ReadXData(br);
                     if (updatedBar != null)
+                    {
                         AnnotationEngine.SyncAnnotation(br.Database, updatedBar);
+
+                        // Zaktualizuj etykietę pręta-źródłowego (MLeader) — nowa liczba prętów
+                        AnnotationEngine.UpdateBarLabelCount(br.Database, updatedBar.SourceBarHandle ?? "");
+                    }
                 }
                 else
                 {
@@ -635,7 +640,12 @@ namespace BricsCadRc.Core
                 if (annotBr == null) { tr.Commit(); return; }
 
                 annotBr.Erase(true);
+
+                // Zaktualizuj etykietę pręta-źródłowego — przelicz sumę pozostałych rozkładów
+                var barXdErase = BarBlockEngine.ReadXData(br);
                 tr.Commit();
+                if (barXdErase != null && !string.IsNullOrEmpty(barXdErase.SourceBarHandle))
+                    PendingLabelUpdates.Add(barXdErase.SourceBarHandle);
             }
             catch { /* nie przerywaj głównego usuwania */ }
         }
@@ -662,6 +672,124 @@ namespace BricsCadRc.Core
     }
 
     // ----------------------------------------------------------------
+    // BarPolylineEraseOverrule — usunięcie RC_SINGLE_BAR usuwa MLeadera etykiety
+    // ----------------------------------------------------------------
+
+    /// <summary>
+    /// Gdy polilinia pręta (RC_SINGLE_BAR) jest usuwana, usuwa też powiązany MLeader etykiety.
+    /// </summary>
+    internal class BarPolylineEraseOverrule : ObjectOverrule
+    {
+        public override void Erase(DBObject dbObject, bool erasing)
+        {
+            base.Erase(dbObject, erasing);
+
+            if (!erasing) return;
+            if (dbObject is not Teigha.DatabaseServices.Polyline pline) return;
+
+            var db = pline.Database;
+            if (db == null) return;
+
+            // Odczytaj LabelHandle z XData RC_SINGLE_BAR
+            var bar = SingleBarEngine.ReadBarXData(pline);
+            if (bar == null || string.IsNullOrEmpty(bar.LabelHandle)) return;
+
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+
+                // Obsługuj zarówno hex jak i decimal format handle
+                ObjectId lblId = ObjectId.Null;
+                if (long.TryParse(bar.LabelHandle,
+                        System.Globalization.NumberStyles.HexNumber,
+                        null, out long hValHex))
+                {
+                    var h = new Handle(hValHex);
+                    if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
+                        lblId = id;
+                }
+                if (lblId.IsNull && long.TryParse(bar.LabelHandle,
+                        System.Globalization.NumberStyles.Integer,
+                        null, out long hValDec))
+                {
+                    var h = new Handle(hValDec);
+                    if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
+                        lblId = id;
+                }
+
+                if (lblId.IsNull) { tr.Commit(); return; }
+
+                var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                ml?.Erase(true);
+
+                // Usuń też wszystkie rozkłady (RC_BAR_BLOCK) powiązane z tym prętem
+                string plineHandle = pline.Handle.Value.ToString("X8");
+                var modelSpace = (BlockTableRecord)tr.GetObject(
+                    SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+
+                foreach (ObjectId oid in modelSpace)
+                {
+                    if (oid.IsErased) continue;
+                    var ent = tr.GetObject(oid, OpenMode.ForRead) as BlockReference;
+                    if (ent == null) continue;
+                    var barBlock = BarBlockEngine.ReadXData(ent);
+                    if (barBlock == null) continue;
+                    // Sprawdź czy SourceBarHandle wskazuje na ten pręt
+                    if (string.Equals(barBlock.SourceBarHandle, plineHandle,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Usuń też powiązaną annotację (RC_BAR_ANNOT)
+                        if (!string.IsNullOrEmpty(barBlock.AnnotHandle)
+                            && long.TryParse(barBlock.AnnotHandle,
+                                System.Globalization.NumberStyles.HexNumber,
+                                null, out long aHVal))
+                        {
+                            var aHandle = new Handle(aHVal);
+                            if (db.TryGetObjectId(aHandle, out ObjectId aId)
+                                && !aId.IsNull && !aId.IsErased)
+                            {
+                                var annotBr = tr.GetObject(aId, OpenMode.ForWrite) as BlockReference;
+                                annotBr?.Erase(true);
+                            }
+                        }
+                        ent.UpgradeOpen();
+                        ent.Erase(true);
+                    }
+                }
+
+                tr.Commit();
+            }
+            catch { }
+        }
+
+        public new void SetCustomFilter()
+        {
+            this.SetXDataFilter("RC_SINGLE_BAR");
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // PendingLabelUpdates — opóźniona aktualizacja etykiet po ERASE
+    // ----------------------------------------------------------------
+    internal static class PendingLabelUpdates
+    {
+        static readonly HashSet<string> _pendingHandles = new();
+
+        public static void Add(string sourceBarHandle)
+        {
+            if (!string.IsNullOrEmpty(sourceBarHandle))
+                _pendingHandles.Add(sourceBarHandle);
+        }
+
+        public static void FlushAll(Database db)
+        {
+            foreach (var h in _pendingHandles)
+                AnnotationEngine.UpdateBarLabelCount(db, h);
+            _pendingHandles.Clear();
+        }
+    }
+
+    // ----------------------------------------------------------------
     // Menedzer rejestracji
     // ----------------------------------------------------------------
     public static class AnnotMoveOverrule
@@ -670,6 +798,7 @@ namespace BricsCadRc.Core
         private static AnnotTransformOverrule       _transform;
         private static BarBlockTransformOverrule    _barBlockTransform;
         private static BarBlockEraseOverrule        _barBlockErase;
+        private static BarPolylineEraseOverrule     _barPolylineErase;
 
         public static void Register()
         {
@@ -685,6 +814,12 @@ namespace BricsCadRc.Core
             Overrule.AddOverrule(cls, _barBlockErase,       false);
             _barBlockTransform.SetCustomFilter();
             _barBlockErase.SetCustomFilter();
+            _barPolylineErase = new BarPolylineEraseOverrule();
+            Overrule.AddOverrule(
+                RXObject.GetClass(typeof(Teigha.DatabaseServices.Polyline)),
+                _barPolylineErase,
+                false);
+            _barPolylineErase.SetCustomFilter();
             Overrule.Overruling = true;
         }
 
@@ -696,10 +831,14 @@ namespace BricsCadRc.Core
             Overrule.RemoveOverrule(cls, _barBlockTransform);
             Overrule.RemoveOverrule(cls, _transform);
             Overrule.RemoveOverrule(cls, _grip);
+            Overrule.RemoveOverrule(
+                RXObject.GetClass(typeof(Teigha.DatabaseServices.Polyline)),
+                _barPolylineErase);
             _barBlockErase.Dispose();     _barBlockErase     = null;
             _barBlockTransform.Dispose(); _barBlockTransform = null;
             _transform.Dispose();         _transform         = null;
             _grip.Dispose();              _grip              = null;
+            _barPolylineErase.Dispose();  _barPolylineErase  = null;
         }
     }
 }

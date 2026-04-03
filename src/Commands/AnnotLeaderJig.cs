@@ -142,8 +142,9 @@ namespace BricsCadRc.Commands
         LabelDirection      _direction;
         readonly List<Line> _transients = new List<Line>();
 
-        public LabelDirection Direction => _direction;
-        public Point3d        KinkPt    => _snappedPt;
+        public LabelDirection Direction     => _direction;
+        public Point3d        KinkPt        => _snappedPt;
+        public Point3d        LastCursorPt  { get; private set; }
 
         public AnnotLabelDirectionJig(
             Point3d centerPt, double labelPos, double minFixed,
@@ -158,8 +159,9 @@ namespace BricsCadRc.Commands
             _dotRadius  = dotRadius;
             _count      = count;
             _spacing    = spacing;
-            _snappedPt  = centerPt;
-            _direction  = LabelDirection.Up;
+            _snappedPt   = centerPt;
+            _direction   = LabelDirection.Up;
+            LastCursorPt = centerPt;
         }
 
         protected override SamplerStatus Sampler(JigPrompts prompts)
@@ -169,6 +171,7 @@ namespace BricsCadRc.Commands
             if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
 
             var    cursor = res.Value;
+            LastCursorPt  = cursor;
             double dx     = cursor.X - _centerPt.X;
             double dy     = cursor.Y - _centerPt.Y;
 
@@ -178,12 +181,19 @@ namespace BricsCadRc.Commands
             if (Math.Abs(dy) >= Math.Abs(dx))
             {
                 newDir  = dy >= 0 ? LabelDirection.Up   : LabelDirection.Down;
-                newSnap = new Point3d(_centerPt.X, cursor.Y, 0);
+                // Dla X-bars (horizontal=true): dist line pionowa, kink przesuwa się w Y wzdłuż dist line
+                // Dla Y-bars (horizontal=false): dist line pozioma, kink przesuwa się w X wzdłuż dist line
+                newSnap = _horizontal
+                    ? new Point3d(_centerPt.X, cursor.Y, 0)   // X-bars: Y swobodne
+                    : new Point3d(cursor.X, _centerPt.Y, 0);  // Y-bars: X swobodne
             }
             else
             {
                 newDir  = dx >= 0 ? LabelDirection.Right : LabelDirection.Left;
-                newSnap = new Point3d(cursor.X, _centerPt.Y, 0);
+                // Analogicznie — kink przesuwa się wzdłuż dist line
+                newSnap = _horizontal
+                    ? new Point3d(_centerPt.X, cursor.Y, 0)   // X-bars: Y swobodne (nawet dla L/R)
+                    : new Point3d(cursor.X, _centerPt.Y, 0);  // Y-bars: X swobodne
             }
 
             if (_direction == newDir && _snappedPt.IsEqualTo(newSnap, Tolerance.Global))
@@ -358,7 +368,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(x, _minFixed + _barsSpan, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(x, _minFixed + i * _spacing, 0), _dotRadius);
             }
             else
             {
@@ -367,7 +377,7 @@ namespace BricsCadRc.Commands
                                    new Point3d(_minFixed + _barsSpan, y, 0), 7);
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
-                    AddDiamond(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
+                    AddCirclePreview(tm, vpIds, new Point3d(_minFixed + i * _spacing, y, 0), _dotRadius);
             }
         }
 
@@ -377,6 +387,20 @@ namespace BricsCadRc.Commands
             var ln = new Line(p1, p2) { ColorIndex = color };
             try { tm.AddTransient(ln, TransientDrawingMode.DirectTopmost, 128, vpIds); _transients.Add(ln); }
             catch { ln.Dispose(); }
+        }
+
+        void AddCirclePreview(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
+        {
+            int segments = 8;
+            for (int s = 0; s < segments; s++)
+            {
+                double a1 = 2 * Math.PI * s       / segments;
+                double a2 = 2 * Math.PI * (s + 1) / segments;
+                AddLine(tm, vpIds,
+                    new Point3d(c.X + r * Math.Cos(a1), c.Y + r * Math.Sin(a1), 0),
+                    new Point3d(c.X + r * Math.Cos(a2), c.Y + r * Math.Sin(a2), 0),
+                    7);
+            }
         }
 
         void AddDiamond(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)

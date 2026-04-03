@@ -187,6 +187,7 @@ namespace BricsCadRc.Core
             tr.AddNewlyCreatedDBObject(distLine, true);
 
             // 2. Romby — wzgledne pozycje: (0, i*spacing), i=0..count-1
+            var visSetH = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
             for (int i = 0; i < bar.Count; i++)
             {
                 bool isFirst = (i == 0);
@@ -196,7 +197,7 @@ namespace BricsCadRc.Core
                     AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), -Vector3d.YAxis);
                 else if (bar.Count > 3 && isLast)
                     AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), Vector3d.YAxis);
-                else
+                else if (bar.Count <= 3 || visSetH.Contains(i))
                     AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
             }
 
@@ -351,6 +352,15 @@ namespace BricsCadRc.Core
                 } catch (System.Exception exH) { edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] GeomExtents error: {exH.Message}"); }
             }
 
+            // Kółko w punkcie styku arma z dist line (złamanie)
+            if (leaderHorizontal)
+            {
+                double midY = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0;
+                // Kółko tylko gdy złamanie mieści się w zakresie dist line (0..barsSpan)
+                if (midY >= 0 && midY <= barsSpan)
+                    AddKinkCircle(tr, btr, new Point3d(0, midY, 0), DotRadius);
+            }
+
             return armTotalLen;
         }
 
@@ -387,6 +397,7 @@ namespace BricsCadRc.Core
             tr.AddNewlyCreatedDBObject(distLine, true);
 
             // 2. Romby — na pozycjach pretow: (i*spacing, 0), i=0..count-1
+            var visSetV = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
             for (int i = 0; i < bar.Count; i++)
             {
                 bool isFirst = (i == 0);
@@ -396,7 +407,7 @@ namespace BricsCadRc.Core
                     AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), -Vector3d.XAxis);
                 else if (bar.Count > 3 && isLast)
                     AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Vector3d.XAxis);
-                else
+                else if (bar.Count <= 3 || visSetV.Contains(i))
                     AddDot(tr, btr, new Point3d(i * bar.Spacing, 0, 0), DotRadius);
             }
 
@@ -537,7 +548,28 @@ namespace BricsCadRc.Core
                 tr.AddNewlyCreatedDBObject(arm, true);
             }
 
+            // Kółko w punkcie styku arma z dist line (złamanie)
+            if (leaderVertical)
+            {
+                double midX = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength;
+                // Kółko tylko gdy złamanie mieści się w zakresie dist line (0..barsSpan)
+                if (midX >= 0 && midX <= barsSpan)
+                    AddKinkCircle(tr, btr, new Point3d(midX, 0, 0), DotRadius);
+            }
+
             return armTotalLen;
+        }
+
+        // ----------------------------------------------------------------
+        // KinkCircle — puste kółko w punkcie styku arma z dist line
+        // ----------------------------------------------------------------
+
+        private static void AddKinkCircle(Transaction tr, BlockTableRecord btr, Point3d center, double r)
+        {
+            var circle = new Circle(center, Vector3d.ZAxis, r);
+            circle.Layer = LayerManager.LeaderLayer;
+            btr.AppendEntity(circle);
+            tr.AddNewlyCreatedDBObject(circle, true);
         }
 
         // ----------------------------------------------------------------
@@ -828,6 +860,54 @@ namespace BricsCadRc.Core
                 edUpd?.WriteMessage($"\n[DEBUG UPDATE] armText=NULL – text nie zaktualizowany!");
             }
 
+            // Zaktualizuj kółko złamania — usuń stare (jeśli istnieje) i dodaj nowe
+            if (xHoriz || yHoriz)
+            {
+                var btrForCircles = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+
+                // Zbierz i usuń kółka złamania (nie-prętowe)
+                var circlesToErase = new List<Circle>();
+                foreach (ObjectId oid in btrForCircles)
+                {
+                    if (oid.IsErased) continue;
+                    var obj = tr.GetObject(oid, OpenMode.ForRead);
+                    if (obj is Circle c)
+                    {
+                        bool isBarCircle = false;
+                        if (xHoriz)
+                        {
+                            // Kółka prętów: center.X ≈ 0, center.Y = i*spacing (wielokrotność spacing)
+                            // Kółko złamania: center.X ≈ 0, center.Y = midY (dowolna wartość)
+                            double rem = bar.Spacing > 0 ? c.Center.Y % bar.Spacing : -1;
+                            isBarCircle = Math.Abs(rem) < 5.0 || Math.Abs(rem - bar.Spacing) < 5.0;
+                        }
+                        else // yHoriz
+                        {
+                            double rem = bar.Spacing > 0 ? c.Center.X % bar.Spacing : -1;
+                            isBarCircle = Math.Abs(rem) < 5.0 || Math.Abs(rem - bar.Spacing) < 5.0;
+                        }
+                        if (!isBarCircle)
+                            circlesToErase.Add(c);
+                    }
+                }
+                foreach (var c in circlesToErase)
+                {
+                    c.UpgradeOpen();
+                    c.Erase();
+                }
+
+                // Dodaj nowe kółko złamania tylko gdy midY/midX w zakresie dist line
+                if (xHoriz && midY >= 0 && midY <= bar.BarsSpan)
+                    AddKinkCircle(tr, btrForCircles, new Point3d(0, midY, 0), DotRadius);
+                else if (yHoriz)
+                {
+                    double midXK = !double.IsNaN(newMidY) ? newMidY
+                                 : (!double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : bar.BarsSpan / 2.0 + ArmLength);
+                    if (midXK >= 0 && midXK <= bar.BarsSpan)
+                        AddKinkCircle(tr, btrForCircles, new Point3d(midXK, 0, 0), DotRadius);
+                }
+            }
+
             // Pionowy stem — od środka dist line (barsSpan/2) do punktu zagięcia (midY).
             // Dotyczy tylko xHoriz. Zawsze obecny (nie tylko gdy midY poza dist line).
             if (xHoriz)
@@ -1102,6 +1182,91 @@ namespace BricsCadRc.Core
 
         public static bool IsAnnotation(Entity entity)
             => entity.GetXDataForApplication(AnnotAppName) != null;
+
+        // ----------------------------------------------------------------
+        // UpdateBarLabelCount — suma prętów ze wszystkich rozkładów powiązanych z prętem
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Aktualizuje tekst MLeadera pręta na podstawie sumy prętów ze wszystkich powiązanych rozkładów.
+        /// </summary>
+        public static void UpdateBarLabelCount(Database db, string sourceBarHandle)
+        {
+            if (string.IsNullOrEmpty(sourceBarHandle)) return;
+
+            try
+            {
+                // Krok 1 — znajdź polilnię pręta
+                if (!long.TryParse(sourceBarHandle,
+                        System.Globalization.NumberStyles.HexNumber,
+                        null, out long srcHVal)) return;
+                var srcHandle = new Handle(srcHVal);
+                if (!db.TryGetObjectId(srcHandle, out ObjectId srcId) || srcId.IsErased) return;
+
+                using var tr = db.TransactionManager.StartTransaction();
+
+                var srcPline = tr.GetObject(srcId, OpenMode.ForRead)
+                    as Teigha.DatabaseServices.Polyline;
+                var srcBar = srcPline != null ? SingleBarEngine.ReadBarXData(srcPline) : null;
+                if (srcBar == null || string.IsNullOrEmpty(srcBar.LabelHandle))
+                { tr.Commit(); return; }
+
+                // Krok 2 — zsumuj pręty ze wszystkich rozkładów powiązanych z tym prętem
+                int totalCount = 0;
+                var modelSpace = (BlockTableRecord)tr.GetObject(
+                    SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+
+                foreach (ObjectId oid in modelSpace)
+                {
+                    if (oid.IsErased) continue;
+                    var br2 = tr.GetObject(oid, OpenMode.ForRead) as BlockReference;
+                    if (br2 == null) continue;
+                    var barBlock = BarBlockEngine.ReadXData(br2);
+                    if (barBlock == null) continue;
+                    if (string.Equals(barBlock.SourceBarHandle, sourceBarHandle,
+                            StringComparison.OrdinalIgnoreCase))
+                        totalCount += barBlock.Count;
+                }
+
+                // Krok 3 — zaktualizuj MLeadera
+                if (!long.TryParse(srcBar.LabelHandle,
+                        System.Globalization.NumberStyles.HexNumber,
+                        null, out long lblHVal))
+                { tr.Commit(); return; }
+                var lblHandle = new Handle(lblHVal);
+                if (!db.TryGetObjectId(lblHandle, out ObjectId lblId) || lblId.IsErased)
+                { tr.Commit(); return; }
+
+                var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                if (ml?.ContentType == ContentType.MTextContent)
+                {
+                    var mt = ml.MText?.Clone() as MText;
+                    if (mt != null)
+                    {
+                        var segs = srcBar.Mark.Split('-');
+                        string barBase = segs.Length >= 2
+                            ? $"{segs[0]}-{segs[1]}" : srcBar.Mark;
+                        int spaceIdx = srcBar.Mark.IndexOf(' ');
+                        string sfx = spaceIdx >= 0
+                            ? " " + srcBar.Mark.Substring(spaceIdx + 1) : "";
+
+                        if (totalCount == 0)
+                        {
+                            // Brak rozkładów — pokaż sam Mark bez liczby
+                            mt.Contents = $"{barBase}{sfx}";
+                        }
+                        else
+                        {
+                            mt.Contents = $"{totalCount} {barBase}{sfx}";
+                        }
+                        ml.MText = mt;
+                    }
+                }
+
+                tr.Commit();
+            }
+            catch { }
+        }
 
         // ----------------------------------------------------------------
         // Helpers

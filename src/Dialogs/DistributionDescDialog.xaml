@@ -43,10 +43,6 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="8"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Podglad etykiety (niebieski pasek) -->
@@ -89,23 +85,8 @@
                      TextChanged="Input_Changed"/>
         </Grid>
 
-        <!-- Naglowek widocznosci -->
-        <TextBlock Grid.Row="8" Text="Bar visibility:" FontWeight="SemiBold"/>
-
-        <!-- 4 przyciski widocznosci (radio) -->
-        <StackPanel Grid.Row="10" Orientation="Horizontal">
-            <RadioButton x:Name="RadioAll" Content="All bars" GroupName="Visibility"
-                         IsChecked="True" Checked="Visibility_Changed"/>
-            <RadioButton x:Name="RadioMiddle" Content="Middle only" GroupName="Visibility"
-                         Checked="Visibility_Changed"/>
-            <RadioButton x:Name="RadioFirstLast" Content="First + Last" GroupName="Visibility"
-                         Checked="Visibility_Changed"/>
-            <RadioButton x:Name="RadioManual" Content="Manual" GroupName="Visibility"
-                         Checked="Visibility_Changed"/>
-        </StackPanel>
-
         <!-- Przyciski -->
-        <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right"
                     FlowDirection="RightToLeft" Margin="0,4,0,0">
             <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
             <Button Content="OK" Click="OK_Click"

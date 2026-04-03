@@ -17,9 +17,6 @@ namespace BricsCadRc.Dialogs
         public double BarSpacing { get; private set; }
         public string Suffix     { get; private set; }
 
-        public enum VisibilityMode { All, MiddleOnly, FirstAndLast, Manual }
-        public VisibilityMode BarVisibility { get; private set; } = VisibilityMode.All;
-
         public DistributionDescDialog(BarData sourceBar, int autoCount, double autoSpacing, string baseMark)
         {
             InitializeComponent();
@@ -48,14 +45,6 @@ namespace BricsCadRc.Dialogs
 
         private void Input_Changed(object sender, TextChangedEventArgs e)
             => UpdatePreview();
-
-        private void Visibility_Changed(object sender, RoutedEventArgs e)
-        {
-            if      (RadioAll       .IsChecked == true) BarVisibility = VisibilityMode.All;
-            else if (RadioMiddle    .IsChecked == true) BarVisibility = VisibilityMode.MiddleOnly;
-            else if (RadioFirstLast .IsChecked == true) BarVisibility = VisibilityMode.FirstAndLast;
-            else                                        BarVisibility = VisibilityMode.Manual;
-        }
 
         private void OK_Click(object sender, RoutedEventArgs e)
         {

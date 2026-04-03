@@ -26,14 +26,29 @@ namespace BricsCadRc.App
             // Snap grotu MLeadera (etykieta RC_BAR) z powrotem na pręt po edycji
             RcMLeaderOverrule.Register();
 
+            // Opóźniona aktualizacja etykiet prętów po ERASE
+            if (doc != null)
+                doc.CommandEnded += OnCommandEnded;
+
             RibbonBuilder.Build();
         }
 
         public void Terminate()
         {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc != null)
+                doc.CommandEnded -= OnCommandEnded;
+
             RcMLeaderOverrule.Unregister();
             BarGeometryWatcher.Unregister();
             AnnotMoveOverrule.Unregister();
+        }
+
+        static void OnCommandEnded(object sender, CommandEventArgs e)
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc?.Database != null)
+                PendingLabelUpdates.FlushAll(doc.Database);
         }
     }
 }

@@ -1,4 +1,5 @@
 using System.Windows;
+using BricsCadRc.Core;
 
 namespace BricsCadRc.Dialogs
 {
@@ -7,16 +8,26 @@ namespace BricsCadRc.Dialogs
         private readonly int    _diameter;
         private readonly string _posNr;
 
-        public int    ResultCount   { get; private set; }
-        public double ResultSpacing { get; private set; }
-        public string ResultMark    { get; private set; } = "";
+        public int                ResultCount      { get; private set; }
+        public double             ResultSpacing    { get; private set; }
+        public string             ResultMark       { get; private set; } = "";
+        public BarVisibilityMode  ResultVisibility { get; private set; } = BarVisibilityMode.All;
 
         // mark = pełny aktualny mark np. "H12-01-200 B1"
         // diameter i spacing używane do odbudowania baseMark
-        public EditLabelDialog(int count, string mark, int diameter, double spacing)
+        public EditLabelDialog(int count, string mark, int diameter, double spacing,
+            BarVisibilityMode currentVisibility = BarVisibilityMode.All)
         {
             InitializeComponent();
             _diameter = diameter;
+
+            switch (currentVisibility)
+            {
+                case BarVisibilityMode.MiddleOnly: RbMiddle.IsChecked    = true; break;
+                case BarVisibilityMode.FirstLast:  RbFirstLast.IsChecked = true; break;
+                case BarVisibilityMode.Manual:     RbManual.IsChecked    = true; break;
+                default:                           RbAll.IsChecked       = true; break;
+            }
 
             // Rozbij mark na coreOfMark i suffix
             // Format: "H12-01-200" lub "H12-01-200 B1"
@@ -68,6 +79,10 @@ namespace BricsCadRc.Dialogs
             ResultCount   = c;
             ResultSpacing = sp;
             ResultMark    = string.IsNullOrEmpty(suffix) ? baseMark : $"{baseMark} {suffix}";
+            ResultVisibility = RbMiddle.IsChecked    == true ? BarVisibilityMode.MiddleOnly
+                             : RbFirstLast.IsChecked == true ? BarVisibilityMode.FirstLast
+                             : RbManual.IsChecked    == true ? BarVisibilityMode.Manual
+                             : BarVisibilityMode.All;
             DialogResult  = true;
         }
 

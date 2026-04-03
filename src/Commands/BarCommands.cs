@@ -140,6 +140,10 @@ namespace BricsCadRc.Commands
                 tr.Commit();
             }
 
+            // Zapisz handle polilinii pręta — potrzebny do resetu etykiety przy usunięciu rozkładu
+            if (sourceBar != null)
+                sourceBar.SourceBarHandle = selResult.ObjectId.Handle.Value.ToString("X8");
+
             if (sourceBar == null)
             {
                 ed.WriteMessage("\nSelected entity has no RC bar data. Use RC_BAR command to create bars.\n");
@@ -415,6 +419,12 @@ namespace BricsCadRc.Commands
             bool     leaderRight      = true;
             bool     leaderUp         = true;
             Point3d? insertOverride   = null;
+            Point3d  kinkPt           = Point3d.Origin;
+            Point3d  distCenter       = Point3d.Origin;
+            Point3d  jig3CursorPt     = Point3d.Origin;
+            double   labelPos         = 0;
+            bool     userClickedInJig2 = false;
+            bool     userClickedInJig3 = false;
 
             // ── 3-etapowy JIG — wspólna logika dla X-bars i Y-bars ──────────
             // X-bars (horizontal=true):  minFixed=minY, basePos=maxX, freeAxis=X
@@ -433,8 +443,8 @@ namespace BricsCadRc.Commands
 
                 if (res1.Status == PromptStatus.OK)
                 {
-                    double  labelPos   = jig1.LabelPos;
-                    Point3d distCenter = horizontal
+                    labelPos           = jig1.LabelPos;
+                    distCenter = horizontal
                         ? new Point3d(labelPos,                        minFixed + barsSpan / 2.0, 0)
                         : new Point3d(minFixed + barsSpan / 2.0, labelPos,                        0);
                     insertOverride = horizontal
@@ -442,6 +452,7 @@ namespace BricsCadRc.Commands
                         : new Point3d(minFixed,  labelPos, 0);
 
                     // ── ETAP 2: kierunek etykiety ──────────────────────────
+                    kinkPt = distCenter;  // domyślnie środek dist line
                     var jig2 = new AnnotLabelDirectionJig(
                         distCenter, labelPos, minFixed, barsSpan, horizontal, dotR, finalCount, finalSpacing);
                     var res2 = ed.Drag(jig2);
@@ -450,8 +461,9 @@ namespace BricsCadRc.Commands
 
                     if (res2.Status == PromptStatus.OK)
                     {
-                        var direction = jig2.Direction;
-                        var kinkPt    = jig2.KinkPt;
+                        var direction    = jig2.Direction;
+                        kinkPt           = jig2.KinkPt;
+                        userClickedInJig2 = true;
                         leaderUp = (direction != LabelDirection.Down);
 
                         // "Prosty" kierunek = prostopadle do dist line — brak ETAP 3
@@ -463,11 +475,34 @@ namespace BricsCadRc.Commands
 
                         if (isSimple)
                         {
-                            leaderHorizontal  = true;
-                            leaderRight       = horizontal
+                            leaderHorizontal = true;
+                            leaderRight      = horizontal
                                 ? (direction == LabelDirection.Right)
                                 : true;  // dla Y-bars: nieużywane przy leaderVertical=true
-                            sourceBar.ArmMidY = barsSpan / 2.0;
+                            // ArmMidY = gdzie user kliknął na dist line (nie zawsze środek)
+                            sourceBar.ArmMidY = horizontal
+                                ? kinkPt.Y - insertOverride.Value.Y    // X-bars: offset Y od dołu dist line
+                                : kinkPt.X - insertOverride.Value.X;   // Y-bars: offset X od lewej krawędzi
+
+                            // ETAP 3 dla isSimple — użytkownik klika żeby ustawić długość arma
+                            // Używamy tego samego AnnotLabelBendJig co dla złamanego, z kinkPt jako punktem złamania
+                            var jig3s = new AnnotLabelBendJig(
+                                distCenter, kinkPt,
+                                labelPos, minFixed, barsSpan, horizontal, dotR, finalCount, finalSpacing);
+                            var res3s = ed.Drag(jig3s);
+                            jig3s.ClearTransients();
+                            if (res3s.Status == PromptStatus.Cancel) return;
+
+                            if (res3s.Status == PromptStatus.OK)
+                            {
+                                jig3CursorPt      = jig3s.CursorPt;
+                                userClickedInJig3  = true;
+                                // Zaktualizuj leaderRight na podstawie strony kliknięcia
+                                leaderRight = horizontal
+                                    ? jig3s.CursorPt.X >= labelPos
+                                    : jig3s.CursorPt.Y >= labelPos;
+                            }
+                            // else Enter = zostaw domyślną długość arma (ArmLength)
                         }
                         else // wzdłuż dist line: ETAP 3 — złamanie lub prosta
                         {
@@ -485,7 +520,9 @@ namespace BricsCadRc.Commands
                             if (res3.Status == PromptStatus.OK)
                             {
                                 // Klik = złamanie
-                                leaderHorizontal = true;
+                                leaderHorizontal  = true;
+                                jig3CursorPt      = jig3.CursorPt;
+                                userClickedInJig3 = true;
                                 if (horizontal)
                                 {
                                     // X-bars: kink pionowy, ramię poziome → leaderRight z X kursora
@@ -504,8 +541,10 @@ namespace BricsCadRc.Commands
                     }
                     else
                     {
-                        // Enter po ETAP 2 = prosta etykieta bez kierunku
-                        leaderHorizontal = false;
+                        // Enter po ETAP 2 = prosta etykieta, użyj ostatniej pozycji kursora jako kinkPt
+                        leaderHorizontal  = false;
+                        kinkPt            = jig2.LastCursorPt;
+                        userClickedInJig2 = true;  // włącz fix długości arma
                     }
                 }
                 // else Enter po ETAP 1 = auto placement (insertOverride=null, leaderHorizontal=false)
@@ -520,31 +559,77 @@ namespace BricsCadRc.Commands
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
-            // Zaktualizuj etykietę pręta — dodaj liczbę prętów z rozkładu
-            if (!string.IsNullOrEmpty(sourceBar.LabelHandle))
+            // Jeśli user kliknął konkretną pozycję w ETAP 2 (kinkPt != distCenter)
+            // i etykieta jest "prosta" (leaderHorizontal=false) — dopasuj długość arma do kliknięcia
+            if (!leaderHorizontal && annotResult.BlockRefId != ObjectId.Null
+                && userClickedInJig2)
             {
-                using var trBarLbl = db.TransactionManager.StartTransaction();
-                if (long.TryParse(sourceBar.LabelHandle,
-                        System.Globalization.NumberStyles.HexNumber,
-                        null, out long barLblHVal))
+                // Oblicz żądaną długość arma na podstawie odległości kinkPt od środka dist line
+                double desiredArmTotalLen;
+                if (horizontal)
                 {
-                    var h = new Handle(barLblHVal);
-                    if (db.TryGetObjectId(h, out ObjectId barLblId) && !barLblId.IsErased)
-                    {
-                        var ml = trBarLbl.GetObject(barLblId, OpenMode.ForWrite) as MLeader;
-                        if (ml?.ContentType == ContentType.MTextContent)
-                        {
-                            var mt = ml.MText?.Clone() as MText;
-                            if (mt != null)
-                            {
-                                mt.Contents = $"{finalCount} {sourceBar.Mark}";
-                                ml.MText    = mt;
-                            }
-                        }
-                    }
+                    // X-bars: arm pionowy, kinkPt.Y wskazuje docelowy koniec
+                    double centerWorldY = insertOverride.HasValue
+                        ? insertOverride.Value.Y + sourceBar.BarsSpan / 2.0
+                        : barResult.MinPoint.Y + sourceBar.BarsSpan / 2.0;
+                    desiredArmTotalLen = Math.Abs(kinkPt.Y - centerWorldY);
                 }
-                trBarLbl.Commit();
+                else
+                {
+                    // Y-bars: arm poziomy, kinkPt.X wskazuje docelowy koniec
+                    double centerWorldX = insertOverride.HasValue
+                        ? insertOverride.Value.X + sourceBar.BarsSpan / 2.0
+                        : barResult.MinPoint.X + sourceBar.BarsSpan / 2.0;
+                    desiredArmTotalLen = Math.Abs(kinkPt.X - centerWorldX);
+                }
+
+                // Zastosuj tylko jeśli większa niż domyślna długość
+                if (desiredArmTotalLen > AnnotationEngine.ArmLength)
+                {
+                    using var trArm = db.TransactionManager.StartTransaction();
+                    var annotBrArm = trArm.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
+                    trArm.Commit();
+                    if (annotBrArm != null)
+                        AnnotationEngine.UpdateArmInBlock(annotBrArm, desiredArmTotalLen);
+                }
             }
+
+            // Dla złamanej etykiety (leaderHorizontal=true) — dopasuj długość arma do kliknięcia w ETAP 3
+            if (leaderHorizontal && annotResult.BlockRefId != ObjectId.Null
+                && userClickedInJig3)
+            {
+                double desiredArmTotalLen;
+                if (horizontal)
+                {
+                    // X-bars: arm poziomy, jig3CursorPt.X wskazuje docelowy koniec arma
+                    desiredArmTotalLen = Math.Abs(jig3CursorPt.X - labelPos);
+                }
+                else
+                {
+                    // Y-bars: arm pionowy, jig3CursorPt.Y wskazuje docelowy koniec arma
+                    desiredArmTotalLen = Math.Abs(jig3CursorPt.Y - labelPos);
+                }
+
+                if (desiredArmTotalLen > AnnotationEngine.ArmLength)
+                {
+                    using var trArm2 = db.TransactionManager.StartTransaction();
+                    var annotBrArm2 = trArm2.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
+                    if (annotBrArm2 != null)
+                    {
+                        // Przekaż też aktualny ArmMidY (punkt złamania) żeby stem nie był resetowany
+                        var barArm2 = AnnotationEngine.ReadAnnotXData(annotBrArm2);
+                        double midY2 = barArm2 != null && !double.IsNaN(barArm2.ArmMidY)
+                            ? barArm2.ArmMidY
+                            : double.NaN;
+                        trArm2.Commit();
+                        AnnotationEngine.UpdateArmInBlock(annotBrArm2, desiredArmTotalLen, midY2);
+                    }
+                    else trArm2.Commit();
+                }
+            }
+
+            // Zaktualizuj etykietę pręta — suma prętów ze wszystkich rozkładów
+            AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle);
 
             ed.WriteMessage(
                 $"\n[RC SLAB] Distribution created: {finalCount} bars  {sourceBar.Mark}\n" +

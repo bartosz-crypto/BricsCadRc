@@ -1,5 +1,7 @@
 namespace BricsCadRc.Core
 {
+    public enum BarVisibilityMode { All, MiddleOnly, FirstLast, Manual }
+
     /// <summary>
     /// Reprezentuje dane jednego preta / ukladu pretow.
     /// Te dane sa zapisywane w XData na obiekcie Line w rysunku.
@@ -140,6 +142,12 @@ namespace BricsCadRc.Core
         /// "Up" = CCW 90° od kierunku linii; "Down" = CW 90°.
         /// </summary>
         public string SymbolDirection { get; set; } = "Up";
+
+        /// <summary>Tryb widoczności prętów w bloku RC_SLAB_BARS: All/MiddleOnly/FirstLast/Manual.</summary>
+        public BarVisibilityMode VisibilityMode { get; set; } = BarVisibilityMode.All;
+
+        /// <summary>Dla Manual: indeksy widocznych prętów jako "0,2,4". "" = wszystkie.</summary>
+        public string VisibleIndices { get; set; } = "";
 
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };

@@ -131,12 +131,14 @@ namespace BricsCadRc.Core
             Transaction tr, BlockTableRecord btr,
             BarData bar, double barWidth, int count)
         {
-            string barLayer = LayerManager.GetLayerName(bar.LayerCode);
-            var    lw       = DiameterToLineWeight(bar.Diameter);
-            var    cat      = ResolveSymbolCat(bar);
+            string barLayer  = LayerManager.GetLayerName(bar.LayerCode);
+            var    lw        = DiameterToLineWeight(bar.Diameter);
+            var    cat       = ResolveSymbolCat(bar);
+            var    visibleSet = GetVisibleIndices(bar.VisibilityMode, bar.VisibleIndices, count);
 
             for (int i = 0; i < count; i++)
             {
+                if (!visibleSet.Contains(i)) continue;
                 double y   = i * bar.Spacing;
                 var    ptS = new Point3d(0, y, 0);
                 var    ptE = new Point3d(barWidth, y, 0);
@@ -156,12 +158,14 @@ namespace BricsCadRc.Core
             Transaction tr, BlockTableRecord btr,
             BarData bar, double barHeight, int count)
         {
-            string barLayer = LayerManager.GetLayerName(bar.LayerCode);
-            var    lw       = DiameterToLineWeight(bar.Diameter);
-            var    cat      = ResolveSymbolCat(bar);
+            string barLayer   = LayerManager.GetLayerName(bar.LayerCode);
+            var    lw         = DiameterToLineWeight(bar.Diameter);
+            var    cat        = ResolveSymbolCat(bar);
+            var    visibleSet = GetVisibleIndices(bar.VisibilityMode, bar.VisibleIndices, count);
 
             for (int i = 0; i < count; i++)
             {
+                if (!visibleSet.Contains(i)) continue;
                 double x   = i * bar.Spacing;
                 var    ptS = new Point3d(x, 0, 0);
                 var    ptE = new Point3d(x, barHeight, 0);
@@ -170,6 +174,32 @@ namespace BricsCadRc.Core
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection);
+            }
+        }
+
+        public static HashSet<int> GetVisibleIndicesPublic(BarVisibilityMode mode, string customIndices, int count)
+            => GetVisibleIndices(mode, customIndices, count);
+
+        private static HashSet<int> GetVisibleIndices(BarVisibilityMode mode, string customIndices, int count)
+        {
+            switch (mode)
+            {
+                case BarVisibilityMode.MiddleOnly:
+                    return new HashSet<int> { count / 2 };
+                case BarVisibilityMode.FirstLast:
+                    var fl = new HashSet<int> { 0 };
+                    if (count > 1) fl.Add(count - 1);
+                    return fl;
+                case BarVisibilityMode.Manual:
+                    var manual = new HashSet<int>();
+                    foreach (var s in (customIndices ?? "").Split(','))
+                        if (int.TryParse(s.Trim(), out int idx) && idx >= 0 && idx < count)
+                            manual.Add(idx);
+                    return manual.Count > 0 ? manual : new HashSet<int> { 0 };
+                default: // All
+                    var all = new HashSet<int>();
+                    for (int i = 0; i < count; i++) all.Add(i);
+                    return all;
             }
         }
 
@@ -415,6 +445,34 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // RebuildVisibility — zmienia VisibilityMode/VisibleIndices i przebudowuje BTR.
+        // Wywoływane przez RC_EDIT_LABEL po zmianie bar visibility.
+        // ----------------------------------------------------------------
+        public static void RebuildVisibility(
+            Database db, ObjectId blockRefId,
+            BarVisibilityMode mode, string visibleIndices)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var br = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+            if (br == null) { tr.Commit(); return; }
+
+            var bar = ReadXData(br);
+            if (bar == null) { tr.Commit(); return; }
+
+            bar.VisibilityMode = mode;
+            bar.VisibleIndices = visibleIndices ?? "";
+            WriteXData(br, bar);
+
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            EraseAllInBtr(tr, btr);
+
+            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
+            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // RebuildBarEndStyle — zmienia SymbolType/SymbolSide/SymbolDirection i przebudowuje BTR.
         // Wywoływane przez RC_BAR_END.
         // ----------------------------------------------------------------
@@ -577,7 +635,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolType        ?? "Auto"), // [17]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SourceBarHandle   ?? ""),    // [18]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelPolyHandle   ?? ""),    // [19]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? "")     // [20]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? ""),    // [20]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.VisibilityMode),      // [21]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? "")     // [22]
             );
         }
 
@@ -610,6 +670,8 @@ namespace BricsCadRc.Core
             if (v.Length >= 19) bd.SourceBarHandle  = (string)v[18].Value;
             if (v.Length >= 20) bd.LabelPolyHandle  = (string)v[19].Value;
             if (v.Length >= 21) bd.LabelTextHandle  = (string)v[20].Value;
+            if (v.Length >= 22) bd.VisibilityMode   = (BarVisibilityMode)(short)v[21].Value;
+            if (v.Length >= 23) bd.VisibleIndices   = (string)v[22].Value ?? "";
             return bd;
         }
 

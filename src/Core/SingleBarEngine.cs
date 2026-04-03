@@ -122,27 +122,20 @@ namespace BricsCadRc.Core
             var pline = tr.GetObject(barPolyId, OpenMode.ForRead) as Polyline;
             if (pline == null) return textPt;
 
-            Extents3d ext    = pline.GeometricExtents;
-            Point3d   minPt  = ext.MinPoint;
-            Point3d   maxPt  = ext.MaxPoint;
-            double    cx     = (minPt.X + maxPt.X) / 2.0;
-            double    cy     = (minPt.Y + maxPt.Y) / 2.0;
-
-            // Zamknięte kształty (strzemiona itp.) — zawsze środek górnego segmentu
-            if (_closedShapes.Contains(bar?.ShapeCode ?? ""))
-                return new Point3d(cx, maxPt.Y, 0);
-
-            double dx = textPt.X - cx;
-            double dy = textPt.Y - cy;
-
-            if (Math.Abs(dy) >= Math.Abs(dx))
-                return dy >= 0
-                    ? new Point3d(cx,       maxPt.Y, 0)   // tekst powyżej → górna krawędź
-                    : new Point3d(cx,       minPt.Y, 0);  // tekst poniżej → dolna krawędź
-            else
-                return dx >= 0
-                    ? new Point3d(maxPt.X,  cy,      0)   // tekst z prawej → prawy koniec
-                    : new Point3d(minPt.X,  cy,      0);  // tekst z lewej  → lewy koniec
+            // Użyj najbliższego punktu na krzywej — grot trafia dokładnie gdzie user kliknął
+            try
+            {
+                return pline.GetClosestPointTo(textPt, false);
+            }
+            catch
+            {
+                // Fallback do centrum pręta
+                var ext = pline.GeometricExtents;
+                return new Point3d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0,
+                    0);
+            }
         }
 
         // ----------------------------------------------------------------

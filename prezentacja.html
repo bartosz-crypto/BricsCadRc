@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>BricsCadRc — Prezentacja</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+  }
+
+  .slide {
+    width: 297mm;
+    min-height: 210mm;
+    padding: 16mm 20mm;
+    margin: 0 auto 8mm;
+    background: #16213e;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    page-break-after: always;
+    border-left: 6px solid #0f3460;
+  }
+
+  .slide-number {
+    position: absolute;
+    bottom: 8mm;
+    right: 10mm;
+    font-size: 11px;
+    color: #444;
+  }
+
+  .tag {
+    display: inline-block;
+    background: #0f3460;
+    color: #e94560;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 3px;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-size: 42px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1.1;
+    margin-bottom: 10px;
+  }
+
+  h2 {
+    font-size: 30px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 18px;
+    border-bottom: 2px solid #e94560;
+    padding-bottom: 8px;
+  }
+
+  h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e94560;
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+
+  p {
+    font-size: 15px;
+    line-height: 1.6;
+    color: #b0b8c8;
+    margin-bottom: 10px;
+  }
+
+  .subtitle {
+    font-size: 20px;
+    color: #7f8ca0;
+    margin-bottom: 30px;
+  }
+
+  .highlight {
+    color: #e94560;
+    font-weight: 700;
+  }
+
+  /* Grid layouts */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  /* Cards */
+  .card {
+    background: #0f3460;
+    border-radius: 8px;
+    padding: 16px 18px;
+    border-top: 3px solid #e94560;
+  }
+
+  .card h3 { margin-top: 0; }
+
+  .card ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .card ul li {
+    font-size: 13px;
+    color: #9aafc4;
+    padding: 4px 0;
+    border-bottom: 1px solid #1a3a6e;
+  }
+
+  .card ul li:last-child { border-bottom: none; }
+
+  .card ul li::before {
+    content: '▸ ';
+    color: #e94560;
+  }
+
+  /* Steps / flow */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: #0d2a50;
+    border-radius: 6px;
+    padding: 12px 16px;
+  }
+
+  .step-num {
+    background: #e94560;
+    color: #fff;
+    font-weight: 800;
+    font-size: 16px;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .step-body h4 {
+    font-size: 15px;
+    color: #ffffff;
+    margin-bottom: 3px;
+  }
+
+  .step-body p {
+    font-size: 13px;
+    color: #8090a8;
+    margin: 0;
+  }
+
+  /* Command badge */
+  .cmd {
+    display: inline-block;
+    background: #e94560;
+    color: #fff;
+    font-family: 'Consolas', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 4px;
+    letter-spacing: 1px;
+  }
+
+  /* Flow arrows */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+  }
+
+  .flow-box {
+    background: #0f3460;
+    border: 1px solid #1e4f8a;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #c0d0e8;
+    text-align: center;
+    min-width: 90px;
+  }
+
+  .flow-arrow {
+    color: #e94560;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  /* Cover slide special */
+  .slide.cover {
+    background: linear-gradient(135deg, #0d1b2a 0%, #1a1a4e 100%);
+    align-items: flex-start;
+    justify-content: center;
+    border-left: none;
+    padding-left: 24mm;
+  }
+
+  .cover-logo {
+    font-size: 64px;
+    margin-bottom: 20px;
+  }
+
+  .cover h1 {
+    font-size: 54px;
+    color: #ffffff;
+  }
+
+  .cover .version {
+    margin-top: 30px;
+    font-size: 13px;
+    color: #444;
+  }
+
+  /* Tip box */
+  .tip {
+    background: #0a2a0a;
+    border-left: 4px solid #2ecc71;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: #7ec89a;
+  }
+
+  .warn {
+    background: #2a1a0a;
+    border-left: 4px solid #e67e22;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: #d4956a;
+  }
+
+  /* Code / command line */
+  .cli {
+    background: #080e1a;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: 'Consolas', monospace;
+    font-size: 14px;
+    color: #7ec87a;
+    margin: 12px 0;
+    border: 1px solid #1a3a1a;
+  }
+
+  /* Summary table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+
+  th {
+    background: #0f3460;
+    color: #e94560;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1a2a4a;
+    color: #9aafc4;
+  }
+
+  tr:nth-child(even) td { background: #0d1f3c; }
+
+  /* Visibility mode boxes */
+  .vis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  .vis-box {
+    background: #0d2a50;
+    border-radius: 8px;
+    padding: 14px 12px;
+    text-align: center;
+    border-top: 3px solid #e94560;
+  }
+
+  .vis-box .vis-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #e94560;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .vis-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    margin: 6px 0;
+  }
+
+  .bar-line {
+    width: 70px;
+    height: 3px;
+    background: #3a6fd8;
+    border-radius: 2px;
+    position: relative;
+  }
+
+  .bar-line.hidden {
+    background: #1a2a4a;
+    border: 1px dashed #2a3a5a;
+  }
+
+  .bar-dot {
+    position: absolute;
+    left: -5px;
+    top: -4px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #e94560;
+  }
+
+  .bar-dot.hidden { display: none; }
+
+  .vis-box .vis-desc {
+    font-size: 11px;
+    color: #6a8aa8;
+    margin-top: 8px;
+  }
+
+  @media print {
+    body { background: white; }
+    .slide {
+      background: #16213e !important;
+      margin: 0;
+      page-break-after: always;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 1 — OKŁADKA -->
+<div class="slide cover">
+  <div class="cover-logo">🏗️</div>
+  <div class="tag">Plugin BricsCAD</div>
+  <h1>BricsCadRc</h1>
+  <p class="subtitle">Narzędzie do projektowania zbrojenia płyt żelbetowych</p>
+  <p style="color:#556; font-size:14px; margin-top:20px;">
+    Alternatywa dla modułu ASD (Speedeck Foundations Ltd)<br>
+    Integracja natywna z BricsCAD · C# · .NET 4.8
+  </p>
+  <p class="version">wersja robocza · 2026</p>
+  <div class="slide-number">1</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 2 — PO CO? -->
+<div class="slide">
+  <div class="tag">Kontekst</div>
+  <h2>Co robi ten plugin?</h2>
+  <div class="grid-2" style="gap:24px; margin-top:8px;">
+    <div>
+      <p>Plugin dodaje do BricsCAD dedykowane narzędzia do <span class="highlight">rysowania i opisywania zbrojenia</span> płyt betonowych — bezpośrednio w przestrzeni modelu, bez zewnętrznych aplikacji.</p>
+      <p>Zamiast ręcznie rysować pręty i wpisywać etykiety, używasz kilku komend które <span class="highlight">automatycznie generują geometrię, annotacje i dane XData</span>.</p>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Co jest automatyczne</h3>
+        <ul>
+          <li>Geometria pręta (kształt, haczyki)</li>
+          <li>Blok rozkładu z N prętami</li>
+          <li>Annotacja z dist line i ramionkiem</li>
+          <li>Etykieta MLeader na pręcie</li>
+          <li>Aktualizacja liczników przy edycji</li>
+          <li>Usuwanie powiązanych obiektów</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">2</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 3 — KOMENDY -->
+<div class="slide">
+  <div class="tag">Przegląd</div>
+  <h2>Dostępne komendy</h2>
+  <div class="grid-3" style="margin-top:8px;">
+    <div class="card">
+      <h3>Tworzenie</h3>
+      <ul>
+        <li><span class="cmd">RC_BAR</span></li>
+        <li><span class="cmd">RC_DISTRIBUTION</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Edycja</h3>
+      <ul>
+        <li><span class="cmd">RC_EDIT_BAR</span></li>
+        <li><span class="cmd">RC_EDIT_DISTRIBUTION</span></li>
+        <li><span class="cmd">RC_EDIT_LABEL</span></li>
+        <li><span class="cmd">RC_UPDATE_BAR</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Automatyczne</h3>
+      <ul>
+        <li>Grip drag → aktualizacja</li>
+        <li>ERASE → usuwa powiązane</li>
+        <li>Stretch polilinii → update</li>
+        <li>Etykieta zawsze aktualna</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tip">
+    💡 Wszystkie komendy są też dostępne z Ribbon — panel <strong>RC SLAB</strong> w zakładce <strong>Pret</strong> i <strong>Rozkład</strong>.
+  </div>
+  <div class="slide-number">3</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 4 — RC_BAR FLOW -->
+<div class="slide">
+  <div class="tag">Komenda 1</div>
+  <h2><span class="cmd">RC_BAR</span> &nbsp;— Tworzenie pręta</h2>
+  <div class="flow" style="margin-bottom:16px;">
+    <div class="flow-box">Dialog<br><small>Parametry</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Klik<br><small>Punkt wstawienia</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Dialog<br><small>Nr pozycji</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Klik<br><small>Pozycja etykiety</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color:#2ecc71; color:#7ec89a;">Gotowe</div>
+  </div>
+  <div class="grid-2">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Dialog parametrów</h4>
+          <p>Wybierz: średnicę (8/10/12/16/20/25), kształt (00 = prosty, 11/12 = L, 21 = U...), warstwę (B1/T1/B2/T2...), wymiary A/B/C</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Klik punktu wstawienia</h4>
+          <p>Kliknij w rysunku — polilinia pręta o wybranym kształcie zostaje narysowana w tym miejscu</p>
+        </div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Numer pozycji</h4>
+          <p>Dialog sugeruje kolejny wolny numer (np. 01). Możesz zmienić ręcznie. Jeśli numer jest zajęty — pojawia się ostrzeżenie o konflikcie.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Etykieta MLeader</h4>
+          <p>Kliknij gdzie ma być tekst etykiety. Enter = pozycja automatyczna. Grot strzałki trafia na pręt, tekst: <strong>H12-01</strong></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">4</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 5 — RC_DISTRIBUTION FLOW -->
+<div class="slide">
+  <div class="tag">Komenda 2</div>
+  <h2><span class="cmd">RC_DISTRIBUTION</span> &nbsp;— Rozkład pręta</h2>
+  <div class="flow" style="margin-bottom:12px;">
+    <div class="flow-box">Wybierz<br><small>pręt RC_BAR</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Dialog<br><small>Detale</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">2 punkty<br><small>krawędź płyty</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Rozstaw<br><small>live preview</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">Dialog<br><small>Liczba / rozstaw</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">3-etapowy<br><small>jig etykiety</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box" style="border-color:#2ecc71; color:#7ec89a;">Gotowe</div>
+  </div>
+  <div class="grid-2">
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Wybierz pręt</h4>
+          <p>Kliknij na istniejącą polilinię RC_BAR — plugin pobierze z niej dane (średnica, kształt, pozycja)</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>2 punkty krawędzi + flip</h4>
+          <p>Kliknij dwa punkty wzdłuż krawędzi. Klawisz <strong>S</strong> odwraca stronę (pręty po drugiej stronie krawędzi). Enter = zatwierdź.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Rozstaw z live preview</h4>
+          <p>Wpisuj wartości — pręty przerysowują się na bieżąco. Enter = zatwierdź ostatni rozstaw.</p>
+        </div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Dialog potwierdzenia</h4>
+          <p>Możesz zmienić liczbę prętów i rozstaw końcowy. Plugin proponuje wartości na podstawie zakresu.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h4>Jig etykiety (3 etapy)</h4>
+          <p><strong>Etap 1:</strong> Przesuń dist line wzdłuż prętów<br>
+          <strong>Etap 2:</strong> Wybierz kierunek ramienia<br>
+          <strong>Etap 3:</strong> Kliknij długość ramienia. Enter = domyślna</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">✓</div>
+        <div class="step-body">
+          <h4>Wynik</h4>
+          <p>Blok z N prętami + annotacja + aktualizacja etykiety MLeader pręta na <strong>47 H12-01</strong></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">5</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 6 — ANNOTACJA -->
+<div class="slide">
+  <div class="tag">Wygląd</div>
+  <h2>Co powstaje w rysunku</h2>
+  <div class="grid-2" style="align-items:start;">
+    <div>
+      <h3>Pręt (RC_BAR)</h3>
+      <div class="cli">Polilinia kształtu pręta<br>+ MLeader: "H12-01"<br>Warstwa: RC-SLAB-BOT-01</div>
+      <h3 style="margin-top:16px;">Rozkład (RC_DISTRIBUTION)</h3>
+      <div class="cli">Blok RC_SLAB_BARS_001:<br>  ├─ N linii prętów (filtrowane)<br>  ├─ Dist line (_DOT linetype)<br>  ├─ Markery na dist line<br>  ├─ Ramię + tekst annotacji<br>  └─ Kółko złamania (opcja)<br><br>Etykieta pręta → "47 H12-01"</div>
+    </div>
+    <div>
+      <h3>Markery na dist line</h3>
+      <div class="card">
+        <ul>
+          <li><strong>Kółka (wypełnione)</strong> — środkowe pręty; filtrowane przez Bar Visibility</li>
+          <li><strong>Strzałki (trójkąty)</strong> — pierwszy i ostatni pręt gdy Count &gt; 3; zawsze widoczne</li>
+          <li><strong>Kreseczki końcowe</strong> — na krańcach dist line gdy Count &gt; 3; zawsze widoczne</li>
+          <li>Dist line: linetype <strong>_DOT</strong> (pionowa dla X-bars, pozioma dla Y-bars)</li>
+          <li>Tekst: <strong>47 H12-01 200 B1</strong></li>
+          <li>Font: romans.shx · kolor: żółty (ACI 2)</li>
+        </ul>
+      </div>
+      <div class="tip" style="margin-top:12px;">
+        💡 Grip na bloku → przeciągnij aby zmienić liczbę prętów. Annotacja i etykieta aktualizują się automatycznie.
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">6</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 7 — EDYCJA -->
+<div class="slide">
+  <div class="tag">Edycja</div>
+  <h2>Jak edytować obiekty</h2>
+  <div class="grid-3" style="margin-top:8px;">
+    <div class="card">
+      <h3><span class="cmd" style="font-size:11px;">RC_EDIT_BAR</span></h3>
+      <ul>
+        <li>Zmień średnicę pręta</li>
+        <li>Zmień kształt i wymiary</li>
+        <li>Zmień warstwę / numer pozycji</li>
+        <li>Aktualizuje wszystkie powiązane rozkłady</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="cmd" style="font-size:11px;">RC_EDIT_DISTRIBUTION</span></h3>
+      <ul>
+        <li>Zmień liczbę prętów i rozstaw</li>
+        <li>Live preview podczas edycji</li>
+        <li>Zachowuje geometrię etykiety</li>
+        <li>Aktualizuje MLeader pręta</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="cmd" style="font-size:11px;">RC_EDIT_LABEL</span></h3>
+      <ul>
+        <li>Zmień tekst annotacji rozkładu</li>
+        <li>Ramię dopasowuje się do nowego tekstu</li>
+        <li>Ustaw <strong>widoczność prętów</strong></li>
+        <li style="color:#e94560;">→ Wszystkie / Środkowy / Pierwszy+Ostatni / Ręcznie</li>
+      </ul>
+    </div>
+  </div>
+  <h3 style="margin-top:20px;">Grip drag bez komendy</h3>
+  <div class="grid-2">
+    <div class="step">
+      <div class="step-num" style="background:#0f3460;">⊕</div>
+      <div class="step-body">
+        <h4>Grip 0 — przesuwa dist line</h4>
+        <p>Chwyć dolny/lewy grip bloku annotacji. Przesuwa całą etykietę wzdłuż osi prętów.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num" style="background:#0f3460;">⊕</div>
+      <div class="step-body">
+        <h4>Grip 1 — rozciąga ramię / span</h4>
+        <p>Chwyć koniec ramienia = zmień długość. Chwyć koniec dist line = zmień liczbę prętów.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">7</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 8 — BAR VISIBILITY -->
+<div class="slide">
+  <div class="tag">RC_EDIT_LABEL</div>
+  <h2>Bar Visibility — widoczność prętów w rozkładzie</h2>
+  <p>W dialogu <span class="cmd">RC_EDIT_LABEL</span> możesz kontrolować które linie prętów są rysowane w bloku rozkładu — bez zmiany danych XData ani liczby prętów.</p>
+
+  <div class="vis-grid" style="margin-top:20px;">
+    <div class="vis-box">
+      <span class="vis-label">Wszystkie</span>
+      <div class="vis-diagram">
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+      </div>
+      <div class="vis-desc">Domyślnie — wszystkie pręty widoczne</div>
+    </div>
+    <div class="vis-box">
+      <span class="vis-label">Środkowy</span>
+      <div class="vis-diagram">
+        <div class="bar-line hidden"></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line hidden"></div>
+      </div>
+      <div class="vis-desc">Tylko pręt środkowy (index count/2)</div>
+    </div>
+    <div class="vis-box">
+      <span class="vis-label">Pierwszy+Ostatni</span>
+      <div class="vis-diagram">
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+      </div>
+      <div class="vis-desc">Dwa skrajne pręty; typowo dla stref z gęstym zbrojeniem</div>
+    </div>
+    <div class="vis-box">
+      <span class="vis-label">Manualny</span>
+      <div class="vis-diagram">
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+        <div class="bar-line hidden"></div>
+        <div class="bar-line"><div class="bar-dot"></div></div>
+      </div>
+      <div class="vis-desc">Klikasz pręty w rysunku — toggle, Enter kończy</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:16px; align-items:start;">
+    <div class="tip">
+      💡 <strong>Strzałki (krańcowe) i kreseczki końcowe</strong> są zawsze rysowane — niezależnie od trybu widoczności. Filtrowane są tylko kółka środkowych prętów.
+    </div>
+    <div class="tip">
+      💡 Ustawienie widoczności jest zapisywane w XData bloku prętów (RC_BAR_BLOCK) i zachowuje się po edycji rozkładu, skalowaniu i ponownym otwarciu pliku DWG.
+    </div>
+  </div>
+  <div class="slide-number">8</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 9 — POWIĄZANIA -->
+<div class="slide">
+  <div class="tag">Inteligencja</div>
+  <h2>Automatyczne powiązania między obiektami</h2>
+  <p style="margin-bottom:16px;">Plugin śledzi relacje między prętami, rozkładami i etykietami — zmiany propagują się automatycznie.</p>
+  <table>
+    <tr>
+      <th>Akcja użytkownika</th>
+      <th>Co dzieje się automatycznie</th>
+    </tr>
+    <tr>
+      <td>Usuń rozkład (<code>ERASE</code>)</td>
+      <td>Usuwa annotację · Aktualizuje licznik na etykiecie pręta (po zakończeniu komendy)</td>
+    </tr>
+    <tr>
+      <td>Usuń pręt (<code>ERASE</code>)</td>
+      <td>Usuwa MLeader etykiety · Usuwa wszystkie powiązane rozkłady i annotacje</td>
+    </tr>
+    <tr>
+      <td>Grip drag koniec dist line</td>
+      <td>Zmienia liczbę prętów · Przebudowuje blok · Aktualizuje annotację i etykietę</td>
+    </tr>
+    <tr>
+      <td>Stretch polilinii pręta</td>
+      <td>Aktualizuje długość A we wszystkich rozkładach tego pręta</td>
+    </tr>
+    <tr>
+      <td>Przesuń blok rozkładu (<code>MOVE</code>)</td>
+      <td>Annotacja podąża razem z blokiem</td>
+    </tr>
+    <tr>
+      <td>Dodaj drugi rozkład tego samego pręta</td>
+      <td>Etykieta pręta pokazuje sumę: <strong>47+23 = 70</strong> prętów</td>
+    </tr>
+  </table>
+  <div class="tip" style="margin-top:16px;">
+    💡 Powiązania są przechowywane w XData obiektów — działają nawet po zapisaniu i ponownym otwarciu pliku DWG.
+  </div>
+  <div class="slide-number">9</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 10 — WARSTWY -->
+<div class="slide">
+  <div class="tag">Organizacja</div>
+  <h2>Warstwy i kody stref</h2>
+  <div class="grid-2">
+    <div>
+      <h3>Kody stref (warstwy)</h3>
+      <table>
+        <tr><th>Kod</th><th>Znaczenie</th><th>Kolor</th></tr>
+        <tr><td><strong>B1</strong></td><td>Spód — kierunek X</td><td>ACI 5 (niebieski)</td></tr>
+        <tr><td><strong>B2</strong></td><td>Spód — kierunek Y</td><td>ACI 5 (niebieski)</td></tr>
+        <tr><td><strong>T1</strong></td><td>Góra — kierunek X</td><td>ACI 5 (niebieski)</td></tr>
+        <tr><td><strong>T2</strong></td><td>Góra — kierunek Y</td><td>ACI 5 (niebieski)</td></tr>
+        <tr><td><strong>UB</strong></td><td>Universal Bottom</td><td>ACI 5</td></tr>
+        <tr><td><strong>SIDE</strong></td><td>Pręty boczne</td><td>ACI 3</td></tr>
+      </table>
+      <div class="tip" style="margin-top:10px; font-size:12px;">
+        Wszystkie pręty (Top i Bottom) w tym samym kolorze niebieskim — jak konwencja ASD.
+      </div>
+    </div>
+    <div>
+      <h3>Warstwy tworzone automatycznie</h3>
+      <div class="card">
+        <ul>
+          <li>RC-SLAB-BOT-01, -BOT-02 (pręty dolne)</li>
+          <li>RC-SLAB-TOP-01, -TOP-02 (pręty górne)</li>
+          <li>RC-SLAB-LEADERS (annotacje, ACI 7)</li>
+          <li>RC-SLAB-ANNOT (etykiety, ACI 2 żółty)</li>
+          <li>RC-SLAB-DIMS (wymiarowanie)</li>
+        </ul>
+      </div>
+      <div class="warn" style="margin-top:12px;">
+        ⚠️ Plugin tworzy warstwy przy pierwszym użyciu. Jeśli warstwa już istnieje w rysunku — kolor nie jest nadpisywany.
+      </div>
+      <h3 style="margin-top:16px;">Kształty prętów (shape codes)</h3>
+      <div class="card">
+        <ul>
+          <li><strong>00</strong> — prosty</li>
+          <li><strong>11/12</strong> — L (haczyk jednostronny)</li>
+          <li><strong>21</strong> — U (haczyki obustronnie)</li>
+          <li><strong>25</strong> — Z / S-bar</li>
+          <li><strong>32/51</strong> — inne kształty</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">10</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 11 — TYPOWY WORKFLOW -->
+<div class="slide">
+  <div class="tag">Praktyka</div>
+  <h2>Typowy workflow — zbrojenie płyty</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Narysuj pręt wzorcowy — <span class="cmd" style="font-size:12px;">RC_BAR</span></h4>
+        <p>Jeden pręt H12, kształt 00 (prosty), warstwa B1, długość A = 4500mm, pozycja nr 01 → tworzy polilinię + etykietę "H12-01"</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Rozłóż go po płycie — <span class="cmd" style="font-size:12px;">RC_DISTRIBUTION</span></h4>
+        <p>Wybierz pręt → zaznacz zakres płyty → rozstaw 200mm → 23 pręty → jig etykiety → gotowe. Etykieta pręta zmienia się na "23 H12-01"</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Powtórz dla kierunku Y</h4>
+        <p>RC_BAR → H12, B2, pozycja 02 → RC_DISTRIBUTION → rozstaw 200mm → "19 H12-02"</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Koryguj geometrię — stretch, edit, visibility</h4>
+        <p>Rozciągnij polilinię pręta → rozkłady aktualizują się automatycznie. RC_EDIT_DISTRIBUTION — zmień rozstaw. RC_EDIT_LABEL — ustaw widoczność prętów (np. Pierwszy+Ostatni dla przejrzystości).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Wynik</h4>
+        <p>Rysunek z prętami, annotacjami w stylu ASD, aktualnymi etykietami i pełnymi danymi w XData gotowymi do eksportu do BBS.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">11</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 12 — STATUS -->
+<div class="slide">
+  <div class="tag">Status projektu</div>
+  <h2>Co jest zrobione / co planowane</h2>
+  <div class="grid-2">
+    <div>
+      <h3 style="color:#2ecc71;">✓ Zaimplementowane</h3>
+      <div class="card" style="border-top-color:#2ecc71;">
+        <ul>
+          <li>RC_BAR — tworzenie prętów (wszystkie kształty)</li>
+          <li>RC_DISTRIBUTION — pełny 3-etapowy jig</li>
+          <li>RC_EDIT_BAR / DISTRIBUTION / LABEL</li>
+          <li>Grip drag z live update</li>
+          <li>Auto-usuwanie powiązanych obiektów</li>
+          <li>Auto-aktualizacja po stretch</li>
+          <li>Etykiety z sumowaniem rozkładów</li>
+          <li><strong>Bar Visibility</strong> — 4 tryby widoczności prętów</li>
+          <li>Warstwy i style jak ASD (jednolity kolor niebieski)</li>
+          <li>XData z pełnymi danymi zbrojenia</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <h3 style="color:#e67e22;">⧗ Planowane (kolejne fazy)</h3>
+      <div class="card" style="border-top-color:#e67e22;">
+        <ul>
+          <li>Project Data Manager (dane projektu)</li>
+          <li>DXF Zone Parser (strefy SOFiSTiK)</li>
+          <li>Bar Calculator (obliczenia)</li>
+          <li>Spacing Override Editor</li>
+          <li>Interactive Bar Editor</li>
+          <li>BBS Export (zestawienie stali)</li>
+          <li>Quantity Takeoff</li>
+          <li>Drawing Checker</li>
+        </ul>
+      </div>
+      <div class="warn" style="margin-top:12px;">
+        Plan: 22 moduły · 6 faz · 11 tygodni
+      </div>
+    </div>
+  </div>
+  <div class="slide-number">12</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SLAJD 13 — KONIEC -->
+<div class="slide cover" style="align-items:center; text-align:center;">
+  <div style="font-size:56px; margin-bottom:20px;">🔩</div>
+  <div class="tag">Koniec</div>
+  <h1 style="font-size:40px;">Dziękuję za uwagę</h1>
+  <p class="subtitle" style="margin-top:16px;">Pytania?</p>
+  <div style="margin-top:40px; display:flex; gap:30px; justify-content:center;">
+    <div class="card" style="min-width:180px; text-align:left;">
+      <h3>Szybki start</h3>
+      <ul>
+        <li>Załaduj BricsCadRc.dll</li>
+        <li>Wpisz RC_BAR</li>
+        <li>Wpisz RC_DISTRIBUTION</li>
+      </ul>
+    </div>
+    <div class="card" style="min-width:180px; text-align:left;">
+      <h3>Wymagania</h3>
+      <ul>
+        <li>BricsCAD V23+</li>
+        <li>.NET Framework 4.8</li>
+        <li>romans.shx w fontach</li>
+      </ul>
+    </div>
+  </div>
+  <div class="slide-number">13</div>
+</div>
+
+</body>
+</html>

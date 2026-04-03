@@ -1,7 +1,7 @@
 <Window x:Class="BricsCadRc.Dialogs.EditLabelDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Edycja etykiety" Width="320" SizeToContent="Height"
+        Title="Edycja etykiety" Width="420" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
     <StackPanel Margin="16">
         <Grid>
@@ -34,6 +34,14 @@
             <TextBlock Grid.Row="4" Grid.Column="1" x:Name="PreviewLabel"
                        VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
         </Grid>
+
+        <TextBlock Text="Widoczność prętów:" FontWeight="Bold" Margin="0,8,0,4"/>
+        <WrapPanel>
+            <RadioButton x:Name="RbAll"       Content="Wszystkie"        GroupName="vis" Margin="0,0,12,4" IsChecked="True"/>
+            <RadioButton x:Name="RbMiddle"    Content="Środkowy"         GroupName="vis" Margin="0,0,12,4"/>
+            <RadioButton x:Name="RbFirstLast" Content="Pierwszy+Ostatni" GroupName="vis" Margin="0,0,12,4"/>
+            <RadioButton x:Name="RbManual"    Content="Manualny"         GroupName="vis" Margin="0,0,0,4"/>
+        </WrapPanel>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="Anuluj" Width="80" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
