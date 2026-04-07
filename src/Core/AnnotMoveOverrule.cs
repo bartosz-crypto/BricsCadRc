@@ -113,8 +113,6 @@ namespace BricsCadRc.Core
                 _dragOrigPos.Remove(hv);
                 ClearGripTransients();
 
-                var edDbg = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-                edDbg?.WriteMessage($"\n[DEBUG XDATA] in GetGrips: ArmTotalLen={barAnnot.ArmTotalLen:F1} ArmMidY={barAnnot.ArmMidY:F1}");
 
                 var ins = br.Position;
                 // Grip[0]: środek dist line (nie insertPt)
@@ -171,10 +169,6 @@ namespace BricsCadRc.Core
                 }
                 gripPoints.Add(armTop);  // [1] arm end
 
-                var edGrip = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-                edGrip?.WriteMessage($"\n[DEBUG GRIPS] grip[0]=({grip0.X:F1},{grip0.Y:F1}) grip[1]=({armTop.X:F1},{armTop.Y:F1})" +
-                                     $" leaderH={barAnnot.LeaderHorizontal} leaderRight={barAnnot.LeaderRight}" +
-                                     $" ins=({ins.X:F1},{ins.Y:F1}) armTotalLen={barAnnot.ArmTotalLen:F1} midY={AnnotationEngine.GetArmMidY(br):F1}");
                 return;
             }
 
@@ -241,14 +235,8 @@ namespace BricsCadRc.Core
             if (br == null) { base.MoveGripPointsAt(entity, indices, offset); return; }
 
             bool isGrip1 = false;
-            var idxList = new System.Text.StringBuilder();
             foreach (int idx in indices)
-            {
-                idxList.Append(idx).Append(',');
                 if (idx == 1) isGrip1 = true;
-            }
-            Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
-                .WriteMessage($"\n[DEBUG GRIPS] MoveGripPointsAt indices=[{idxList}] isGrip1={isGrip1} offset=({offset.X:F1},{offset.Y:F1})");
 
             ApplyGripMove(entity, br, offset, isGrip1);
         }
@@ -432,17 +420,24 @@ namespace BricsCadRc.Core
                         _dragOrigPos[handle] = br.Position;
 
                     var origPos = _dragOrigPos[handle];
-                    // X-bars: X wolny (wzdłuż pręta), Y zablokowany
-                    // Y-bars: Y wolny, X zablokowany
-                    double targetX = (barAnnot.Direction == "X")
-                        ? origPos.X + offset.X
-                        : origPos.X;
-                    double targetY = (barAnnot.Direction == "X")
-                        ? origPos.Y
-                        : origPos.Y + offset.Y;
-                    var target = new Point3d(targetX, targetY, origPos.Z);
+
+                    Point3d newPos;
+                    if (Math.Abs(br.Rotation) > 1e-6)
+                    {
+                        // Obrócony blok — swobodny ruch w WCS (bez constraintu osi)
+                        newPos = new Point3d(origPos.X + offset.X, origPos.Y + offset.Y, origPos.Z);
+                    }
+                    else if (barAnnot.Direction == "X")
+                    {
+                        newPos = new Point3d(origPos.X + offset.X, origPos.Y, origPos.Z);
+                    }
+                    else
+                    {
+                        newPos = new Point3d(origPos.X, origPos.Y + offset.Y, origPos.Z);
+                    }
+
                     br.UpgradeOpen();
-                    br.Position = new Point3d(targetX, targetY, origPos.Z);
+                    br.Position = newPos;
                 }
                 return;
             }
@@ -502,6 +497,20 @@ namespace BricsCadRc.Core
             // Blok pretow: swobodny ruch — brak ograniczenia kierunku
             if (BarBlockEngine.IsBarBlock(br)) { base.TransformBy(entity, transform); return; }
 
+            // Sprawdź kąt obrotu bloku annotacji
+            double annotAngle = 0.0;
+            var barAnnotForAngle = AnnotationEngine.ReadAnnotXData(br);
+            if (barAnnotForAngle != null)
+                annotAngle = br.Rotation;
+
+            // Jeśli blok jest obrócony (ukośne pręty) — przepuść transform bez constraintu
+            if (Math.Abs(annotAngle) > 1e-6)
+            {
+                base.TransformBy(entity, transform);
+                return;
+            }
+
+            // Standardowy constraint dla poziomych/pionowych prętów
             string dir = null;
             var bb = BarBlockEngine.ReadXData(br);
             if (bb != null) dir = bb.Direction;

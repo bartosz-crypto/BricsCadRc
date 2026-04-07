@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -399,19 +400,33 @@ namespace BricsCadRc.Core
             if (horizontal) BuildHorizontal(tr, btr, bar, barLength, bar.Count);
             else             BuildVertical  (tr, btr, bar, barLength, bar.Count);
 
-            var insertPt = new Point3d(x0, y0, 0);
+            // Dla ukośnych prętów: insertPt = Pt1X/Pt1Y (krawędź kliknięta przez użytkownika po cover)
+            // Dla prostych (angle≈0): zachowaj stary lewy-dolny róg AABB
+            var insertPt = Math.Abs(bar.Angle) > 1e-6
+                ? new Point3d(bar.Pt1X, bar.Pt1Y, 0)
+                : new Point3d(x0, y0, 0);
+            var edG = Application.DocumentManager.MdiActiveDocument?.Editor;
+            edG?.WriteMessage($"\n[GEN] bar.Angle={bar.Angle:F4} insertPt=({insertPt.X:F0},{insertPt.Y:F0}) blockRef.Rotation będzie={bar.Angle:F4}");
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            if (Math.Abs(bar.Angle) > 1e-6)
+                blockRef.Rotation = bar.Angle;
             space.AppendEntity(blockRef);
             tr.AddNewlyCreatedDBObject(blockRef, true);
 
             WriteXData(blockRef, bar);
+
+            // MinPoint/MaxPoint z GeometricExtents uwzględnia obrót bloku
+            Extents3d ext;
+            try   { ext = blockRef.GeometricExtents; }
+            catch { ext = new Extents3d(new Point3d(x0, y0, 0), new Point3d(x1, y1, 0)); }
+
             tr.Commit();
 
             return new BarBlockResult
             {
                 BlockRefId = blockRef.ObjectId,
-                MinPoint   = new Point3d(x0, y0, 0),
-                MaxPoint   = new Point3d(x1, y1, 0)
+                MinPoint   = ext.MinPoint,
+                MaxPoint   = ext.MaxPoint
             };
         }
 
@@ -637,7 +652,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelPolyHandle   ?? ""),    // [19]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? ""),    // [20]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.VisibilityMode),      // [21]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? "")     // [22]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? ""),    // [22]
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle)                      // [23]
             );
         }
 
@@ -672,6 +688,7 @@ namespace BricsCadRc.Core
             if (v.Length >= 21) bd.LabelTextHandle  = (string)v[20].Value;
             if (v.Length >= 22) bd.VisibilityMode   = (BarVisibilityMode)(short)v[21].Value;
             if (v.Length >= 23) bd.VisibleIndices   = (string)v[22].Value ?? "";
+            if (v.Length >= 24) bd.Angle            = (double)v[23].Value;
             return bd;
         }
 

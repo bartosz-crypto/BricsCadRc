@@ -149,6 +149,15 @@ namespace BricsCadRc.Core
         /// <summary>Dla Manual: indeksy widocznych prętów jako "0,2,4". "" = wszystkie.</summary>
         public string VisibleIndices { get; set; } = "";
 
+        /// <summary>Kąt obrotu układu prętów w radianach (0 = poziomy, π/2 = pionowy, inne = ukośny).</summary>
+        public double Angle { get; set; } = 0.0;
+
+        /// <summary>Punkt wstawienia X (w WCS) dla ukośnych prętów — przekazywany do GenerateFromBounds.</summary>
+        public double Pt1X { get; set; } = 0.0;
+
+        /// <summary>Punkt wstawienia Y (w WCS) dla ukośnych prętów — przekazywany do GenerateFromBounds.</summary>
+        public double Pt1Y { get; set; } = 0.0;
+
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 

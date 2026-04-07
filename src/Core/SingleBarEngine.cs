@@ -111,6 +111,23 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // GetBarAngle — kąt pierwszego segmentu polilinii pręta w radianach.
+        // Uwzględnia obrót przez ROTATE (wierzchołki są w WCS).
+        // 0 = poziomy (obrót 0°), π/2 = pionowy, inne = ukośny.
+        // ----------------------------------------------------------------
+
+        public static double GetBarAngle(Polyline pline)
+        {
+            if (pline == null || pline.NumberOfVertices < 2) return 0.0;
+            var p0 = pline.GetPoint3dAt(0);
+            var p1 = pline.GetPoint3dAt(1);
+            double dx = p1.X - p0.X;
+            double dy = p1.Y - p0.Y;
+            if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6) return 0.0;
+            return Math.Atan2(dy, dx);
+        }
+
+        // ----------------------------------------------------------------
         // GetBarArrowTip — punkt na krawędzi pręta najbliżej textPt.
         // Używa GeometricExtents (bbox uwzględnia ConstantWidth).
         // Dla shape codes zamkniętych zawsze zwraca środek górnej krawędzi.

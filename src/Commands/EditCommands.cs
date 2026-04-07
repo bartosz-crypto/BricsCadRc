@@ -177,8 +177,24 @@ namespace BricsCadRc.Commands
             double origSpacing = bar.Spacing;
             double origCover   = bar.Cover;
 
+            // Sprawdź czy annotacja istnieje
+            bool annotMissing = false;
+            if (string.IsNullOrEmpty(bar.AnnotHandle))
+            {
+                annotMissing = true;
+            }
+            else if (long.TryParse(bar.AnnotHandle,
+                    System.Globalization.NumberStyles.HexNumber,
+                    null, out long checkHVal))
+            {
+                var checkHandle = new Handle(checkHVal);
+                if (!db.TryGetObjectId(checkHandle, out ObjectId checkId)
+                    || checkId.IsNull || checkId.IsErased)
+                    annotMissing = true;
+            }
+
             // Krok 2 — dialog z live preview
-            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover);
+            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover, annotMissing);
             dlg.OnPreview = (c, sp, cv) => ApplyPreview(c, sp, cv);
 
             bool confirmed = Application.ShowModalWindow(dlg) == true;
@@ -189,6 +205,54 @@ namespace BricsCadRc.Commands
                 {
                     ApplyPreview(origCount, origSpacing, origCover);
                 }
+                return;
+            }
+
+            if (annotMissing && dlg.ResultAddAnnotation)
+            {
+                using var trRe = db.TransactionManager.StartTransaction();
+                var brRe = trRe.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                if (brRe == null) { trRe.Commit(); return; }
+                // Odczytaj kąt z obrotu bloku RC_BAR_BLOCK (uwzględnia ROTATE wykonany przez użytkownika)
+                bar.Angle = brRe.Rotation;
+                var insertWCS = brRe.Position;
+                BarBlockEngine.BarBlockResult barResult;
+                if (Math.Abs(bar.Angle) > 1e-6)
+                {
+                    // Dla obróconego bloku — oblicz MaxPoint w kierunku obrotu (nie AABB w WCS)
+                    double cos       = Math.Cos(bar.Angle);
+                    double sin       = Math.Sin(bar.Angle);
+                    double barsSpanR = bar.BarsSpan;
+                    double lengthR   = bar.LengthA;
+                    barResult = new BarBlockEngine.BarBlockResult
+                    {
+                        BlockRefId = blockRefId,
+                        MinPoint   = insertWCS,
+                        MaxPoint   = new Point3d(
+                            insertWCS.X + lengthR * cos + barsSpanR * (-sin),
+                            insertWCS.Y + lengthR * sin + barsSpanR * cos,
+                            0)
+                    };
+                }
+                else
+                {
+                    barResult = new BarBlockEngine.BarBlockResult
+                    {
+                        BlockRefId = blockRefId,
+                        MinPoint   = insertWCS,
+                        MaxPoint   = new Point3d(
+                            insertWCS.X + (bar.Direction == "X" ? bar.LengthA : bar.BarsSpan),
+                            insertWCS.Y + (bar.Direction == "X" ? bar.BarsSpan : bar.LengthA),
+                            0)
+                    };
+                }
+                trRe.Commit();
+
+                string baseMark = $"H{bar.Diameter}-{SingleBarEngine.ExtractPosNr(bar.Mark):D2}-{(int)bar.Spacing}";
+                BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
+                    bar.Spacing, bar.Count, baseMark, blockRefId);
+
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
                 return;
             }
 
@@ -405,6 +469,33 @@ namespace BricsCadRc.Commands
 
                 AnnotationEngine.WriteAnnotXData(br, bar);
 
+                // Zsynchronizuj Mark i Count do RC_BAR_BLOCK
+                if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
+                {
+                    if (long.TryParse(bar.SourceBlockHandle,
+                            System.Globalization.NumberStyles.HexNumber,
+                            null, out long sbHVal2))
+                    {
+                        var sbHandle2 = new Handle(sbHVal2);
+                        if (db.TryGetObjectId(sbHandle2, out ObjectId sbId2) && !sbId2.IsErased)
+                        {
+                            using var trMarkSync = db.TransactionManager.StartTransaction();
+                            var brBlock = trMarkSync.GetObject(sbId2, OpenMode.ForWrite) as BlockReference;
+                            if (brBlock != null)
+                            {
+                                var barBlock = BarBlockEngine.ReadXData(brBlock);
+                                if (barBlock != null)
+                                {
+                                    barBlock.Mark  = bar.Mark;
+                                    barBlock.Count = bar.Count;
+                                    BarBlockEngine.WriteXData(brBlock, barBlock);
+                                }
+                            }
+                            trMarkSync.Commit();
+                        }
+                    }
+                }
+
                 // Zaktualizuj TextString w DBText wewnątrz BTR
                 var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
                 foreach (ObjectId oid in btr)
@@ -469,31 +560,6 @@ namespace BricsCadRc.Commands
                     else trSync.Commit();
                 }
                 else trSync.Commit();
-            }
-
-            // DEBUG — odczyt po tr.Commit() żeby sprawdzić czy TextString faktycznie się zapisał
-            using (var trDbg = db.TransactionManager.StartTransaction())
-            {
-                var brDbg = trDbg.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
-                if (brDbg != null)
-                {
-                    var btrDbg = (BlockTableRecord)trDbg.GetObject(brDbg.BlockTableRecord, OpenMode.ForRead);
-                    string foundText = null;
-                    int    txtCount  = 0;
-                    foreach (ObjectId oid in btrDbg)
-                    {
-                        if (oid.IsErased) continue;
-                        var obj = trDbg.GetObject(oid, OpenMode.ForRead);
-                        if (obj is DBText txt)
-                        {
-                            txtCount++;
-                            if (foundText == null) foundText = txt.TextString;
-                        }
-                    }
-                    ed.WriteMessage($"\n[DEBUG RC_EDIT_LABEL] DBText w BTR: {txtCount}  " +
-                                    $"pierwszy TextString=\"{foundText ?? "(null)"}\"");
-                }
-                trDbg.Commit();
             }
 
             // Wymusz odświeżenie renderowania bloku

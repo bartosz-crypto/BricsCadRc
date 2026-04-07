@@ -11,10 +11,12 @@ namespace BricsCadRc.Dialogs
 
         public Action<int, double, double> OnPreview    { get; set; }
         public bool                        PreviewApplied { get; private set; } = false;
+        public bool ResultAddAnnotation => CbAddAnnotation.IsChecked == true;
 
         private System.Windows.Threading.DispatcherTimer _debounce;
 
-        public EditDistributionDialog(string mark, int count, double spacing, double cover)
+        public EditDistributionDialog(string mark, int count, double spacing, double cover,
+            bool annotMissing = false)
         {
             InitializeComponent();
             MarkLabel.Text  = mark;
@@ -25,6 +27,9 @@ namespace BricsCadRc.Dialogs
             CountBox.TextChanged   += (s, e) => { UpdateSpan(); SchedulePreview(); };
             SpacingBox.TextChanged += (s, e) => { UpdateSpan(); SchedulePreview(); };
             CoverBox.TextChanged   += (s, e) => SchedulePreview();
+
+            if (annotMissing)
+                CbAddAnnotation.Visibility = Visibility.Visible;
         }
 
         void UpdateSpan()

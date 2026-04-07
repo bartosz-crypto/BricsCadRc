@@ -117,19 +117,9 @@ namespace BricsCadRc.Core
             bar.LeaderUp         = leaderUp;
             // ArmMidY już zainicjalizowane powyżej (przed BuildHorizontal)
 
-            // Debug dla etykiety poziomej
-            if (barsHorizontal && leaderHorizontal)
-            {
-                double midYDbg     = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : 0;
-                double hDirDbg     = leaderRight ? 1.0 : -1.0;
-                var    bendPtWorld = new Point3d(insertPt.X, insertPt.Y + midYDbg, 0);
-                Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
-                    .WriteMessage(
-                        $"\n[DEBUG HORIZ] armTotalLen={armTotalLen:F1} textPos.X={hDirDbg * ArmLength:F1} textLen={bar.TextLen:F1} ArmLength={ArmLength} armEndX={hDirDbg * (ArmLength + bar.TextLen):F1}" +
-                        $"\n[DEBUG HORIZ] insertPt=({insertPt.X:F0},{insertPt.Y:F0}) bendPt=({bendPtWorld.X:F0},{bendPtWorld.Y:F0}) armStartLocal=(0,{midYDbg:F1})");
-            }
-
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            if (Math.Abs(bar.Angle) > 1e-6)
+                blockRef.Rotation = bar.Angle;
             space.AppendEntity(blockRef);
             tr.AddNewlyCreatedDBObject(blockRef, true);
 
@@ -271,10 +261,6 @@ namespace BricsCadRc.Core
                 btr.AppendEntity(arm);
                 tr.AddNewlyCreatedDBObject(arm, true);
 
-                var ed0 = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-                try { var ext0 = dbText.GeometricExtents;
-                    ed0?.WriteMessage($"\n[DEBUG VERT OBJ] leaderUp={leaderUp} armLine.End=({arm.EndPoint.X:F1},{arm.EndPoint.Y:F1}) text.Position=({dbText.Position.X:F1},{dbText.Position.Y:F1}) text.Max.Y={ext0.MaxPoint.Y:F1}");
-                } catch (System.Exception ex0) { ed0?.WriteMessage($"\n[DEBUG VERT OBJ] GeomExtents error: {ex0.Message}"); }
             }
             else
             {
@@ -343,13 +329,6 @@ namespace BricsCadRc.Core
                 btr.AppendEntity(arm);
                 tr.AddNewlyCreatedDBObject(arm, true);
 
-                var edH = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-                try { var extH = dbText.GeometricExtents;
-                    edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] stemLine.Start=({stem.StartPoint.X:F1},{stem.StartPoint.Y:F1}) stemLine.End=({stem.EndPoint.X:F1},{stem.EndPoint.Y:F1})");
-                    edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] armLine.Start=({arm.StartPoint.X:F1},{arm.StartPoint.Y:F1}) armLine.End=({arm.EndPoint.X:F1},{arm.EndPoint.Y:F1})");
-                    edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] text.Position=({dbText.Position.X:F1},{dbText.Position.Y:F1}) text.Rotation={dbText.Rotation:F4}");
-                    edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] text.GeometricExtents Min=({extH.MinPoint.X:F1},{extH.MinPoint.Y:F1}) Max=({extH.MaxPoint.X:F1},{extH.MaxPoint.Y:F1})");
-                } catch (System.Exception exH) { edH?.WriteMessage($"\n[DEBUG HORIZ OBJ] GeomExtents error: {exH.Message}"); }
             }
 
             // Kółko w punkcie styku arma z dist line (złamanie)
@@ -747,7 +726,6 @@ namespace BricsCadRc.Core
                 if (armLine != null && armText != null) break;
             }
 
-            var edUpd = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
 
             if (armLine != null)
             {
@@ -804,7 +782,6 @@ namespace BricsCadRc.Core
                         armText.Position = newTextPos;
                     else
                         armText.AlignmentPoint = newTextPos;
-                    edUpd?.WriteMessage($"\n[DEBUG UPDATE] direction=X-horiz newArmLen={clampedNew:F1} textLen={textLen:F1} armEnd=({armLine?.EndPoint.X:F1},{armLine?.EndPoint.Y:F1}) textPos=({newTextPos.X:F1},{newTextPos.Y:F1})");
                 }
                 else if (bar.Direction == "X")
                 {
@@ -820,7 +797,6 @@ namespace BricsCadRc.Core
                         newTextPos = new Point3d(-TextArmOffset, bar.BarsSpan / 2.0 - clampedNew, 0);
                     }
                     armText.Position = newTextPos;
-                    edUpd?.WriteMessage($"\n[DEBUG UPDATE] direction=X-vert leaderUp={bar.LeaderUp} newArmLen={clampedNew:F1} textLen={textLen:F1} armEnd=({armLine?.EndPoint.X:F1},{armLine?.EndPoint.Y:F1}) textPos=({newTextPos.X:F1},{newTextPos.Y:F1})");
                 }
                 else if (yVert)
                 {
@@ -829,7 +805,6 @@ namespace BricsCadRc.Core
                         ? bar.BarsSpan + clampedNew - textLen   // prawo: tekst przy końcu arma
                         : bar.BarsSpan / 2.0 - clampedNew;      // lewo: tekst od końca arma w prawo
                     armText.Position = new Point3d(textStartX, TextArmOffset, 0);
-                    edUpd?.WriteMessage($"\n[DEBUG UPDATE] direction=Y-vert leaderRight={bar.LeaderRight} newArmLen={clampedNew:F1} textPos=({textStartX:F1},{TextArmOffset:F1})");
                 }
                 else if (yHoriz)
                 {
@@ -844,7 +819,6 @@ namespace BricsCadRc.Core
                         ? clampedNew - textLen   // góra: tekst kończy się przy końcu arma
                         : -clampedNew;           // dół: tekst zaczyna się przy końcu arma i rośnie w górę
                     armText.Position = new Point3d(midXVal - TextArmOffset, textStartY, 0);
-                    edUpd?.WriteMessage($"\n[DEBUG UPDATE] direction=Y-horiz leaderUp={bar.LeaderUp} midX={midXVal:F1} newArmLen={clampedNew:F1} textPos=({midXVal - TextArmOffset:F1},{textStartY:F1})");
                 }
                 else
                 {
@@ -852,12 +826,10 @@ namespace BricsCadRc.Core
                     double textStartX = bar.BarsSpan + clampedNew - textLen;
                     var newTextPos    = new Point3d(textStartX, TextArmOffset, 0);
                     armText.Position  = newTextPos;
-                    edUpd?.WriteMessage($"\n[DEBUG UPDATE] direction=Y-fallback newArmLen={clampedNew:F1} armEnd=({armLine?.EndPoint.X:F1},{armLine?.EndPoint.Y:F1}) textPos=({newTextPos.X:F1},{newTextPos.Y:F1})");
                 }
             }
             else
             {
-                edUpd?.WriteMessage($"\n[DEBUG UPDATE] armText=NULL – text nie zaktualizowany!");
             }
 
             // Zaktualizuj kółko złamania — usuń stare (jeśli istnieje) i dodaj nowe
@@ -999,16 +971,6 @@ namespace BricsCadRc.Core
 
             tr.Commit();
 
-            var ed = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-            try
-            {
-                using var tr2 = db.TransactionManager.StartTransaction();
-                var brCheck  = tr2.GetObject(objId, OpenMode.ForRead) as BlockReference;
-                var barCheck = brCheck != null ? ReadAnnotXData(brCheck) : null;
-                ed?.WriteMessage($"\n[DEBUG XDATA] after commit: ArmTotalLen={barCheck?.ArmTotalLen:F1} ArmMidY={barCheck?.ArmMidY:F1}");
-                tr2.Commit();
-            }
-            catch (System.Exception ex) { ed?.WriteMessage($"\n[DEBUG XDATA] after commit read failed: {ex.Message}"); }
         }
 
         // ----------------------------------------------------------------
