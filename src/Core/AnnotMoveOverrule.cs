@@ -33,6 +33,16 @@ namespace BricsCadRc.Core
         // Czyszczone w GetGripPoints (poczatek nowej interakcji gripem).
         // ArmMidY NIE wymaga osobnego slownika — UpdateArmInBlock zapisuje go do XData
         // po kazdym ruchu, wiec barAnnot.ArmMidY zawsze zawiera aktualny lokalny Y kink.
+        static Point3d LocalToWCS(Point3d insertPt, double angle, double localX, double localY)
+        {
+            double cos = Math.Cos(angle);
+            double sin = Math.Sin(angle);
+            return new Point3d(
+                insertPt.X + localX * cos - localY * sin,
+                insertPt.Y + localX * sin + localY * cos,
+                0);
+        }
+
         private static readonly Dictionary<long, double>  _dragOrigArm
             = new Dictionary<long, double>();
         private static readonly Dictionary<long, Point3d> _dragOrigPos
@@ -124,48 +134,73 @@ namespace BricsCadRc.Core
                 // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
                 // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
                 Point3d armTop;
-                // Etykieta z złamaniem: grip[1] przy końcu tekstu (TextEndLocal)
-                if (barAnnot.TextEndLocalX != 0.0 || barAnnot.TextEndLocalY != 0.0)
+                if (Math.Abs(br.Rotation) > 1e-6)
                 {
-                    armTop = new Point3d(ins.X + barAnnot.TextEndLocalX, ins.Y + barAnnot.TextEndLocalY, 0);
-                }
-                else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
-                    armTop = barAnnot.LeaderUp
-                        ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                        : new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, 0);
-                else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
-                {
-                    double currentMidY = AnnotationEngine.GetArmMidY(br);
-                    double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
-                    armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY, 0);
-                }
-                else if (barAnnot.Direction == "Y" && !barAnnot.LeaderHorizontal)
-                {
-                    // Y-bars, etykieta lewo/prawo — arm poziomy
-                    armTop = barAnnot.LeaderRight
-                        ? new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0)
-                        : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, ins.Y, 0);
-                }
-                else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
-                {
-                    // Y-bars, etykieta lewo/prawo — arm pionowy ze złamaniem
-                    double currentMidX = !double.IsNaN(barAnnot.ArmMidY)
-                        ? barAnnot.ArmMidY
-                        : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
-                    double vDir2 = barAnnot.LeaderUp ? 1.0 : -1.0;
-                    armTop = new Point3d(
-                        ins.X + currentMidX,
-                        ins.Y + vDir2 * barAnnot.ArmTotalLen,
-                        0);
+                    // Dla obróconych bloków — przelicz pozycję gripa z układu lokalnego do WCS
+                    double angle = br.Rotation;
+                    double armLen = barAnnot.ArmTotalLen;
+                    double midY   = !double.IsNaN(barAnnot.ArmMidY) ? barAnnot.ArmMidY : barAnnot.BarsSpan / 2.0;
+
+                    Point3d localArmEnd;
+                    if (!barAnnot.LeaderHorizontal)
+                    {
+                        // Prosta etykieta: arm wzdłuż osi Y lokalnie
+                        double vDir = barAnnot.LeaderUp ? 1.0 : -1.0;
+                        localArmEnd = new Point3d(0, vDir * armLen, 0);
+                    }
+                    else
+                    {
+                        // Złamana etykieta: arm od (0, midY) w kierunku X lokalnie
+                        double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        localArmEnd = new Point3d(hDir * armLen, midY, 0);
+                    }
+                    armTop = LocalToWCS(ins, angle, localArmEnd.X, localArmEnd.Y);
                 }
                 else
                 {
-                    // Y-bars, etykieta lewo/prawo — arm poziomy, uwzględnij kierunek
-                    double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
-                    armTop = new Point3d(
-                        ins.X + hDir2 * barAnnot.ArmTotalLen,
-                        ins.Y + barAnnot.BarsSpan / 2.0,
-                        0);
+                    // Etykieta z złamaniem: grip[1] przy końcu tekstu (TextEndLocal)
+                    if (barAnnot.TextEndLocalX != 0.0 || barAnnot.TextEndLocalY != 0.0)
+                    {
+                        armTop = new Point3d(ins.X + barAnnot.TextEndLocalX, ins.Y + barAnnot.TextEndLocalY, 0);
+                    }
+                    else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
+                        armTop = barAnnot.LeaderUp
+                            ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
+                            : new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, 0);
+                    else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
+                    {
+                        double currentMidY = AnnotationEngine.GetArmMidY(br);
+                        double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY, 0);
+                    }
+                    else if (barAnnot.Direction == "Y" && !barAnnot.LeaderHorizontal)
+                    {
+                        // Y-bars, etykieta lewo/prawo — arm poziomy
+                        armTop = barAnnot.LeaderRight
+                            ? new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0)
+                            : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, ins.Y, 0);
+                    }
+                    else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
+                    {
+                        // Y-bars, etykieta lewo/prawo — arm pionowy ze złamaniem
+                        double currentMidX = !double.IsNaN(barAnnot.ArmMidY)
+                            ? barAnnot.ArmMidY
+                            : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
+                        double vDir2 = barAnnot.LeaderUp ? 1.0 : -1.0;
+                        armTop = new Point3d(
+                            ins.X + currentMidX,
+                            ins.Y + vDir2 * barAnnot.ArmTotalLen,
+                            0);
+                    }
+                    else
+                    {
+                        // Y-bars, etykieta lewo/prawo — arm poziomy, uwzględnij kierunek
+                        double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
+                        armTop = new Point3d(
+                            ins.X + hDir2 * barAnnot.ArmTotalLen,
+                            ins.Y + barAnnot.BarsSpan / 2.0,
+                            0);
+                    }
                 }
                 gripPoints.Add(armTop);  // [1] arm end
 
@@ -424,8 +459,16 @@ namespace BricsCadRc.Core
                     Point3d newPos;
                     if (Math.Abs(br.Rotation) > 1e-6)
                     {
-                        // Obrócony blok — swobodny ruch w WCS (bez constraintu osi)
-                        newPos = new Point3d(origPos.X + offset.X, origPos.Y + offset.Y, origPos.Z);
+                        // Obrócony blok — ruch WZDŁUŻ prętów (cos θ, sin θ)
+                        // (nie wzdłuż dist line, bo to oddala kółka od prętów)
+                        double angle = br.Rotation;
+                        double dx = Math.Cos(angle);
+                        double dy = Math.Sin(angle);
+                        double proj = offset.X * dx + offset.Y * dy;
+                        newPos = new Point3d(
+                            origPos.X + proj * dx,
+                            origPos.Y + proj * dy,
+                            origPos.Z);
                     }
                     else if (barAnnot.Direction == "X")
                     {
@@ -484,6 +527,7 @@ namespace BricsCadRc.Core
 
         public override void TransformBy(Entity entity, Matrix3d transform)
         {
+            var br = entity as BlockReference;
             // Jeśli przesunięcie pochodzi z BarBlockTransformOverrule — nie ograniczaj osi
             if (AnnotOverruleState.BypassConstraint)
             {
@@ -491,7 +535,6 @@ namespace BricsCadRc.Core
                 return;
             }
 
-            var br = entity as BlockReference;
             if (br == null) { base.TransformBy(entity, transform); return; }
 
             // Blok pretow: swobodny ruch — brak ograniczenia kierunku

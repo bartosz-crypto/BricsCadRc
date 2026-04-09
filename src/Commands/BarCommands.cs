@@ -486,7 +486,8 @@ namespace BricsCadRc.Commands
             // ETAP 1
             var jig1 = new AnnotLabelPositionJig(
                 minFixed, basePos, barsSpan, finalSpacing, finalCount,
-                horizontal, AnnotationEngine.DotRadius);
+                horizontal, AnnotationEngine.DotRadius,
+                sourceBar.Angle, barResult.MinPoint);
             var res1 = ed.Drag(jig1);
             jig1.ClearTransients();
             if (res1.Status == PromptStatus.Cancel) return false;
@@ -498,9 +499,19 @@ namespace BricsCadRc.Commands
                     ? new Point3d(labelPos, minFixed, 0)
                     : new Point3d(minFixed, labelPos, 0);
 
-                // Uproszczenie dla obróconych bloków: insertOverride = pozycja bloku w WCS
+                // Dla obróconych bloków: insertOverride musi uwzględniać pozycję z jiga (labelPos)
+                // wzdłuż kierunku pręta (cos, sin) od punktu wstawienia bloku
                 if (Math.Abs(sourceBar.Angle) > 1e-6)
-                    insertOverride = barResult.MinPoint;
+                {
+                    double cos    = Math.Cos(sourceBar.Angle);
+                    double sin    = Math.Sin(sourceBar.Angle);
+                    double origin = horizontal ? barResult.MinPoint.X : barResult.MinPoint.Y;
+                    double offset2 = labelPos - origin;
+                    insertOverride = new Point3d(
+                        barResult.MinPoint.X + offset2 * cos,
+                        barResult.MinPoint.Y + offset2 * sin,
+                        0);
+                }
 
                 Point3d distCenter = horizontal
                     ? new Point3d(labelPos, minFixed + barsSpan / 2.0, 0)
@@ -510,7 +521,8 @@ namespace BricsCadRc.Commands
                 // ETAP 2
                 var jig2 = new AnnotLabelDirectionJig(
                     distCenter, labelPos, minFixed, barsSpan,
-                    horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing);
+                    horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
+                    sourceBar.Angle, barResult.MinPoint);
                 var res2 = ed.Drag(jig2);
                 jig2.ClearTransients();
                 if (res2.Status == PromptStatus.Cancel) return false;
@@ -535,7 +547,8 @@ namespace BricsCadRc.Commands
 
                         var jig3s = new AnnotLabelBendJig(
                             distCenter, kinkPt, labelPos, minFixed, barsSpan,
-                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing);
+                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
+                            sourceBar.Angle, barResult.MinPoint);
                         var res3s = ed.Drag(jig3s);
                         jig3s.ClearTransients();
                         if (res3s.Status == PromptStatus.Cancel) return false;
@@ -554,7 +567,8 @@ namespace BricsCadRc.Commands
 
                         var jig3 = new AnnotLabelBendJig(
                             distCenter, kinkPt, labelPos, minFixed, barsSpan,
-                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing);
+                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
+                            sourceBar.Angle, barResult.MinPoint);
                         var res3 = ed.Drag(jig3);
                         jig3.ClearTransients();
                         if (res3.Status == PromptStatus.Cancel) return false;
