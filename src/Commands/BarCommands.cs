@@ -308,6 +308,11 @@ namespace BricsCadRc.Commands
 
             // Kierunek prętów + granice (zależne od cover, NIE od spacing — obliczane tu)
             bool horizontal = !edgeHorizontal;
+            // Dla prostych rozkładów (krawędź H lub V) obrót bloku = 0.
+            // BuildHorizontal/BuildVertical już obsługuje orientację prętów.
+            // GetBarAngle (linia 142) może zwrócić ±90° gdy polilinia rysowana "od góry" —
+            // to niepoprawnie ustawia blockRef.Rotation i obraca pręty w złym kierunku.
+            sourceBar.Angle = 0.0;
             double x0, y0, x1Bound, y1Bound;
             if (edgeHorizontal)
             {
@@ -468,8 +473,22 @@ namespace BricsCadRc.Commands
 
             // Krok 8 — 3-etapowy JIG
             double barsSpan  = newBarsSpan;
-            double minFixed  = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
-            double basePos   = horizontal ? barResult.MaxPoint.X : barResult.MaxPoint.Y;
+            double minFixed, basePos;
+
+            if (Math.Abs(sourceBar.Angle) > 1e-6)
+            {
+                // Dla obróconych bloków — lokalne współrzędne (przed obrotem)
+                // barResult.MinPoint = punkt wstawienia (lokalne 0,0)
+                // horizontal=true: dist line wzdłuż Y lokalnie (0..barsSpan), pręty wzdłuż X (0..barLength)
+                // horizontal=false: dist line wzdłuż X lokalnie
+                minFixed = 0.0;        // lokalne origin zawsze 0
+                basePos  = sourceBar.LengthA;
+            }
+            else
+            {
+                minFixed = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
+                basePos  = horizontal ? barResult.MaxPoint.X : barResult.MaxPoint.Y;
+            }
 
             Point3d  kinkPt           = horizontal
                 ? new Point3d(barResult.MinPoint.X, barResult.MinPoint.Y + barsSpan / 2.0, 0)
@@ -483,11 +502,17 @@ namespace BricsCadRc.Commands
             Point3d? insertOverride    = null;
             double   labelPos          = 0;
 
+            // Dla nieobróconego bloku rotCenter=(0,0,0) — LocalToWCS działa jako identity
+            // Dla obróconego rotCenter=barResult.MinPoint — punkt wstawienia bloku w WCS
+            Point3d jigRotCenter = Math.Abs(sourceBar.Angle) > 1e-6
+                ? barResult.MinPoint
+                : Point3d.Origin;
+
             // ETAP 1
             var jig1 = new AnnotLabelPositionJig(
                 minFixed, basePos, barsSpan, finalSpacing, finalCount,
                 horizontal, AnnotationEngine.DotRadius,
-                sourceBar.Angle, barResult.MinPoint);
+                sourceBar.Angle, jigRotCenter);
             var res1 = ed.Drag(jig1);
             jig1.ClearTransients();
             if (res1.Status == PromptStatus.Cancel) return false;
@@ -499,30 +524,41 @@ namespace BricsCadRc.Commands
                     ? new Point3d(labelPos, minFixed, 0)
                     : new Point3d(minFixed, labelPos, 0);
 
-                // Dla obróconych bloków: insertOverride musi uwzględniać pozycję z jiga (labelPos)
-                // wzdłuż kierunku pręta (cos, sin) od punktu wstawienia bloku
                 if (Math.Abs(sourceBar.Angle) > 1e-6)
                 {
-                    double cos    = Math.Cos(sourceBar.Angle);
-                    double sin    = Math.Sin(sourceBar.Angle);
-                    double origin = horizontal ? barResult.MinPoint.X : barResult.MinPoint.Y;
-                    double offset2 = labelPos - origin;
-                    insertOverride = new Point3d(
-                        barResult.MinPoint.X + offset2 * cos,
-                        barResult.MinPoint.Y + offset2 * sin,
-                        0);
+                    // insertOverride = WCS pozycja gdzie dist line przecina pierwszy pret (lokalny Y=0)
+                    // labelPos = lokalna X (gdzie wzdluz preta stoi dist line)
+                    // kinkPt po ETAP 2 daje lokalną Y (gdzie na dist line jest punkt docelowy)
+                    // Ale insertOverride musi być przy Y=0 (pierwszy pret) — bez kinkPt
+                    if (horizontal)
+                        insertOverride = Point3dRotate.LocalToWCS(jigRotCenter, sourceBar.Angle, labelPos, 0);
+                    else
+                        insertOverride = Point3dRotate.LocalToWCS(jigRotCenter, sourceBar.Angle, 0, labelPos);
+                    // Przesuniecie wzdluz dist line jest kodowane w ArmMidY, nie w insertOverride
                 }
 
-                Point3d distCenter = horizontal
-                    ? new Point3d(labelPos, minFixed + barsSpan / 2.0, 0)
-                    : new Point3d(minFixed + barsSpan / 2.0, labelPos, 0);
+                Point3d distCenter;
+                if (Math.Abs(sourceBar.Angle) > 1e-6)
+                {
+                    // Dla obróconych: distCenter w WCS = LocalToWCS(rotCenter, angle, localX, localY)
+                    if (horizontal)
+                        distCenter = Point3dRotate.LocalToWCS(jigRotCenter, sourceBar.Angle, labelPos, barsSpan / 2.0);
+                    else
+                        distCenter = Point3dRotate.LocalToWCS(jigRotCenter, sourceBar.Angle, barsSpan / 2.0, labelPos);
+                }
+                else
+                {
+                    distCenter = horizontal
+                        ? new Point3d(labelPos, minFixed + barsSpan / 2.0, 0)
+                        : new Point3d(minFixed + barsSpan / 2.0, labelPos, 0);
+                }
                 kinkPt = distCenter;
 
                 // ETAP 2
                 var jig2 = new AnnotLabelDirectionJig(
                     distCenter, labelPos, minFixed, barsSpan,
                     horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
-                    sourceBar.Angle, barResult.MinPoint);
+                    sourceBar.Angle, jigRotCenter);
                 var res2 = ed.Drag(jig2);
                 jig2.ClearTransients();
                 if (res2.Status == PromptStatus.Cancel) return false;
@@ -548,7 +584,7 @@ namespace BricsCadRc.Commands
                         var jig3s = new AnnotLabelBendJig(
                             distCenter, kinkPt, labelPos, minFixed, barsSpan,
                             horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
-                            sourceBar.Angle, barResult.MinPoint);
+                            sourceBar.Angle, jigRotCenter);
                         var res3s = ed.Drag(jig3s);
                         jig3s.ClearTransients();
                         if (res3s.Status == PromptStatus.Cancel) return false;
@@ -568,7 +604,7 @@ namespace BricsCadRc.Commands
                         var jig3 = new AnnotLabelBendJig(
                             distCenter, kinkPt, labelPos, minFixed, barsSpan,
                             horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
-                            sourceBar.Angle, barResult.MinPoint);
+                            sourceBar.Angle, jigRotCenter);
                         var res3 = ed.Drag(jig3);
                         jig3.ClearTransients();
                         if (res3.Status == PromptStatus.Cancel) return false;
@@ -597,6 +633,57 @@ namespace BricsCadRc.Commands
                 }
             }
 
+            // Dla obróconych bloków — przelicz ArmMidY, leaderRight, leaderUp do układu lokalnego
+            if (Math.Abs(sourceBar.Angle) > 1e-6 && insertOverride.HasValue)
+            {
+                double cos = Math.Cos(sourceBar.Angle);
+                double sin = Math.Sin(sourceBar.Angle);
+                var ins = insertOverride.Value;
+
+                // Przelicz kinkPt do lokalnego układu bloku (od insertOverride)
+                double dkx = kinkPt.X - ins.X;
+                double dky = kinkPt.Y - ins.Y;
+                // lokalX = wzdłuż pręta (cos,sin), lokalY = wzdłuż dist line (-sin,cos)
+                double kinkLocalX = dkx * cos + dky * sin;
+                double kinkLocalY = -dkx * sin + dky * cos;
+
+                // ArmMidY = lokalna pozycja Y na dist line gdzie przymocowany jest arm
+                if (leaderHorizontal)
+                {
+                    // Użyj jig3CursorPt jeśli user kliknął w ETAP 3 — daje dokładną pozycję złamania
+                    if (userClickedInJig3)
+                    {
+                        double dcx3 = jig3CursorPt.X - ins.X;
+                        double dcy3 = jig3CursorPt.Y - ins.Y;
+                        double cursor3LocalY = -dcx3 * sin + dcy3 * cos;
+                        sourceBar.ArmMidY = cursor3LocalY;
+                    }
+                    else
+                    {
+                        sourceBar.ArmMidY = kinkLocalY;
+                    }
+                }
+
+                // leaderRight = po której stronie pręta user umieścił kursor w jig3
+                if (leaderHorizontal && userClickedInJig3)
+                {
+                    // Przelicz CursorPt jig3 do układu lokalnego
+                    double dcx = jig3CursorPt.X - ins.X;
+                    double dcy = jig3CursorPt.Y - ins.Y;
+                    double cursorLocalX = dcx * cos + dcy * sin;
+                    leaderRight = cursorLocalX >= 0;
+                }
+                else if (leaderHorizontal)
+                {
+                    // Fallback — użyj kinkPt
+                    leaderRight = kinkLocalX >= 0;
+                }
+
+                // leaderUp = arm idzie w kierunku +lokalY (wzdłuż dist line)
+                if (!leaderHorizontal)
+                    leaderUp = kinkLocalY >= 0;
+            }
+
             // Krok 9 — CreateLeader
             int posNr = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
             var annotResult = AnnotationEngine.CreateLeader(
@@ -609,34 +696,63 @@ namespace BricsCadRc.Commands
             BarBlockEngine.LinkAnnotation(db, blockRefId, annotResult.BlockRefId);
             AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "");
 
-            // Arm-fix — prosta etykieta
-            if (!leaderHorizontal && userClickedInJig2 && insertOverride.HasValue)
+            if (Math.Abs(sourceBar.Angle) < 1e-6)
             {
-                double desiredLen = horizontal
-                    ? Math.Abs(kinkPt.Y - (insertOverride.Value.Y + sourceBar.BarsSpan / 2.0))
-                    : Math.Abs(kinkPt.X - (insertOverride.Value.X + sourceBar.BarsSpan / 2.0));
-                if (desiredLen > AnnotationEngine.ArmLength)
+                // Arm-fix — prosta etykieta
+                if (!leaderHorizontal && userClickedInJig2 && insertOverride.HasValue)
                 {
-                    using var trA = db.TransactionManager.StartTransaction();
-                    var brA = trA.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
-                    trA.Commit();
-                    if (brA != null) AnnotationEngine.UpdateArmInBlock(brA, desiredLen);
+                    double desiredLen = horizontal
+                        ? Math.Abs(kinkPt.Y - (insertOverride.Value.Y + sourceBar.BarsSpan / 2.0))
+                        : Math.Abs(kinkPt.X - (insertOverride.Value.X + sourceBar.BarsSpan / 2.0));
+                    if (desiredLen > AnnotationEngine.ArmLength)
+                    {
+                        using var trA = db.TransactionManager.StartTransaction();
+                        var brA = trA.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
+                        trA.Commit();
+                        if (brA != null) AnnotationEngine.UpdateArmInBlock(brA, desiredLen);
+                    }
+                }
+                // Arm-fix — złamana etykieta
+                if (leaderHorizontal && userClickedInJig3)
+                {
+                    double desiredLen = horizontal
+                        ? Math.Abs(jig3CursorPt.X - labelPos)
+                        : Math.Abs(jig3CursorPt.Y - labelPos);
+                    if (desiredLen > AnnotationEngine.ArmLength)
+                    {
+                        using var trA2 = db.TransactionManager.StartTransaction();
+                        var brA2  = trA2.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
+                        var barA2 = brA2 != null ? AnnotationEngine.ReadAnnotXData(brA2) : null;
+                        double midY = barA2 != null && !double.IsNaN(barA2.ArmMidY) ? barA2.ArmMidY : double.NaN;
+                        trA2.Commit();
+                        if (brA2 != null) AnnotationEngine.UpdateArmInBlock(brA2, desiredLen, midY);
+                    }
                 }
             }
-            // Arm-fix — złamana etykieta
-            if (leaderHorizontal && userClickedInJig3)
+            else if (leaderHorizontal && userClickedInJig3 && insertOverride.HasValue)
             {
-                double desiredLen = horizontal
-                    ? Math.Abs(jig3CursorPt.X - labelPos)
-                    : Math.Abs(jig3CursorPt.Y - labelPos);
-                if (desiredLen > AnnotationEngine.ArmLength)
+                // Obrócony blok — oblicz długość arma z lokalnej odległości kursora Jig3
+                double cos3 = Math.Cos(sourceBar.Angle);
+                double sin3 = Math.Sin(sourceBar.Angle);
+                var ins3    = insertOverride.Value;
+
+                // Przelicz jig3CursorPt do układu lokalnego
+                double dcx3 = jig3CursorPt.X - ins3.X;
+                double dcy3 = jig3CursorPt.Y - ins3.Y;
+                // localX = wzdłuż pręta (oś X lokalnie)
+                double cursor3LocalX = dcx3 * cos3 + dcy3 * sin3;
+
+                double desiredArmLen = Math.Abs(cursor3LocalX);
+                if (desiredArmLen > AnnotationEngine.ArmLength)
                 {
-                    using var trA2 = db.TransactionManager.StartTransaction();
-                    var brA2  = trA2.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
-                    var barA2 = brA2 != null ? AnnotationEngine.ReadAnnotXData(brA2) : null;
-                    double midY = barA2 != null && !double.IsNaN(barA2.ArmMidY) ? barA2.ArmMidY : double.NaN;
-                    trA2.Commit();
-                    if (brA2 != null) AnnotationEngine.UpdateArmInBlock(brA2, desiredLen, midY);
+                    using var trArmR = db.TransactionManager.StartTransaction();
+                    var brArmR = trArmR.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
+                    var barArmR = brArmR != null ? AnnotationEngine.ReadAnnotXData(brArmR) : null;
+                    double midYR = barArmR != null && !double.IsNaN(barArmR.ArmMidY)
+                        ? barArmR.ArmMidY : double.NaN;
+                    trArmR.Commit();
+                    if (brArmR != null)
+                        AnnotationEngine.UpdateArmInBlock(brArmR, desiredArmLen, midYR);
                 }
             }
 
@@ -1265,6 +1381,42 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+        }
+
+        // ================================================================
+        //  RC_SCHEDULE — zestawienie prętów (BBS) wg BS 8666:2020
+        // ================================================================
+
+        [CommandMethod("RC_SCHEDULE", CommandFlags.Modal)]
+        public void ShowSchedule()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+
+            ed.WriteMessage("\n[RC_SCHEDULE] Budowanie zestawienia prętów...\n");
+
+            List<BarScheduleEntry> entries;
+            try
+            {
+                entries = BarScheduleEngine.BuildSchedule(db);
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[RC_SCHEDULE] Błąd: {ex.Message}\n");
+                return;
+            }
+
+            if (entries.Count == 0)
+            {
+                ed.WriteMessage("\n[RC_SCHEDULE] Brak prętów z rozkładami w rysunku.\n");
+                return;
+            }
+
+            ed.WriteMessage($"\n[RC_SCHEDULE] Znaleziono {entries.Count} pozycji.\n");
+
+            var dlg = new BarScheduleDialog(entries);
+            Application.ShowModelessWindow(dlg);
         }
     }
 }

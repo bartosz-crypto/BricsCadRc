@@ -12,16 +12,16 @@ namespace BricsCadRc.Commands
 
     internal static class Point3dRotate
     {
-        internal static Point3d RotatePoint(Point3d pt, Point3d center, double angle)
+        // Transformacja lokalny → WCS: WCS = rotCenter + R(angle) × (localX, localY)
+        internal static Point3d LocalToWCS(Point3d rotCenter, double angle, double localX, double localY)
         {
-            if (Math.Abs(angle) < 1e-6) return pt;
+            if (Math.Abs(angle) < 1e-6)
+                return new Point3d(rotCenter.X + localX, rotCenter.Y + localY, 0);
             double cos = Math.Cos(angle);
             double sin = Math.Sin(angle);
-            double dx  = pt.X - center.X;
-            double dy  = pt.Y - center.Y;
             return new Point3d(
-                center.X + dx * cos - dy * sin,
-                center.Y + dx * sin + dy * cos,
+                rotCenter.X + localX * cos - localY * sin,
+                rotCenter.Y + localX * sin + localY * cos,
                 0);
         }
     }
@@ -44,6 +44,7 @@ namespace BricsCadRc.Commands
         readonly Point3d    _rotCenter;
 
         double              _freeAxis;
+        Point3d             _lastCursor = Point3d.Origin;
         readonly List<Line> _transients = new List<Line>();
 
         public double LabelPos => _freeAxis;
@@ -71,7 +72,24 @@ namespace BricsCadRc.Commands
             var res  = prompts.AcquirePoint(opts);
             if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
 
-            double newFree = _horizontal ? res.Value.X : res.Value.Y;
+            Point3d cursor = res.Value;
+            _lastCursor = cursor;
+            double newFree;
+            if (Math.Abs(_angle) > 1e-6)
+            {
+                // Przelicz kursor do układu lokalnego bloku (odwrotna rotacja)
+                double dx  = cursor.X - _rotCenter.X;
+                double dy  = cursor.Y - _rotCenter.Y;
+                double cos = Math.Cos(-_angle);
+                double sin = Math.Sin(-_angle);
+                double localX = dx * cos - dy * sin;
+                double localY = dx * sin + dy * cos;
+                newFree = _horizontal ? localX : localY;
+            }
+            else
+            {
+                newFree = _horizontal ? cursor.X : cursor.Y;
+            }
             if (Math.Abs(newFree - _freeAxis) < 0.01) return SamplerStatus.NoChange;
             _freeAxis = newFree;
             RefreshTransients();
@@ -88,29 +106,53 @@ namespace BricsCadRc.Commands
 
             if (_horizontal)
             {
-                // X-bars: pionowa dist line przy x=_freeAxis
+                // X-bars: pionowa dist line przy x=_freeAxis (lokalna)
                 double x = _freeAxis;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed,             0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + _barsSpan, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + i * _spacing, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }
             else
             {
-                // Y-bars: pozioma dist line przy y=_freeAxis
+                // Y-bars: pozioma dist line przy y=_freeAxis (lokalna)
                 double y = _freeAxis;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(_minFixed,             y, 0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(_minFixed + _barsSpan, y, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(_minFixed + i * _spacing, y, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }
@@ -171,6 +213,8 @@ namespace BricsCadRc.Commands
 
         Point3d             _snappedPt;
         LabelDirection      _direction;
+        Point3d             _lastCursor = Point3d.Origin;
+        private Point3d     _prevLastCursor;
         readonly List<Line> _transients = new List<Line>();
 
         public LabelDirection Direction     => _direction;
@@ -205,14 +249,44 @@ namespace BricsCadRc.Commands
             if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
 
             var    cursor = res.Value;
+            _prevLastCursor = _lastCursor;
+            _lastCursor   = cursor;
             LastCursorPt  = cursor;
-            double dx     = cursor.X - _centerPt.X;
-            double dy     = cursor.Y - _centerPt.Y;
+            Point3d effectiveCursor = cursor;
+            if (Math.Abs(_angle) > 1e-6)
+            {
+                // Przelicz kursor do układu lokalnego
+                double ddx = cursor.X - _rotCenter.X;
+                double ddy = cursor.Y - _rotCenter.Y;
+                double cos = Math.Cos(-_angle);
+                double sin = Math.Sin(-_angle);
+                effectiveCursor = new Point3d(
+                    _rotCenter.X + ddx * cos - ddy * sin,
+                    _rotCenter.Y + ddx * sin + ddy * cos,
+                    0);
+            }
+            double dx = effectiveCursor.X - _centerPt.X;
+            double dy = effectiveCursor.Y - _centerPt.Y;
 
-            LabelDirection newDir;
+            LabelDirection newDir = _direction;  // default dla obróconych bloków
             Point3d        newSnap;
 
-            if (Math.Abs(dy) >= Math.Abs(dx))
+            if (Math.Abs(_angle) > 1e-6)
+            {
+                double sinA = Math.Sin(_angle);
+                double cosA = Math.Cos(_angle);
+                // Rzut kursora na dist line przez _centerPt (kierunek dist line: -sinA, cosA)
+                double t = (cursor.X - _centerPt.X) * (-sinA)
+                         + (cursor.Y - _centerPt.Y) * cosA;
+                // Clamp: kinkPt musi być na dist line [od pierwszego do ostatniego pręta]
+                double halfSpan = _barsSpan / 2.0;
+                t = Math.Max(-halfSpan, Math.Min(halfSpan, t));
+                newSnap = new Point3d(
+                    _centerPt.X + t * (-sinA),
+                    _centerPt.Y + t * cosA,
+                    0);
+            }
+            else if (Math.Abs(dy) >= Math.Abs(dx))
             {
                 newDir  = dy >= 0 ? LabelDirection.Up   : LabelDirection.Down;
                 // Dla X-bars (horizontal=true): dist line pionowa, kink przesuwa się w Y wzdłuż dist line
@@ -231,7 +305,16 @@ namespace BricsCadRc.Commands
             }
 
             if (_direction == newDir && _snappedPt.IsEqualTo(newSnap, Tolerance.Global))
-                return SamplerStatus.NoChange;
+            {
+                // Y-bars Up/Down: snap.X zmienia się z cursor.X, ale gdy kursor idzie prosto w górę
+                // cursor.X ≈ centerPt.X — snap się nie zmienia. Sprawdź ruch w Y osobno.
+                bool yBarsCursorMoved = !_horizontal
+                    && (newDir == LabelDirection.Up || newDir == LabelDirection.Down)
+                    && Math.Abs(cursor.Y - _prevLastCursor.Y) > 0.01;
+                if (!yBarsCursorMoved)
+                    return SamplerStatus.NoChange;
+                // else: kursor przesunął się w Y — odśwież podgląd
+            }
 
             _direction = newDir;
             _snappedPt = newSnap;
@@ -250,10 +333,17 @@ namespace BricsCadRc.Commands
             // Dist line (zamrożona)
             DrawDistLine(tm, vpIds);
 
-            // Linia kierunku (kolor 2 = żółty)
-            var rotCenter  = Point3dRotate.RotatePoint(_centerPt,  _rotCenter, _angle);
-            var rotSnapped = Point3dRotate.RotatePoint(_snappedPt, _rotCenter, _angle);
-            AddLine(tm, vpIds, rotCenter, rotSnapped, 2);
+            // Dla obróconych bloków — linia kierunku do kursora (nie do snappedPt na dist line)
+            Point3d arrowEnd;
+            if (Math.Abs(_angle) > 1e-6)
+                arrowEnd = _lastCursor;
+            else if (!_horizontal
+                     && (_direction == LabelDirection.Up || _direction == LabelDirection.Down))
+                // Y-bars Up/Down: pokaż strzałkę idącą pionowo do pozycji kursora
+                arrowEnd = new Point3d(_snappedPt.X, _lastCursor.Y, 0);
+            else
+                arrowEnd = _snappedPt;
+            AddLine(tm, vpIds, _centerPt, arrowEnd, 2);
 
             try { Application.UpdateScreen(); } catch { }
         }
@@ -263,26 +353,50 @@ namespace BricsCadRc.Commands
             if (_horizontal)
             {
                 double x = _labelPos;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed,             0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + _barsSpan, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + i * _spacing, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }
             else
             {
                 double y = _labelPos;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(_minFixed,             y, 0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(_minFixed + _barsSpan, y, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(_minFixed + i * _spacing, y, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }
@@ -343,6 +457,7 @@ namespace BricsCadRc.Commands
         readonly Point3d    _rotCenter;
 
         Point3d             _cursor;
+        Point3d             _lastCursor = Point3d.Origin;
         readonly List<Line> _transients = new List<Line>();
 
         public Point3d CursorPt => _cursor;
@@ -375,6 +490,7 @@ namespace BricsCadRc.Commands
             if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
             if (_cursor.IsEqualTo(res.Value, Tolerance.Global)) return SamplerStatus.NoChange;
             _cursor = res.Value;
+            _lastCursor = res.Value;
             RefreshTransients();
             return SamplerStatus.OK;
         }
@@ -390,22 +506,20 @@ namespace BricsCadRc.Commands
             // Dist line (zamrożona)
             DrawDistLine(tm, vpIds);
 
-            var rotCenterPt = Point3dRotate.RotatePoint(_centerPt, _rotCenter, _angle);
-            var rotKinkPt   = Point3dRotate.RotatePoint(_kinkPt,   _rotCenter, _angle);
-
+            // _centerPt, _kinkPt, _cursor już w WCS — bez transformacji
             if (_horizontal)
             {
                 // X-bars: stem pionowy (centerPt → kinkPt), ramię poziome
-                AddLine(tm, vpIds, rotCenterPt, rotKinkPt, 2);
-                var armEnd = Point3dRotate.RotatePoint(new Point3d(_cursor.X, _kinkPt.Y, 0), _rotCenter, _angle);
-                AddLine(tm, vpIds, rotKinkPt, armEnd, 2);
+                AddLine(tm, vpIds, _centerPt, _kinkPt, 2);
+                var armEnd = new Point3d(_cursor.X, _kinkPt.Y, 0);
+                AddLine(tm, vpIds, _kinkPt, armEnd, 2);
             }
             else
             {
                 // Y-bars: stem poziomy (centerPt → kinkPt), ramię pionowe
-                AddLine(tm, vpIds, rotCenterPt, rotKinkPt, 2);
-                var armEnd = Point3dRotate.RotatePoint(new Point3d(_kinkPt.X, _cursor.Y, 0), _rotCenter, _angle);
-                AddLine(tm, vpIds, rotKinkPt, armEnd, 2);
+                AddLine(tm, vpIds, _centerPt, _kinkPt, 2);
+                var armEnd = new Point3d(_kinkPt.X, _cursor.Y, 0);
+                AddLine(tm, vpIds, _kinkPt, armEnd, 2);
             }
 
             try { Application.UpdateScreen(); } catch { }
@@ -416,26 +530,50 @@ namespace BricsCadRc.Commands
             if (_horizontal)
             {
                 double x = _labelPos;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed,             0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + _barsSpan, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(x, _minFixed + i * _spacing, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }
             else
             {
                 double y = _labelPos;
-                var rp1 = Point3dRotate.RotatePoint(new Point3d(_minFixed,             y, 0), _rotCenter, _angle);
-                var rp2 = Point3dRotate.RotatePoint(new Point3d(_minFixed + _barsSpan, y, 0), _rotCenter, _angle);
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
                 AddLine(tm, vpIds, rp1, rp2, 7);
+                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                {
+                    double sinA = Math.Sin(_angle);
+                    double cosA = Math.Cos(_angle);
+                    double t = (_lastCursor.X - rp1.X) * (-sinA)
+                             + (_lastCursor.Y - rp1.Y) * cosA;
+                    var cursorOnLine = new Point3d(rp1.X + t * (-sinA), rp1.Y + t * cosA, 0);
+                    if (t > _barsSpan)
+                        AddLine(tm, vpIds, rp2, cursorOnLine, 8);
+                    else if (t < 0)
+                        AddLine(tm, vpIds, rp1, cursorOnLine, 8);
+                }
                 int maxDots = Math.Min(_count, 20);
                 for (int i = 0; i < maxDots; i++)
                 {
-                    var rc = Point3dRotate.RotatePoint(new Point3d(_minFixed + i * _spacing, y, 0), _rotCenter, _angle);
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
                     AddCirclePreview(tm, vpIds, rc, _dotRadius);
                 }
             }

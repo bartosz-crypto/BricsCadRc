@@ -81,7 +81,8 @@ namespace BricsCadRc.App
         {
             var src = new RibbonPanelSource { Title = "BBS", Id = "RC_PANEL_BBS" };
 
-            src.Items.Add(MakeButton("Zlicz prety", "RC_COUNT_BBS", "Zlicz prety i oblicz tonaz wg BS8666"));
+            src.Items.Add(MakeButton("Zlicz prety",  "RC_COUNT_BBS",  "Zlicz prety i oblicz tonaz wg BS8666"));
+            src.Items.Add(MakeButton("Zestawienie", "RC_SCHEDULE",   "Zestawienie pretow (BBS) wg BS 8666:2020 — dialog z eksportem CSV"));
 
             return new RibbonPanel { Source = src };
         }
