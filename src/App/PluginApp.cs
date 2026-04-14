@@ -1,5 +1,6 @@
 using Bricscad.ApplicationServices;
 using BricsCadRc.Core;
+using Teigha.DatabaseServices;
 using Teigha.Runtime;
 
 [assembly: ExtensionApplication(typeof(BricsCadRc.App.PluginApp))]
@@ -28,7 +29,10 @@ namespace BricsCadRc.App
 
             // Opóźniona aktualizacja etykiet prętów po ERASE
             if (doc != null)
-                doc.CommandEnded += OnCommandEnded;
+            {
+                doc.CommandEnded      += OnCommandEnded;
+                doc.CommandCancelled  += OnCommandCancelled;
+            }
 
             RibbonBuilder.Build();
         }
@@ -37,7 +41,10 @@ namespace BricsCadRc.App
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc != null)
-                doc.CommandEnded -= OnCommandEnded;
+            {
+                doc.CommandEnded     -= OnCommandEnded;
+                doc.CommandCancelled -= OnCommandCancelled;
+            }
 
             RcMLeaderOverrule.Unregister();
             BarGeometryWatcher.Unregister();
@@ -49,6 +56,33 @@ namespace BricsCadRc.App
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc?.Database != null)
                 PendingLabelUpdates.FlushAll(doc.Database);
+        }
+
+        static void OnCommandCancelled(object sender, CommandEventArgs e)
+        {
+            if (e.GlobalCommandName != "GRIP_STRETCH") return;
+            if (AnnotGripOverrule.PendingAnnotRestore.Count == 0) return;
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc?.Database == null) return;
+            var db = doc.Database;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var kvp in AnnotGripOverrule.PendingAnnotRestore)
+                {
+                    try
+                    {
+                        var annotBr = tr.GetObject(kvp.Key, OpenMode.ForWrite) as BlockReference;
+                        if (annotBr != null)
+                            annotBr.Position = kvp.Value;
+                    }
+                    catch { }
+                }
+                tr.Commit();
+            }
+
+            AnnotGripOverrule.PendingAnnotRestore.Clear();
         }
     }
 }

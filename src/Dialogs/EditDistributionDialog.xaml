@@ -16,6 +16,7 @@
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Mark (readonly) -->
@@ -38,7 +39,19 @@
             <TextBlock Grid.Row="4" Grid.Column="0" Text="Rozpiętość [mm]:" VerticalAlignment="Center"/>
             <TextBlock Grid.Row="4" Grid.Column="1" x:Name="SpanLabel" VerticalAlignment="Center" Foreground="Gray"/>
 
-            <CheckBox x:Name="CbAddAnnotation" Grid.Row="5" Grid.ColumnSpan="2"
+            <!-- ViewingDirection -->
+            <TextBlock Grid.Row="5" Grid.Column="0"
+                       Text="Kierunek widoku:"
+                       VerticalAlignment="Center" Margin="0,4,8,4"/>
+            <ComboBox  Grid.Row="5" Grid.Column="1"
+                       x:Name="ViewDirBox"
+                       VerticalAlignment="Center" Margin="0,4,0,4">
+                <ComboBoxItem Content="Auto"/>
+                <ComboBoxItem Content="Manual"/>
+                <ComboBoxItem Content="Any"/>
+            </ComboBox>
+
+            <CheckBox x:Name="CbAddAnnotation" Grid.Row="6" Grid.ColumnSpan="2"
                       Content="Dodaj opis rozkładu" Margin="0,8,0,0"
                       Visibility="Collapsed"/>
         </Grid>

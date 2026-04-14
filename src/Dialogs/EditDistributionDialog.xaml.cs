@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace BricsCadRc.Dialogs
 {
@@ -8,6 +10,14 @@ namespace BricsCadRc.Dialogs
         public int    ResultCount   { get; private set; }
         public double ResultSpacing { get; private set; }
         public double ResultCover   { get; private set; }
+        public string ResultViewingDirection
+        {
+            get
+            {
+                var sel = ViewDirBox.SelectedItem as ComboBoxItem;
+                return sel?.Content as string ?? "Auto";
+            }
+        }
 
         public Action<int, double, double> OnPreview    { get; set; }
         public bool                        PreviewApplied { get; private set; } = false;
@@ -16,13 +26,17 @@ namespace BricsCadRc.Dialogs
         private System.Windows.Threading.DispatcherTimer _debounce;
 
         public EditDistributionDialog(string mark, int count, double spacing, double cover,
-            bool annotMissing = false)
+            bool annotMissing = false,
+            string viewingDirection = "Auto")
         {
             InitializeComponent();
             MarkLabel.Text  = mark;
             CountBox.Text   = count.ToString();
             SpacingBox.Text = spacing.ToString("F0");
             CoverBox.Text   = cover.ToString("F0");
+            var vdItem = ViewDirBox.Items.Cast<ComboBoxItem>()
+                .FirstOrDefault(i => (string)i.Content == viewingDirection);
+            ViewDirBox.SelectedItem = vdItem ?? ViewDirBox.Items[0];
             UpdateSpan();
             CountBox.TextChanged   += (s, e) => { UpdateSpan(); SchedulePreview(); };
             SpacingBox.TextChanged += (s, e) => { UpdateSpan(); SchedulePreview(); };

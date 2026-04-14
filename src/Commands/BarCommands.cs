@@ -408,6 +408,27 @@ namespace BricsCadRc.Commands
             RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
                 spacing, autoCount, baseMark, barResult.BlockRefId);
 
+            // Zaktualizuj Mark w RC_BAR_BLOCK — GenerateFromBounds zapisało mark bez spacingu,
+            // RunAnnotationFlow zbudowało pełny mark (np. "H12-01-200"); przepisz go do XData bloku
+            if (!string.IsNullOrEmpty(sourceBar.Mark) && barResult.IsValid)
+            {
+                using (var trMark = db.TransactionManager.StartTransaction())
+                {
+                    var brMark = trMark.GetObject(barResult.BlockRefId, OpenMode.ForWrite)
+                                 as BlockReference;
+                    if (brMark != null)
+                    {
+                        var barXd = BarBlockEngine.ReadXData(brMark);
+                        if (barXd != null)
+                        {
+                            barXd.Mark = sourceBar.Mark;
+                            BarBlockEngine.WriteXData(brMark, barXd);
+                        }
+                    }
+                    trMark.Commit();
+                }
+            }
+
             ed.WriteMessage($"\n[RC SLAB] Distribution created: {sourceBar.Count} bars  {sourceBar.Mark}");
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
         }
@@ -694,7 +715,7 @@ namespace BricsCadRc.Commands
             if (annotResult.BlockRefId == ObjectId.Null) return false;
 
             BarBlockEngine.LinkAnnotation(db, blockRefId, annotResult.BlockRefId);
-            AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "");
+            AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
 
             if (Math.Abs(sourceBar.Angle) < 1e-6)
             {

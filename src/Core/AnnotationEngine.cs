@@ -1090,6 +1090,20 @@ namespace BricsCadRc.Core
 
         internal static void WriteAnnotXData(Entity entity, BarData bar)
         {
+            // Jeśli bar.SourceBlockHandle jest pusty (stary format annotacji bez tego slotu),
+            // zachowaj istniejącą wartość z XData zamiast nadpisywać pustym stringiem.
+            string sourceHandle = bar.SourceBlockHandle;
+            if (string.IsNullOrEmpty(sourceHandle))
+            {
+                var existing = entity.GetXDataForApplication(AnnotAppName);
+                if (existing != null)
+                {
+                    var ev = existing.AsArray();
+                    if (ev.Length >= 17)
+                        sourceHandle = ev[16].Value?.ToString() ?? "";
+                }
+            }
+
             entity.XData = new ResultBuffer(
                 new TypedValue((int)DxfCode.ExtendedDataRegAppName,  AnnotAppName),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.Mark),
@@ -1107,7 +1121,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderRight ? 1 : 0)),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : bar.BarsSpan / 2.0),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderUp ? 1 : 0)),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SourceBlockHandle ?? "")
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle)
             );
         }
 
@@ -1152,7 +1166,8 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Aktualizuje tekst MLeadera pręta na podstawie sumy prętów ze wszystkich powiązanych rozkładów.
         /// </summary>
-        public static void UpdateBarLabelCount(Database db, string sourceBarHandle)
+        public static void UpdateBarLabelCount(Database db, string sourceBarHandle,
+                                               string markOverride = null)
         {
             if (string.IsNullOrEmpty(sourceBarHandle)) return;
 
@@ -1205,10 +1220,10 @@ namespace BricsCadRc.Core
                     var mt = ml.MText?.Clone() as MText;
                     if (mt != null)
                     {
-                        var segs = srcBar.Mark.Split('-');
-                        string barBase = segs.Length >= 2
-                            ? $"{segs[0]}-{segs[1]}" : srcBar.Mark;
                         int spaceIdx = srcBar.Mark.IndexOf(' ');
+                        string barBase = !string.IsNullOrEmpty(markOverride)
+                            ? markOverride
+                            : (spaceIdx >= 0 ? srcBar.Mark.Substring(0, spaceIdx) : srcBar.Mark);
                         string sfx = spaceIdx >= 0
                             ? " " + srcBar.Mark.Substring(spaceIdx + 1) : "";
 

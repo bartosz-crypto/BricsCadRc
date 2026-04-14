@@ -194,7 +194,9 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 2 — dialog z live preview
-            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover, annotMissing);
+            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover,
+                annotMissing,
+                viewingDirection: bar.ViewingDirection ?? "Auto");
             dlg.OnPreview = (c, sp, cv) => ApplyPreview(c, sp, cv);
 
             bool confirmed = Application.ShowModalWindow(dlg) == true;
@@ -256,9 +258,64 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // Krok 3 — przebuduj blok z wartościami z dialogu
-            BarBlockEngine.RebuildWithNewLayout(db, blockRefId,
-                dlg.ResultCount, dlg.ResultSpacing, dlg.ResultCover);
+            // Krok 3 — przebuduj blok z wartościami z dialogu (+ opcjonalnie viewLength/ViewingDir)
+            double? newLengthA = null;
+            string  newViewDir = dlg.ResultViewingDirection;
+            int     newSegIdx  = -1;
+
+            if (newViewDir == "Manual" || newViewDir == "Auto")
+            {
+                // Rozwiąż polilnię pręta-źródłowego przez SourceBarHandle
+                ObjectId polyId = ObjectId.Null;
+                BarData  barSrc = null;
+                using (var trPoly = db.TransactionManager.StartTransaction())
+                {
+                    var brPoly  = trPoly.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                    var barPoly = brPoly != null ? BarBlockEngine.ReadXData(brPoly) : null;
+                    if (barPoly != null && !string.IsNullOrEmpty(barPoly.SourceBarHandle))
+                    {
+                        if (long.TryParse(barPoly.SourceBarHandle,
+                                System.Globalization.NumberStyles.HexNumber, null, out long hv))
+                            db.TryGetObjectId(new Handle(hv), out polyId);
+                    }
+                    if (!polyId.IsNull)
+                    {
+                        var polyEnt = trPoly.GetObject(polyId, OpenMode.ForRead) as Entity;
+                        barSrc = polyEnt != null ? SingleBarEngine.ReadBarXData(polyEnt) : null;
+                    }
+                    trPoly.Commit();
+                }
+                barSrc ??= new BarData();
+
+                if (newViewDir == "Manual" && !polyId.IsNull)
+                {
+                    double segLen = BarCommands.GetViewLengthManual(ed, db, polyId, barSrc);
+                    if (segLen > 0)
+                    {
+                        newLengthA = segLen;
+                        newSegIdx  = barSrc.ViewSegmentIndex;
+                    }
+                    else
+                    {
+                        // ESC z Manual → cofnij do Auto
+                        newViewDir = "Auto";
+                        newLengthA = BarCommands.GetViewLength(barSrc);
+                    }
+                }
+                else if (newViewDir == "Auto")
+                {
+                    // Auto zawsze przelicza z ShapeCode — niezależnie od poprzedniego stanu
+                    newLengthA = BarCommands.GetViewLength(barSrc);
+                }
+            }
+            // "Any" lub bez zmiany ViewingDir → newLengthA = null (zachowaj obecne LengthA)
+
+            BarBlockEngine.RebuildWithNewLayout(
+                db, blockRefId,
+                dlg.ResultCount, dlg.ResultSpacing, dlg.ResultCover,
+                newLengthA:    newLengthA,
+                newViewingDir: newViewDir,
+                newViewSegIdx: newSegIdx);
 
             // Krok 3b — zaktualizuj Mark jeśli zmienił się rozstaw (format H{dia}-{posNr}-{spacing})
             if (Math.Abs(dlg.ResultSpacing - bar.Spacing) > 0.1 || dlg.ResultCount != bar.Count)
@@ -295,7 +352,7 @@ namespace BricsCadRc.Commands
                 var brSrc = trSrc.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
                 var barSrc = brSrc != null ? BarBlockEngine.ReadXData(brSrc) : null;
                 trSrc.Commit();
-                AnnotationEngine.UpdateBarLabelCount(db, barSrc?.SourceBarHandle ?? "");
+                AnnotationEngine.UpdateBarLabelCount(db, barSrc?.SourceBarHandle ?? "", markOverride: barSrc?.Mark);
             }
 
             // Krok 4 — zaktualizuj annotację (nowy BarsSpan)
@@ -451,8 +508,28 @@ namespace BricsCadRc.Commands
             // Obsługa Manual — user klika pręty
             string newVisibleIndices = bar.VisibleIndices ?? "";
             if (dlg.ResultVisibility == BarVisibilityMode.Manual)
-                newVisibleIndices = SelectVisibleBarsManually(doc, db, selRes.ObjectId, bar)
+            {
+                // Tymczasowo pokaż WSZYSTKIE pręty — user musi widzieć co klika
+                if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
+                {
+                    try
+                    {
+                        long hValPrev = Convert.ToInt64(
+                            bar.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                        if (db.TryGetObjectId(new Handle(hValPrev), out ObjectId prevBlockId)
+                            && !prevBlockId.IsNull)
+                            BarBlockEngine.RebuildVisibility(
+                                db, prevBlockId, BarVisibilityMode.All, "");
+                    }
+                    catch { }
+                }
+
+                // User klika pręty — widzi wszystkie, toggle'uje wybrane
+                newVisibleIndices = SelectVisibleBarsManually(doc, db, selRes.ObjectId, bar,
+                                        existingIndices: bar.VisibleIndices ?? "")
                                     ?? bar.VisibleIndices ?? "";
+                // Finalne RebuildVisibility z wybranym zestawem wywoływane niżej (~linia 520)
+            }
 
             // Krok 4 — zaktualizuj XData i DBText w BTR
             using (var tr = db.TransactionManager.StartTransaction())
@@ -518,13 +595,35 @@ namespace BricsCadRc.Commands
             // Przebuduj blok prętów jeśli znamy SourceBlockHandle (visibility mogła się zmienić)
             if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
             {
+                // Gdy Manual z pustym indicesem → zachowaj poprzedni stan zamiast resetować do pręta 0
+                string safeIndices = newVisibleIndices;
+                if (dlg.ResultVisibility == BarVisibilityMode.Manual
+                    && string.IsNullOrEmpty(safeIndices))
+                {
+                    safeIndices = bar.VisibleIndices ?? "0";
+                }
+
                 try
                 {
                     long hVal = Convert.ToInt64(bar.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
                     if (db.TryGetObjectId(new Handle(hVal), out ObjectId barBlockId) && !barBlockId.IsNull)
-                        BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, newVisibleIndices);
+                    {
+                        ed.WriteMessage($"\n[DBG-BEFORE] VisibleIndices={bar.VisibleIndices} Mode={bar.VisibilityMode} safeIndices={safeIndices} SourceHandle={bar.SourceBlockHandle}");
+                        BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, safeIndices);
+                        using (var tr2 = db.TransactionManager.StartTransaction())
+                        {
+                            var br2 = tr2.GetObject(barBlockId, OpenMode.ForRead) as BlockReference;
+                            var bar2 = br2 != null ? BarBlockEngine.ReadXData(br2) : null;
+                            ed.WriteMessage($"\n[DBG-AFTER]  VisibleIndices={bar2?.VisibleIndices} Mode={bar2?.VisibilityMode}");
+                            tr2.Commit();
+                        }
+                    }
+                    else
+                    {
+                        ed.WriteMessage($"\n[DBG] barBlockId NIE ZNALEZIONY dla handle={bar.SourceBlockHandle}");
+                    }
                 }
-                catch { }
+                catch (System.Exception ex) { ed.WriteMessage($"\n[DBG-EXCEPTION] {ex.GetType().Name}: {ex.Message}"); }
             }
 
             // Przebuduj annotację (kółka na dist line) z nową widocznością
@@ -634,12 +733,20 @@ namespace BricsCadRc.Commands
         }
 
         private static string SelectVisibleBarsManually(
-            Document doc, Database db, ObjectId annotId, BarData bar)
+            Document doc, Database db, ObjectId annotId, BarData bar,
+            string existingIndices = "")
         {
             var ed = doc.Editor;
             ed.WriteMessage("\nKliknij pręty które mają być widoczne (toggle). Enter = zatwierdź.");
 
+            // Prefill z poprzedniego stanu — user widzi co już jest zaznaczone i może toggle'ować
             var selectedIndices = new System.Collections.Generic.HashSet<int>();
+            if (!string.IsNullOrEmpty(existingIndices))
+            {
+                foreach (var part in existingIndices.Split(','))
+                    if (int.TryParse(part.Trim(), out int idx))
+                        selectedIndices.Add(idx);
+            }
 
             while (true)
             {
@@ -681,39 +788,52 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
-        /// RC_SHOW_ALL_BARS — przywraca widocznosc wszystkich pretow RC SLAB.
+        /// RC_SHOW_ALL_BARS — przywraca widoczność (All) wszystkich rozkładów RC_BAR_BLOCK.
         /// </summary>
         [CommandMethod("RC_SHOW_ALL_BARS", CommandFlags.Modal)]
         public void ShowAllBars()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
-            var ed = doc.Editor;
-            var db = doc.Database;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
 
-            using var tr = db.TransactionManager.StartTransaction();
-            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
-            int count = 0;
+            var toRebuild = new System.Collections.Generic.List<(ObjectId id, BarData bar)>();
 
-            foreach (ObjectId id in space)
+            // Krok 1 — zbierz rozkłady które nie są w trybie All
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                var entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                if (entity == null) continue;
+                var space = (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId, OpenMode.ForRead);
 
-                var bar = XDataHelper.Read(entity);
-                if (bar == null) continue;
-
-                if (!entity.Visible)
+                foreach (ObjectId id in space)
                 {
-                    entity.UpgradeOpen();
-                    entity.Visible = true;
-                    bar.RepresentativeFlag = 0;
-                    XDataHelper.Write(entity, bar);
-                    count++;
+                    var ent = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (ent == null || ent.IsErased) continue;
+
+                    var barBlock = BarBlockEngine.ReadXData(ent);
+                    if (barBlock == null) continue;
+
+                    if (barBlock.VisibilityMode != BarVisibilityMode.All)
+                        toRebuild.Add((id, barBlock));
                 }
+                tr.Commit();
             }
 
-            tr.Commit();
-            ed.WriteMessage($"\n[RC SLAB] Przywrocono widocznosc {count} pretow.\n");
+            // Krok 2 — przebuduj każdy rozkład poza transakcją iteracji
+            // (RebuildVisibility i SyncAnnotation tworzą własne transakcje wewnętrznie)
+            foreach (var (id, bar) in toRebuild)
+            {
+                // 1. Przebuduj symbole prętów w RC_BAR_BLOCK (kółka/strzałki)
+                BarBlockEngine.RebuildVisibility(db, id, BarVisibilityMode.All, "");
+
+                // 2. Przebuduj geometrię RC_BAR_ANNOT (doty na dist line, ramię leadera)
+                bar.VisibilityMode = BarVisibilityMode.All;
+                bar.VisibleIndices = "";
+                if (!string.IsNullOrEmpty(bar.AnnotHandle))
+                    AnnotationEngine.SyncAnnotation(db, bar);
+            }
+
+            ed.WriteMessage($"\n[RC] Zaktualizowano {toRebuild.Count} rozkładów → widok: Wszystkie.\n");
         }
     }
 }

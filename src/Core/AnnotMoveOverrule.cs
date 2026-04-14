@@ -50,6 +50,11 @@ namespace BricsCadRc.Core
         private static readonly Dictionary<long, Point3d> _annotDragStart
             = new Dictionary<long, Point3d>();
 
+        // Klucz: ObjectId annotacji, wartość: oryginalna pozycja przed dragiem.
+        // Czyszczone przy final commit (sukces) lub w OnCommandCancelled (ESC).
+        internal static readonly Dictionary<ObjectId, Point3d> PendingAnnotRestore
+            = new Dictionary<ObjectId, Point3d>();
+
         // Transienty podglądu dragu arm — czyszczone przed każdym nowym wywołaniem MoveGripPointsAt
         // i przy GetGripPoints (nowa interakcja).
         private static readonly List<Entity> _gripTransients = new List<Entity>();
@@ -105,8 +110,9 @@ namespace BricsCadRc.Core
             {
                 // Nowa interakcja — wyczysc stan dragu pozycji
                 _dragOrigPos.Remove(br.ObjectId.Handle.Value);
+                _dragOrigPos.Remove(0L);          // wyczyść też cache klonu z poprzedniego drag
                 _annotDragStart.Remove(br.ObjectId.Handle.Value);
-                _annotDragStart.Remove(0L);  // wyczyść też cache klonu z poprzedniego drag
+                _annotDragStart.Remove(0L);
 
                 gripPoints.Add(BarBlockEngine.GripLateral(br, barBlock)); // [0] krawedz plyty (cover offset)
                 gripPoints.Add(BarBlockEngine.GripSpan(br, barBlock)); // [1] span resize
@@ -297,7 +303,10 @@ namespace BricsCadRc.Core
                         AnnotationEngine.SyncAnnotation(br.Database, updatedBar);
 
                         // Zaktualizuj etykietę pręta-źródłowego (MLeader) — nowa liczba prętów
-                        AnnotationEngine.UpdateBarLabelCount(br.Database, updatedBar.SourceBarHandle ?? "");
+                        AnnotationEngine.UpdateBarLabelCount(
+                            br.Database,
+                            updatedBar.SourceBarHandle ?? "",
+                            markOverride: updatedBar.Mark);
                     }
                 }
                 else
@@ -311,8 +320,8 @@ namespace BricsCadRc.Core
 
                     // Wyłącz auto-sync annotacji w BarBlockTransformOverrule (używamy własnej logiki)
                     AnnotOverruleState.InGripDrag = true;
-                    entity.TransformBy(Matrix3d.Displacement(disp));
-                    AnnotOverruleState.InGripDrag = false;
+                    try { entity.TransformBy(Matrix3d.Displacement(disp)); }
+                    finally { AnnotOverruleState.InGripDrag = false; }
 
                     // handle=0 → klon BricsCAD (rubber-band preview) → synchronizuj annotację
                     // handle≠0 → prawdziwy obiekt (final commit) → annotacja już na miejscu, pomijamy
@@ -336,6 +345,10 @@ namespace BricsCadRc.Core
                                     if (!_annotDragStart.ContainsKey(handle))
                                         _annotDragStart[handle] = annotBr2.Position;
 
+                                    // Zapamiętaj oryginalną pozycję do ewentualnego restore przy ESC
+                                    if (!PendingAnnotRestore.ContainsKey(annotId2))
+                                        PendingAnnotRestore[annotId2] = annotBr2.Position;
+
                                     var origAnnotPos = _annotDragStart[handle];
 
                                     AnnotOverruleState.BypassConstraint = true;
@@ -355,7 +368,20 @@ namespace BricsCadRc.Core
                             }
                         }
                     }
-                    // else: final commit z prawdziwym handle — annotacja jest już na miejscu z preview
+                    else
+                    {
+                        // Final commit — wyczyść PendingAnnotRestore, restore nie będzie potrzebny
+                        var barFinal = BarBlockEngine.ReadXData(br);
+                        if (barFinal != null && !string.IsNullOrEmpty(barFinal.AnnotHandle))
+                        {
+                            if (long.TryParse(barFinal.AnnotHandle,
+                                    System.Globalization.NumberStyles.HexNumber, null, out long hv))
+                            {
+                                if (br.Database.TryGetObjectId(new Handle(hv), out ObjectId finalAnnotId))
+                                    PendingAnnotRestore.Remove(finalAnnotId);
+                            }
+                        }
+                    }
                 }
                 return;
             }

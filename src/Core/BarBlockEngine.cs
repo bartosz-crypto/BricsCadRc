@@ -551,7 +551,9 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         public static void RebuildWithNewLayout(
             Database db, ObjectId blockRefId,
-            int newCount, double newSpacing, double newCover)
+            int newCount, double newSpacing, double newCover,
+            double? newLengthA = null,
+            string newViewingDir = null, int newViewSegIdx = -1)
         {
             using var tr = db.TransactionManager.StartTransaction();
             var br = tr.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
@@ -563,6 +565,12 @@ namespace BricsCadRc.Core
             bar.Count    = newCount;
             bar.Spacing  = newSpacing;
             bar.Cover    = newCover;
+            if (newLengthA.HasValue && newLengthA.Value > 0)
+                bar.LengthA = newLengthA.Value;
+            if (newViewingDir != null)
+                bar.ViewingDirection = newViewingDir;
+            if (newViewSegIdx >= 0)
+                bar.ViewSegmentIndex = newViewSegIdx;
             bar.BarsSpan = (newCount - 1) * newSpacing;
             WriteXData(br, bar);
 
