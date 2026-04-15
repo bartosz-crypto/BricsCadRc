@@ -124,6 +124,7 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc.Editor;
             var db  = doc.Database;
+            ed.WriteMessage("\n[VERSION] RC_DISTRIBUTION v2025-BUILD");
 
             // --- Krok 1: Wybierz pret (polilinia RC_SINGLE_BAR lub BlockReference RC_BAR_BLOCK) ---
             var selOpts = new PromptEntityOptions("\nSelect bar to distribute (RC_BAR): ");
@@ -154,6 +155,10 @@ namespace BricsCadRc.Commands
                 return;
             }
 
+            // Wartości dla trybu Any (widok legendy — domyślnie 1 pręt)
+            int    anyCount   = 1;
+            double anySpacing = sourceBar.Spacing > 0 ? sourceBar.Spacing : 200.0;
+
             // --- Krok 2: Dialog "Reinforcement detailing" ---
             var detailDlg = new ReinfDetailingDialog();
             if (Application.ShowModalWindow(detailDlg) != true) return;
@@ -168,10 +173,38 @@ namespace BricsCadRc.Commands
                     sourceBar.ViewingDirection = "Auto";
                     viewLength = GetViewLength(sourceBar);
                 }
+                else
+                {
+                    sourceBar.ViewingDirection = "Manual";
+                }
+            }
+            else if (detailDlg.IsAnyViewingDirection)
+            {
+                sourceBar.ViewingDirection = "Any";
+                viewLength = GetViewLength(sourceBar);
+                var anyDlg = new AnyCountSpacingDialog(anyCount, anySpacing);
+                if (Application.ShowModalWindow(anyDlg) != true) return;
+                anyCount   = anyDlg.ResultCount;
+                anySpacing = anyDlg.ResultSpacing;
             }
             else
             {
+                sourceBar.ViewingDirection = "Auto";
                 viewLength = GetViewLength(sourceBar);
+            }
+
+            // Sync VisibilityMode z ViewingDirection
+            if (sourceBar.ViewingDirection == "Any")
+            {
+                sourceBar.VisibilityMode = BarVisibilityMode.Manual;
+                sourceBar.VisibleIndices = "0";
+            }
+            else if (sourceBar.VisibilityMode == BarVisibilityMode.Manual
+                     && sourceBar.VisibleIndices == "0")
+            {
+                // Wróć do All jeśli poprzednio był Any
+                sourceBar.VisibilityMode = BarVisibilityMode.All;
+                sourceBar.VisibleIndices = "";
             }
 
             ed.WriteMessage(
@@ -392,9 +425,14 @@ namespace BricsCadRc.Commands
             sourceBar.Cover     = cover;
             sourceBar.Pt1X      = x0;
             sourceBar.Pt1Y      = y0;
+            int?    countOverride   = sourceBar.ViewingDirection == "Any" ? anyCount   : (int?)null;
+            double? spacingOverride = sourceBar.ViewingDirection == "Any" ? anySpacing : (double?)null;
+
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1Bound, y1Bound,
-                sourceBar, horizontal, posNr);
+                sourceBar, horizontal, posNr,
+                overrideCount:   countOverride,
+                overrideSpacing: spacingOverride);
 
             if (!barResult.IsValid)
             {
@@ -402,14 +440,17 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // Krok 6, 8–9 — dialog + jigy + CreateLeader
-            string baseMark = $"H{sourceBar.Diameter}-{posNr:D2}-{(int)spacing}";
-            sourceBar.Spacing = spacing;
-            RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
-                spacing, autoCount, baseMark, barResult.BlockRefId);
+            // Krok 6, 8–9 — dialog + jigy + CreateLeader (dla wszystkich trybów, w tym "Any")
+            double effectiveSpacing = sourceBar.ViewingDirection == "Any" ? anySpacing : spacing;
+            int    effectiveCount   = sourceBar.ViewingDirection == "Any" ? anyCount   : autoCount;
+            string baseMark = $"H{sourceBar.Diameter}-{posNr:D2}-{(int)effectiveSpacing}";
+            sourceBar.Spacing = effectiveSpacing;
 
-            // Zaktualizuj Mark w RC_BAR_BLOCK — GenerateFromBounds zapisało mark bez spacingu,
-            // RunAnnotationFlow zbudowało pełny mark (np. "H12-01-200"); przepisz go do XData bloku
+            bool annOk = RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
+                effectiveSpacing, effectiveCount, baseMark, barResult.BlockRefId);
+            if (!annOk) return;
+
+            // Zaktualizuj Mark w RC_BAR_BLOCK — RunAnnotationFlow zbudowało pełny mark; przepisz do XData bloku
             if (!string.IsNullOrEmpty(sourceBar.Mark) && barResult.IsValid)
             {
                 using (var trMark = db.TransactionManager.StartTransaction())
@@ -428,6 +469,10 @@ namespace BricsCadRc.Commands
                     trMark.Commit();
                 }
             }
+
+            // UpdateBarLabelCount zawsze — niezależnie od trybu (Any lub Auto/Manual)
+            AnnotationEngine.UpdateBarLabelCount(
+                db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
 
             ed.WriteMessage($"\n[RC SLAB] Distribution created: {sourceBar.Count} bars  {sourceBar.Mark}");
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }

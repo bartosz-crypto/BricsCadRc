@@ -98,12 +98,15 @@ namespace BricsCadRc.Core
             }
 
             // barsHorizontal decyduje o geometrii prętów (BuildHorizontal vs BuildVertical)
+            bool skipDist = bar.ViewingDirection == "Any";
             double armTotalLen = barsHorizontal
-                ? BuildHorizontal(tr, btr, db, bar, ltName, leaderHorizontal, leaderRight, leaderUp)
+                ? BuildHorizontal(tr, btr, db, bar, ltName, leaderHorizontal, leaderRight, leaderUp,
+                    skipDistLine: skipDist)
                 : BuildVertical  (tr, btr, db, bar, ltName,
                     leaderVertical: leaderHorizontal,
                     leaderRight:    leaderRight,
-                    leaderUp:       leaderUp);
+                    leaderUp:       leaderUp,
+                    skipDistLine:   skipDist);
 
             bar.ArmTotalLen = armTotalLen;
 
@@ -162,41 +165,45 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static double BuildHorizontal(
             Transaction tr, BlockTableRecord btr, Database db,
-            BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true)
+            BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true,
+            bool skipDistLine = false)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — zawsze pionowa
-            var distLine = new Line(new Point3d(0, 0, 0), new Point3d(0, barsSpan, 0))
+            if (!skipDistLine)
             {
-                Layer      = LayerManager.LeaderLayer,
-                LineWeight = LineWeight.LineWeight018,
-                Linetype   = ltName
-            };
-            btr.AppendEntity(distLine);
-            tr.AddNewlyCreatedDBObject(distLine, true);
+                // 1. Dist line — zawsze pionowa
+                var distLine = new Line(new Point3d(0, 0, 0), new Point3d(0, barsSpan, 0))
+                {
+                    Layer      = LayerManager.LeaderLayer,
+                    LineWeight = LineWeight.LineWeight018,
+                    Linetype   = ltName
+                };
+                btr.AppendEntity(distLine);
+                tr.AddNewlyCreatedDBObject(distLine, true);
 
-            // 2. Romby — wzgledne pozycje: (0, i*spacing), i=0..count-1
-            var visSetH = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
-            for (int i = 0; i < bar.Count; i++)
-            {
-                bool isFirst = (i == 0);
-                bool isLast  = (i == bar.Count - 1);
+                // 2. Romby — wzgledne pozycje: (0, i*spacing), i=0..count-1
+                var visSetH = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
+                for (int i = 0; i < bar.Count; i++)
+                {
+                    bool isFirst = (i == 0);
+                    bool isLast  = (i == bar.Count - 1);
 
-                if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), -Vector3d.YAxis);
-                else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), Vector3d.YAxis);
-                else if (bar.Count <= 3 || visSetH.Contains(i))
-                    AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
-            }
+                    if (bar.Count > 3 && isFirst)
+                        AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), -Vector3d.YAxis);
+                    else if (bar.Count > 3 && isLast)
+                        AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), Vector3d.YAxis);
+                    else if (bar.Count <= 3 || visSetH.Contains(i))
+                        AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
+                }
 
-            if (bar.Count > 3)
-            {
-                double tickLen = DotRadius * 3;
-                double topY    = (bar.Count - 1) * bar.Spacing;
-                AddEndTick(tr, btr, new Point3d(0, 0,    0), Vector3d.XAxis, tickLen);
-                AddEndTick(tr, btr, new Point3d(0, topY, 0), Vector3d.XAxis, tickLen);
+                if (bar.Count > 3)
+                {
+                    double tickLen = DotRadius * 3;
+                    double topY    = (bar.Count - 1) * bar.Spacing;
+                    AddEndTick(tr, btr, new Point3d(0, 0,    0), Vector3d.XAxis, tickLen);
+                    AddEndTick(tr, btr, new Point3d(0, topY, 0), Vector3d.XAxis, tickLen);
+                }
             }
 
             double armTotalLen;
@@ -235,19 +242,20 @@ namespace BricsCadRc.Core
                 bar.ArmTotalLen = armTotalLen;
 
                 Point3d armStart, armEnd, textFinal;
+                double armBase = skipDistLine ? 0.0 : barsSpan / 2.0;
                 if (leaderUp)
                 {
-                    // Góra: arm od barsSpan/2 w górę; tekst zaczyna się tuż nad ArmLength
-                    armStart  = new Point3d(0, barsSpan / 2.0,     0);
-                    armEnd    = new Point3d(0, barsSpan + armTotalLen, 0);
-                    textFinal = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0);
+                    // Góra: arm od armBase w górę; tekst zaczyna się tuż nad ArmLength
+                    armStart  = new Point3d(0, armBase,              0);
+                    armEnd    = new Point3d(0, armBase + armTotalLen, 0);
+                    textFinal = new Point3d(-TextArmOffset, armBase + ArmLength, 0);
                 }
                 else
                 {
-                    // Dół: arm od barsSpan/2 w dół; tekst na końcu arm (rośnie do góry od arm.End)
-                    armStart  = new Point3d(0, barsSpan / 2.0,              0);
-                    armEnd    = new Point3d(0, barsSpan / 2.0 - armTotalLen, 0);
-                    textFinal = new Point3d(-TextArmOffset, barsSpan / 2.0 - armTotalLen, 0);
+                    // Dół: arm od armBase w dół; tekst na końcu arm (rośnie do góry od arm.End)
+                    armStart  = new Point3d(0, armBase,              0);
+                    armEnd    = new Point3d(0, armBase - armTotalLen, 0);
+                    textFinal = new Point3d(-TextArmOffset, armBase - armTotalLen, 0);
                 }
 
                 dbText.Position = textFinal;
@@ -265,14 +273,13 @@ namespace BricsCadRc.Core
             else
             {
                 // Etykieta z boku — geometria z zagięciem 90°: segment pionowy + poziomy
-                double midY = !double.IsNaN(bar.ArmMidY)
-                    ? bar.ArmMidY
-                    : barsSpan / 2.0 + ArmLength;   // fallback: kink powyżej środka
+                double midY = skipDistLine ? 0.0
+                    : (!double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength);
                 double hDir = leaderRight ? 1.0 : -1.0;
 
                 // Segment 1: pionowy od środka dist line (barsSpan/2) do punktu zagięcia (midY)
                 var stem = new Line(
-                    new Point3d(0, barsSpan / 2.0, 0),
+                    new Point3d(0, skipDistLine ? 0.0 : barsSpan / 2.0, 0),
                     new Point3d(0, midY, 0))
                 {
                     Layer      = LayerManager.LeaderLayer,
@@ -334,9 +341,9 @@ namespace BricsCadRc.Core
             // Kółko w punkcie styku arma z dist line (złamanie)
             if (leaderHorizontal)
             {
-                double midY = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0;
-                // Kółko tylko gdy złamanie mieści się w zakresie dist line (0..barsSpan)
-                if (midY >= 0 && midY <= barsSpan)
+                double midY = skipDistLine ? 0.0
+                    : (!double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0);
+                if (skipDistLine || (midY >= 0 && midY <= barsSpan))
                     AddKinkCircle(tr, btr, new Point3d(0, midY, 0), DotRadius);
             }
 
@@ -361,41 +368,45 @@ namespace BricsCadRc.Core
         private static double BuildVertical(
             Transaction tr, BlockTableRecord btr, Database db,
             BarData bar, string ltName,
-            bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true)
+            bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true,
+            bool skipDistLine = false)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — pozioma przy y=0 (gorna krawedz pretow)
-            var distLine = new Line(new Point3d(0, 0, 0), new Point3d(barsSpan, 0, 0))
+            if (!skipDistLine)
             {
-                Layer      = LayerManager.LeaderLayer,
-                LineWeight = LineWeight.LineWeight018,
-                Linetype   = ltName
-            };
-            btr.AppendEntity(distLine);
-            tr.AddNewlyCreatedDBObject(distLine, true);
+                // 1. Dist line — pozioma przy y=0 (gorna krawedz pretow)
+                var distLine = new Line(new Point3d(0, 0, 0), new Point3d(barsSpan, 0, 0))
+                {
+                    Layer      = LayerManager.LeaderLayer,
+                    LineWeight = LineWeight.LineWeight018,
+                    Linetype   = ltName
+                };
+                btr.AppendEntity(distLine);
+                tr.AddNewlyCreatedDBObject(distLine, true);
 
-            // 2. Romby — na pozycjach pretow: (i*spacing, 0), i=0..count-1
-            var visSetV = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
-            for (int i = 0; i < bar.Count; i++)
-            {
-                bool isFirst = (i == 0);
-                bool isLast  = (i == bar.Count - 1);
+                // 2. Romby — na pozycjach pretow: (i*spacing, 0), i=0..count-1
+                var visSetV = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
+                for (int i = 0; i < bar.Count; i++)
+                {
+                    bool isFirst = (i == 0);
+                    bool isLast  = (i == bar.Count - 1);
 
-                if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), -Vector3d.XAxis);
-                else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Vector3d.XAxis);
-                else if (bar.Count <= 3 || visSetV.Contains(i))
-                    AddDot(tr, btr, new Point3d(i * bar.Spacing, 0, 0), DotRadius);
-            }
+                    if (bar.Count > 3 && isFirst)
+                        AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), -Vector3d.XAxis);
+                    else if (bar.Count > 3 && isLast)
+                        AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Vector3d.XAxis);
+                    else if (bar.Count <= 3 || visSetV.Contains(i))
+                        AddDot(tr, btr, new Point3d(i * bar.Spacing, 0, 0), DotRadius);
+                }
 
-            if (bar.Count > 3)
-            {
-                double tickLen  = DotRadius * 3;
-                double rightX   = (bar.Count - 1) * bar.Spacing;
-                AddEndTick(tr, btr, new Point3d(0,      0, 0), Vector3d.YAxis, tickLen);
-                AddEndTick(tr, btr, new Point3d(rightX, 0, 0), Vector3d.YAxis, tickLen);
+                if (bar.Count > 3)
+                {
+                    double tickLen  = DotRadius * 3;
+                    double rightX   = (bar.Count - 1) * bar.Spacing;
+                    AddEndTick(tr, btr, new Point3d(0,      0, 0), Vector3d.YAxis, tickLen);
+                    AddEndTick(tr, btr, new Point3d(rightX, 0, 0), Vector3d.YAxis, tickLen);
+                }
             }
 
             double armTotalLen;
@@ -433,17 +444,18 @@ namespace BricsCadRc.Core
                 bar.ArmTotalLen = armTotalLen;
 
                 Point3d armStart, armEnd, textFinal;
+                double armBase = skipDistLine ? 0.0 : barsSpan / 2.0;
                 if (leaderRight)
                 {
-                    armStart  = new Point3d(barsSpan / 2.0,              0, 0);
-                    armEnd    = new Point3d(barsSpan + armTotalLen,       0, 0);
-                    textFinal = new Point3d(barsSpan + ArmLength, TextArmOffset, 0);
+                    armStart  = new Point3d(armBase,              0, 0);
+                    armEnd    = new Point3d(armBase + armTotalLen, 0, 0);
+                    textFinal = new Point3d(armBase + ArmLength,   TextArmOffset, 0);
                 }
                 else
                 {
-                    armStart  = new Point3d(barsSpan / 2.0,              0, 0);
-                    armEnd    = new Point3d(barsSpan / 2.0 - armTotalLen, 0, 0);
-                    textFinal = new Point3d(barsSpan / 2.0 - armTotalLen, TextArmOffset, 0);
+                    armStart  = new Point3d(armBase,              0, 0);
+                    armEnd    = new Point3d(armBase - armTotalLen, 0, 0);
+                    textFinal = new Point3d(armBase - armTotalLen, TextArmOffset, 0);
                     dbText.HorizontalMode = TextHorizontalMode.TextLeft;
                 }
 
@@ -461,15 +473,14 @@ namespace BricsCadRc.Core
             else
             {
                 // Etykieta z góry/dołu — geometria z zagięciem 90°: segment poziomy + pionowy
-                double midX = !double.IsNaN(bar.ArmMidY)
-                    ? bar.ArmMidY
-                    : barsSpan / 2.0 + ArmLength;
+                double midX = skipDistLine ? 0.0
+                    : (!double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength);
                 double vDir = leaderUp ? 1.0 : -1.0;
 
                 // Segment 1: poziomy od środka dist line (barsSpan/2) do punktu zagięcia (midX)
                 var stem = new Line(
-                    new Point3d(barsSpan / 2.0, 0, 0),
-                    new Point3d(midX,            0, 0))
+                    new Point3d(skipDistLine ? 0.0 : barsSpan / 2.0, 0, 0),
+                    new Point3d(midX,                                 0, 0))
                 {
                     Layer      = LayerManager.LeaderLayer,
                     LineWeight = LineWeight.LineWeight018,
@@ -530,9 +541,9 @@ namespace BricsCadRc.Core
             // Kółko w punkcie styku arma z dist line (złamanie)
             if (leaderVertical)
             {
-                double midX = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength;
-                // Kółko tylko gdy złamanie mieści się w zakresie dist line (0..barsSpan)
-                if (midX >= 0 && midX <= barsSpan)
+                double midX = skipDistLine ? 0.0
+                    : (!double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0);
+                if (skipDistLine || (midX >= 0 && midX <= barsSpan))
                     AddKinkCircle(tr, btr, new Point3d(midX, 0, 0), DotRadius);
             }
 
@@ -980,6 +991,10 @@ namespace BricsCadRc.Core
 
         public static void SyncAnnotation(Database db, BarData updatedBar)
         {
+            var docS = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            docS.Editor.WriteMessage(
+                $"\n[SYNC] ViewingDir='{updatedBar.ViewingDirection}' called");
+
             // Szukaj po AnnotHandle (unikalne dla kazdego rozkladu) — bez handle fallback na Mark
             var annotId = !string.IsNullOrEmpty(updatedBar.AnnotHandle)
                 ? FindAnnotationIdByHandle(db, updatedBar.AnnotHandle)
@@ -1015,14 +1030,36 @@ namespace BricsCadRc.Core
                 ((DBObject)tr.GetObject(oid, OpenMode.ForWrite)).Erase();
 
             // Przebudowa — BuildH/V remierzy tekst i ustawia TextLen
-            string ltName     = ResolveLinetype(db, tr, "_DOT", "CENTER");
-            double armTotalLen = updatedBar.Direction == "X"
-                ? BuildHorizontal(tr, btr, db, updatedBar, ltName,
-                    updatedBar.LeaderHorizontal, updatedBar.LeaderRight, updatedBar.LeaderUp)
-                : BuildVertical  (tr, btr, db, updatedBar, ltName,
-                    leaderVertical: updatedBar.LeaderHorizontal,
-                    leaderRight:    updatedBar.LeaderRight,
-                    leaderUp:       updatedBar.LeaderUp);
+            string ltName      = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            double armTotalLen;
+
+            if (updatedBar.ViewingDirection == "Any")
+            {
+                // Tryb Any: RC_BAR_ANNOT zawiera TYLKO arm+tekst (bez dist line, bez dots).
+                // RC_BAR_BLOCK z geometrią pręta jest zarządzany przez GenerateFromBounds.
+                if (updatedBar.Direction == "X")
+                    armTotalLen = BuildHorizontal(tr, btr, db, updatedBar, ltName,
+                        updatedBar.LeaderHorizontal, updatedBar.LeaderRight, updatedBar.LeaderUp,
+                        skipDistLine: true);
+                else
+                    armTotalLen = BuildVertical(tr, btr, db, updatedBar, ltName,
+                        leaderVertical: updatedBar.LeaderHorizontal,
+                        leaderRight:    updatedBar.LeaderRight,
+                        leaderUp:       updatedBar.LeaderUp,
+                        skipDistLine:   true);
+            }
+            else
+            {
+                // Standard: pełny widok z dist line + dots + arm + tekst
+                if (updatedBar.Direction == "X")
+                    armTotalLen = BuildHorizontal(tr, btr, db, updatedBar, ltName,
+                        updatedBar.LeaderHorizontal, updatedBar.LeaderRight, updatedBar.LeaderUp);
+                else
+                    armTotalLen = BuildVertical(tr, btr, db, updatedBar, ltName,
+                        leaderVertical: updatedBar.LeaderHorizontal,
+                        leaderRight:    updatedBar.LeaderRight,
+                        leaderUp:       updatedBar.LeaderUp);
+            }
 
             updatedBar.ArmTotalLen = armTotalLen;
             WriteAnnotXData(annotBr, updatedBar);
