@@ -5,7 +5,7 @@ namespace BricsCadRc.Dialogs
 {
     /// <summary>
     /// Dialog "Reinforcement detailing" (FLOW 2, krok 2).
-    /// Viewing direction: Auto / Manual / Any.
+    /// Viewing direction: Auto / Manual.
     /// </summary>
     public partial class ReinfDetailingDialog : Window
     {
@@ -13,16 +13,11 @@ namespace BricsCadRc.Dialogs
         public bool IsManualViewingDirection
             => (CbViewingDirection.SelectedItem as ComboBoxItem)?.Content as string == "Manual";
 
-        /// <summary>True gdy użytkownik wybrał "Any" — wstaw pojedynczą kopię pręta jako widok legendy.</summary>
-        public bool IsAnyViewingDirection
-            => (CbViewingDirection.SelectedItem as ComboBoxItem)?.Content as string == "Any";
-
         public ReinfDetailingDialog(string initialViewingDirection = "Auto")
         {
             InitializeComponent();
             CbViewingDirection.SelectedIndex =
-                initialViewingDirection == "Manual" ? 1 :
-                initialViewingDirection == "Any"    ? 2 : 0;
+                initialViewingDirection == "Manual" ? 1 : 0;
         }
 
         private void OK_Click(object sender, RoutedEventArgs e)

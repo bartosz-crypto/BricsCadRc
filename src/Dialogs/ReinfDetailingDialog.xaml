@@ -71,7 +71,6 @@
                       SelectedIndex="0" FontSize="12" Height="24">
                 <ComboBoxItem Content="Auto"/>
                 <ComboBoxItem Content="Manual"/>
-                <ComboBoxItem Content="Any"/>
             </ComboBox>
         </Grid>
 

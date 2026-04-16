@@ -179,51 +179,6 @@ namespace BricsCadRc.Core
             }
         }
 
-        // ----------------------------------------------------------------
-        // BuildAny — tryb ViewingDirection="Any": pełny kształt pręta + 1 kółko.
-        // Geometria od Origin (lokalny układ BTR), kierunek (1,0,0).
-        // bar.Count/Spacing są poprawne w XData (dla annotacji i zestawienia),
-        // ale wizualnie rysowany jest 1 egzemplarz pręta.
-        // ----------------------------------------------------------------
-        private static void BuildAny(
-            Transaction tr, BlockTableRecord btr,
-            Database db, BarData bar)
-        {
-            string barLayer = LayerManager.GetLayerName(bar.LayerCode);
-
-            // 1. Geometria pręta (polilinia kształtu) od Origin
-            var shape    = ShapeCodeLibrary.Get(bar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
-            var entities = SingleBarEngine.BuildVisualEntities(
-                shape, bar.ParamValues, bar.Diameter,
-                startPoint: Point3d.Origin,
-                direction:  new Vector3d(1, 0, 0));
-
-            foreach (var ent in entities)
-            {
-                ent.Layer      = barLayer;
-                ent.ColorIndex = 7; // biały (jak RC_SINGLE_BAR)
-                btr.AppendEntity(ent);
-                tr.AddNewlyCreatedDBObject(ent, true);
-            }
-
-            // 2. Jedno kółko w środku pierwszego segmentu polilinii
-            var pline  = entities.OfType<Polyline>().FirstOrDefault();
-            Point3d dotPos = Point3d.Origin;
-            if (pline != null && pline.NumberOfVertices >= 2)
-            {
-                var p0 = pline.GetPoint3dAt(0);
-                var p1 = pline.GetPoint3dAt(1);
-                dotPos = new Point3d((p0.X + p1.X) / 2.0, (p0.Y + p1.Y) / 2.0, 0);
-            }
-            var circle = new Circle(dotPos, Vector3d.ZAxis, AnnotationEngine.DotRadius)
-            {
-                Layer      = barLayer,
-                ColorIndex = 7
-            };
-            btr.AppendEntity(circle);
-            tr.AddNewlyCreatedDBObject(circle, true);
-        }
-
         public static HashSet<int> GetVisibleIndicesPublic(BarVisibilityMode mode, string customIndices, int count)
             => GetVisibleIndices(mode, customIndices, count);
 
@@ -396,9 +351,7 @@ namespace BricsCadRc.Core
             double   x1, double y1,
             BarData  bar,
             bool     horizontal,
-            int      posNr,
-            int?     overrideCount   = null,
-            double?  overrideSpacing = null)
+            int      posNr)
         {
             var empty = new BarBlockResult();
             if (x0 >= x1 || y0 >= y1) return empty;
@@ -410,14 +363,7 @@ namespace BricsCadRc.Core
             if (horizontal) { barLength = x1 - x0; rawSpan = y1 - y0; }
             else             { barLength = y1 - y0; rawSpan = x1 - x0; }
 
-            if (overrideCount.HasValue)
-            {
-                // Tryb Any / override z zewnątrz — użyj podanych wartości bezpośrednio
-                bar.Count   = overrideCount.Value;
-                bar.Spacing = overrideSpacing ?? bar.Spacing;
-                bar.BarsSpan = (bar.Count - 1) * bar.Spacing;
-            }
-            else if (bar.Count > 1)
+            if (bar.Count > 1)
             {
                 // Zachowaj count/spacing przekazane z zewnątrz
                 bar.BarsSpan = (bar.Count - 1) * bar.Spacing;
@@ -450,9 +396,7 @@ namespace BricsCadRc.Core
             var btrId = blockTable.Add(btr);
             tr.AddNewlyCreatedDBObject(btr, true);
 
-            if (bar.ViewingDirection == "Any")
-                BuildAny(tr, btr, db, bar);
-            else if (horizontal)
+            if (horizontal)
                 BuildHorizontal(tr, btr, bar, barLength, bar.Count);
             else
                 BuildVertical(tr, btr, bar, barLength, bar.Count);
@@ -627,23 +571,6 @@ namespace BricsCadRc.Core
             if (newViewSegIdx >= 0)
                 bar.ViewSegmentIndex = newViewSegIdx;
             bar.BarsSpan = (newCount - 1) * newSpacing;
-
-            // Sync VisibilityMode z ViewingDirection (przed WriteXData)
-            if (bar.ViewingDirection == "Any")
-            {
-                bar.VisibilityMode = BarVisibilityMode.Manual;
-                bar.VisibleIndices = "0";
-            }
-            else if (bar.ViewingDirection == "Auto" || bar.ViewingDirection == "Manual")
-            {
-                // Wróć do All jeśli poprzednio był Any
-                if (bar.VisibilityMode == BarVisibilityMode.Manual
-                    && bar.VisibleIndices == "0")
-                {
-                    bar.VisibilityMode = BarVisibilityMode.All;
-                    bar.VisibleIndices = "";
-                }
-            }
 
             WriteXData(br, bar);
 

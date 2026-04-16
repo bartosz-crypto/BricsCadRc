@@ -48,7 +48,6 @@
                        VerticalAlignment="Center" Margin="0,4,0,4">
                 <ComboBoxItem Content="Auto"/>
                 <ComboBoxItem Content="Manual"/>
-                <ComboBoxItem Content="Any"/>
             </ComboBox>
 
             <CheckBox x:Name="CbAddAnnotation" Grid.Row="6" Grid.ColumnSpan="2"
