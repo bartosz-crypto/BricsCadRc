@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using BricsCadRc.Core;
@@ -604,58 +605,71 @@ namespace BricsCadRc.Commands
                         ? direction == LabelDirection.Left || direction == LabelDirection.Right
                         : direction == LabelDirection.Up   || direction == LabelDirection.Down;
 
-                    if (isSimple)
-                    {
-                        leaderHorizontal  = true;
-                        leaderRight       = horizontal ? direction == LabelDirection.Right : true;
-                        sourceBar.ArmMidY = horizontal
-                            ? kinkPt.Y - insertOverride.Value.Y
-                            : kinkPt.X - insertOverride.Value.X;
+                    // ETAP 3 — wielosegmentowy leader: pętla GetPoint
+                    var leaderWcsPts = new List<Point3d> { kinkPt };  // start = kinkPt z jig2
 
-                        var jig3s = new AnnotLabelBendJig(
-                            distCenter, kinkPt, labelPos, minFixed, barsSpan,
-                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
-                            sourceBar.Angle, jigRotCenter);
-                        var res3s = ed.Drag(jig3s);
-                        jig3s.ClearTransients();
-                        if (res3s.Status == PromptStatus.Cancel) return false;
-                        if (res3s.Status == PromptStatus.OK)
-                        {
-                            jig3CursorPt      = jig3s.CursorPt;
-                            userClickedInJig3 = true;
-                            leaderRight       = horizontal
-                                ? jig3s.CursorPt.X >= labelPos
-                                : jig3s.CursorPt.Y >= labelPos;
-                        }
+                    while (true)
+                    {
+                        var ptOpts = new PromptPointOptions(
+                            "\nKliknij punkt leadera [Enter=zakończ]: ");
+                        ptOpts.AllowNone = true;
+                        // Pokaż rubber band od ostatniego punktu
+                        ptOpts.UseBasePoint = true;
+                        ptOpts.BasePoint    = leaderWcsPts[leaderWcsPts.Count - 1];
+
+                        var ptRes = ed.GetPoint(ptOpts);
+                        if (ptRes.Status == PromptStatus.Cancel) return false;
+                        if (ptRes.Status != PromptStatus.OK) break;  // Enter = zakończ
+                        leaderWcsPts.Add(ptRes.Value);
                     }
+
+                    if (leaderWcsPts.Count < 2)
+                        leaderWcsPts.Add(kinkPt + new Vector3d(0, AnnotationEngine.ArmLength, 0));  // fallback
+
+                    // insertPt = punkt wstawienia RC_BAR_BLOCK (origin BTR w WCS)
+                    Point3d insertPt;
+                    if (insertOverride.HasValue)
+                        insertPt = insertOverride.Value;
                     else
                     {
-                        if (!horizontal) leaderRight = direction == LabelDirection.Right;
-
-                        var jig3 = new AnnotLabelBendJig(
-                            distCenter, kinkPt, labelPos, minFixed, barsSpan,
-                            horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
-                            sourceBar.Angle, jigRotCenter);
-                        var res3 = ed.Drag(jig3);
-                        jig3.ClearTransients();
-                        if (res3.Status == PromptStatus.Cancel) return false;
-                        if (res3.Status == PromptStatus.OK)
+                        using (var trIns = db.TransactionManager.StartTransaction())
                         {
-                            leaderHorizontal   = true;
-                            jig3CursorPt       = jig3.CursorPt;
-                            userClickedInJig3  = true;
-                            if (horizontal)
-                            {
-                                leaderRight       = jig3.CursorPt.X >= labelPos;
-                                sourceBar.ArmMidY = kinkPt.Y - insertOverride.Value.Y;
-                            }
-                            else
-                            {
-                                leaderUp          = jig3.CursorPt.Y >= labelPos;
-                                sourceBar.ArmMidY = kinkPt.X - insertOverride.Value.X;
-                            }
+                            var brIns = trIns.GetObject(barResult.BlockRefId, OpenMode.ForRead)
+                                        as BlockReference;
+                            insertPt = brIns?.Position ?? Point3d.Origin;
+                            trIns.Commit();
                         }
                     }
+
+                    // Przelicz punkty WCS → układ lokalny BTR
+                    var localPts = leaderWcsPts.Select(pt => {
+                        double dx = pt.X - insertPt.X;
+                        double dy = pt.Y - insertPt.Y;
+                        if (Math.Abs(sourceBar.Angle) < 1e-6)
+                            return new Point3d(dx, dy, 0);
+                        double cos = Math.Cos(-sourceBar.Angle);
+                        double sin = Math.Sin(-sourceBar.Angle);
+                        return new Point3d(dx * cos - dy * sin, dx * sin + dy * cos, 0);
+                    }).ToList();
+
+                    // Pierwszy punkt leadera zawsze na dist line (środek spanu w lokalnym BTR)
+                    Point3d distLinePt = horizontal
+                        ? new Point3d(0, sourceBar.BarsSpan / 2.0, 0)   // X-bars: dist line wzdłuż Y
+                        : new Point3d(sourceBar.BarsSpan / 2.0, 0, 0);  // Y-bars: dist line wzdłuż X
+                    localPts.Insert(0, distLinePt);
+
+                    sourceBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(localPts);
+
+                    // leaderHorizontal=true gdy user kliknął przynajmniej jeden punkt (jest złamanie)
+                    leaderHorizontal = leaderWcsPts.Count > 1;
+
+                    // leaderUp/leaderRight z kierunku ostatniego segmentu
+                    var lastMsDir = leaderWcsPts[leaderWcsPts.Count - 1]
+                                  - leaderWcsPts[leaderWcsPts.Count - 2];
+                    if (horizontal)
+                        leaderRight = lastMsDir.X >= 0;
+                    else
+                        leaderUp = lastMsDir.Y >= 0;
                 }
                 else
                 {

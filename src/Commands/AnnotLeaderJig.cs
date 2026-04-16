@@ -619,4 +619,162 @@ namespace BricsCadRc.Commands
             _transients.Clear();
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ETAP 3 (nowy): wielosegmentowy leader — pętla kliknięć.
+    //   Każde LPM dodaje punkt do listy.
+    //   Enter (bez kliknięcia) kończy pętlę.
+    // Output: Points (lista WCS), LastCursor (ostatnia pozycja kursora).
+    // ─────────────────────────────────────────────────────────────────────────
+    internal class AnnotLabelMultiSegJig : EntityJig
+    {
+        private readonly List<Point3d> _pts;
+        private Point3d                _cursor;
+
+        private readonly double   _labelPos;
+        private readonly double   _minFixed;
+        private readonly double   _barsSpan;
+        private readonly bool     _horizontal;
+        private readonly double   _dotRadius;
+        private readonly int      _count;
+        private readonly double   _spacing;
+        private readonly double   _angle;
+        private readonly Point3d  _rotCenter;
+
+        private readonly List<Line> _transients = new List<Line>();
+
+        public IReadOnlyList<Point3d> Points    => _pts;
+        public Point3d                LastCursor => _cursor;
+
+        public AnnotLabelMultiSegJig(
+            Point3d startPt,
+            double minFixed, double barsSpan,
+            bool horizontal, double dotRadius,
+            int count, double spacing,
+            double angle = 0.0, Point3d rotCenter = default)
+            : base(new Line(startPt, startPt))
+        {
+            _pts        = new List<Point3d> { startPt };
+            _cursor     = startPt;
+            _minFixed   = minFixed;
+            _barsSpan   = barsSpan;
+            _horizontal = horizontal;
+            _dotRadius  = dotRadius;
+            _count      = count;
+            _spacing    = spacing;
+            _angle      = angle;
+            _rotCenter  = rotCenter;
+
+            // Odtwórz labelPos z startPt (startPt leży na dist line)
+            if (Math.Abs(angle) > 1e-6)
+            {
+                double dx  = startPt.X - rotCenter.X;
+                double dy  = startPt.Y - rotCenter.Y;
+                double cos = Math.Cos(angle);
+                double sin = Math.Sin(angle);
+                _labelPos  = horizontal ? (dx * cos + dy * sin) : (-dx * sin + dy * cos);
+            }
+            else
+            {
+                _labelPos = horizontal ? startPt.X : startPt.Y;
+            }
+        }
+
+        protected override SamplerStatus Sampler(JigPrompts prompts)
+        {
+            var opts = new JigPromptPointOptions(
+                "\nKliknij kolejny punkt leadera [Enter=zakończ]: ");
+            var res = prompts.AcquirePoint(opts);
+            if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
+            if (_cursor.IsEqualTo(res.Value, Tolerance.Global))
+                return SamplerStatus.NoChange;
+            _cursor = res.Value;
+            return SamplerStatus.OK;
+        }
+
+        protected override bool Update()
+        {
+            ClearTransients();
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+
+            DrawDistLine(tm, vpIds);
+
+            // Zatwierdzone segmenty
+            for (int i = 0; i < _pts.Count - 1; i++)
+                AddLine(tm, vpIds, _pts[i], _pts[i + 1], 2);
+
+            // Segment do aktualnej pozycji kursora
+            if (_pts.Count > 0)
+                AddLine(tm, vpIds, _pts[_pts.Count - 1], _cursor, 2);
+
+            try { Application.UpdateScreen(); } catch { }
+            return true;
+        }
+
+        public void CommitCurrentPoint()
+            => _pts.Add(_cursor);
+
+        void DrawDistLine(TransientManager tm, IntegerCollection vpIds)
+        {
+            if (_horizontal)
+            {
+                double x  = _labelPos;
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
+                AddLine(tm, vpIds, rp1, rp2, 7);
+                int maxDots = Math.Min(_count, 20);
+                for (int i = 0; i < maxDots; i++)
+                {
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
+                    AddCirclePreview(tm, vpIds, rc, _dotRadius);
+                }
+            }
+            else
+            {
+                double y  = _labelPos;
+                var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
+                var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
+                AddLine(tm, vpIds, rp1, rp2, 7);
+                int maxDots = Math.Min(_count, 20);
+                for (int i = 0; i < maxDots; i++)
+                {
+                    var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
+                    AddCirclePreview(tm, vpIds, rc, _dotRadius);
+                }
+            }
+        }
+
+        void AddLine(TransientManager tm, IntegerCollection vpIds,
+                     Point3d p1, Point3d p2, short color)
+        {
+            var ln = new Line(p1, p2) { ColorIndex = color };
+            try { tm.AddTransient(ln, TransientDrawingMode.DirectTopmost, 128, vpIds); _transients.Add(ln); }
+            catch { ln.Dispose(); }
+        }
+
+        void AddCirclePreview(TransientManager tm, IntegerCollection vpIds, Point3d c, double r)
+        {
+            int segments = 8;
+            for (int s = 0; s < segments; s++)
+            {
+                double a1 = 2 * Math.PI * s       / segments;
+                double a2 = 2 * Math.PI * (s + 1) / segments;
+                AddLine(tm, vpIds,
+                    new Point3d(c.X + r * Math.Cos(a1), c.Y + r * Math.Sin(a1), 0),
+                    new Point3d(c.X + r * Math.Cos(a2), c.Y + r * Math.Sin(a2), 0),
+                    7);
+            }
+        }
+
+        public void ClearTransients()
+        {
+            if (_transients.Count == 0) return;
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+            foreach (var ln in _transients)
+                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch { }
+            _transients.Clear();
+        }
+    }
 }

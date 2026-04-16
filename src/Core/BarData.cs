@@ -158,6 +158,9 @@ namespace BricsCadRc.Core
         /// <summary>Punkt wstawienia Y (w WCS) dla ukośnych prętów — przekazywany do GenerateFromBounds.</summary>
         public double Pt1Y { get; set; } = 0.0;
 
+        /// <summary>Zakodowane punkty leadera w układzie lokalnym bloku: "x1,y1;x2,y2;...". "" = domyślny arm.</summary>
+        public string LeaderPoints { get; set; } = "";
+
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 

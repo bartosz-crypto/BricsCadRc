@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -199,146 +200,42 @@ namespace BricsCadRc.Core
                 AddEndTick(tr, btr, new Point3d(0, topY, 0), Vector3d.XAxis, tickLen);
             }
 
-            double armTotalLen;
-
-            if (!leaderHorizontal)
+            // === MLeader wielosegmentowy ===
+            // Zdekoduj punkty leadera z bar.LeaderPoints
+            // Jeśli puste — użyj domyślnego: punkt na dist line → punkt nad/pod dist line
+            var leaderPtsH = DecodeLeaderPoints(bar.LeaderPoints);
+            if (leaderPtsH.Count < 2)
             {
-                // Etykieta z góry/dołu — geometria pionowa.
-                // leaderUp=true  → arm idzie w górę  (powyżej barsSpan)
-                // leaderUp=false → arm idzie w dół   (poniżej barsSpan/2)
-                var dbText = new DBText
-                {
-                    TextString     = $"{bar.Count} {bar.Mark}",
-                    Layer          = LayerManager.AnnotLayer,
-                    Height         = DefaultTextHeight,
-                    Position       = new Point3d(-TextArmOffset, barsSpan + ArmLength, 0), // pozycja tymczasowa
-                    Rotation       = Math.PI / 2.0,
-                    HorizontalMode = TextHorizontalMode.TextLeft,
-                    VerticalMode   = TextVerticalMode.TextBase,
-                    TextStyleId    = GetTextStyleId(db)
-                };
-                btr.AppendEntity(dbText);
-                tr.AddNewlyCreatedDBObject(dbText, true);
+                double midY = bar.BarsSpan / 2.0;
+                double hDir = leaderRight ? 1.0 : -1.0;
+                double vDir = leaderUp    ? 1.0 : -1.0;
 
-                // Zmierz rzeczywistą długość tekstu przez GeometricExtents (Rotation=90° → mierzymy Y)
-                double textLen;
-                try
+                if (!leaderHorizontal)
                 {
-                    var extTxt = dbText.GeometricExtents;
-                    textLen = extTxt.MaxPoint.Y - extTxt.MinPoint.Y;
-                    if (textLen <= 0) throw new InvalidOperationException();
-                }
-                catch { textLen = dbText.TextString.Length * TextCharWidth; }
-
-                bar.TextLen     = textLen;
-                armTotalLen     = ArmLength + textLen;
-                bar.ArmTotalLen = armTotalLen;
-
-                Point3d armStart, armEnd, textFinal;
-                double armBase = barsSpan / 2.0;
-                if (leaderUp)
-                {
-                    // Góra: arm od armBase w górę; tekst zaczyna się tuż nad ArmLength
-                    armStart  = new Point3d(0, armBase,              0);
-                    armEnd    = new Point3d(0, armBase + armTotalLen, 0);
-                    textFinal = new Point3d(-TextArmOffset, armBase + ArmLength, 0);
+                    // Prosta pionowa (Up/Down bez złamania) — arm wzdłuż Y
+                    leaderPtsH = new List<Point3d>
+                    {
+                        new Point3d(0, midY,                    0),
+                        new Point3d(0, midY + vDir * ArmLength, 0)
+                    };
                 }
                 else
                 {
-                    // Dół: arm od armBase w dół; tekst na końcu arm (rośnie do góry od arm.End)
-                    armStart  = new Point3d(0, armBase,              0);
-                    armEnd    = new Point3d(0, armBase - armTotalLen, 0);
-                    textFinal = new Point3d(-TextArmOffset, armBase - armTotalLen, 0);
+                    // Złamana (Left/Right lub Up+Jig3) — stem pionowy + arm poziomy
+                    double kinkY = !double.IsNaN(bar.ArmMidY) && bar.ArmMidY != 0
+                        ? bar.ArmMidY
+                        : midY;
+                    leaderPtsH = new List<Point3d>
+                    {
+                        new Point3d(0,              midY,  0),  // środek dist line
+                        new Point3d(0,              kinkY, 0),  // punkt złamania
+                        new Point3d(hDir * ArmLength, kinkY, 0) // koniec arma
+                    };
                 }
-
-                dbText.Position = textFinal;
-
-                var arm = new Line(armStart, armEnd)
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(arm);
-                tr.AddNewlyCreatedDBObject(arm, true);
-
-            }
-            else
-            {
-                // Etykieta z boku — geometria z zagięciem 90°: segment pionowy + poziomy
-                double midY = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength;
-                double hDir = leaderRight ? 1.0 : -1.0;
-
-                // Segment 1: pionowy od środka dist line (barsSpan/2) do punktu zagięcia (midY)
-                var stem = new Line(
-                    new Point3d(0, barsSpan / 2.0, 0),
-                    new Point3d(0, midY, 0))
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(stem);
-                tr.AddNewlyCreatedDBObject(stem, true);
-
-                // Segment 2: poziomy — najpierw wstaw tekst, zmierz rzeczywistą szerokość,
-                // potem narysuj arm dopasowany do prawdziwej długości tekstu.
-                // hDir=+1 (prawo): TextLeft, Position = lewa krawędź tekstu przy ArmLength od kink
-                // hDir=-1 (lewo): TextRight, AlignmentPoint = prawa krawędź tekstu przy ArmLength od kink
-                var alignPt = new Point3d(hDir * ArmLength, midY + TextArmOffset, 0);
-                var dbText = new DBText
-                {
-                    TextString  = $"{bar.Count} {bar.Mark}",
-                    Layer       = LayerManager.AnnotLayer,
-                    Height      = DefaultTextHeight,
-                    Position    = alignPt,
-                    Rotation    = 0.0,
-                    TextStyleId = GetTextStyleId(db)
-                };
-                if (hDir < 0)
-                {
-                    dbText.HorizontalMode = TextHorizontalMode.TextRight;
-                    dbText.AlignmentPoint = alignPt;
-                }
-                btr.AppendEntity(dbText);
-                tr.AddNewlyCreatedDBObject(dbText, true);
-
-                // Zmierz rzeczywistą szerokość tekstu przez GeometricExtents
-                double textLen;
-                try
-                {
-                    var extTxt = dbText.GeometricExtents;
-                    textLen = Math.Abs(extTxt.MaxPoint.X - extTxt.MinPoint.X);
-                    if (textLen <= 0) throw new InvalidOperationException();
-                }
-                catch { textLen = dbText.TextString.Length * TextCharWidth; }
-
-                bar.TextLen = textLen;
-                armTotalLen = ArmLength + textLen;
-
-                // arm: od kink (0,midY) do końca tekstu (zmierzona długość)
-                var armSP = new Point3d(0, midY, 0);
-                var armEP = new Point3d(hDir * (ArmLength + textLen), midY, 0);
-                var arm = new Line(armSP, armEP)
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(arm);
-                tr.AddNewlyCreatedDBObject(arm, true);
-
             }
 
-            // Kółko w punkcie styku arma z dist line (złamanie)
-            if (leaderHorizontal)
-            {
-                double midY = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0;
-                if (midY >= 0 && midY <= barsSpan)
-                    AddKinkCircle(tr, btr, new Point3d(0, midY, 0), DotRadius);
-            }
-
-            return armTotalLen;
+            BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsH);
+            return bar.ArmTotalLen;
         }
 
         // ----------------------------------------------------------------
@@ -396,143 +293,43 @@ namespace BricsCadRc.Core
                 AddEndTick(tr, btr, new Point3d(rightX, 0, 0), Vector3d.YAxis, tickLen);
             }
 
-            double armTotalLen;
-
-            if (!leaderVertical)
+            // === MLeader wielosegmentowy ===
+            // Zdekoduj punkty leadera z bar.LeaderPoints
+            // Jeśli puste — użyj domyślnego: punkt na dist line → punkt po prawej/lewej
+            var leaderPtsV = DecodeLeaderPoints(bar.LeaderPoints);
+            if (leaderPtsV.Count < 2)
             {
-                // Etykieta z lewej/prawej — geometria pozioma
-                // leaderRight=true  → arm idzie w prawo (za ostatnim prętem)
-                // leaderRight=false → arm idzie w lewo  (przed pierwszym prętem)
-                var dbText = new DBText
-                {
-                    TextString     = $"{bar.Count} {bar.Mark}",
-                    Layer          = LayerManager.AnnotLayer,
-                    Height         = DefaultTextHeight,
-                    Position       = new Point3d(barsSpan + ArmLength, TextArmOffset, 0),
-                    Rotation       = 0.0,
-                    HorizontalMode = TextHorizontalMode.TextLeft,
-                    VerticalMode   = TextVerticalMode.TextBase,
-                    TextStyleId    = GetTextStyleId(db)
-                };
-                btr.AppendEntity(dbText);
-                tr.AddNewlyCreatedDBObject(dbText, true);
+                double midX = bar.BarsSpan / 2.0;
+                double hDir = leaderRight ? 1.0 : -1.0;
+                double vDir = leaderUp    ? 1.0 : -1.0;
 
-                double textLen;
-                try
+                if (!leaderVertical)
                 {
-                    var extTxt = dbText.GeometricExtents;
-                    textLen = extTxt.MaxPoint.X - extTxt.MinPoint.X;
-                    if (textLen <= 0) throw new InvalidOperationException();
-                }
-                catch { textLen = dbText.TextString.Length * TextCharWidth; }
-
-                bar.TextLen     = textLen;
-                armTotalLen     = ArmLength + textLen;
-                bar.ArmTotalLen = armTotalLen;
-
-                Point3d armStart, armEnd, textFinal;
-                double armBase = barsSpan / 2.0;
-                if (leaderRight)
-                {
-                    armStart  = new Point3d(armBase,              0, 0);
-                    armEnd    = new Point3d(armBase + armTotalLen, 0, 0);
-                    textFinal = new Point3d(armBase + ArmLength,   TextArmOffset, 0);
+                    // Prosta pozioma (Left/Right bez złamania) — arm wzdłuż X
+                    leaderPtsV = new List<Point3d>
+                    {
+                        new Point3d(midX,                    0, 0),
+                        new Point3d(midX + hDir * ArmLength, 0, 0)
+                    };
                 }
                 else
                 {
-                    armStart  = new Point3d(armBase,              0, 0);
-                    armEnd    = new Point3d(armBase - armTotalLen, 0, 0);
-                    textFinal = new Point3d(armBase - armTotalLen, TextArmOffset, 0);
-                    dbText.HorizontalMode = TextHorizontalMode.TextLeft;
+                    // Złamana (Up/Down lub Left+Jig3) — stem poziomy + arm pionowy
+                    // bar.ArmMidY przechowuje lokalną X złamania dla Y-bars
+                    double kinkX = !double.IsNaN(bar.ArmMidY) && bar.ArmMidY != 0
+                        ? bar.ArmMidY
+                        : midX;
+                    leaderPtsV = new List<Point3d>
+                    {
+                        new Point3d(midX,  0,                0),  // środek dist line
+                        new Point3d(kinkX, 0,                0),  // punkt złamania
+                        new Point3d(kinkX, vDir * ArmLength, 0)   // koniec arma
+                    };
                 }
-
-                dbText.Position = textFinal;
-
-                var arm = new Line(armStart, armEnd)
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(arm);
-                tr.AddNewlyCreatedDBObject(arm, true);
-            }
-            else
-            {
-                // Etykieta z góry/dołu — geometria z zagięciem 90°: segment poziomy + pionowy
-                double midX = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0 + ArmLength;
-                double vDir = leaderUp ? 1.0 : -1.0;
-
-                // Segment 1: poziomy od środka dist line (barsSpan/2) do punktu zagięcia (midX)
-                var stem = new Line(
-                    new Point3d(barsSpan / 2.0, 0, 0),
-                    new Point3d(midX,           0, 0))
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(stem);
-                tr.AddNewlyCreatedDBObject(stem, true);
-
-                // Segment 2: pionowy arm + tekst po lewej stronie arma
-                // Najpierw wstaw tekst na pozycji tymczasowej, zmierz textLen, potem przestaw
-
-                var dbText = new DBText
-                {
-                    TextString  = $"{bar.Count} {bar.Mark}",
-                    Layer       = LayerManager.AnnotLayer,
-                    Height      = DefaultTextHeight,
-                    Position    = new Point3d(midX - TextArmOffset, 0, 0),  // tymczasowa
-                    Rotation    = Math.PI / 2.0,
-                    TextStyleId = GetTextStyleId(db)
-                };
-                btr.AppendEntity(dbText);
-                tr.AddNewlyCreatedDBObject(dbText, true);
-
-                double textLen;
-                try
-                {
-                    var extTxt = dbText.GeometricExtents;
-                    textLen = Math.Abs(extTxt.MaxPoint.Y - extTxt.MinPoint.Y);
-                    if (textLen <= 0) throw new InvalidOperationException();
-                }
-                catch { textLen = dbText.TextString.Length * TextCharWidth; }
-
-                bar.TextLen = textLen;
-                armTotalLen = ArmLength + textLen;
-
-                // Rotation=90° → tekst zawsze rośnie w +Y od Position.
-                // vDir= 1 (góra): tekst od +ArmLength do +armTotalLen → Position.Y = +ArmLength
-                // vDir=-1 (dół):  tekst od -armTotalLen do -ArmLength → Position.Y = -armTotalLen
-                double textStartY = vDir > 0
-                    ? ArmLength
-                    : -(armTotalLen);
-
-                dbText.Position = new Point3d(midX - TextArmOffset, textStartY, 0);
-
-                // Arm pionowy: od kink (midX,0) do (midX, vDir*armTotalLen)
-                var arm = new Line(
-                    new Point3d(midX, 0,                   0),
-                    new Point3d(midX, vDir * armTotalLen,  0))
-                {
-                    Layer      = LayerManager.LeaderLayer,
-                    LineWeight = LineWeight.LineWeight018,
-                    Linetype   = "Continuous"
-                };
-                btr.AppendEntity(arm);
-                tr.AddNewlyCreatedDBObject(arm, true);
             }
 
-            // Kółko w punkcie styku arma z dist line (złamanie)
-            if (leaderVertical)
-            {
-                double midX = !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : barsSpan / 2.0;
-                if (midX >= 0 && midX <= barsSpan)
-                    AddKinkCircle(tr, btr, new Point3d(midX, 0, 0), DotRadius);
-            }
-
-            return armTotalLen;
+            BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
+            return bar.ArmTotalLen;
         }
 
         // ----------------------------------------------------------------
@@ -629,6 +426,155 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // UpdateArmInBlock — grip arm-top
         // ----------------------------------------------------------------
+
+        // ----------------------------------------------------------------
+        // UpdateLeaderInBlock — przebudowuje MLeader z zaktualizowanymi punktami
+        // ----------------------------------------------------------------
+        public static void UpdateLeaderInBlock(
+            BlockReference br, Point3d newTextPosWCS)
+        {
+            var db = br.Database;
+            using var tr = db.TransactionManager.StartTransaction();
+
+            var brRw = tr.GetObject(br.ObjectId, OpenMode.ForWrite) as BlockReference;
+            if (brRw == null) { tr.Commit(); return; }
+
+            var bar = ReadAnnotXData(brRw);
+            if (bar == null) { tr.Commit(); return; }
+
+            // Przelicz nową pozycję tekstu do lokalnego BTR
+            var inv     = brRw.BlockTransform.Inverse();
+            var localPt = newTextPosWCS.TransformBy(inv);
+
+            // Zaktualizuj ostatni punkt w LeaderPoints
+            var pts = DecodeLeaderPoints(bar.LeaderPoints);
+            if (pts.Count > 0)
+                pts[pts.Count - 1] = localPt;
+            else
+                pts.Add(localPt);
+            bar.LeaderPoints = EncodeLeaderPoints(pts);
+
+            // Kasuj stare: Line (Continuous, ColorIndex=7) i DBText
+            var btr = (BlockTableRecord)tr.GetObject(
+                brRw.BlockTableRecord, OpenMode.ForWrite);
+            var idsToErase = new List<ObjectId>();
+            foreach (ObjectId eid in btr)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForRead);
+                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                    idsToErase.Add(eid);
+                if (ent is DBText)
+                    idsToErase.Add(eid);
+            }
+            foreach (var eid in idsToErase)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForWrite);
+                ent.Erase();
+            }
+
+            // Odbuduj geometrię z zaktualizowanymi punktami
+            BuildMLeaderInBtr(tr, btr, db, bar, pts);
+
+            // Zapisz XData
+            WriteAnnotXData(brRw, bar);
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
+        // BuildMLeaderInBtr — budowa leadera w BTR: Line segmenty + DBText + landing
+        // Używana przez BuildHorizontal, BuildVertical i UpdateLeaderInBlock.
+        // ----------------------------------------------------------------
+        private static void BuildMLeaderInBtr(
+            Transaction tr, BlockTableRecord btr, Database db,
+            BarData bar, List<Point3d> leaderPts)
+        {
+            if (leaderPts.Count < 2) return;
+
+            // 1. Rysuj segmenty leadera (Line od punktu do punktu)
+            for (int i = 0; i < leaderPts.Count - 1; i++)
+            {
+                var seg = new Line(leaderPts[i], leaderPts[i + 1])
+                {
+                    Layer      = LayerManager.LeaderLayer,
+                    ColorIndex = 7,
+                    LineWeight = LineWeight.LineWeight018,
+                    Linetype   = "Continuous"
+                };
+                btr.AppendEntity(seg);
+                tr.AddNewlyCreatedDBObject(seg, true);
+            }
+
+            // 2. Oblicz kierunek ostatniego segmentu (dla tekstu i landing)
+            var lastPt     = leaderPts[leaderPts.Count - 1];
+            var prevPt     = leaderPts[leaderPts.Count - 2];
+            var lastDir    = (lastPt - prevPt).GetNormal();
+            double textAngle = Math.Atan2(lastDir.Y, lastDir.X);
+
+            // Normalizuj kąt żeby tekst nie był do góry nogami
+            if (textAngle > Math.PI / 2.0 + 1e-6)
+                textAngle -= Math.PI;
+            else if (textAngle < -Math.PI / 2.0 - 1e-6)
+                textAngle += Math.PI;
+
+            // 3. Prostopadły wektor (zawsze "w górę" od linii)
+            var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
+
+            // 4. Tymczasowy DBText żeby zmierzyć textLen
+            string textString = $"{bar.Count} {bar.Mark}";
+            double textLen;
+            {
+                var tmpText = new DBText
+                {
+                    TextString  = textString,
+                    Height      = DefaultTextHeight,
+                    TextStyleId = GetTextStyleId(db)
+                };
+                btr.AppendEntity(tmpText);
+                tr.AddNewlyCreatedDBObject(tmpText, true);
+                try
+                {
+                    var ext = tmpText.GeometricExtents;
+                    textLen = Math.Max(
+                        Math.Abs(ext.MaxPoint.X - ext.MinPoint.X),
+                        Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y));
+                    if (textLen <= 0) textLen = textString.Length * DefaultTextHeight * 0.65;
+                }
+                catch { textLen = textString.Length * DefaultTextHeight * 0.65; }
+                tmpText.Erase();  // usuń tymczasowy
+            }
+
+            // 5. Landing line KOŃCZY SIĘ w lastPt
+            var landingStart = lastPt - lastDir * (textLen + TextArmOffset);
+            var landingLine = new Line(landingStart, lastPt)
+            {
+                Layer      = LayerManager.LeaderLayer,
+                ColorIndex = 7,
+                LineWeight = LineWeight.LineWeight018,
+                Linetype   = "Continuous"
+            };
+            btr.AppendEntity(landingLine);
+            tr.AddNewlyCreatedDBObject(landingLine, true);
+
+            // 6. Tekst NAD landing, zaczyna się od landingStart
+            var textPos = landingStart + perpDir * TextArmOffset;
+            var dbText = new DBText
+            {
+                TextString     = textString,
+                Layer          = LayerManager.AnnotLayer,
+                Height         = DefaultTextHeight,
+                ColorIndex     = 2,
+                Position       = textPos,
+                Rotation       = textAngle,
+                TextStyleId    = GetTextStyleId(db),
+                HorizontalMode = TextHorizontalMode.TextLeft,
+                VerticalMode   = TextVerticalMode.TextBase
+            };
+            btr.AppendEntity(dbText);
+            tr.AddNewlyCreatedDBObject(dbText, true);
+
+            bar.ArmTotalLen = (lastPt - prevPt).Length;
+            bar.TextLen     = textLen;
+        }
 
         public static void UpdateArmInBlock(BlockReference br, double newArmTotalLen, double newMidY = double.NaN)
         {
@@ -1120,7 +1066,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderRight ? 1 : 0)),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : bar.BarsSpan / 2.0),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderUp ? 1 : 0)),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle)
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle),      // [16]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? "") // [17] — punkty leadera "x1,y1;x2,y2;..."
             );
         }
 
@@ -1152,6 +1099,7 @@ namespace BricsCadRc.Core
             if (v.Length >= 15) bd.ArmMidY   = (double)v[14].Value;
             if (v.Length >= 16) bd.LeaderUp           = (short)v[15].Value == 1;
             if (v.Length >= 17) bd.SourceBlockHandle  = v[16].Value?.ToString() ?? "";
+            if (v.Length >= 18) bd.LeaderPoints       = (string)v[17].Value ?? "";
             return bd;
         }
 
@@ -1262,5 +1210,32 @@ namespace BricsCadRc.Core
             var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
             return st.Has(LayerManager.AnnotTextStyle) ? st[LayerManager.AnnotTextStyle] : db.Textstyle;
         }
+
+        // ----------------------------------------------------------------
+        // LeaderPoints — enkodowanie/dekodowanie punktów leadera
+        // ----------------------------------------------------------------
+
+        /// <summary>Enkoduje listę punktów do stringa "x1,y1;x2,y2;..."</summary>
+        public static string EncodeLeaderPoints(IEnumerable<Point3d> pts)
+            => string.Join(";", pts.Select(p => $"{p.X:F4},{p.Y:F4}"));
+
+        /// <summary>Dekoduje string "x1,y1;x2,y2;..." do listy Point3d (Z=0).</summary>
+        public static List<Point3d> DecodeLeaderPoints(string s)
+        {
+            var result = new List<Point3d>();
+            if (string.IsNullOrEmpty(s)) return result;
+            foreach (var seg in s.Split(';'))
+            {
+                var parts = seg.Split(',');
+                if (parts.Length >= 2
+                    && double.TryParse(parts[0], System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out double x)
+                    && double.TryParse(parts[1], System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture, out double y))
+                    result.Add(new Point3d(x, y, 0));
+            }
+            return result;
+        }
+
     }
 }

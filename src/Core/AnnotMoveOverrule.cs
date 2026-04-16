@@ -137,78 +137,29 @@ namespace BricsCadRc.Core
                     : new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0);
                 gripPoints.Add(grip0);  // [0] lateral
 
-                // X: arm pionowe — grip na gorze (ins.X, ins.Y + barsSpan + armTotalLen)
-                // Y: arm poziome — grip na prawo (ins.X + barsSpan + armTotalLen, ins.Y)
-                Point3d armTop;
-                if (Math.Abs(br.Rotation) > 1e-6)
+                // Grip[1]: koniec landing line (EndPoint ostatniego Line Continuous/ColorIndex=7)
+                Point3d grip1 = grip0;  // fallback
+                try
                 {
-                    // Dla obróconych bloków — przelicz pozycję gripa z układu lokalnego do WCS
-                    double angle = br.Rotation;
-                    double armLen = barAnnot.ArmTotalLen;
-                    double midY   = !double.IsNaN(barAnnot.ArmMidY) ? barAnnot.ArmMidY : barAnnot.BarsSpan / 2.0;
-
-                    Point3d localArmEnd;
-                    if (!barAnnot.LeaderHorizontal)
+                    using (var trG = br.Database.TransactionManager.StartTransaction())
                     {
-                        // Prosta etykieta: arm wzdłuż osi Y lokalnie
-                        double vDir = barAnnot.LeaderUp ? 1.0 : -1.0;
-                        localArmEnd = new Point3d(0, vDir * armLen, 0);
-                    }
-                    else
-                    {
-                        // Złamana etykieta: arm od (0, midY) w kierunku X lokalnie
-                        double hDir = barAnnot.LeaderRight ? 1.0 : -1.0;
-                        localArmEnd = new Point3d(hDir * armLen, midY, 0);
-                    }
-                    armTop = LocalToWCS(ins, angle, localArmEnd.X, localArmEnd.Y);
-                }
-                else
-                {
-                    // Etykieta z złamaniem: grip[1] przy końcu tekstu (TextEndLocal)
-                    if (barAnnot.TextEndLocalX != 0.0 || barAnnot.TextEndLocalY != 0.0)
-                    {
-                        armTop = new Point3d(ins.X + barAnnot.TextEndLocalX, ins.Y + barAnnot.TextEndLocalY, 0);
-                    }
-                    else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
-                        armTop = barAnnot.LeaderUp
-                            ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan + barAnnot.ArmTotalLen, 0)
-                            : new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, 0);
-                    else if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
-                    {
-                        double currentMidY = AnnotationEngine.GetArmMidY(br);
-                        double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
-                        armTop = new Point3d(ins.X + hDir2 * barAnnot.ArmTotalLen, ins.Y + currentMidY, 0);
-                    }
-                    else if (barAnnot.Direction == "Y" && !barAnnot.LeaderHorizontal)
-                    {
-                        // Y-bars, etykieta lewo/prawo — arm poziomy
-                        armTop = barAnnot.LeaderRight
-                            ? new Point3d(ins.X + barAnnot.BarsSpan + barAnnot.ArmTotalLen, ins.Y, 0)
-                            : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - barAnnot.ArmTotalLen, ins.Y, 0);
-                    }
-                    else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
-                    {
-                        // Y-bars, etykieta lewo/prawo — arm pionowy ze złamaniem
-                        double currentMidX = !double.IsNaN(barAnnot.ArmMidY)
-                            ? barAnnot.ArmMidY
-                            : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
-                        double vDir2 = barAnnot.LeaderUp ? 1.0 : -1.0;
-                        armTop = new Point3d(
-                            ins.X + currentMidX,
-                            ins.Y + vDir2 * barAnnot.ArmTotalLen,
-                            0);
-                    }
-                    else
-                    {
-                        // Y-bars, etykieta lewo/prawo — arm poziomy, uwzględnij kierunek
-                        double hDir2 = barAnnot.LeaderRight ? 1.0 : -1.0;
-                        armTop = new Point3d(
-                            ins.X + hDir2 * barAnnot.ArmTotalLen,
-                            ins.Y + barAnnot.BarsSpan / 2.0,
-                            0);
+                        var btrG = (BlockTableRecord)trG.GetObject(
+                            br.BlockTableRecord, OpenMode.ForRead);
+                        // Znajdź landing line — ostatni Line z Linetype="Continuous" i ColorIndex=7
+                        Line lastLine = null;
+                        foreach (ObjectId eid in btrG)
+                        {
+                            var line = trG.GetObject(eid, OpenMode.ForRead) as Line;
+                            if (line != null && line.ColorIndex == 7 && line.Linetype == "Continuous")
+                                lastLine = line;
+                        }
+                        if (lastLine != null)
+                            grip1 = lastLine.EndPoint.TransformBy(br.BlockTransform);
+                        trG.Commit();
                     }
                 }
-                gripPoints.Add(armTop);  // [1] arm end
+                catch { }
+                gripPoints.Add(grip1);  // [1] arm end
 
                 return;
             }
@@ -392,83 +343,65 @@ namespace BricsCadRc.Core
             {
                 if (isGrip1)
                 {
-                    double hDir       = barAnnot.LeaderRight ? 1.0 : -1.0;
-                    double vDir       = barAnnot.LeaderUp    ? 1.0 : -1.0;
-                    double origArmLen = barAnnot.ArmTotalLen;
-
-                    ClearGripTransients();
-                    var ins = br.Position;
-
-                    if (barAnnot.Direction == "X" && barAnnot.LeaderHorizontal)
+                    // grip[1] przesuwa koniec leadera — EndPoint landing line w WCS
+                    Point3d currentTextWCS;
+                    try
                     {
-                        // X-bars, etykieta lewo/prawo — stem pionowy + arm poziomy
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
-                            origArmLen + offset.X * hDir);
-                        double origMidY = !double.IsNaN(barAnnot.ArmMidY)
-                            ? barAnnot.ArmMidY
-                            : AnnotationEngine.GetArmMidY(br);
-                        double newMidY = origMidY + offset.Y;
-
-                        AddGripTransientLine(
-                            new Point3d(ins.X,                         ins.Y + barAnnot.BarsSpan / 2.0, 0),
-                            new Point3d(ins.X,                         ins.Y + newMidY,                  0));
-                        AddGripTransientLine(
-                            new Point3d(ins.X,                         ins.Y + newMidY,                  0),
-                            new Point3d(ins.X + hDir * newArmTotalLen, ins.Y + newMidY,                  0));
-
-                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidY);
+                        using (var trT = br.Database.TransactionManager.StartTransaction())
+                        {
+                            var btrT = (BlockTableRecord)trT.GetObject(
+                                br.BlockTableRecord, OpenMode.ForRead);
+                            currentTextWCS = br.Position;
+                            Line lastLine = null;
+                            foreach (ObjectId eid in btrT)
+                            {
+                                var ln = trT.GetObject(eid, OpenMode.ForRead) as Line;
+                                if (ln != null && ln.ColorIndex == 7 && ln.Linetype == "Continuous")
+                                    lastLine = ln;
+                            }
+                            if (lastLine != null)
+                                currentTextWCS = lastLine.EndPoint.TransformBy(br.BlockTransform);
+                            trT.Commit();
+                        }
                     }
-                    else if (barAnnot.Direction == "X" && !barAnnot.LeaderHorizontal)
-                    {
-                        // X-bars, etykieta góra/dół — arm pionowy
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
-                            origArmLen + offset.Y * vDir);
-                        double armEndY = barAnnot.LeaderUp
-                            ? ins.Y + barAnnot.BarsSpan + newArmTotalLen
-                            : ins.Y + barAnnot.BarsSpan / 2.0 - newArmTotalLen;
-                        AddGripTransientLine(
-                            new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0, 0),
-                            new Point3d(ins.X, armEndY,                          0));
-                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
-                        if (Math.Abs(offset.X) > 0.01)
-                            entity.TransformBy(Matrix3d.Displacement(new Vector3d(offset.X, 0, 0)));
-                    }
-                    else if (barAnnot.Direction == "Y" && barAnnot.LeaderHorizontal)
-                    {
-                        // Y-bars, etykieta góra/dół — stem poziomy + arm pionowy
-                        double origMidX = !double.IsNaN(barAnnot.ArmMidY)
-                            ? barAnnot.ArmMidY
-                            : barAnnot.BarsSpan / 2.0 + AnnotationEngine.ArmLength;
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
-                            origArmLen + offset.Y * vDir);
-                        double newMidX = origMidX + offset.X;
+                    catch { currentTextWCS = br.Position; }
 
-                        AddGripTransientLine(
-                            new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0),
-                            new Point3d(ins.X + newMidX,                  ins.Y, 0));
-                        AddGripTransientLine(
-                            new Point3d(ins.X + newMidX, ins.Y,                         0),
-                            new Point3d(ins.X + newMidX, ins.Y + vDir * newArmTotalLen,  0));
+                    // Constrain grip do osi ostatniego segmentu leadera
+                    var barAnnot2 = AnnotationEngine.ReadAnnotXData(br);
+                    if (barAnnot2 != null && !string.IsNullOrEmpty(barAnnot2.LeaderPoints))
+                    {
+                        var pts = AnnotationEngine.DecodeLeaderPoints(barAnnot2.LeaderPoints);
+                        if (pts.Count >= 2)
+                        {
+                            var lastSegDir = (pts[pts.Count - 1] - pts[pts.Count - 2]).GetNormal();
+                            // Transformuj lastSegDir z local BTR do WCS
+                            var wcsDir = lastSegDir.TransformBy(br.BlockTransform);
+                            wcsDir = new Vector3d(wcsDir.X, wcsDir.Y, 0).GetNormal();
+                            // Rzutuj offset na kierunek segmentu
+                            double proj = offset.X * wcsDir.X + offset.Y * wcsDir.Y;
 
-                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen, newMidX);
+                            // Clamp: ostatni segment nie może być krótszy niż ArmLength/2
+                            double currentSegLen = (pts[pts.Count - 1] - pts[pts.Count - 2]).Length;
+                            double newSegLen = currentSegLen + proj;
+                            double minLen = AnnotationEngine.ArmLength / 2.0;
+                            if (newSegLen < minLen)
+                                proj = minLen - currentSegLen;
+
+                            var constrainedOffset = wcsDir * proj;
+                            var newTextWCS = currentTextWCS + constrainedOffset;
+                            AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
+                        }
+                        else
+                        {
+                            var newTextWCS = currentTextWCS + offset;
+                            AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
+                        }
                     }
                     else
                     {
-                        // Y-bars, etykieta lewo/prawo — arm poziomy
-                        double newArmTotalLen = Math.Max(AnnotationEngine.ArmLength,
-                            origArmLen + offset.X * hDir);
-                        Point3d armEnd = barAnnot.LeaderRight
-                            ? new Point3d(ins.X + barAnnot.BarsSpan + newArmTotalLen, ins.Y, 0)
-                            : new Point3d(ins.X + barAnnot.BarsSpan / 2.0 - newArmTotalLen, ins.Y, 0);
-                        AddGripTransientLine(
-                            new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0),
-                            armEnd);
-                        AnnotationEngine.UpdateArmInBlock(br, newArmTotalLen);
-                        if (Math.Abs(offset.Y) > 0.01)
-                            entity.TransformBy(Matrix3d.Displacement(new Vector3d(0, offset.Y, 0)));
+                        var newTextWCS = currentTextWCS + offset;
+                        AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
                     }
-
-                    try { Application.UpdateScreen(); } catch { }
                     return;
                 }
                 else
