@@ -206,6 +206,9 @@ namespace BricsCadRc.Core
             var leaderPtsH = DecodeLeaderPoints(bar.LeaderPoints);
             if (leaderPtsH.Count < 2)
             {
+                Bricscad.ApplicationServices.Application.DocumentManager
+                    .MdiActiveDocument.Editor.WriteMessage(
+                    $"\n[DEF] leaderH={leaderHorizontal} leaderU={leaderUp} leaderR={leaderRight} vDir={(leaderUp ? 1.0 : -1.0)}");
                 double midY = bar.BarsSpan / 2.0;
                 double hDir = leaderRight ? 1.0 : -1.0;
                 double vDir = leaderUp    ? 1.0 : -1.0;
@@ -328,6 +331,12 @@ namespace BricsCadRc.Core
                 }
             }
 
+            Bricscad.ApplicationServices.Application.DocumentManager
+                .MdiActiveDocument.Editor.WriteMessage(
+                $"\n[BV] leaderV={leaderVertical} leaderR={leaderRight} leaderU={leaderUp} pts.Count={leaderPtsV.Count}");
+            foreach (var p in leaderPtsV)
+                Bricscad.ApplicationServices.Application.DocumentManager
+                    .MdiActiveDocument.Editor.WriteMessage($"\n[BV]   pt=({p.X:F0},{p.Y:F0})");
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
             return bar.ArmTotalLen;
         }
@@ -508,15 +517,27 @@ namespace BricsCadRc.Core
             var lastPt     = leaderPts[leaderPts.Count - 1];
             var prevPt     = leaderPts[leaderPts.Count - 2];
             var lastDir    = (lastPt - prevPt).GetNormal();
+            Bricscad.ApplicationServices.Application.DocumentManager
+                .MdiActiveDocument.Editor.WriteMessage(
+                $"\n[BM] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) prevPt=({prevPt.X:F0},{prevPt.Y:F0})");
             double textAngle = Math.Atan2(lastDir.Y, lastDir.X);
 
-            // Normalizuj kąt żeby tekst nie był do góry nogami
-            if (textAngle > Math.PI / 2.0 + 1e-6)
-                textAngle -= Math.PI;
-            else if (textAngle < -Math.PI / 2.0 - 1e-6)
-                textAngle += Math.PI;
+            // 3. Decyzja: tekst zawsze czytelny, landing zawsze kończy się w lastPt
+            bool lastIsHorizontal = Math.Abs(lastDir.X) > Math.Abs(lastDir.Y);
 
-            // 3. Prostopadły wektor (zawsze "w górę" od linii)
+            Vector3d textDir;
+            double textAngleFinal;
+            if (lastIsHorizontal)
+            {
+                textAngleFinal = 0;
+                textDir = new Vector3d(1, 0, 0);
+            }
+            else
+            {
+                textAngleFinal = Math.PI / 2.0;
+                textDir = new Vector3d(0, 1, 0);
+            }
+            textAngle = textAngleFinal;
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
 
             // 4. Tymczasowy DBText żeby zmierzyć textLen
@@ -540,12 +561,14 @@ namespace BricsCadRc.Core
                     if (textLen <= 0) textLen = textString.Length * DefaultTextHeight * 0.65;
                 }
                 catch { textLen = textString.Length * DefaultTextHeight * 0.65; }
-                tmpText.Erase();  // usuń tymczasowy
+                tmpText.Erase();
             }
 
-            // 5. Landing line KOŃCZY SIĘ w lastPt
-            var landingStart = lastPt - lastDir * (textLen + TextArmOffset);
-            var landingLine = new Line(landingStart, lastPt)
+            // 5. Landing: zawsze kończy się w lastPt
+            Vector3d landingDir = lastDir;
+            var landingStart = lastPt - landingDir * (textLen + TextArmOffset);
+            var landingEnd   = lastPt;
+            var landingLine  = new Line(landingStart, landingEnd)
             {
                 Layer      = LayerManager.LeaderLayer,
                 ColorIndex = 7,
@@ -555,8 +578,21 @@ namespace BricsCadRc.Core
             btr.AppendEntity(landingLine);
             tr.AddNewlyCreatedDBObject(landingLine, true);
 
-            // 6. Tekst NAD landing, zaczyna się od landingStart
-            var textPos = landingStart + perpDir * TextArmOffset;
+            // 6. Tekst pisany od landingStart w kierunku landingEnd
+            Point3d textPos;
+            if (lastIsHorizontal)
+            {
+                double xStart = Math.Min(landingStart.X, landingEnd.X);
+                textPos = new Point3d(xStart, landingStart.Y + TextArmOffset, 0);
+            }
+            else
+            {
+                double yStart = Math.Min(landingStart.Y, landingEnd.Y);
+                textPos = new Point3d(landingStart.X - TextArmOffset, yStart, 0);
+            }
+            Bricscad.ApplicationServices.Application.DocumentManager
+                .MdiActiveDocument.Editor.WriteMessage(
+                $"\n[LAST] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) landingStart=({landingStart.X:F0},{landingStart.Y:F0}) textPos=({textPos.X:F0},{textPos.Y:F0}) horiz={lastIsHorizontal}");
             var dbText = new DBText
             {
                 TextString     = textString,
@@ -574,6 +610,15 @@ namespace BricsCadRc.Core
 
             bar.ArmTotalLen = (lastPt - prevPt).Length;
             bar.TextLen     = textLen;
+            Bricscad.ApplicationServices.Application.DocumentManager
+                .MdiActiveDocument.Editor.WriteMessage(
+                $"\n[GEOM] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) " +
+                $"lastPt=({lastPt.X:F0},{lastPt.Y:F0}) " +
+                $"landingStart=({landingStart.X:F0},{landingStart.Y:F0}) " +
+                $"landingEnd=({landingEnd.X:F0},{landingEnd.Y:F0}) " +
+                $"textPos=({textPos.X:F0},{textPos.Y:F0}) " +
+                $"textAngle={textAngle * 180 / Math.PI:F0}° " +
+                $"textLen={textLen:F0}");
         }
 
         public static void UpdateArmInBlock(BlockReference br, double newArmTotalLen, double newMidY = double.NaN)

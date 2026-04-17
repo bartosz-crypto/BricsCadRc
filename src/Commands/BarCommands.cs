@@ -608,19 +608,27 @@ namespace BricsCadRc.Commands
                     // ETAP 3 — wielosegmentowy leader: pętla GetPoint
                     var leaderWcsPts = new List<Point3d> { kinkPt };  // start = kinkPt z jig2
 
+                    bool firstClickDone = false;
                     while (true)
                     {
-                        var ptOpts = new PromptPointOptions(
-                            "\nKliknij punkt leadera [Enter=zakończ]: ");
-                        ptOpts.AllowNone = true;
-                        // Pokaż rubber band od ostatniego punktu
+                        string msg = firstClickDone
+                            ? "\nKliknij kolejny punkt leadera [Enter=zakończ]: "
+                            : "\nKliknij koniec leadera (pozycja tekstu): ";
+                        var ptOpts = new PromptPointOptions(msg);
+                        ptOpts.AllowNone    = firstClickDone;  // Enter dozwolony tylko po pierwszym kliku
                         ptOpts.UseBasePoint = true;
                         ptOpts.BasePoint    = leaderWcsPts[leaderWcsPts.Count - 1];
 
                         var ptRes = ed.GetPoint(ptOpts);
                         if (ptRes.Status == PromptStatus.Cancel) return false;
-                        if (ptRes.Status != PromptStatus.OK) break;  // Enter = zakończ
+                        if (ptRes.Status == PromptStatus.None)   // Enter
+                        {
+                            if (firstClickDone) break;
+                            else continue;  // nie zakończ przed pierwszym klikiem
+                        }
+                        if (ptRes.Status != PromptStatus.OK) continue;
                         leaderWcsPts.Add(ptRes.Value);
+                        firstClickDone = true;
                     }
 
                     if (leaderWcsPts.Count < 2)
@@ -657,6 +665,18 @@ namespace BricsCadRc.Commands
                         ? new Point3d(0, sourceBar.BarsSpan / 2.0, 0)   // X-bars: dist line wzdłuż Y
                         : new Point3d(sourceBar.BarsSpan / 2.0, 0, 0);  // Y-bars: dist line wzdłuż X
                     localPts.Insert(0, distLinePt);
+
+                    // Detekcja "zawracania" — usuń punkty pośrednie które tworzą kąt ostry
+                    for (int k = localPts.Count - 2; k >= 1; k--)
+                    {
+                        var before = localPts[k - 1];
+                        var mid    = localPts[k];
+                        var after  = localPts[k + 1];
+                        var d1 = (mid   - before).GetNormal();
+                        var d2 = (after - mid).GetNormal();
+                        if (d1.DotProduct(d2) < -0.1)
+                            localPts.RemoveAt(k);
+                    }
 
                     sourceBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(localPts);
 
@@ -730,6 +750,7 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 9 — CreateLeader
+            ed.WriteMessage($"\n[AF] leaderH={leaderHorizontal} leaderU={leaderUp} leaderR={leaderRight}");
             int posNr = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, sourceBar, leaderHorizontal, posNr,
@@ -740,66 +761,6 @@ namespace BricsCadRc.Commands
 
             BarBlockEngine.LinkAnnotation(db, blockRefId, annotResult.BlockRefId);
             AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
-
-            if (Math.Abs(sourceBar.Angle) < 1e-6)
-            {
-                // Arm-fix — prosta etykieta
-                if (!leaderHorizontal && userClickedInJig2 && insertOverride.HasValue)
-                {
-                    double desiredLen = horizontal
-                        ? Math.Abs(kinkPt.Y - (insertOverride.Value.Y + sourceBar.BarsSpan / 2.0))
-                        : Math.Abs(kinkPt.X - (insertOverride.Value.X + sourceBar.BarsSpan / 2.0));
-                    if (desiredLen > AnnotationEngine.ArmLength)
-                    {
-                        using var trA = db.TransactionManager.StartTransaction();
-                        var brA = trA.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
-                        trA.Commit();
-                        if (brA != null) AnnotationEngine.UpdateArmInBlock(brA, desiredLen);
-                    }
-                }
-                // Arm-fix — złamana etykieta
-                if (leaderHorizontal && userClickedInJig3)
-                {
-                    double desiredLen = horizontal
-                        ? Math.Abs(jig3CursorPt.X - labelPos)
-                        : Math.Abs(jig3CursorPt.Y - labelPos);
-                    if (desiredLen > AnnotationEngine.ArmLength)
-                    {
-                        using var trA2 = db.TransactionManager.StartTransaction();
-                        var brA2  = trA2.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
-                        var barA2 = brA2 != null ? AnnotationEngine.ReadAnnotXData(brA2) : null;
-                        double midY = barA2 != null && !double.IsNaN(barA2.ArmMidY) ? barA2.ArmMidY : double.NaN;
-                        trA2.Commit();
-                        if (brA2 != null) AnnotationEngine.UpdateArmInBlock(brA2, desiredLen, midY);
-                    }
-                }
-            }
-            else if (leaderHorizontal && userClickedInJig3 && insertOverride.HasValue)
-            {
-                // Obrócony blok — oblicz długość arma z lokalnej odległości kursora Jig3
-                double cos3 = Math.Cos(sourceBar.Angle);
-                double sin3 = Math.Sin(sourceBar.Angle);
-                var ins3    = insertOverride.Value;
-
-                // Przelicz jig3CursorPt do układu lokalnego
-                double dcx3 = jig3CursorPt.X - ins3.X;
-                double dcy3 = jig3CursorPt.Y - ins3.Y;
-                // localX = wzdłuż pręta (oś X lokalnie)
-                double cursor3LocalX = dcx3 * cos3 + dcy3 * sin3;
-
-                double desiredArmLen = Math.Abs(cursor3LocalX);
-                if (desiredArmLen > AnnotationEngine.ArmLength)
-                {
-                    using var trArmR = db.TransactionManager.StartTransaction();
-                    var brArmR = trArmR.GetObject(annotResult.BlockRefId, OpenMode.ForRead) as BlockReference;
-                    var barArmR = brArmR != null ? AnnotationEngine.ReadAnnotXData(brArmR) : null;
-                    double midYR = barArmR != null && !double.IsNaN(barArmR.ArmMidY)
-                        ? barArmR.ArmMidY : double.NaN;
-                    trArmR.Commit();
-                    if (brArmR != null)
-                        AnnotationEngine.UpdateArmInBlock(brArmR, desiredArmLen, midYR);
-                }
-            }
 
             return true;
         }

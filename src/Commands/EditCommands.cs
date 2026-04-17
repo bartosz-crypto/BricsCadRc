@@ -704,9 +704,6 @@ namespace BricsCadRc.Commands
 
                         if (newTextLen > 0)
                         {
-                            double newArmTotalLen = AnnotationEngine.ArmLength + newTextLen;
-
-                            // Zaktualizuj TextLen w XData — UpdateArmInBlock czyta go do pozycjonowania tekstu
                             barArm.TextLen = newTextLen;
                             using (var trTextLen = db.TransactionManager.StartTransaction())
                             {
@@ -717,7 +714,6 @@ namespace BricsCadRc.Commands
                             }
 
                             trArm.Commit();
-                            AnnotationEngine.UpdateArmInBlock(brArm, newArmTotalLen);
                         }
                         else
                         {

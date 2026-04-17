@@ -49,6 +49,8 @@ namespace BricsCadRc.Core
             = new Dictionary<long, Point3d>();
         private static readonly Dictionary<long, Point3d> _annotDragStart
             = new Dictionary<long, Point3d>();
+        private static readonly Dictionary<long, double>  _dragStartSegLen
+            = new Dictionary<long, double>();
 
         // Klucz: ObjectId annotacji, wartość: oryginalna pozycja przed dragiem.
         // Czyszczone przy final commit (sukces) lub w OnCommandCancelled (ESC).
@@ -127,6 +129,8 @@ namespace BricsCadRc.Core
                 long hv = br.ObjectId.Handle.Value;
                 _dragOrigArm.Remove(hv);
                 _dragOrigPos.Remove(hv);
+                _dragStartSegLen.Remove(hv);
+                _dragStartSegLen.Remove(0L);
                 ClearGripTransients();
 
 
@@ -137,28 +141,14 @@ namespace BricsCadRc.Core
                     : new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0);
                 gripPoints.Add(grip0);  // [0] lateral
 
-                // Grip[1]: koniec landing line (EndPoint ostatniego Line Continuous/ColorIndex=7)
+                // Grip[1]: punkt początku tekstu (z uwzględnieniem Down)
                 Point3d grip1 = grip0;  // fallback
-                try
+                var ptsGrip = AnnotationEngine.DecodeLeaderPoints(barAnnot.LeaderPoints);
+                if (ptsGrip.Count > 0)
                 {
-                    using (var trG = br.Database.TransactionManager.StartTransaction())
-                    {
-                        var btrG = (BlockTableRecord)trG.GetObject(
-                            br.BlockTableRecord, OpenMode.ForRead);
-                        // Znajdź landing line — ostatni Line z Linetype="Continuous" i ColorIndex=7
-                        Line lastLine = null;
-                        foreach (ObjectId eid in btrG)
-                        {
-                            var line = trG.GetObject(eid, OpenMode.ForRead) as Line;
-                            if (line != null && line.ColorIndex == 7 && line.Linetype == "Continuous")
-                                lastLine = line;
-                        }
-                        if (lastLine != null)
-                            grip1 = lastLine.EndPoint.TransformBy(br.BlockTransform);
-                        trG.Commit();
-                    }
+                    var lastLocal = ptsGrip[ptsGrip.Count - 1];
+                    grip1 = lastLocal.TransformBy(br.BlockTransform);
                 }
-                catch { }
                 gripPoints.Add(grip1);  // [1] arm end
 
                 return;
@@ -343,65 +333,52 @@ namespace BricsCadRc.Core
             {
                 if (isGrip1)
                 {
-                    // grip[1] przesuwa koniec leadera — EndPoint landing line w WCS
-                    Point3d currentTextWCS;
-                    try
-                    {
-                        using (var trT = br.Database.TransactionManager.StartTransaction())
-                        {
-                            var btrT = (BlockTableRecord)trT.GetObject(
-                                br.BlockTableRecord, OpenMode.ForRead);
-                            currentTextWCS = br.Position;
-                            Line lastLine = null;
-                            foreach (ObjectId eid in btrT)
-                            {
-                                var ln = trT.GetObject(eid, OpenMode.ForRead) as Line;
-                                if (ln != null && ln.ColorIndex == 7 && ln.Linetype == "Continuous")
-                                    lastLine = ln;
-                            }
-                            if (lastLine != null)
-                                currentTextWCS = lastLine.EndPoint.TransformBy(br.BlockTransform);
-                            trT.Commit();
-                        }
-                    }
-                    catch { currentTextWCS = br.Position; }
+                    long handle = br.ObjectId.IsNull ? 0L : br.ObjectId.Handle.Value;
+                    if (handle == 0) return;  // preview — zostaw BricsCAD
 
-                    // Constrain grip do osi ostatniego segmentu leadera
-                    var barAnnot2 = AnnotationEngine.ReadAnnotXData(br);
-                    if (barAnnot2 != null && !string.IsNullOrEmpty(barAnnot2.LeaderPoints))
+                    // Odczytaj świeży snapshot LeaderPoints z XData
+                    List<Point3d> pts = null;
+                    using (var trT = br.Database.TransactionManager.StartTransaction())
                     {
-                        var pts = AnnotationEngine.DecodeLeaderPoints(barAnnot2.LeaderPoints);
-                        if (pts.Count >= 2)
-                        {
-                            var lastSegDir = (pts[pts.Count - 1] - pts[pts.Count - 2]).GetNormal();
-                            // Transformuj lastSegDir z local BTR do WCS
-                            var wcsDir = lastSegDir.TransformBy(br.BlockTransform);
-                            wcsDir = new Vector3d(wcsDir.X, wcsDir.Y, 0).GetNormal();
-                            // Rzutuj offset na kierunek segmentu
-                            double proj = offset.X * wcsDir.X + offset.Y * wcsDir.Y;
-
-                            // Clamp: ostatni segment nie może być krótszy niż ArmLength/2
-                            double currentSegLen = (pts[pts.Count - 1] - pts[pts.Count - 2]).Length;
-                            double newSegLen = currentSegLen + proj;
-                            double minLen = AnnotationEngine.ArmLength / 2.0;
-                            if (newSegLen < minLen)
-                                proj = minLen - currentSegLen;
-
-                            var constrainedOffset = wcsDir * proj;
-                            var newTextWCS = currentTextWCS + constrainedOffset;
-                            AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
-                        }
-                        else
-                        {
-                            var newTextWCS = currentTextWCS + offset;
-                            AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
-                        }
+                        var brT = trT.GetObject(br.ObjectId, OpenMode.ForRead) as BlockReference;
+                        var barT = brT != null ? AnnotationEngine.ReadAnnotXData(brT) : null;
+                        if (barT != null && !string.IsNullOrEmpty(barT.LeaderPoints))
+                            pts = AnnotationEngine.DecodeLeaderPoints(barT.LeaderPoints);
+                        trT.Commit();
                     }
-                    else
+
+                    if (pts == null || pts.Count < 2)
                     {
-                        var newTextWCS = currentTextWCS + offset;
-                        AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
+                        // Fallback: przesuń o offset bez constraina
+                        if (pts != null && pts.Count > 0)
+                        {
+                            var lastWCS0 = pts[pts.Count - 1].TransformBy(br.BlockTransform);
+                            AnnotationEngine.UpdateLeaderInBlock(br, lastWCS0 + offset);
+                        }
+                        return;
                     }
+
+                    // Constrain wzdłuż osi ostatniego segmentu
+                    var lastSegDirLocal = (pts[pts.Count - 1] - pts[pts.Count - 2]).GetNormal();
+                    var wcsDir = lastSegDirLocal.TransformBy(br.BlockTransform);
+                    wcsDir = new Vector3d(wcsDir.X, wcsDir.Y, 0).GetNormal();
+
+                    var prevWCS = pts[pts.Count - 2].TransformBy(br.BlockTransform);
+                    var lastWCS = pts[pts.Count - 1].TransformBy(br.BlockTransform);
+
+                    // Zapamiętaj startSegLen przy pierwszym wywołaniu dla tego handle
+                    long h = br.ObjectId.Handle.Value;
+                    if (!_dragStartSegLen.ContainsKey(h))
+                        _dragStartSegLen[h] = (lastWCS - prevWCS).DotProduct(wcsDir);
+                    double startSegLen = _dragStartSegLen[h];
+
+                    // newSegLen = startSegLen + kumulatywny offset wzdłuż wcsDir
+                    double proj = offset.X * wcsDir.X + offset.Y * wcsDir.Y;
+                    double newSegLen = startSegLen + proj;
+                    if (newSegLen < 10.0) newSegLen = 10.0;
+
+                    var newTextWCS = prevWCS + wcsDir * newSegLen;
+                    AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
                     return;
                 }
                 else
