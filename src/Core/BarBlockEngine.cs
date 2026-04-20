@@ -86,6 +86,10 @@ namespace BricsCadRc.Core
             bar.BarsSpan = barsSpan;
             bar.Cover    = cover;
 
+            // Cover przesuwa blok w kierunku startu — długość prętów bez zmian
+            if (horizontal) x0 += cover;
+            else             y0 += cover;
+
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
             var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
@@ -375,6 +379,10 @@ namespace BricsCadRc.Core
             }
 
             bar.LengthA  = barLength;
+
+            // Cover przesuwa blok w kierunku startu — długość prętów bez zmian
+            if (horizontal) x0 += bar.Cover;
+            else             y0 += bar.Cover;
 
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);

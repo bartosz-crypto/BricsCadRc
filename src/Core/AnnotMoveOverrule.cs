@@ -205,6 +205,20 @@ namespace BricsCadRc.Core
                     break;
                 }
             }
+            // RC_BAR_ANNOT grip[0]: project offset onto bar axis so grip marker follows same path
+            if (!isGrip1)
+            {
+                var barAnnotGdc = AnnotationEngine.ReadAnnotXData(br);
+                if (barAnnotGdc != null)
+                {
+                    double localBarAngle = (barAnnotGdc.Direction == "X") ? 0.0 : Math.PI / 2.0;
+                    double wcsAngle = br.Rotation + localBarAngle;
+                    double dx = Math.Cos(wcsAngle), dy = Math.Sin(wcsAngle);
+                    double proj = offset.X * dx + offset.Y * dy;
+                    base.MoveGripPointsAt(entity, grips, new Vector3d(proj * dx, proj * dy, 0), bitFlags);
+                    return;
+                }
+            }
             ApplyGripMove(entity, br, offset, isGrip1);
         }
 
@@ -224,6 +238,20 @@ namespace BricsCadRc.Core
             foreach (int idx in indices)
                 if (idx == 1) isGrip1 = true;
 
+            // RC_BAR_ANNOT grip[0]: project offset onto bar axis so grip marker follows same path
+            if (!isGrip1)
+            {
+                var barAnnot = AnnotationEngine.ReadAnnotXData(br);
+                if (barAnnot != null)
+                {
+                    double localBarAngle = (barAnnot.Direction == "X") ? 0.0 : Math.PI / 2.0;
+                    double wcsAngle = br.Rotation + localBarAngle;
+                    double dx = Math.Cos(wcsAngle), dy = Math.Sin(wcsAngle);
+                    double proj = offset.X * dx + offset.Y * dy;
+                    base.MoveGripPointsAt(entity, indices, new Vector3d(proj * dx, proj * dy, 0));
+                    return;
+                }
+            }
             ApplyGripMove(entity, br, offset, isGrip1);
         }
 
@@ -418,11 +446,11 @@ namespace BricsCadRc.Core
                     Point3d newPos;
                     if (Math.Abs(br.Rotation) > 1e-6)
                     {
-                        // Obrócony blok — ruch WZDŁUŻ prętów (cos θ, sin θ)
-                        // (nie wzdłuż dist line, bo to oddala kółka od prętów)
-                        double angle = br.Rotation;
-                        double dx = Math.Cos(angle);
-                        double dy = Math.Sin(angle);
+                        // Obrócony blok — kierunek prętów w WCS = rotation + lokalna oś pręta
+                        double localBarAngle = (barAnnot.Direction == "X") ? 0.0 : Math.PI / 2.0;
+                        double wcsAngle = br.Rotation + localBarAngle;
+                        double dx = Math.Cos(wcsAngle);
+                        double dy = Math.Sin(wcsAngle);
                         double proj = offset.X * dx + offset.Y * dy;
                         newPos = new Point3d(
                             origPos.X + proj * dx,
@@ -431,13 +459,13 @@ namespace BricsCadRc.Core
                     }
                     else if (barAnnot.Direction == "X")
                     {
-                        // X-bars: dist line wzdłuż Y → grip porusza się wzdłuż Y
-                        newPos = new Point3d(origPos.X, origPos.Y + offset.Y, origPos.Z);
+                        // X-bars: pręty wzdłuż X → ruch wzdłuż X (równolegle do prętów)
+                        newPos = new Point3d(origPos.X + offset.X, origPos.Y, origPos.Z);
                     }
                     else
                     {
-                        // Y-bars: dist line wzdłuż X → grip porusza się wzdłuż X
-                        newPos = new Point3d(origPos.X + offset.X, origPos.Y, origPos.Z);
+                        // Y-bars: pręty wzdłuż Y → ruch wzdłuż Y (równolegle do prętów)
+                        newPos = new Point3d(origPos.X, origPos.Y + offset.Y, origPos.Z);
                     }
 
                     br.UpgradeOpen();
@@ -582,7 +610,18 @@ namespace BricsCadRc.Core
                 var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
                 if (annotBr == null) { tr.Commit(); return; }
 
-                // MOVE/COPY — stosujemy ten sam transform co na bar block
+                // Safety check: link może być "stale" po COPY — XData kopii zawiera handle oryginału.
+                // Prawdziwy link istnieje tylko gdy annot.SourceBlockHandle wskazuje na NAS.
+                string myHandleHex = br.Handle.Value.ToString("X8");
+                var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
+                string annotSourceHex = (annotData?.SourceBlockHandle ?? "").ToUpperInvariant();
+                if (!string.Equals(annotSourceHex, myHandleHex, StringComparison.OrdinalIgnoreCase))
+                {
+                    tr.Commit();
+                    return;
+                }
+
+                // Link poprawny — przesuń annot razem z blokiem
                 AnnotOverruleState.BypassConstraint = true;
                 try { annotBr.TransformBy(transform); }
                 finally { AnnotOverruleState.BypassConstraint = false; }

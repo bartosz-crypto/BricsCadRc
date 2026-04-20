@@ -166,9 +166,10 @@ namespace BricsCadRc.Core
             BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
+            double lineExt  = (bar.Count >= 2 && bar.Count <= 3) ? DotRadius : 0.0;
 
             // 1. Dist line — zawsze pionowa
-            var distLine = new Line(new Point3d(0, 0, 0), new Point3d(0, barsSpan, 0))
+            var distLine = new Line(new Point3d(0, -lineExt, 0), new Point3d(0, barsSpan + lineExt, 0))
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -262,9 +263,10 @@ namespace BricsCadRc.Core
             bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true)
         {
             double barsSpan = (bar.Count - 1) * bar.Spacing;
+            double lineExt  = (bar.Count >= 2 && bar.Count <= 3) ? DotRadius : 0.0;
 
             // 1. Dist line — pozioma przy y=0 (gorna krawedz pretow)
-            var distLine = new Line(new Point3d(0, 0, 0), new Point3d(barsSpan, 0, 0))
+            var distLine = new Line(new Point3d(-lineExt, 0, 0), new Point3d(barsSpan + lineExt, 0, 0))
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -613,15 +615,12 @@ namespace BricsCadRc.Core
             var lastPt     = leaderPts[leaderPts.Count - 1];
             var prevPt     = leaderPts[leaderPts.Count - 2];
             var lastDir    = (lastPt - prevPt).GetNormal();
-            Bricscad.ApplicationServices.Application.DocumentManager
-                .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[BM] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) prevPt=({prevPt.X:F0},{prevPt.Y:F0})");
             // 3. Kąt tekstu = kąt ostatniego segmentu (dokładny, nie snap do 0/90°)
             double rawAngle = Math.Atan2(lastDir.Y, lastDir.X);
             double textAngle = rawAngle;
             // Normalizuj żeby tekst był czytelny (nie do góry nogami)
             if (textAngle > Math.PI / 2.0 + 1e-6) textAngle -= Math.PI;
-            else if (textAngle < -Math.PI / 2.0 - 1e-6) textAngle += Math.PI;
+            else if (textAngle <= -Math.PI / 2.0 + 1e-6) textAngle += Math.PI;
 
             var textDir = new Vector3d(Math.Cos(textAngle), Math.Sin(textAngle), 0);
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
@@ -664,20 +663,10 @@ namespace BricsCadRc.Core
             btr.AppendEntity(landingLine);
             tr.AddNewlyCreatedDBObject(landingLine, true);
 
-            // 6. textPos = landingStart + perpDir * TextArmOffset
-            Point3d textPos = landingStart + perpDir * TextArmOffset;
-            Bricscad.ApplicationServices.Application.DocumentManager
-                .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[LAST] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) landingStart=({landingStart.X:F0},{landingStart.Y:F0}) textPos=({textPos.X:F0},{textPos.Y:F0}) textAngle={textAngle * 180 / Math.PI:F1}°");
-            Bricscad.ApplicationServices.Application.DocumentManager
-                .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[BM-ROT] barAngle={bar.Angle * 180 / Math.PI:F0}° " +
-                $"textAngle_local={textAngle * 180 / Math.PI:F0}° " +
-                $"perpDir=({perpDir.X:F2},{perpDir.Y:F2}) " +
-                $"lastDir=({lastDir.X:F2},{lastDir.Y:F2}) " +
-                $"lastPt=({lastPt.X:F0},{lastPt.Y:F0}) " +
-                $"landingStart=({landingStart.X:F0},{landingStart.Y:F0}) " +
-                $"textPos=({textPos.X:F0},{textPos.Y:F0})");
+            // 6. textPos: gdy textAngle był flipowany, anchor = lastPt; gdy nie — landingStart
+            bool textFlipped  = Math.Abs(textAngle - rawAngle) > 1e-6;
+            Point3d textAnchor = textFlipped ? lastPt : landingStart;
+            Point3d textPos    = textAnchor + perpDir * TextArmOffset;
             var dbText = new DBText
             {
                 TextString     = textString,
@@ -695,15 +684,6 @@ namespace BricsCadRc.Core
 
             bar.ArmTotalLen = (lastPt - prevPt).Length;
             bar.TextLen     = textLen;
-            Bricscad.ApplicationServices.Application.DocumentManager
-                .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[GEOM] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) " +
-                $"lastPt=({lastPt.X:F0},{lastPt.Y:F0}) " +
-                $"landingStart=({landingStart.X:F0},{landingStart.Y:F0}) " +
-                $"landingEnd=({landingEnd.X:F0},{landingEnd.Y:F0}) " +
-                $"textPos=({textPos.X:F0},{textPos.Y:F0}) " +
-                $"textAngle={textAngle * 180 / Math.PI:F0}° " +
-                $"textLen={textLen:F0}");
         }
 
         public static void UpdateArmInBlock(BlockReference br, double newArmTotalLen, double newMidY = double.NaN)

@@ -21,11 +21,16 @@ namespace BricsCadRc.App
             // Ogranicz ruch blokow RC_ANNOT_nnn do osi kierunku zbrojenia (X lub Y)
             AnnotMoveOverrule.Register();
 
+            // Remap handle'ów block↔annot po kopiowaniu (COPY/MIRROR/ARRAY)
+            BarCopyWatcher.Register();
+
             // Auto-aktualizacja rozkładów po rozciągnięciu polilinii pręta (FEATURE E)
             BarGeometryWatcher.Register();
 
             // Snap grotu MLeadera (etykieta RC_BAR) z powrotem na pręt po edycji
             RcMLeaderOverrule.Register();
+
+            BarBlockHighlightManager.Register();
 
             // Opóźniona aktualizacja etykiet prętów po ERASE
             if (doc != null)
@@ -39,6 +44,7 @@ namespace BricsCadRc.App
 
         public void Terminate()
         {
+            BarBlockHighlightManager.Unregister();
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc != null)
             {
@@ -48,6 +54,7 @@ namespace BricsCadRc.App
 
             RcMLeaderOverrule.Unregister();
             BarGeometryWatcher.Unregister();
+            BarCopyWatcher.Unregister();
             AnnotMoveOverrule.Unregister();
         }
 
