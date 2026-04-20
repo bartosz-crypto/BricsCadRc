@@ -41,8 +41,23 @@ namespace BricsCadRc.Dialogs
             var segments = coreOfMark.Split('-');
             _posNr = segments.Length >= 2 ? segments[1] : "01";
 
-            CountBox.Text      = count.ToString();
-            SpacingBox.Text    = spacing.ToString("F0");
+            CountBox.Text = count.ToString();
+
+            // Prefill z Mark (np. "H12-01-190" → 190), fallback na parametr spacing
+            double spacingFromMark = spacing;
+            if (!string.IsNullOrEmpty(mark))
+            {
+                var mParts = mark.Split('-');
+                if (mParts.Length >= 3
+                    && double.TryParse(mParts[mParts.Length - 1],
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double sp))
+                {
+                    spacingFromMark = sp;
+                }
+            }
+            SpacingBox.Text = spacingFromMark.ToString("F0");
             SuffixBox.Text     = suffix;
             BaseMarkLabel.Text = coreOfMark;
             UpdatePreview();

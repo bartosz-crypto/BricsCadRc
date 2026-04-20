@@ -525,7 +525,6 @@ namespace BricsCadRc.Commands
             Point3d  kinkPt           = horizontal
                 ? new Point3d(barResult.MinPoint.X, barResult.MinPoint.Y + barsSpan / 2.0, 0)
                 : new Point3d(barResult.MinPoint.X + barsSpan / 2.0, barResult.MinPoint.Y, 0);
-            bool     userClickedInJig2 = false;
             bool     userClickedInJig3 = false;
             Point3d  jig3CursorPt      = kinkPt;
             bool     leaderHorizontal  = false;
@@ -597,42 +596,47 @@ namespace BricsCadRc.Commands
                 if (res2.Status == PromptStatus.OK)
                 {
                     var direction = jig2.Direction;
-                    kinkPt            = jig2.KinkPt;
-                    userClickedInJig2 = true;
-                    leaderUp          = direction != LabelDirection.Down;
-
-                    bool isSimple = horizontal
+                    kinkPt           = jig2.KinkPt;
+                    leaderHorizontal = horizontal
                         ? direction == LabelDirection.Left || direction == LabelDirection.Right
                         : direction == LabelDirection.Up   || direction == LabelDirection.Down;
+                    leaderRight = direction == LabelDirection.Right;
+                    leaderUp    = direction == LabelDirection.Up;
 
-                    // ETAP 3 — wielosegmentowy leader: pętla GetPoint
+                    // ETAP 3 — wielosegmentowy leader: pętla GetPoint z live preview
                     var leaderWcsPts = new List<Point3d> { kinkPt };  // start = kinkPt z jig2
 
-                    bool firstClickDone = false;
-                    while (true)
+                    using (var drawer = new LeaderTransientDrawer())
                     {
-                        string msg = firstClickDone
-                            ? "\nKliknij kolejny punkt leadera [Enter=zakończ]: "
-                            : "\nKliknij koniec leadera (pozycja tekstu): ";
-                        var ptOpts = new PromptPointOptions(msg);
-                        ptOpts.AllowNone    = firstClickDone;  // Enter dozwolony tylko po pierwszym kliku
-                        ptOpts.UseBasePoint = true;
-                        ptOpts.BasePoint    = leaderWcsPts[leaderWcsPts.Count - 1];
-
-                        var ptRes = ed.GetPoint(ptOpts);
-                        if (ptRes.Status == PromptStatus.Cancel) return false;
-                        if (ptRes.Status == PromptStatus.None)   // Enter
+                        while (true)
                         {
-                            if (firstClickDone) break;
-                            else continue;  // nie zakończ przed pierwszym klikiem
-                        }
-                        if (ptRes.Status != PromptStatus.OK) continue;
-                        leaderWcsPts.Add(ptRes.Value);
-                        firstClickDone = true;
-                    }
+                            var ptOpts = new PromptPointOptions(
+                                "\nKliknij punkt leadera [Enter=zatwierdź]: ");
+                            ptOpts.AllowNone = true;
+                            ptOpts.UseBasePoint = true;
+                            ptOpts.BasePoint = leaderWcsPts[leaderWcsPts.Count - 1];
 
-                    if (leaderWcsPts.Count < 2)
-                        leaderWcsPts.Add(kinkPt + new Vector3d(0, AnnotationEngine.ArmLength, 0));  // fallback
+                            PointMonitorEventHandler monitor = (s, ev) =>
+                            {
+                                try
+                                {
+                                    drawer.UpdatePreview(leaderWcsPts, ev.Context.ComputedPoint);
+                                    Application.UpdateScreen();
+                                }
+                                catch { }
+                            };
+                            ed.PointMonitor += monitor;
+
+                            PromptPointResult ptRes;
+                            try { ptRes = ed.GetPoint(ptOpts); }
+                            finally { ed.PointMonitor -= monitor; }
+
+                            if (ptRes.Status == PromptStatus.Cancel) { drawer.Clear(); return false; }
+                            if (ptRes.Status != PromptStatus.OK) break;
+                            leaderWcsPts.Add(ptRes.Value);
+                        }
+                        drawer.Clear();
+                    }
 
                     // insertPt = punkt wstawienia RC_BAR_BLOCK (origin BTR w WCS)
                     Point3d insertPt;
@@ -680,21 +684,22 @@ namespace BricsCadRc.Commands
 
                     sourceBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(localPts);
 
-                    // leaderHorizontal=true gdy user kliknął przynajmniej jeden punkt (jest złamanie)
-                    leaderHorizontal = leaderWcsPts.Count > 1;
-
-                    // leaderUp/leaderRight z kierunku ostatniego segmentu
-                    var lastMsDir = leaderWcsPts[leaderWcsPts.Count - 1]
-                                  - leaderWcsPts[leaderWcsPts.Count - 2];
-                    if (horizontal)
-                        leaderRight = lastMsDir.X >= 0;
-                    else
-                        leaderUp = lastMsDir.Y >= 0;
+                    if (leaderWcsPts.Count >= 2)
+                    {
+                        // User kliknął w jig3 → wielosegmentowy leader
+                        leaderHorizontal = true;
+                        var lastMsDir = leaderWcsPts[leaderWcsPts.Count - 1]
+                                      - leaderWcsPts[leaderWcsPts.Count - 2];
+                        if (horizontal)
+                            leaderRight = lastMsDir.X >= 0;
+                        else
+                            leaderUp = lastMsDir.Y >= 0;
+                    }
+                    // else: Enter od razu → zachowaj leaderHorizontal/leaderRight/leaderUp z jig2
                 }
                 else
                 {
                     kinkPt            = jig2.LastCursorPt;
-                    userClickedInJig2 = true;
                 }
             }
 

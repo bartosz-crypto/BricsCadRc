@@ -45,6 +45,10 @@ namespace BricsCadRc.Core
         /// <summary>Łączna masa zestawu [kg] = TotalCount × CuttingLength/1000 × LinearMass</summary>
         public double TotalMassKg => TotalCount * (CuttingLength / 1000.0) * LinearMass;
 
+        public string NoOfMembers { get; set; } = "1";
+        public string TypeAndSize => $"H{Diameter}";
+        public string TotalNoBarsStr => TotalCount.ToString();
+
         /// <summary>Kolumna wyświetlana — A [mm]</summary>
         public string ColA => A > 0 ? ((int)A).ToString() : "";
 

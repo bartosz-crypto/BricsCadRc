@@ -17,6 +17,7 @@
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Mark (readonly) -->
@@ -53,6 +54,9 @@
             <CheckBox x:Name="CbAddAnnotation" Grid.Row="6" Grid.ColumnSpan="2"
                       Content="Dodaj opis rozkładu" Margin="0,8,0,0"
                       Visibility="Collapsed"/>
+
+            <CheckBox x:Name="CbRebuildLeader" Grid.Row="7" Grid.ColumnSpan="2"
+                      Content="Przebuduj leader" Margin="0,4,0,0"/>
         </Grid>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">

@@ -64,34 +64,24 @@
                   RowBackground="White"
                   BorderBrush="#AAAAAA"
                   BorderThickness="1"
-                  SelectionMode="Single"
+                  SelectionMode="Extended"
+                  SelectionUnit="CellOrRowHeader"
+                  ClipboardCopyMode="IncludeHeader"
                   HeadersVisibility="Column">
 
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Pos." Binding="{Binding PosNr}"
-                                    Width="50"/>
-                <DataGridTextColumn Header="Mark" Binding="{Binding Mark}"
-                                    Width="90"/>
-                <DataGridTextColumn Header="Shape" Binding="{Binding ShapeCode}"
-                                    Width="55"/>
-                <DataGridTextColumn Header="Dia. [mm]" Binding="{Binding Diameter}"
-                                    Width="70"/>
-                <DataGridTextColumn Header="A [mm]" Binding="{Binding ColA}"
-                                    Width="65"/>
-                <DataGridTextColumn Header="B [mm]" Binding="{Binding ColB}"
-                                    Width="65"/>
-                <DataGridTextColumn Header="C [mm]" Binding="{Binding ColC}"
-                                    Width="65"/>
-                <DataGridTextColumn Header="D [mm]" Binding="{Binding ColD}"
-                                    Width="65"/>
-                <DataGridTextColumn Header="E [mm]" Binding="{Binding ColE}"
-                                    Width="65"/>
-                <DataGridTextColumn Header="Cut Length [mm]" Binding="{Binding ColLength}"
-                                    Width="100"/>
-                <DataGridTextColumn Header="No. Bars" Binding="{Binding TotalCount}"
-                                    Width="70"/>
-                <DataGridTextColumn Header="Mass [kg]" Binding="{Binding ColMass}"
-                                    Width="75"/>
+                <DataGridTextColumn Header="BAR MARK"        Binding="{Binding PosNr}"         Width="90"/>
+                <DataGridTextColumn Header="TYPE &amp; SIZE" Binding="{Binding TypeAndSize}"    Width="90"/>
+                <DataGridTextColumn Header="NO. OF MEMBERS"  Binding="{Binding NoOfMembers}"   Width="110"/>
+                <DataGridTextColumn Header="NO. IN EACH"     Binding="{Binding TotalCount}"    Width="90"/>
+                <DataGridTextColumn Header="TOTAL NO. BARS"  Binding="{Binding TotalNoBarsStr}" Width="110"/>
+                <DataGridTextColumn Header="LENGTH PER BAR"  Binding="{Binding ColLength}"     Width="110"/>
+                <DataGridTextColumn Header="CODE"            Binding="{Binding ShapeCode}"     Width="60"/>
+                <DataGridTextColumn Header="A"               Binding="{Binding ColA}"          Width="70"/>
+                <DataGridTextColumn Header="B"               Binding="{Binding ColB}"          Width="70"/>
+                <DataGridTextColumn Header="C"               Binding="{Binding ColC}"          Width="70"/>
+                <DataGridTextColumn Header="D"               Binding="{Binding ColD}"          Width="70"/>
+                <DataGridTextColumn Header="E/R"             Binding="{Binding ColE}"          Width="70"/>
             </DataGrid.Columns>
         </DataGrid>
 

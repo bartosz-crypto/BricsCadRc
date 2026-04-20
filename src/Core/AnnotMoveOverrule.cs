@@ -51,6 +51,8 @@ namespace BricsCadRc.Core
             = new Dictionary<long, Point3d>();
         private static readonly Dictionary<long, double>  _dragStartSegLen
             = new Dictionary<long, double>();
+        private static readonly Dictionary<long, Point3d> _dragStartLastPt
+            = new Dictionary<long, Point3d>();
 
         // Klucz: ObjectId annotacji, wartość: oryginalna pozycja przed dragiem.
         // Czyszczone przy final commit (sukces) lub w OnCommandCancelled (ESC).
@@ -131,6 +133,8 @@ namespace BricsCadRc.Core
                 _dragOrigPos.Remove(hv);
                 _dragStartSegLen.Remove(hv);
                 _dragStartSegLen.Remove(0L);
+                _dragStartLastPt.Remove(hv);
+                _dragStartLastPt.Remove(0L);
                 ClearGripTransients();
 
 
@@ -336,7 +340,7 @@ namespace BricsCadRc.Core
                     long handle = br.ObjectId.IsNull ? 0L : br.ObjectId.Handle.Value;
                     if (handle == 0) return;  // preview — zostaw BricsCAD
 
-                    // Odczytaj świeży snapshot LeaderPoints z XData
+                    // Odczytaj aktualny lastPt z XData
                     List<Point3d> pts = null;
                     using (var trT = br.Database.TransactionManager.StartTransaction())
                     {
@@ -347,38 +351,57 @@ namespace BricsCadRc.Core
                         trT.Commit();
                     }
 
-                    if (pts == null || pts.Count < 2)
+                    if (pts == null || pts.Count < 1)
                     {
-                        // Fallback: przesuń o offset bez constraina
-                        if (pts != null && pts.Count > 0)
-                        {
-                            var lastWCS0 = pts[pts.Count - 1].TransformBy(br.BlockTransform);
-                            AnnotationEngine.UpdateLeaderInBlock(br, lastWCS0 + offset);
-                        }
+                        _dragStartLastPt.Remove(handle);
                         return;
                     }
 
-                    // Constrain wzdłuż osi ostatniego segmentu
-                    var lastSegDirLocal = (pts[pts.Count - 1] - pts[pts.Count - 2]).GetNormal();
-                    var wcsDir = lastSegDirLocal.TransformBy(br.BlockTransform);
-                    wcsDir = new Vector3d(wcsDir.X, wcsDir.Y, 0).GetNormal();
+                    // Zapamiętaj start pozycji tekstu przy pierwszym wywołaniu
+                    // (żeby offset był kumulatywny od startu, nie od klatki)
+                    var lastLocal = pts[pts.Count - 1];
+                    var lastWCS = lastLocal.TransformBy(br.BlockTransform);
 
-                    var prevWCS = pts[pts.Count - 2].TransformBy(br.BlockTransform);
-                    var lastWCS = pts[pts.Count - 1].TransformBy(br.BlockTransform);
+                    if (!_dragStartLastPt.ContainsKey(handle))
+                        _dragStartLastPt[handle] = lastWCS;
+                    var startWCS = _dragStartLastPt[handle];
 
-                    // Zapamiętaj startSegLen przy pierwszym wywołaniu dla tego handle
-                    long h = br.ObjectId.Handle.Value;
-                    if (!_dragStartSegLen.ContainsKey(h))
-                        _dragStartSegLen[h] = (lastWCS - prevWCS).DotProduct(wcsDir);
-                    double startSegLen = _dragStartSegLen[h];
+                    // Kierunek ostatniego segmentu (WCS)
+                    if (pts.Count < 2)
+                    {
+                        AnnotationEngine.UpdateLeaderInBlock(br, startWCS + offset);
+                        return;
+                    }
+                    var segLocal = pts[pts.Count - 1] - pts[pts.Count - 2];
+                    var segWCS = segLocal.TransformBy(br.BlockTransform);
+                    segWCS = new Vector3d(segWCS.X, segWCS.Y, 0);
+                    if (segWCS.Length < 0.01)
+                    {
+                        AnnotationEngine.UpdateLeaderInBlock(br, startWCS + offset);
+                        return;
+                    }
+                    var segDir = segWCS.GetNormal();
+                    var perpDir = new Vector3d(-segDir.Y, segDir.X, 0);
 
-                    // newSegLen = startSegLen + kumulatywny offset wzdłuż wcsDir
-                    double proj = offset.X * wcsDir.X + offset.Y * wcsDir.Y;
-                    double newSegLen = startSegLen + proj;
-                    if (newSegLen < 10.0) newSegLen = 10.0;
+                    // Rozłóż offset od startu dragu
+                    double projAlong = offset.X * segDir.X  + offset.Y * segDir.Y;
+                    double projPerp  = offset.X * perpDir.X + offset.Y * perpDir.Y;
 
-                    var newTextWCS = prevWCS + wcsDir * newSegLen;
-                    AnnotationEngine.UpdateLeaderInBlock(br, newTextWCS);
+                    Vector3d perpShift, alongShift;
+                    if (pts.Count == 2)
+                    {
+                        // Leader prosty bez kinku — tylko wydłużanie wzdłuż segmentu
+                        perpShift  = new Vector3d(0, 0, 0);
+                        alongShift = segDir * projAlong;
+                    }
+                    else
+                    {
+                        // Leader z kinkiem — decompose: perp przesuwa segment, along wydłuża
+                        perpShift  = perpDir * projPerp;
+                        alongShift = segDir * projAlong;
+                    }
+
+                    AnnotationEngine.UpdateLastSegmentWithShift(br, perpShift, alongShift);
                     return;
                 }
                 else
@@ -408,11 +431,13 @@ namespace BricsCadRc.Core
                     }
                     else if (barAnnot.Direction == "X")
                     {
-                        newPos = new Point3d(origPos.X + offset.X, origPos.Y, origPos.Z);
+                        // X-bars: dist line wzdłuż Y → grip porusza się wzdłuż Y
+                        newPos = new Point3d(origPos.X, origPos.Y + offset.Y, origPos.Z);
                     }
                     else
                     {
-                        newPos = new Point3d(origPos.X, origPos.Y + offset.Y, origPos.Z);
+                        // Y-bars: dist line wzdłuż X → grip porusza się wzdłuż X
+                        newPos = new Point3d(origPos.X + offset.X, origPos.Y, origPos.Z);
                     }
 
                     br.UpgradeOpen();

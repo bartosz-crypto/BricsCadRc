@@ -777,4 +777,51 @@ namespace BricsCadRc.Commands
             _transients.Clear();
         }
     }
+
+    internal class LeaderTransientDrawer : IDisposable
+    {
+        private readonly List<Entity> _ents = new List<Entity>();
+        private readonly TransientManager _tm = TransientManager.CurrentTransientManager;
+        private readonly IntegerCollection _viewports = new IntegerCollection();
+
+        public void UpdatePreview(List<Point3d> points, Point3d cursor)
+        {
+            Clear();
+            if (points == null || points.Count == 0) return;
+
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                var seg = new Line(points[i], points[i + 1])
+                {
+                    ColorIndex = 2,
+                    Linetype   = "Continuous"
+                };
+                _ents.Add(seg);
+                _tm.AddTransient(seg, TransientDrawingMode.DirectShortTerm, 128, _viewports);
+            }
+
+            if (points.Count > 0)
+            {
+                var rubber = new Line(points[points.Count - 1], cursor)
+                {
+                    ColorIndex = 3,
+                    Linetype   = "Continuous"
+                };
+                _ents.Add(rubber);
+                _tm.AddTransient(rubber, TransientDrawingMode.DirectShortTerm, 128, _viewports);
+            }
+        }
+
+        public void Clear()
+        {
+            foreach (var e in _ents)
+            {
+                try { _tm.EraseTransient(e, _viewports); } catch { }
+                try { e.Dispose(); } catch { }
+            }
+            _ents.Clear();
+        }
+
+        public void Dispose() => Clear();
+    }
 }

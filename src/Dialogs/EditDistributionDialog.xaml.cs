@@ -21,7 +21,8 @@ namespace BricsCadRc.Dialogs
 
         public Action<int, double, double> OnPreview    { get; set; }
         public bool                        PreviewApplied { get; private set; } = false;
-        public bool ResultAddAnnotation => CbAddAnnotation.IsChecked == true;
+        public bool ResultAddAnnotation  => CbAddAnnotation.IsChecked  == true;
+        public bool ResultRebuildLeader  => CbRebuildLeader.IsChecked  == true;
 
         private System.Windows.Threading.DispatcherTimer _debounce;
 

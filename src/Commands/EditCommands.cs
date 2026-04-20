@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using BricsCadRc.Commands;
 using BricsCadRc.Core;
 using BricsCadRc.Dialogs;
 using Teigha.DatabaseServices;
@@ -370,7 +373,196 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage(
                 $"\nRozkład {bar.Mark} zaktualizowany: {dlg.ResultCount} szt. co {dlg.ResultSpacing:F0} mm.\n");
+
+            // Krok 5 — opcjonalna pętla jig3: przebuduj leader
+            if (dlg.ResultRebuildLeader)
+            {
+                // Rozwiąż ObjectId annotacji z aktualnego XData bloku
+                ObjectId annotBlockRefId = ObjectId.Null;
+                using (var trA = db.TransactionManager.StartTransaction())
+                {
+                    var brA = trA.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
+                    var barA = brA != null ? BarBlockEngine.ReadXData(brA) : null;
+                    if (barA != null && !string.IsNullOrEmpty(barA.AnnotHandle)
+                        && long.TryParse(barA.AnnotHandle,
+                            System.Globalization.NumberStyles.HexNumber, null, out long annotHv))
+                        db.TryGetObjectId(new Handle(annotHv), out annotBlockRefId);
+                    trA.Commit();
+                }
+
+                if (!annotBlockRefId.IsNull)
+                {
+                    // Startowy punkt = środek dist line annotacji w WCS
+                    var leaderWcsPts = new List<Point3d>();
+                    using (var trB = db.TransactionManager.StartTransaction())
+                    {
+                        var brB = trB.GetObject(annotBlockRefId, OpenMode.ForRead) as BlockReference;
+                        if (brB != null)
+                        {
+                            var barB = AnnotationEngine.ReadAnnotXData(brB);
+                            if (barB != null)
+                            {
+                                Point3d startLocal = barB.Direction == "X"
+                                    ? new Point3d(0, barB.BarsSpan / 2.0, 0)
+                                    : new Point3d(barB.BarsSpan / 2.0, 0, 0);
+                                leaderWcsPts.Add(startLocal.TransformBy(brB.BlockTransform));
+                            }
+                        }
+                        trB.Commit();
+                    }
+
+                    if (leaderWcsPts.Count > 0)
+                    {
+                        // Pętla kliknięć jig3 z live preview
+                        using (var drawer = new LeaderTransientDrawer())
+                        {
+                            while (true)
+                            {
+                                var ptOpts = new PromptPointOptions(
+                                    "\nKliknij punkt leadera [Enter=zatwierdź]: ");
+                                ptOpts.AllowNone = true;
+                                ptOpts.UseBasePoint = true;
+                                ptOpts.BasePoint = leaderWcsPts[leaderWcsPts.Count - 1];
+
+                                PointMonitorEventHandler monitor = (s, ev) =>
+                                {
+                                    try
+                                    {
+                                        drawer.UpdatePreview(leaderWcsPts, ev.Context.ComputedPoint);
+                                        Application.UpdateScreen();
+                                    }
+                                    catch { }
+                                };
+                                ed.PointMonitor += monitor;
+
+                                PromptPointResult ptRes;
+                                try { ptRes = ed.GetPoint(ptOpts); }
+                                finally { ed.PointMonitor -= monitor; }
+
+                                if (ptRes.Status == PromptStatus.Cancel) { drawer.Clear(); return; }
+                                if (ptRes.Status != PromptStatus.OK) break;
+                                leaderWcsPts.Add(ptRes.Value);
+                            }
+                            drawer.Clear();
+                        }
+
+                        if (leaderWcsPts.Count >= 2)
+                        {
+                            using (var trC = db.TransactionManager.StartTransaction())
+                            {
+                                var brC = trC.GetObject(annotBlockRefId, OpenMode.ForWrite) as BlockReference;
+                                if (brC != null)
+                                {
+                                    var barC = AnnotationEngine.ReadAnnotXData(brC);
+                                    if (barC != null)
+                                    {
+                                        var inv = brC.BlockTransform.Inverse();
+                                        var localPts = leaderWcsPts.Select(p => p.TransformBy(inv)).ToList();
+
+                                        // Detekcja zawracania — usuń punkty kąta ostrego
+                                        for (int k = localPts.Count - 2; k >= 1; k--)
+                                        {
+                                            var d1 = (localPts[k] - localPts[k - 1]).GetNormal();
+                                            var d2 = (localPts[k + 1] - localPts[k]).GetNormal();
+                                            if (d1.DotProduct(d2) < -0.1)
+                                                localPts.RemoveAt(k);
+                                        }
+
+                                        barC.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(localPts);
+                                        AnnotationEngine.WriteAnnotXData(brC, barC);
+                                        AnnotationEngine.SyncAnnotation(db, barC);
+                                    }
+                                }
+                                trC.Commit();
+                            }
+                        }
+                    }
+                }
+            }
+
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+        }
+
+        // ----------------------------------------------------------------
+
+        [CommandMethod("RC_BAR_END", CommandFlags.Modal)]
+        public void BarEnd()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+
+            // 1. Wybór RC_BAR_BLOCK lub RC_SINGLE_BAR
+            var selOpts = new PromptEntityOptions("\nWybierz pręt lub rozkład: ");
+            selOpts.SetRejectMessage("\nTo nie jest pręt RC.");
+            selOpts.AddAllowedClass(typeof(Polyline),        true);
+            selOpts.AddAllowedClass(typeof(BlockReference),  true);
+            var selRes = ed.GetEntity(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            BarData  barData    = null;
+            ObjectId targetId   = ObjectId.Null;
+            bool     isBarBlock = false;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ent = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as Entity;
+                if (ent is BlockReference br)
+                {
+                    targetId   = ResolveBarBlock(ent, tr);
+                    if (!targetId.IsNull)
+                    {
+                        var brT = tr.GetObject(targetId, OpenMode.ForRead) as BlockReference;
+                        barData    = brT != null ? BarBlockEngine.ReadXData(brT) : null;
+                        isBarBlock = true;
+                    }
+                }
+                else if (ent is Polyline poly)
+                {
+                    barData  = SingleBarEngine.ReadBarXData(poly);
+                    targetId = selRes.ObjectId;
+                }
+                tr.Commit();
+            }
+
+            if (barData == null || targetId.IsNull)
+            {
+                ed.WriteMessage("\nWybrany obiekt nie zawiera danych pręta RC.");
+                return;
+            }
+
+            // 2. Dialog z aktualnymi wartościami
+            var dlg = new BarEndStyleDialog(
+                barData.SymbolType      ?? "Auto",
+                barData.SymbolSide      ?? "Right",
+                barData.SymbolDirection ?? "Up");
+
+            if (Application.ShowModalWindow(dlg) != true) return;
+
+            // 3. Aktualizuj
+            if (isBarBlock)
+            {
+                BarBlockEngine.RebuildBarEndStyle(db, targetId,
+                    dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
+            }
+            else
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var poly = tr.GetObject(targetId, OpenMode.ForWrite) as Polyline;
+                    if (poly != null)
+                    {
+                        barData.SymbolType      = dlg.SymbolType;
+                        barData.SymbolSide      = dlg.SymbolSide;
+                        barData.SymbolDirection = dlg.SymbolDirection;
+                        SingleBarEngine.WriteXData(poly, barData);
+                    }
+                    tr.Commit();
+                }
+            }
+
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            ed.WriteMessage("\n[RC] Symbol końca pręta zaktualizowany.");
         }
 
         // ----------------------------------------------------------------

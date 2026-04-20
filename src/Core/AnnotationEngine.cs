@@ -490,6 +490,102 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        /// <summary>
+        /// Przesuwa ostatni segment leadera (kink + lastPt) o podaną deltę WCS.
+        /// Zachowuje kąt wszystkich segmentów — tylko ostatnie dwa punkty są przesunięte.
+        /// </summary>
+        public static void UpdateLastSegment(BlockReference br, Vector3d shiftWCS)
+        {
+            var db = br.Database;
+            using var tr = db.TransactionManager.StartTransaction();
+            var brRw = tr.GetObject(br.ObjectId, OpenMode.ForWrite) as BlockReference;
+            if (brRw == null) { tr.Commit(); return; }
+
+            var bar = ReadAnnotXData(brRw);
+            if (bar == null) { tr.Commit(); return; }
+
+            var inv = brRw.BlockTransform.Inverse();
+            var shiftLocal = shiftWCS.TransformBy(inv);
+
+            var pts = DecodeLeaderPoints(bar.LeaderPoints);
+            if (pts.Count < 2) { tr.Commit(); return; }
+
+            if (pts.Count >= 3)
+                pts[pts.Count - 2] = pts[pts.Count - 2] + shiftLocal;
+            pts[pts.Count - 1] = pts[pts.Count - 1] + shiftLocal;
+
+            bar.LeaderPoints = EncodeLeaderPoints(pts);
+
+            var btr = (BlockTableRecord)tr.GetObject(
+                brRw.BlockTableRecord, OpenMode.ForWrite);
+            var idsToErase = new List<ObjectId>();
+            foreach (ObjectId eid in btr)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForRead);
+                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                    idsToErase.Add(eid);
+                if (ent is DBText) idsToErase.Add(eid);
+            }
+            foreach (var eid in idsToErase)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForWrite);
+                ent.Erase();
+            }
+
+            BuildMLeaderInBtr(tr, btr, db, bar, pts);
+            WriteAnnotXData(brRw, bar);
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
+        public static void UpdateLastSegmentWithShift(
+            BlockReference br, Vector3d perpShiftWCS, Vector3d alongShiftWCS)
+        {
+            var db = br.Database;
+            using var tr = db.TransactionManager.StartTransaction();
+            var brRw = tr.GetObject(br.ObjectId, OpenMode.ForWrite) as BlockReference;
+            if (brRw == null) { tr.Commit(); return; }
+
+            var bar = ReadAnnotXData(brRw);
+            if (bar == null) { tr.Commit(); return; }
+
+            var inv = brRw.BlockTransform.Inverse();
+            var perpLocal  = perpShiftWCS.TransformBy(inv);
+            var alongLocal = alongShiftWCS.TransformBy(inv);
+
+            var pts = DecodeLeaderPoints(bar.LeaderPoints);
+            if (pts.Count < 2) { tr.Commit(); return; }
+
+            // Kink (pts[N-2]): przesuń tylko o perpLocal
+            // lastPt (pts[N-1]): przesuń o perpLocal + alongLocal
+            if (pts.Count >= 3)
+                pts[pts.Count - 2] = pts[pts.Count - 2] + perpLocal;
+            pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
+
+            bar.LeaderPoints = EncodeLeaderPoints(pts);
+
+            var btr = (BlockTableRecord)tr.GetObject(
+                brRw.BlockTableRecord, OpenMode.ForWrite);
+            var idsToErase = new List<ObjectId>();
+            foreach (ObjectId eid in btr)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForRead);
+                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                    idsToErase.Add(eid);
+                if (ent is DBText) idsToErase.Add(eid);
+            }
+            foreach (var eid in idsToErase)
+            {
+                var ent = tr.GetObject(eid, OpenMode.ForWrite);
+                ent.Erase();
+            }
+
+            BuildMLeaderInBtr(tr, btr, db, bar, pts);
+            WriteAnnotXData(brRw, bar);
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // BuildMLeaderInBtr — budowa leadera w BTR: Line segmenty + DBText + landing
         // Używana przez BuildHorizontal, BuildVertical i UpdateLeaderInBlock.
         // ----------------------------------------------------------------
@@ -520,24 +616,14 @@ namespace BricsCadRc.Core
             Bricscad.ApplicationServices.Application.DocumentManager
                 .MdiActiveDocument.Editor.WriteMessage(
                 $"\n[BM] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) prevPt=({prevPt.X:F0},{prevPt.Y:F0})");
-            double textAngle = Math.Atan2(lastDir.Y, lastDir.X);
+            // 3. Kąt tekstu = kąt ostatniego segmentu (dokładny, nie snap do 0/90°)
+            double rawAngle = Math.Atan2(lastDir.Y, lastDir.X);
+            double textAngle = rawAngle;
+            // Normalizuj żeby tekst był czytelny (nie do góry nogami)
+            if (textAngle > Math.PI / 2.0 + 1e-6) textAngle -= Math.PI;
+            else if (textAngle < -Math.PI / 2.0 - 1e-6) textAngle += Math.PI;
 
-            // 3. Decyzja: tekst zawsze czytelny, landing zawsze kończy się w lastPt
-            bool lastIsHorizontal = Math.Abs(lastDir.X) > Math.Abs(lastDir.Y);
-
-            Vector3d textDir;
-            double textAngleFinal;
-            if (lastIsHorizontal)
-            {
-                textAngleFinal = 0;
-                textDir = new Vector3d(1, 0, 0);
-            }
-            else
-            {
-                textAngleFinal = Math.PI / 2.0;
-                textDir = new Vector3d(0, 1, 0);
-            }
-            textAngle = textAngleFinal;
+            var textDir = new Vector3d(Math.Cos(textAngle), Math.Sin(textAngle), 0);
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
 
             // 4. Tymczasowy DBText żeby zmierzyć textLen
@@ -578,21 +664,20 @@ namespace BricsCadRc.Core
             btr.AppendEntity(landingLine);
             tr.AddNewlyCreatedDBObject(landingLine, true);
 
-            // 6. Tekst pisany od landingStart w kierunku landingEnd
-            Point3d textPos;
-            if (lastIsHorizontal)
-            {
-                double xStart = Math.Min(landingStart.X, landingEnd.X);
-                textPos = new Point3d(xStart, landingStart.Y + TextArmOffset, 0);
-            }
-            else
-            {
-                double yStart = Math.Min(landingStart.Y, landingEnd.Y);
-                textPos = new Point3d(landingStart.X - TextArmOffset, yStart, 0);
-            }
+            // 6. textPos = landingStart + perpDir * TextArmOffset
+            Point3d textPos = landingStart + perpDir * TextArmOffset;
             Bricscad.ApplicationServices.Application.DocumentManager
                 .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[LAST] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) landingStart=({landingStart.X:F0},{landingStart.Y:F0}) textPos=({textPos.X:F0},{textPos.Y:F0}) horiz={lastIsHorizontal}");
+                $"\n[LAST] lastDir=({lastDir.X:F2},{lastDir.Y:F2}) lastPt=({lastPt.X:F0},{lastPt.Y:F0}) landingStart=({landingStart.X:F0},{landingStart.Y:F0}) textPos=({textPos.X:F0},{textPos.Y:F0}) textAngle={textAngle * 180 / Math.PI:F1}°");
+            Bricscad.ApplicationServices.Application.DocumentManager
+                .MdiActiveDocument.Editor.WriteMessage(
+                $"\n[BM-ROT] barAngle={bar.Angle * 180 / Math.PI:F0}° " +
+                $"textAngle_local={textAngle * 180 / Math.PI:F0}° " +
+                $"perpDir=({perpDir.X:F2},{perpDir.Y:F2}) " +
+                $"lastDir=({lastDir.X:F2},{lastDir.Y:F2}) " +
+                $"lastPt=({lastPt.X:F0},{lastPt.Y:F0}) " +
+                $"landingStart=({landingStart.X:F0},{landingStart.Y:F0}) " +
+                $"textPos=({textPos.X:F0},{textPos.Y:F0})");
             var dbText = new DBText
             {
                 TextString     = textString,
@@ -990,6 +1075,7 @@ namespace BricsCadRc.Core
                 updatedBar.LeaderUp         = existingAnnot.LeaderUp;
                 updatedBar.ArmMidY          = existingAnnot.ArmMidY;
                 updatedBar.TextLen          = existingAnnot.TextLen;
+                updatedBar.LeaderPoints     = existingAnnot.LeaderPoints ?? "";
             }
 
             var btr = (BlockTableRecord)tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite);
@@ -1212,22 +1298,18 @@ namespace BricsCadRc.Core
                     var mt = ml.MText?.Clone() as MText;
                     if (mt != null)
                     {
-                        int spaceIdx = srcBar.Mark.IndexOf(' ');
-                        string barBase = !string.IsNullOrEmpty(markOverride)
+                        // Wyciągnij pierwsze dwa człony Mark (bez spacing): "H12-01-200" → "H12-01"
+                        string rawMark = !string.IsNullOrEmpty(markOverride)
                             ? markOverride
-                            : (spaceIdx >= 0 ? srcBar.Mark.Substring(0, spaceIdx) : srcBar.Mark);
-                        string sfx = spaceIdx >= 0
-                            ? " " + srcBar.Mark.Substring(spaceIdx + 1) : "";
+                            : srcBar.Mark;
+                        var parts = rawMark.Split('-');
+                        string markForLabel = parts.Length >= 2
+                            ? $"{parts[0]}-{parts[1]}"
+                            : rawMark;
 
-                        if (totalCount == 0)
-                        {
-                            // Brak rozkładów — pokaż sam Mark bez liczby
-                            mt.Contents = $"{barBase}{sfx}";
-                        }
-                        else
-                        {
-                            mt.Contents = $"{totalCount} {barBase}{sfx}";
-                        }
+                        mt.Contents = totalCount > 0
+                            ? $"{totalCount} {markForLabel}"
+                            : markForLabel;
                         ml.MText = mt;
                     }
                 }

@@ -46,14 +46,14 @@ namespace BricsCadRc.Dialogs
             try
             {
                 var sb = new StringBuilder();
-                sb.AppendLine("Pos,Mark,Shape,Dia,A,B,C,D,E,CutLength,Count,Mass_kg");
+                sb.AppendLine("BAR MARK,TYPE & SIZE,NO. OF MEMBERS,NO. IN EACH,TOTAL NO. BARS,LENGTH PER BAR,CODE,A,B,C,D,E/R");
 
                 foreach (var row in _entries)
                 {
                     sb.AppendLine(
-                        $"{row.PosNr},{row.Mark},{row.ShapeCode},{row.Diameter}," +
-                        $"{row.ColA},{row.ColB},{row.ColC},{row.ColD},{row.ColE}," +
-                        $"{row.ColLength},{row.TotalCount},{row.ColMass}");
+                        $"{row.Mark},{row.TypeAndSize},{row.NoOfMembers}," +
+                        $"{row.TotalCount},{row.TotalCount},{row.ColLength}," +
+                        $"{row.ShapeCode},{row.ColA},{row.ColB},{row.ColC},{row.ColD},{row.ColE}");
                 }
 
                 File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
