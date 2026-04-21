@@ -7,6 +7,7 @@ namespace BricsCadRc.Dialogs
     {
         private readonly int    _diameter;
         private readonly string _posNr;
+        private readonly int    _count;
 
         public int                ResultCount      { get; private set; }
         public double             ResultSpacing    { get; private set; }
@@ -20,6 +21,7 @@ namespace BricsCadRc.Dialogs
         {
             InitializeComponent();
             _diameter = diameter;
+            _count    = count;
 
             switch (currentVisibility)
             {
@@ -70,7 +72,7 @@ namespace BricsCadRc.Dialogs
         void UpdateBaseMark()
         {
             if (double.TryParse(SpacingBox.Text, out double sp) && sp > 0)
-                BaseMarkLabel.Text = $"H{_diameter}-{_posNr}-{(int)sp}";
+                BaseMarkLabel.Text = BarData.FormatMark(_diameter, int.Parse(_posNr), sp, _count);
         }
 
         void UpdatePreview()

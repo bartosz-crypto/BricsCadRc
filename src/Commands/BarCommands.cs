@@ -58,7 +58,7 @@ namespace BricsCadRc.Commands
                 posNr = PositionCounter.GetNextFreeFrom(usedNrs, posNr);
             }
 
-            barData.Mark = $"H{barData.Diameter}-{posNr:D2}";
+            barData.Mark = BarData.FormatMark(barData.Diameter, posNr, 0, 1);
             PositionCounter.Increment(db, posNr);
 
             // --- Krok 5: Wstaw polilinię pręta ---
@@ -398,6 +398,7 @@ namespace BricsCadRc.Commands
             sourceBar.Cover     = cover;
             sourceBar.Pt1X      = x0;
             sourceBar.Pt1Y      = y0;
+            sourceBar.BarsSpan  = rawSpan;
 
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1Bound, y1Bound,
@@ -410,7 +411,7 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 6, 8–9 — dialog + jigy + CreateLeader
-            string baseMark = $"H{sourceBar.Diameter}-{posNr:D2}-{(int)spacing}";
+            string baseMark = BarData.FormatMark(sourceBar.Diameter, posNr, spacing, autoCount);
             sourceBar.Spacing = spacing;
 
             bool annOk = RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
@@ -479,8 +480,9 @@ namespace BricsCadRc.Commands
             sourceBar.Spacing = finalSpacing;
 
             // Przebuduj blok prętów z wartościami z dialogu (finalCount/finalSpacing mogły się zmienić)
-            double newBarsSpan = (finalCount - 1) * finalSpacing;
-            sourceBar.BarsSpan = newBarsSpan;
+            double minSpan = (finalCount - 1) * finalSpacing;
+            if (sourceBar.BarsSpan < minSpan)
+                sourceBar.BarsSpan = minSpan;
             BarBlockEngine.RebuildWithNewLayout(db, blockRefId, finalCount, finalSpacing, sourceBar.Cover);
 
             // Zaktualizuj barResult z nowymi wymiarami
@@ -495,8 +497,8 @@ namespace BricsCadRc.Commands
                         BlockRefId = blockRefId,
                         MinPoint   = brRebuild.Position,
                         MaxPoint   = new Point3d(
-                            brRebuild.Position.X + (horizontal2 ? sourceBar.LengthA : newBarsSpan),
-                            brRebuild.Position.Y + (horizontal2 ? newBarsSpan : sourceBar.LengthA),
+                            brRebuild.Position.X + (horizontal2 ? sourceBar.LengthA : sourceBar.BarsSpan),
+                            brRebuild.Position.Y + (horizontal2 ? sourceBar.BarsSpan : sourceBar.LengthA),
                             0)
                     };
                 }
@@ -504,7 +506,7 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 8 — 3-etapowy JIG
-            double barsSpan  = newBarsSpan;
+            double barsSpan  = sourceBar.BarsSpan;
             double minFixed, basePos;
 
             if (Math.Abs(sourceBar.Angle) > 1e-6)
@@ -1272,7 +1274,7 @@ namespace BricsCadRc.Commands
             // Zachowaj niezmienne pola z oryginału
             // Przebuduj Mark z nową średnicą i posNr z dialogu — format H{dia}-{posNr}
             string posNrStr = dlg.ResultPosNr;
-            updated.Mark    = $"H{updated.Diameter}-{posNrStr}";
+            updated.Mark    = BarData.FormatMark(updated.Diameter, int.Parse(posNrStr), 0, 1);
             updated.LayerCode   = bar.LayerCode;
             updated.Position    = bar.Position;
             updated.Direction   = bar.Direction;

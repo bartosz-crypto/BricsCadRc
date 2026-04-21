@@ -158,7 +158,10 @@ namespace BricsCadRc.Commands
                         var mp = bar.Mark.Split(' ');
                         var cp = mp[0].Split('-');
                         string sfx = mp.Length > 1 ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
-                        bP.Mark    = cp.Length >= 2 ? $"{cp[0]}-{cp[1]}-{(int)spacing}{sfx}" : bar.Mark;
+                        string markBase = count <= 1
+                            ? (cp.Length >= 2 ? $"{cp[0]}-{cp[1]}" : bar.Mark)
+                            : (cp.Length >= 2 ? $"{cp[0]}-{cp[1]}-{(int)spacing}" : bar.Mark);
+                        bP.Mark = $"{markBase}{sfx}";
                         bP.Count   = count;
                         bP.Spacing = spacing;
                         BarBlockEngine.WriteXData(brP, bP);
@@ -171,6 +174,8 @@ namespace BricsCadRc.Commands
                 var bS  = brS != null ? BarBlockEngine.ReadXData(brS) : null;
                 trS.Commit();
                 if (bS != null) AnnotationEngine.SyncAnnotation(db, bS);
+
+                BarBlockHighlightManager.RefreshOutlineForBlock(blockRefId);
 
                 try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
             }
@@ -202,7 +207,16 @@ namespace BricsCadRc.Commands
                 viewingDirection: bar.ViewingDirection ?? "Auto");
             dlg.OnPreview = (c, sp, cv) => ApplyPreview(c, sp, cv);
 
-            bool confirmed = Application.ShowModalWindow(dlg) == true;
+            BarBlockHighlightManager.ShowOutlineFor(blockRefId);
+            bool confirmed;
+            try
+            {
+                confirmed = Application.ShowModalWindow(dlg) == true;
+            }
+            finally
+            {
+                BarBlockHighlightManager.HideOutlineFor(blockRefId);
+            }
 
             if (!confirmed)
             {
@@ -253,7 +267,7 @@ namespace BricsCadRc.Commands
                 }
                 trRe.Commit();
 
-                string baseMark = $"H{bar.Diameter}-{SingleBarEngine.ExtractPosNr(bar.Mark):D2}-{(int)bar.Spacing}";
+                string baseMark = BarData.FormatMark(bar.Diameter, SingleBarEngine.ExtractPosNr(bar.Mark), bar.Spacing, bar.Count);
                 BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
                     bar.Spacing, bar.Count, baseMark, blockRefId);
 
@@ -1022,6 +1036,120 @@ namespace BricsCadRc.Commands
             }
 
             ed.WriteMessage($"\n[RC] Zaktualizowano {toRebuild.Count} rozkładów → widok: Wszystkie.\n");
+        }
+
+        /// <summary>
+        /// RC_SCALE_ANNOT — ustawia wizualną skalę opisu rozkładu (tekst, doty, strzałki, zakończenia prętów).
+        /// Skala 1:50 = factor 1.0 (domyślna). 1:25 = 2.0 (dwa razy większy). 1:100 = 0.5.
+        /// </summary>
+        [CommandMethod("RC_SCALE_ANNOT", CommandFlags.Modal)]
+        public void RcScaleAnnot()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            // 1. Wybierz obiekt (RC_BAR_BLOCK lub RC_BAR_ANNOT)
+            var opts = new PromptEntityOptions("\nWybierz opis rozkładu (RC_BAR_BLOCK lub RC_BAR_ANNOT): ");
+            opts.SetRejectMessage("\nTo nie jest RC_BAR_BLOCK ani RC_BAR_ANNOT.");
+            opts.AddAllowedClass(typeof(BlockReference), true);
+            var selRes = ed.GetEntity(opts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            // 2. Resolve do RC_BAR_BLOCK (source of truth dla AnnotScale)
+            ObjectId blockId = ObjectId.Null;
+            double currentScale = 1.0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as BlockReference;
+                if (br == null) { ed.WriteMessage("\nNieprawidłowy obiekt."); tr.Commit(); return; }
+
+                if (BarBlockEngine.IsBarBlock(br))
+                {
+                    blockId = br.ObjectId;
+                    var bd = BarBlockEngine.ReadXData(br);
+                    if (bd != null) currentScale = bd.AnnotScale;
+                }
+                else if (AnnotationEngine.IsAnnotation(br))
+                {
+                    var annotBd = AnnotationEngine.ReadAnnotXData(br);
+                    if (annotBd == null || string.IsNullOrEmpty(annotBd.SourceBlockHandle))
+                    {
+                        ed.WriteMessage("\nAnotacja nie ma powiązanego RC_BAR_BLOCK.");
+                        tr.Commit();
+                        return;
+                    }
+                    long h;
+                    try { h = Convert.ToInt64(annotBd.SourceBlockHandle, 16); }
+                    catch { ed.WriteMessage("\nNieprawidłowy SourceBlockHandle."); tr.Commit(); return; }
+                    if (!db.TryGetObjectId(new Handle(h), out var bId))
+                    {
+                        ed.WriteMessage("\nNie znaleziono powiązanego RC_BAR_BLOCK.");
+                        tr.Commit();
+                        return;
+                    }
+                    blockId = bId;
+                    var blkBr = tr.GetObject(blockId, OpenMode.ForRead) as BlockReference;
+                    if (blkBr == null) { tr.Commit(); return; }
+                    var bd = BarBlockEngine.ReadXData(blkBr);
+                    if (bd != null) currentScale = bd.AnnotScale;
+                }
+                else
+                {
+                    ed.WriteMessage("\nWybrany obiekt nie jest RC_BAR_BLOCK ani RC_BAR_ANNOT.");
+                    tr.Commit();
+                    return;
+                }
+                tr.Commit();
+            }
+
+            if (blockId.IsNull) return;
+
+            // 3. Zapytaj o skalę rysunku (mianownik: 50 = 1:50, 25 = 1:25 itd.)
+            double currentDenominator = 50.0 * (currentScale > 0 ? currentScale : 1.0);
+            var dOpts = new PromptDoubleOptions($"\nSkala rysunku 1: <{(int)Math.Round(currentDenominator)}>: ");
+            dOpts.AllowNone = true;
+            dOpts.AllowNegative = false;
+            dOpts.AllowZero = false;
+            dOpts.DefaultValue = currentDenominator;
+            dOpts.UseDefaultValue = true;
+            var dRes = ed.GetDouble(dOpts);
+            if (dRes.Status != PromptStatus.OK && dRes.Status != PromptStatus.None) return;
+
+            double denominator = dRes.Status == PromptStatus.None ? currentDenominator : dRes.Value;
+            if (denominator <= 0) { ed.WriteMessage("\nSkala musi być dodatnia."); return; }
+
+            double newFactor = denominator / 50.0;
+
+            // 4a. Zapisz nowy AnnotScale do RC_BAR_BLOCK XData
+            BarData barData;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var blockBr = tr.GetObject(blockId, OpenMode.ForWrite) as BlockReference;
+                if (blockBr == null) { tr.Commit(); return; }
+                barData = BarBlockEngine.ReadXData(blockBr);
+                if (barData == null) { tr.Commit(); return; }
+                barData.AnnotScale = newFactor;
+                BarBlockEngine.WriteXData(blockBr, barData);
+                tr.Commit();
+            }
+
+            // 4b. Przebuduj zakończenia prętów (SymR/HookLen skalują się przez AnnotScale)
+            try
+            {
+                BarBlockEngine.RebuildBarEndStyle(db, blockId,
+                    barData.SymbolType      ?? "Auto",
+                    barData.SymbolSide      ?? "Right",
+                    barData.SymbolDirection ?? "Up");
+            }
+            catch { }
+
+            // 4c. Przebuduj anotację (BuildH/V używają Scaled(...) dla tekstu/dotów/strzałek)
+            AnnotationEngine.SyncAnnotation(db, barData);
+
+            ed.Regen();
+            ed.WriteMessage($"\n[RC] Skala opisu ustawiona na 1:{denominator:F0} (factor={newFactor:F3}).");
         }
     }
 }

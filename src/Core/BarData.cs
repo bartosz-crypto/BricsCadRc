@@ -161,6 +161,13 @@ namespace BricsCadRc.Core
         /// <summary>Zakodowane punkty leadera w układzie lokalnym bloku: "x1,y1;x2,y2;...". "" = domyślny arm.</summary>
         public string LeaderPoints { get; set; } = "";
 
+        /// <summary>
+        /// Współczynnik skali wizualnej anotacji (tekst, doty, strzałki, zakończenia prętów).
+        /// 1.0 = skala domyślna 1:50. 2.0 = 1:25 (dwa razy większy). 0.5 = 1:100 (dwa razy mniejszy).
+        /// NIE skaluje: ArmLength, BarsSpan, pozycje prętów, LengthA.
+        /// </summary>
+        public double AnnotScale { get; set; } = 1.0;
+
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 
@@ -194,6 +201,17 @@ namespace BricsCadRc.Core
                 50 => 15.413,
                 _  => 0.0
             };
+        }
+
+        /// <summary>
+        /// Formatuje Mark pręta. Dla count == 1 pomija suffix spacing.
+        /// Format: "H{diameter}-{posNr:D2}" gdy count=1, w przeciwnym razie "H{diameter}-{posNr:D2}-{spacing}".
+        /// </summary>
+        public static string FormatMark(int diameter, int posNr, double spacing, int count)
+        {
+            string prefix = $"H{diameter}-{posNr:D2}";
+            if (count <= 1 || spacing <= 0) return prefix;
+            return $"{prefix}-{(int)spacing}";
         }
     }
 }

@@ -34,6 +34,9 @@ namespace BricsCadRc.Core
         public const double TextCharWidth     = 65.0;   // txt.shx XScale=0.70 @ H=125
         public const double TextArmOffset     = 70.0;
 
+        private static double Scaled(double baseValue, BarData bar)
+            => baseValue * (bar.AnnotScale > 0 ? bar.AnnotScale : 1.0);
+
         // Domyslna odleglosc annotacji od prawego boku pretow [mm]
         public const double AnnotDefaultOffset = 300.0;
 
@@ -83,7 +86,7 @@ namespace BricsCadRc.Core
             // Init ArmMidY przed budowaniem geometrii (cursor Y dostępny tylko tutaj)
             if (barsHorizontal && leaderHorizontal && double.IsNaN(bar.ArmMidY))
             {
-                double barsSpanInit  = (bar.Count - 1) * bar.Spacing;
+                double barsSpanInit  = bar.BarsSpan;
                 double barCenterY    = barResult.MinPoint.Y + barsSpanInit / 2.0;
                 bool   initLeaderUp  = !customInsertPt.HasValue || customInsertPt.Value.Y >= barCenterY;
                 bar.ArmMidY = barsSpanInit / 2.0 + (initLeaderUp ? ArmLength : -ArmLength);
@@ -92,7 +95,7 @@ namespace BricsCadRc.Core
             // Init ArmMidY dla Y-bars z zagięciem (leaderVertical=true)
             if (!barsHorizontal && leaderHorizontal && double.IsNaN(bar.ArmMidY))
             {
-                double barsSpanInit = (bar.Count - 1) * bar.Spacing;
+                double barsSpanInit = bar.BarsSpan;
                 double barCenterX   = barResult.MinPoint.X + barsSpanInit / 2.0;
                 bool   initRight    = !customInsertPt.HasValue || customInsertPt.Value.X >= barCenterX;
                 bar.ArmMidY = barsSpanInit / 2.0 + (initRight ? ArmLength : -ArmLength);
@@ -165,8 +168,8 @@ namespace BricsCadRc.Core
             Transaction tr, BlockTableRecord btr, Database db,
             BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true)
         {
-            double barsSpan = (bar.Count - 1) * bar.Spacing;
-            double lineExt  = (bar.Count >= 2 && bar.Count <= 3) ? DotRadius : 0.0;
+            double barsSpan = bar.BarsSpan;
+            double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
 
             // 1. Dist line — zawsze pionowa
             var distLine = new Line(new Point3d(0, -lineExt, 0), new Point3d(0, barsSpan + lineExt, 0))
@@ -186,16 +189,16 @@ namespace BricsCadRc.Core
                 bool isLast  = (i == bar.Count - 1);
 
                 if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), -Vector3d.YAxis);
+                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), -Vector3d.YAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), Vector3d.YAxis);
+                    AddArrow(tr, btr, new Point3d(0, i * bar.Spacing, 0), Vector3d.YAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count <= 3 || visSetH.Contains(i))
-                    AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), DotRadius);
+                    AddDot(tr, btr, new Point3d(0, i * bar.Spacing, 0), Scaled(DotRadius, bar));
             }
 
             if (bar.Count > 3)
             {
-                double tickLen = DotRadius * 3;
+                double tickLen = Scaled(DotRadius, bar) * 3;
                 double topY    = (bar.Count - 1) * bar.Spacing;
                 AddEndTick(tr, btr, new Point3d(0, 0,    0), Vector3d.XAxis, tickLen);
                 AddEndTick(tr, btr, new Point3d(0, topY, 0), Vector3d.XAxis, tickLen);
@@ -207,9 +210,6 @@ namespace BricsCadRc.Core
             var leaderPtsH = DecodeLeaderPoints(bar.LeaderPoints);
             if (leaderPtsH.Count < 2)
             {
-                Bricscad.ApplicationServices.Application.DocumentManager
-                    .MdiActiveDocument.Editor.WriteMessage(
-                    $"\n[DEF] leaderH={leaderHorizontal} leaderU={leaderUp} leaderR={leaderRight} vDir={(leaderUp ? 1.0 : -1.0)}");
                 double midY = bar.BarsSpan / 2.0;
                 double hDir = leaderRight ? 1.0 : -1.0;
                 double vDir = leaderUp    ? 1.0 : -1.0;
@@ -238,7 +238,20 @@ namespace BricsCadRc.Core
                 }
             }
 
+            // Rescale pierwszego punktu leadera — zawsze startuje na końcu dist line
+            // (uwzględniając lineExt dla count 2-3). Naprawia sytuację gdy user zmienił
+            // BarsSpan przez grip-stretch, a stare LeaderPoints mają zastygły pierwszy punkt.
+            if (leaderPtsH.Count >= 2)
+            {
+                double distLineEndY = leaderUp
+                    ? (bar.BarsSpan + lineExt)
+                    : (-lineExt);
+                var oldP0 = leaderPtsH[0];
+                leaderPtsH[0] = new Point3d(oldP0.X, distLineEndY, 0);
+            }
+
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsH);
+
             return bar.ArmTotalLen;
         }
 
@@ -262,8 +275,8 @@ namespace BricsCadRc.Core
             BarData bar, string ltName,
             bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true)
         {
-            double barsSpan = (bar.Count - 1) * bar.Spacing;
-            double lineExt  = (bar.Count >= 2 && bar.Count <= 3) ? DotRadius : 0.0;
+            double barsSpan = bar.BarsSpan;
+            double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
 
             // 1. Dist line — pozioma przy y=0 (gorna krawedz pretow)
             var distLine = new Line(new Point3d(-lineExt, 0, 0), new Point3d(barsSpan + lineExt, 0, 0))
@@ -283,16 +296,16 @@ namespace BricsCadRc.Core
                 bool isLast  = (i == bar.Count - 1);
 
                 if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), -Vector3d.XAxis);
+                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), -Vector3d.XAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Vector3d.XAxis);
+                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Vector3d.XAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count <= 3 || visSetV.Contains(i))
-                    AddDot(tr, btr, new Point3d(i * bar.Spacing, 0, 0), DotRadius);
+                    AddDot(tr, btr, new Point3d(i * bar.Spacing, 0, 0), Scaled(DotRadius, bar));
             }
 
             if (bar.Count > 3)
             {
-                double tickLen  = DotRadius * 3;
+                double tickLen  = Scaled(DotRadius, bar) * 3;
                 double rightX   = (bar.Count - 1) * bar.Spacing;
                 AddEndTick(tr, btr, new Point3d(0,      0, 0), Vector3d.YAxis, tickLen);
                 AddEndTick(tr, btr, new Point3d(rightX, 0, 0), Vector3d.YAxis, tickLen);
@@ -333,12 +346,16 @@ namespace BricsCadRc.Core
                 }
             }
 
-            Bricscad.ApplicationServices.Application.DocumentManager
-                .MdiActiveDocument.Editor.WriteMessage(
-                $"\n[BV] leaderV={leaderVertical} leaderR={leaderRight} leaderU={leaderUp} pts.Count={leaderPtsV.Count}");
-            foreach (var p in leaderPtsV)
-                Bricscad.ApplicationServices.Application.DocumentManager
-                    .MdiActiveDocument.Editor.WriteMessage($"\n[BV]   pt=({p.X:F0},{p.Y:F0})");
+            // Rescale pierwszego punktu leadera — zawsze startuje na końcu dist line
+            if (leaderPtsV.Count >= 2)
+            {
+                double distLineEndX = leaderRight
+                    ? (bar.BarsSpan + lineExt)
+                    : (-lineExt);
+                var oldP0 = leaderPtsV[0];
+                leaderPtsV[0] = new Point3d(distLineEndX, oldP0.Y, 0);
+            }
+
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
             return bar.ArmTotalLen;
         }
@@ -463,6 +480,25 @@ namespace BricsCadRc.Core
                 pts[pts.Count - 1] = localPt;
             else
                 pts.Add(localPt);
+
+            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt dla count 1-3)
+            if (pts.Count >= 2)
+            {
+                double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
+                if (bar.Direction == "X")
+                {
+                    double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
+                    var old = pts[0];
+                    pts[0] = new Point3d(old.X, distLineEnd, 0);
+                }
+                else
+                {
+                    double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
+                    var old = pts[0];
+                    pts[0] = new Point3d(distLineEnd, old.Y, 0);
+                }
+            }
+
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
             // Kasuj stare: Line (Continuous, ColorIndex=7) i DBText
@@ -564,6 +600,24 @@ namespace BricsCadRc.Core
                 pts[pts.Count - 2] = pts[pts.Count - 2] + perpLocal;
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
 
+            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt dla count 1-3)
+            if (pts.Count >= 2)
+            {
+                double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
+                if (bar.Direction == "X")
+                {
+                    double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
+                    var old = pts[0];
+                    pts[0] = new Point3d(old.X, distLineEnd, 0);
+                }
+                else
+                {
+                    double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
+                    var old = pts[0];
+                    pts[0] = new Point3d(distLineEnd, old.Y, 0);
+                }
+            }
+
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
             var btr = (BlockTableRecord)tr.GetObject(
@@ -571,10 +625,18 @@ namespace BricsCadRc.Core
             var idsToErase = new List<ObjectId>();
             foreach (ObjectId eid in btr)
             {
+                if (eid.IsErased) continue;
                 var ent = tr.GetObject(eid, OpenMode.ForRead);
-                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                bool willErase = false;
+                if (ent is Line ln)
+                {
+                    willErase = ln.Linetype == "Continuous" && ln.ColorIndex == 7;
+                    if (willErase) idsToErase.Add(eid);
+                }
+                else if (ent is DBText tx)
+                {
                     idsToErase.Add(eid);
-                if (ent is DBText) idsToErase.Add(eid);
+                }
             }
             foreach (var eid in idsToErase)
             {
@@ -614,7 +676,14 @@ namespace BricsCadRc.Core
             // 2. Oblicz kierunek ostatniego segmentu (dla tekstu i landing)
             var lastPt     = leaderPts[leaderPts.Count - 1];
             var prevPt     = leaderPts[leaderPts.Count - 2];
-            var lastDir    = (lastPt - prevPt).GetNormal();
+            var diff = lastPt - prevPt;
+            if (diff.Length < 1e-6)
+            {
+                // Zdegenerowany segment (identyczne punkty) — nie rysuj leadera,
+                // ale NIE rzucaj wyjątku żeby nie rollbackować całej transakcji SyncAnnotation.
+                return;
+            }
+            var lastDir    = diff.GetNormal();
             // 3. Kąt tekstu = kąt ostatniego segmentu (dokładny, nie snap do 0/90°)
             double rawAngle = Math.Atan2(lastDir.Y, lastDir.X);
             double textAngle = rawAngle;
@@ -627,12 +696,13 @@ namespace BricsCadRc.Core
 
             // 4. Tymczasowy DBText żeby zmierzyć textLen
             string textString = $"{bar.Count} {bar.Mark}";
+            double scaledTextH = Scaled(DefaultTextHeight, bar);
             double textLen;
             {
                 var tmpText = new DBText
                 {
                     TextString  = textString,
-                    Height      = DefaultTextHeight,
+                    Height      = scaledTextH,
                     TextStyleId = GetTextStyleId(db)
                 };
                 btr.AppendEntity(tmpText);
@@ -643,15 +713,16 @@ namespace BricsCadRc.Core
                     textLen = Math.Max(
                         Math.Abs(ext.MaxPoint.X - ext.MinPoint.X),
                         Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y));
-                    if (textLen <= 0) textLen = textString.Length * DefaultTextHeight * 0.65;
+                    if (textLen <= 0) textLen = textString.Length * scaledTextH * 0.65;
                 }
-                catch { textLen = textString.Length * DefaultTextHeight * 0.65; }
+                catch { textLen = textString.Length * scaledTextH * 0.65; }
                 tmpText.Erase();
             }
 
             // 5. Landing: zawsze kończy się w lastPt
+            double scaledTextArmOffset = Scaled(TextArmOffset, bar);
             Vector3d landingDir = lastDir;
-            var landingStart = lastPt - landingDir * (textLen + TextArmOffset);
+            var landingStart = lastPt - landingDir * (textLen + scaledTextArmOffset);
             var landingEnd   = lastPt;
             var landingLine  = new Line(landingStart, landingEnd)
             {
@@ -666,12 +737,12 @@ namespace BricsCadRc.Core
             // 6. textPos: gdy textAngle był flipowany, anchor = lastPt; gdy nie — landingStart
             bool textFlipped  = Math.Abs(textAngle - rawAngle) > 1e-6;
             Point3d textAnchor = textFlipped ? lastPt : landingStart;
-            Point3d textPos    = textAnchor + perpDir * TextArmOffset;
+            Point3d textPos    = textAnchor + perpDir * scaledTextArmOffset;
             var dbText = new DBText
             {
                 TextString     = textString,
                 Layer          = LayerManager.AnnotLayer,
-                Height         = DefaultTextHeight,
+                Height         = scaledTextH,
                 ColorIndex     = 2,
                 Position       = textPos,
                 Rotation       = textAngle,
@@ -1038,9 +1109,6 @@ namespace BricsCadRc.Core
                 : FindAnnotationIdByMark  (db, updatedBar.Mark);
             if (annotId == ObjectId.Null) return;
 
-            // BarsSpan musi byc zgodne z nowym Count
-            updatedBar.BarsSpan = (updatedBar.Count - 1) * updatedBar.Spacing;
-
             using var tr = db.TransactionManager.StartTransaction();
             var annotBr = (BlockReference)tr.GetObject(annotId, OpenMode.ForWrite);
 
@@ -1055,7 +1123,39 @@ namespace BricsCadRc.Core
                 updatedBar.LeaderUp         = existingAnnot.LeaderUp;
                 updatedBar.ArmMidY          = existingAnnot.ArmMidY;
                 updatedBar.TextLen          = existingAnnot.TextLen;
-                updatedBar.LeaderPoints     = existingAnnot.LeaderPoints ?? "";
+                // Przefiltruj LeaderPoints — usuń zdegenerowane segmenty (duplikaty)
+                if (!string.IsNullOrEmpty(existingAnnot.LeaderPoints))
+                {
+                    var pts = DecodeLeaderPoints(existingAnnot.LeaderPoints);
+                    var cleanPts = new List<Point3d>();
+                    foreach (var p in pts)
+                    {
+                        if (cleanPts.Count == 0 || cleanPts[cleanPts.Count - 1].DistanceTo(p) > 1e-6)
+                            cleanPts.Add(p);
+                    }
+                    updatedBar.LeaderPoints = cleanPts.Count >= 2
+                        ? EncodeLeaderPoints(cleanPts)
+                        : "";  // Za mało punktów — BuildH/V użyje domyślnego leadera
+                }
+                else
+                    updatedBar.LeaderPoints = "";
+            }
+
+            // Propaguj AnnotScale z bloku-źródła (trzymamy tylko w RC_BAR_BLOCK)
+            if (existingAnnot != null && !string.IsNullOrEmpty(existingAnnot.SourceBlockHandle))
+            {
+                try
+                {
+                    long hVal = Convert.ToInt64(existingAnnot.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                    if (db.TryGetObjectId(new Handle(hVal), out ObjectId srcId) && !srcId.IsNull && !srcId.IsErased)
+                    {
+                        var srcBr = tr.GetObject(srcId, OpenMode.ForRead) as BlockReference;
+                        var sourceBlockBarData = srcBr != null ? BarBlockEngine.ReadXData(srcBr) : null;
+                        if (sourceBlockBarData != null)
+                            updatedBar.AnnotScale = sourceBlockBarData.AnnotScale;
+                    }
+                }
+                catch { }
             }
 
             var btr = (BlockTableRecord)tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite);

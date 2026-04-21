@@ -12,8 +12,12 @@ namespace BricsCadRc.Core
 {
     public static class BarBlockHighlightManager
     {
-        private static readonly Dictionary<ObjectId, Entity> _transientsByBlock
+        private static readonly Dictionary<ObjectId, Entity>   _transientsByBlock
             = new Dictionary<ObjectId, Entity>();
+        // BTR Handle.Value (long) → BlockReference ObjectId — klucz jako long bo ObjectId.Equals()
+        // nie zawsze działa poprawnie między różnymi kontekstami (np. OM vs SelectImplied).
+        private static readonly Dictionary<long, ObjectId> _btrToBlock
+            = new Dictionary<long, ObjectId>();
         private static bool _registered;
 
         public static void Register()
@@ -23,6 +27,7 @@ namespace BricsCadRc.Core
             if (doc == null) return;
             doc.ImpliedSelectionChanged    += OnSelectionChanged;
             doc.Database.ObjectModified    += OnObjectModified;
+            doc.Database.ObjectAppended    += OnObjectAppended;
             _registered = true;
         }
 
@@ -33,6 +38,7 @@ namespace BricsCadRc.Core
             {
                 try { doc.ImpliedSelectionChanged -= OnSelectionChanged;  } catch { }
                 try { doc.Database.ObjectModified -= OnObjectModified;    } catch { }
+                try { doc.Database.ObjectAppended -= OnObjectAppended;    } catch { }
             }
             ClearTransients();
             _registered = false;
@@ -67,6 +73,7 @@ namespace BricsCadRc.Core
                         if (outline == null) continue;
 
                         _transientsByBlock[so.ObjectId] = outline;
+                        _btrToBlock[br.BlockTableRecord.Handle.Value] = so.ObjectId;
                         TransientManager.CurrentTransientManager.AddTransient(
                             outline,
                             TransientDrawingMode.DirectShortTerm,
@@ -75,6 +82,7 @@ namespace BricsCadRc.Core
                     }
                     tr.Commit();
                 }
+
             }
             catch { }
         }
@@ -85,10 +93,77 @@ namespace BricsCadRc.Core
             {
                 if (e.DBObject == null) return;
                 var id = e.DBObject.ObjectId;
-                if (!_transientsByBlock.ContainsKey(id)) return;
-                RefreshOutlineFor(id);
+                var ownerId = e.DBObject is Entity entOM ? entOM.OwnerId : ObjectId.Null;
+
+                if (_transientsByBlock.ContainsKey(id))
+                {
+                    RefreshOutlineFor(id);
+                    return;
+                }
+                // Entity inside a BTR of a selected block was modified — refresh the parent block outline.
+                if (!ownerId.IsNull && _btrToBlock.TryGetValue(ownerId.Handle.Value, out var blockId))
+                    RefreshOutlineFor(blockId);
             }
             catch { }
+        }
+
+        private static void OnObjectAppended(object sender, ObjectEventArgs e)
+        {
+            try
+            {
+                if (e.DBObject == null) return;
+                var ownerId = e.DBObject is Entity entOA ? entOA.OwnerId : ObjectId.Null;
+
+                if (!ownerId.IsNull && _btrToBlock.TryGetValue(ownerId.Handle.Value, out var blockId))
+                    RefreshOutlineFor(blockId);
+            }
+            catch { }
+        }
+
+        public static void ShowOutlineFor(ObjectId blockId)
+        {
+            if (blockId.IsNull || blockId.IsErased) return;
+            if (_transientsByBlock.ContainsKey(blockId)) return;
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(blockId, OpenMode.ForRead) as BlockReference;
+                if (br == null) { tr.Commit(); return; }
+
+                ObjectId ltId = ObjectId.Null;
+                var ltTable = (LinetypeTable)tr.GetObject(doc.Database.LinetypeTableId, OpenMode.ForRead);
+                if (ltTable.Has("DASHED"))   ltId = ltTable["DASHED"];
+                else if (ltTable.Has("_DOT")) ltId = ltTable["_DOT"];
+
+                var outline = BuildOutline(br, ltId);
+                if (outline != null)
+                {
+                    _transientsByBlock[blockId] = outline;
+                    _btrToBlock[br.BlockTableRecord.Handle.Value] = blockId;
+                    TransientManager.CurrentTransientManager.AddTransient(
+                        outline, TransientDrawingMode.DirectShortTerm, 128,
+                        new IntegerCollection());
+                }
+                tr.Commit();
+            }
+        }
+
+        public static void RefreshOutlineForBlock(ObjectId blockId)
+        {
+            RefreshOutlineFor(blockId);
+        }
+
+        public static void HideOutlineFor(ObjectId blockId)
+        {
+            if (_transientsByBlock.TryGetValue(blockId, out var d))
+            {
+                try { TransientManager.CurrentTransientManager.EraseTransient(d, new IntegerCollection()); } catch { }
+                try { d.Dispose(); } catch { }
+                _transientsByBlock.Remove(blockId);
+            }
         }
 
         private static void RefreshOutlineFor(ObjectId blockId)
@@ -118,6 +193,7 @@ namespace BricsCadRc.Core
                 if (outline != null)
                 {
                     _transientsByBlock[blockId] = outline;
+                    _btrToBlock[br.BlockTableRecord.Handle.Value] = blockId;
                     TransientManager.CurrentTransientManager.AddTransient(
                         outline,
                         TransientDrawingMode.DirectShortTerm,
@@ -134,9 +210,7 @@ namespace BricsCadRc.Core
             if (bar == null) return null;
             if (bar.Count <= 0 || bar.LengthA <= 0) return null;
 
-            double barsSpan = bar.BarsSpan > 0
-                ? bar.BarsSpan
-                : Math.Max(0, (bar.Count - 1) * bar.Spacing);
+            double barsSpan = Math.Max(0, bar.BarsSpan);
             double cover = Math.Max(0, bar.Cover);
             double lenA  = bar.LengthA;
 
@@ -182,6 +256,7 @@ namespace BricsCadRc.Core
                 try { ent.Dispose(); }                  catch { }
             }
             _transientsByBlock.Clear();
+            _btrToBlock.Clear();
         }
     }
 }

@@ -79,11 +79,10 @@ namespace BricsCadRc.Core
             else             { barLength = y1 - y0; rawSpan = x1 - x0; }
 
             int    count    = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
-            double barsSpan = (count - 1) * bar.Spacing;
 
             bar.Count    = count;
             bar.LengthA  = barLength;
-            bar.BarsSpan = barsSpan;
+            bar.BarsSpan = rawSpan;
             bar.Cover    = cover;
 
             // Cover przesuwa blok w kierunku startu — długość prętów bez zmian
@@ -152,7 +151,7 @@ namespace BricsCadRc.Core
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
-                              bar.SymbolSide, bar.SymbolDirection);
+                              bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
         }
 
@@ -179,7 +178,7 @@ namespace BricsCadRc.Core
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
-                              bar.SymbolSide, bar.SymbolDirection);
+                              bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
         }
 
@@ -255,10 +254,10 @@ namespace BricsCadRc.Core
         private static void AddBarSymbols(
             Transaction tr, BlockTableRecord btr, string layer,
             BarSymbolCategory cat, Point3d startPt, Point3d endPt,
-            string symbolSide, string symbolDir)
+            string symbolSide, string symbolDir, double annotScale = 1.0)
         {
-            const double SymR    = 35.0;
-            const double HookLen = 100.0;
+            double SymR    = Scaled(35.0,  annotScale);
+            double HookLen = Scaled(100.0, annotScale);
             const double Cos45   = 0.7071067811865476;
 
             switch (cat)
@@ -336,6 +335,9 @@ namespace BricsCadRc.Core
             }
         }
 
+        private static double Scaled(double baseValue, double annotScale)
+            => baseValue * (annotScale > 0 ? annotScale : 1.0);
+
         private static void AppendCircle(Transaction tr, BlockTableRecord btr,
             string layer, Point3d center, double radius)
         {
@@ -367,16 +369,9 @@ namespace BricsCadRc.Core
             if (horizontal) { barLength = x1 - x0; rawSpan = y1 - y0; }
             else             { barLength = y1 - y0; rawSpan = x1 - x0; }
 
-            if (bar.Count > 1)
-            {
-                // Zachowaj count/spacing przekazane z zewnątrz
-                bar.BarsSpan = (bar.Count - 1) * bar.Spacing;
-            }
-            else
-            {
-                bar.Count    = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
-                bar.BarsSpan = (bar.Count - 1) * bar.Spacing;
-            }
+            bar.BarsSpan = rawSpan;
+            if (bar.Count <= 1)
+                bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
 
             bar.LengthA  = barLength;
 
@@ -445,12 +440,18 @@ namespace BricsCadRc.Core
             var bar = ReadXData(br);
             if (bar == null || bar.Spacing <= 0) return;
 
-            newBarsSpan    = Math.Max(bar.Spacing, newBarsSpan);
-            int newCount    = (int)(newBarsSpan / bar.Spacing) + 1;
-            newBarsSpan     = (newCount - 1) * bar.Spacing;
+            newBarsSpan = Math.Max(0, newBarsSpan);
+            int newCount = bar.Spacing > 0
+                ? (int)(newBarsSpan / bar.Spacing) + 1
+                : 1;
+            if (newCount < 1) newCount = 1;
 
             bar.Count    = newCount;
             bar.BarsSpan = newBarsSpan;
+
+            // Aktualizuj Mark — dla count=1 bez suffix spacing
+            int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
+            bar.Mark = BarData.FormatMark(bar.Diameter, posNr, bar.Spacing, newCount);
 
             // Zaktualizuj XData na blockref (jest juz otwarty w grip-op)
             WriteXData(br, bar);
@@ -578,7 +579,9 @@ namespace BricsCadRc.Core
                 bar.ViewingDirection = newViewingDir;
             if (newViewSegIdx >= 0)
                 bar.ViewSegmentIndex = newViewSegIdx;
-            bar.BarsSpan = (newCount - 1) * newSpacing;
+            double minSpan = (newCount - 1) * newSpacing;
+            if (bar.BarsSpan < minSpan)
+                bar.BarsSpan = minSpan;
 
             WriteXData(br, bar);
 
@@ -613,12 +616,13 @@ namespace BricsCadRc.Core
 
         public static Point3d GripSpan(BlockReference br, BarData bar)
         {
-            var ins = br.Position;
-            double c = bar.Cover;
-            // Grip na KRAWEDZI PLYTY za ostatnim pretem (ostatni pret + cover)
-            return bar.Direction == "X"
-                ? new Point3d(ins.X, ins.Y + bar.BarsSpan + c, 0)
-                : new Point3d(ins.X + bar.BarsSpan + c, ins.Y, 0);
+            // Dla count=1 BarsSpan=0 — grip ląduje na górnym końcu lineExt (35mm)
+            // żeby był wizualnie odseparowany od grip[0] (który jest przy cover poniżej origin).
+            double localEnd = bar.Count >= 2 ? bar.BarsSpan : 35.0;
+            Point3d local = bar.Direction == "X"
+                ? new Point3d(0, localEnd, 0)
+                : new Point3d(localEnd, 0, 0);
+            return local.TransformBy(br.BlockTransform);
         }
 
         // ----------------------------------------------------------------
@@ -669,7 +673,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? ""),    // [20]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.VisibilityMode),      // [21]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? ""),    // [22]
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle)                      // [23]
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle),                     // [23]
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale)                 // [24] AnnotScale
             );
         }
 
@@ -705,6 +710,16 @@ namespace BricsCadRc.Core
             if (v.Length >= 22) bd.VisibilityMode   = (BarVisibilityMode)(short)v[21].Value;
             if (v.Length >= 23) bd.VisibleIndices   = (string)v[22].Value ?? "";
             if (v.Length >= 24) bd.Angle            = (double)v[23].Value;
+            if (v.Length >= 25)
+            {
+                try { bd.AnnotScale = Convert.ToDouble(v[24].Value); }
+                catch { bd.AnnotScale = 1.0; }
+                if (bd.AnnotScale <= 0) bd.AnnotScale = 1.0;
+            }
+            else
+            {
+                bd.AnnotScale = 1.0;  // fallback dla starych bloków
+            }
             return bd;
         }
 

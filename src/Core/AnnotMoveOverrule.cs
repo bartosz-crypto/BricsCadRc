@@ -110,7 +110,7 @@ namespace BricsCadRc.Core
 
             // --- Modul pretow RC_BAR_BLOCK ---
             var barBlock = BarBlockEngine.ReadXData(br);
-            if (barBlock != null && barBlock.BarsSpan > 0)
+            if (barBlock != null)
             {
                 // Nowa interakcja — wyczysc stan dragu pozycji
                 _dragOrigPos.Remove(br.ObjectId.Handle.Value);
@@ -125,7 +125,7 @@ namespace BricsCadRc.Core
 
             // --- Modul annotacji RC_BAR_ANNOT ---
             var barAnnot = AnnotationEngine.ReadAnnotXData(br);
-            if (barAnnot != null && barAnnot.BarsSpan > 0 && barAnnot.ArmTotalLen > 0)
+            if (barAnnot != null && barAnnot.ArmTotalLen > 0)
             {
                 // Wyczysc stan dragu — poczatek nowej interakcji z gripem
                 long hv = br.ObjectId.Handle.Value;
@@ -178,7 +178,7 @@ namespace BricsCadRc.Core
             foreach (GripData gd in grips)
             {
                 var barBlock = BarBlockEngine.ReadXData(br);
-                if (barBlock != null && barBlock.BarsSpan > 0)
+                if (barBlock != null)
                 {
                     // Grip [0] jest na krawedzi plyty (cover od insertion point), [1] na span
                     bool nearSpan    = IsNear(gd.GripPoint, BarBlockEngine.GripSpan(br, barBlock));
@@ -262,15 +262,15 @@ namespace BricsCadRc.Core
         {
             // --- RC_BAR_BLOCK ---
             var barBlock = BarBlockEngine.ReadXData(br);
-            if (barBlock != null && barBlock.BarsSpan > 0)
+            if (barBlock != null)
             {
                 if (isGrip1)
                 {
                     double delta       = barBlock.Direction == "X" ? offset.Y : offset.X;
-                    double newBarsSpan = Math.Max(barBlock.Spacing, barBlock.BarsSpan + delta);
+                    double newBarsSpan = Math.Max(0, barBlock.BarsSpan + delta);
                     BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
-                    // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
                     var updatedBar = BarBlockEngine.ReadXData(br);
+                    // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
                     if (updatedBar != null)
                     {
                         AnnotationEngine.SyncAnnotation(br.Database, updatedBar);

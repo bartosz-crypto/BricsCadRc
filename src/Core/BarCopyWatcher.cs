@@ -67,33 +67,25 @@ namespace BricsCadRc.Core
 
         private static void HandleCommandFinish(string cmdRaw, string eventType)
         {
-            var edLog = Application.DocumentManager.MdiActiveDocument?.Editor;
-            cmdRaw = cmdRaw ?? "(null)";
-            edLog?.WriteMessage($"\n[CopyWatcher] ==> Command{eventType} cmd='{cmdRaw}' queueBlocks={_newBlocks.Count} queueAnnots={_newAnnots.Count}");
-
             try
             {
-                string cmd = cmdRaw.ToUpperInvariant();
+                string cmd = (cmdRaw ?? "").ToUpperInvariant();
                 bool isCopyLike =
                        cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
                     || cmd == "MIRROR" || cmd.StartsWith("ARRAY");
 
-                edLog?.WriteMessage($"\n[CopyWatcher]     isCopyLike={isCopyLike}");
-
                 if (isCopyLike && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
                 {
-                    edLog?.WriteMessage($"\n[CopyWatcher]     → RemapCopiedPairs()");
+                    var edLog = Application.DocumentManager.MdiActiveDocument?.Editor;
+                    edLog?.WriteMessage($"\n[CopyWatcher] {cmd}: remap {_newBlocks.Count} blocks + {_newAnnots.Count} annots");
                     RemapCopiedPairs();
                 }
             }
-            catch (System.Exception ex)
-            {
-                edLog?.WriteMessage($"\n[CopyWatcher] EXC: {ex.Message}");
-            }
+            catch { }
             finally
             {
-                string cmd = cmdRaw.ToUpperInvariant();
+                string cmd = (cmdRaw ?? "").ToUpperInvariant();
                 bool shouldClear =
                        cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
@@ -102,13 +94,8 @@ namespace BricsCadRc.Core
 
                 if (shouldClear)
                 {
-                    edLog?.WriteMessage($"\n[CopyWatcher]     clearing queue");
                     _newBlocks.Clear();
                     _newAnnots.Clear();
-                }
-                else
-                {
-                    edLog?.WriteMessage($"\n[CopyWatcher]     (not clearing — not a create-like command)");
                 }
             }
         }

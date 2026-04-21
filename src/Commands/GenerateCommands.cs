@@ -106,7 +106,7 @@ namespace BricsCadRc.Commands
                 LayerCode = layerCode,
                 Direction = horizontal ? "X" : "Y"
             };
-            bar.Mark = $"H{diameter}-{posNr:D2}-{(int)spacing}";
+            bar.Mark = BarData.FormatMark(diameter, posNr, spacing, 2);
 
             // 10. Modul pretow — RC_SLAB_BARS_nnn (prety only, styl ASD RBCR_EN_CONSTLINEMODULE)
             var barResult = BarBlockEngine.Generate(db, selResult.ObjectId, bar, horizontal, cover, posNr);
