@@ -144,9 +144,10 @@ namespace BricsCadRc.Commands
             }
 
             // Lokalna metoda pomocnicza — przebudowuje blok + Mark + annotację
-            void ApplyPreview(int count, double spacing, double cover)
+            void ApplyPreview(int count, double spacing, double cover, double barsSpan)
             {
-                BarBlockEngine.RebuildWithNewLayout(db, blockRefId, count, spacing, cover);
+                if (count < 1) count = 1;
+                BarBlockEngine.RebuildWithNewLayout(db, blockRefId, count, spacing, cover, newBarsSpan: barsSpan);
 
                 using var trP = db.TransactionManager.StartTransaction();
                 var brP = trP.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
@@ -181,9 +182,10 @@ namespace BricsCadRc.Commands
             }
 
             // Zachowaj oryginalne wartości do ewentualnego przywrócenia
-            int    origCount   = bar.Count;
-            double origSpacing = bar.Spacing;
-            double origCover   = bar.Cover;
+            int    origCount    = bar.Count;
+            double origBarsSpan = bar.BarsSpan;
+            double origSpacing  = bar.Spacing;
+            double origCover    = bar.Cover;
 
             // Sprawdź czy annotacja istnieje
             bool annotMissing = false;
@@ -202,10 +204,7 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 2 — dialog z live preview
-            var dlg = new EditDistributionDialog(bar.Mark, bar.Count, bar.Spacing, bar.Cover,
-                annotMissing,
-                viewingDirection: bar.ViewingDirection ?? "Auto");
-            dlg.OnPreview = (c, sp, cv) => ApplyPreview(c, sp, cv);
+            var dlg = new EditDistributionDialog(bar, (cnt, sp, cv, span) => ApplyPreview(cnt, sp, cv, span), annotMissing);
 
             BarBlockHighlightManager.ShowOutlineFor(blockRefId);
             bool confirmed;
@@ -215,14 +214,20 @@ namespace BricsCadRc.Commands
             }
             finally
             {
-                BarBlockHighlightManager.HideOutlineFor(blockRefId);
+                BarBlockHighlightManager.HideAllOutlines();
+                try
+                {
+                    var docF = Application.DocumentManager.MdiActiveDocument;
+                    docF?.Editor.SetImpliedSelection(new ObjectId[0]);
+                }
+                catch { }
             }
 
             if (!confirmed)
             {
                 if (dlg.PreviewApplied)
                 {
-                    ApplyPreview(origCount, origSpacing, origCover);
+                    ApplyPreview(origCount, origSpacing, origCover, origBarsSpan);
                 }
                 return;
             }
@@ -327,15 +332,21 @@ namespace BricsCadRc.Commands
             }
             // "Any" lub bez zmiany ViewingDir → newLengthA = null (zachowaj obecne LengthA)
 
+            int    newCount    = dlg.ResultCount;
+            double newSpacing  = dlg.ResultSpacing;
+            double newCover    = dlg.ResultCover;
+            double newBarsSpan = dlg.ResultBarsSpan;
+
             BarBlockEngine.RebuildWithNewLayout(
                 db, blockRefId,
-                dlg.ResultCount, dlg.ResultSpacing, dlg.ResultCover,
+                newCount, newSpacing, newCover,
+                newBarsSpan:   newBarsSpan,
                 newLengthA:    newLengthA,
                 newViewingDir: newViewDir,
                 newViewSegIdx: newSegIdx);
 
             // Krok 3b — zaktualizuj Mark jeśli zmienił się rozstaw (format H{dia}-{posNr}-{spacing})
-            if (Math.Abs(dlg.ResultSpacing - bar.Spacing) > 0.1 || dlg.ResultCount != bar.Count)
+            if (Math.Abs(newSpacing - bar.Spacing) > 0.1 || newCount != bar.Count)
             {
                 using var trMark = db.TransactionManager.StartTransaction();
                 var brMark = trMark.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
@@ -352,11 +363,11 @@ namespace BricsCadRc.Commands
                             ? " " + string.Join(" ", markParts, 1, markParts.Length - 1)
                             : "";
                         string baseNew = coreParts.Length >= 2
-                            ? $"{coreParts[0]}-{coreParts[1]}-{(int)dlg.ResultSpacing}"
+                            ? $"{coreParts[0]}-{coreParts[1]}-{(int)newSpacing}"
                             : bar.Mark;
                         barMark.Mark    = baseNew + suffix;
-                        barMark.Count   = dlg.ResultCount;
-                        barMark.Spacing = dlg.ResultSpacing;
+                        barMark.Count   = newCount;
+                        barMark.Spacing = newSpacing;
                         BarBlockEngine.WriteXData(brMark, barMark);
                     }
                 }
@@ -386,7 +397,7 @@ namespace BricsCadRc.Commands
             }
 
             ed.WriteMessage(
-                $"\nRozkład {bar.Mark} zaktualizowany: {dlg.ResultCount} szt. co {dlg.ResultSpacing:F0} mm.\n");
+                $"\nRozkład {bar.Mark} zaktualizowany: {newCount} szt. co {newSpacing:F0} mm.\n");
 
             // Krok 5 — opcjonalna pętla jig3: przebuduj leader
             if (dlg.ResultRebuildLeader)

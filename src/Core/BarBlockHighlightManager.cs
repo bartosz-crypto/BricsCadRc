@@ -48,12 +48,19 @@ namespace BricsCadRc.Core
         {
             try
             {
+                var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
+                ed?.WriteMessage($"\n[HL-SEL-FIRE]");
+
                 ClearTransients();
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 if (doc == null) return;
 
                 var sel = doc.Editor.SelectImplied();
-                if (sel.Status != PromptStatus.OK || sel.Value == null) return;
+                if (sel.Status != PromptStatus.OK || sel.Value == null)
+                {
+                    ed?.WriteMessage($"\n[HL-SEL-END] transients={_transientsByBlock.Count}");
+                    return;
+                }
 
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -74,6 +81,7 @@ namespace BricsCadRc.Core
 
                         _transientsByBlock[so.ObjectId] = outline;
                         _btrToBlock[br.BlockTableRecord.Handle.Value] = so.ObjectId;
+                        ed?.WriteMessage($"\n[HL-ADD] block={so.ObjectId.Handle.Value:X}");
                         TransientManager.CurrentTransientManager.AddTransient(
                             outline,
                             TransientDrawingMode.DirectShortTerm,
@@ -83,6 +91,7 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
 
+                ed?.WriteMessage($"\n[HL-SEL-END] transients={_transientsByBlock.Count}");
             }
             catch { }
         }
@@ -166,10 +175,21 @@ namespace BricsCadRc.Core
             }
         }
 
+        public static void HideAllOutlines()
+        {
+            var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
+            ed?.WriteMessage($"\n[HL-HIDE-ALL] hidingCount={_transientsByBlock.Count}");
+            ClearTransients();
+        }
+
         private static void RefreshOutlineFor(ObjectId blockId)
         {
+            var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
+            ed?.WriteMessage($"\n[HL-REF] block={blockId.Handle.Value:X} beforeCount={_transientsByBlock.Count}");
+
             if (_transientsByBlock.TryGetValue(blockId, out var old))
             {
+                ed?.WriteMessage($"\n[HL-ERASE] count={_transientsByBlock.Count}");
                 try { TransientManager.CurrentTransientManager.EraseTransient(old, new IntegerCollection()); } catch { }
                 try { old.Dispose(); } catch { }
                 _transientsByBlock.Remove(blockId);
@@ -194,6 +214,7 @@ namespace BricsCadRc.Core
                 {
                     _transientsByBlock[blockId] = outline;
                     _btrToBlock[br.BlockTableRecord.Handle.Value] = blockId;
+                    ed?.WriteMessage($"\n[HL-ADD] block={blockId.Handle.Value:X}");
                     TransientManager.CurrentTransientManager.AddTransient(
                         outline,
                         TransientDrawingMode.DirectShortTerm,
@@ -202,6 +223,7 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
             }
+            ed?.WriteMessage($"\n[HL-REF] block={blockId.Handle.Value:X} afterCount={_transientsByBlock.Count}");
         }
 
         private static Entity BuildOutline(BlockReference br, ObjectId ltId)

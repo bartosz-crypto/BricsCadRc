@@ -1,97 +1,201 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
+using BricsCadRc.Core;
 
 namespace BricsCadRc.Dialogs
 {
     public partial class EditDistributionDialog : Window
     {
-        public int    ResultCount   { get; private set; }
-        public double ResultSpacing { get; private set; }
-        public double ResultCover   { get; private set; }
-        public string ResultViewingDirection
-        {
-            get
-            {
-                var sel = ViewDirBox.SelectedItem as ComboBoxItem;
-                return sel?.Content as string ?? "Auto";
-            }
-        }
+        public int    ResultCount          { get; private set; }
+        public double ResultSpacing        { get; private set; }
+        public double ResultCover          { get; private set; }
+        public double ResultBarsSpan       { get; private set; }
+        public bool   ResultRebuildLeader  { get; private set; }
+        public string ResultViewingDirection { get; private set; } = "Auto";
+        public bool   ResultAddAnnotation  => CbAddAnnotation.IsChecked == true;
+        public bool   PreviewApplied       { get; private set; }
 
-        public Action<int, double, double> OnPreview    { get; set; }
-        public bool                        PreviewApplied { get; private set; } = false;
-        public bool ResultAddAnnotation  => CbAddAnnotation.IsChecked  == true;
-        public bool ResultRebuildLeader  => CbRebuildLeader.IsChecked  == true;
+        private readonly Action<int, double, double, double> _onPreview;  // (count, spacing, cover, barsSpan)
+        private readonly DispatcherTimer _previewTimer;
 
-        private System.Windows.Threading.DispatcherTimer _debounce;
+        private int    _prevCount;
+        private double _prevSpacing;
+        private double _prevBarsSpan;
+        private bool   _suppressRecalc;
 
-        public EditDistributionDialog(string mark, int count, double spacing, double cover,
-            bool annotMissing = false,
-            string viewingDirection = "Auto")
+        public EditDistributionDialog(BarData bar, Action<int, double, double, double> onPreview, bool annotMissing = false)
         {
             InitializeComponent();
-            MarkLabel.Text  = mark;
-            CountBox.Text   = count.ToString();
-            SpacingBox.Text = spacing.ToString("F0");
-            CoverBox.Text   = cover.ToString("F0");
+            _onPreview = onPreview;
+
+            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _previewTimer.Tick += PreviewTimer_Tick;
+
+            _suppressRecalc = true;
+            MarkLabel.Text  = bar.Mark;
+            CountBox.Text   = bar.Count.ToString(CultureInfo.InvariantCulture);
+            SpacingBox.Text = bar.Spacing.ToString("F0", CultureInfo.InvariantCulture);
+            CoverBox.Text   = bar.Cover.ToString("F0", CultureInfo.InvariantCulture);
+            SpanBox.Text    = bar.BarsSpan.ToString("F0", CultureInfo.InvariantCulture);
+            _suppressRecalc = false;
+
+            _prevCount    = bar.Count;
+            _prevSpacing  = bar.Spacing;
+            _prevBarsSpan = bar.BarsSpan;
+
+            // Safety: stare rozkłady mogą mieć BarsSpan=0 — ustaw minimum
+            if (_prevBarsSpan < (bar.Count - 1) * bar.Spacing)
+                _prevBarsSpan = (bar.Count - 1) * bar.Spacing;
+
             var vdItem = ViewDirBox.Items.Cast<ComboBoxItem>()
-                .FirstOrDefault(i => (string)i.Content == viewingDirection);
+                .FirstOrDefault(i => (string)i.Content == (bar.ViewingDirection ?? "Auto"));
             ViewDirBox.SelectedItem = vdItem ?? ViewDirBox.Items[0];
-            UpdateSpan();
-            CountBox.TextChanged   += (s, e) => { UpdateSpan(); SchedulePreview(); };
-            SpacingBox.TextChanged += (s, e) => { UpdateSpan(); SchedulePreview(); };
-            CoverBox.TextChanged   += (s, e) => SchedulePreview();
+
+            // LostFocus — cross-field rekalkulacja (po zakończeniu edycji)
+            CountBox.LostFocus   += OnCountChanged;
+            SpacingBox.LostFocus += OnSpacingChanged;
+            SpanBox.LostFocus    += OnSpanChanged;
+
+            // TextChanged — tylko timer live preview
+            CountBox.TextChanged   += OnAnyTextChanged;
+            SpacingBox.TextChanged += OnAnyTextChanged;
+            CoverBox.TextChanged   += OnAnyTextChanged;
+            SpanBox.TextChanged    += OnAnyTextChanged;
 
             if (annotMissing)
                 CbAddAnnotation.Visibility = Visibility.Visible;
         }
 
-        void UpdateSpan()
+        private void OnCountChanged(object sender, RoutedEventArgs e)
         {
-            if (int.TryParse(CountBox.Text, out int c)
-                && double.TryParse(SpacingBox.Text, out double sp) && c > 0 && sp > 0)
-                SpanLabel.Text = $"{(c - 1) * sp:F0}";
-            else
-                SpanLabel.Text = "—";
-        }
+            if (_suppressRecalc) return;
+            if (!int.TryParse(CountBox.Text, out int newCount) || newCount < 1)
+            { RestartPreviewTimer(); return; }
 
-        void Preview_Click(object sender, RoutedEventArgs e)
-        {
-            if (!int.TryParse(CountBox.Text, out int c) || c < 1) return;
-            if (!double.TryParse(SpacingBox.Text, out double sp) || sp <= 0) return;
-            if (!double.TryParse(CoverBox.Text, out double cv) || cv < 0) return;
+            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+            { _prevCount = newCount; RestartPreviewTimer(); return; }
 
-            PreviewApplied = true;
-            OnPreview?.Invoke(c, sp, cv);
-        }
-
-        void SchedulePreview()
-        {
-            _debounce?.Stop();
-            _debounce = new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromMilliseconds(600) };
-            _debounce.Tick += (s, e) =>
+            if (newCount > _prevCount)
             {
-                _debounce.Stop();
-                Preview_Click(s, null!);
-            };
-            _debounce.Start();
+                double needed = (newCount - 1) * spacing;
+                if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var currSpan))
+                    currSpan = 0;
+                if (needed > currSpan)
+                {
+                    _suppressRecalc = true;
+                    SpanBox.Text = needed.ToString("F0", CultureInfo.InvariantCulture);
+                    _suppressRecalc = false;
+                    _prevBarsSpan = needed;
+                }
+            }
+
+            _prevCount = newCount;
+            RestartPreviewTimer();
+        }
+
+        private void OnSpacingChanged(object sender, RoutedEventArgs e)
+        {
+            if (_suppressRecalc) return;
+            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var newSpacing) || newSpacing <= 0)
+            { RestartPreviewTimer(); return; }
+
+            if (!int.TryParse(CountBox.Text, out int count))
+            { _prevSpacing = newSpacing; RestartPreviewTimer(); return; }
+
+            if (newSpacing > _prevSpacing)
+            {
+                double needed = (count - 1) * newSpacing;
+                if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var currSpan))
+                    currSpan = 0;
+                if (needed > currSpan)
+                {
+                    _suppressRecalc = true;
+                    SpanBox.Text = needed.ToString("F0", CultureInfo.InvariantCulture);
+                    _suppressRecalc = false;
+                    _prevBarsSpan = needed;
+                }
+            }
+
+            _prevSpacing = newSpacing;
+            RestartPreviewTimer();
+        }
+
+        private void OnSpanChanged(object sender, RoutedEventArgs e)
+        {
+            if (_suppressRecalc) return;
+            if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var newSpan) || newSpan < 0)
+            { RestartPreviewTimer(); return; }
+
+            if (newSpan < _prevBarsSpan)
+            {
+                if (!int.TryParse(CountBox.Text, out int count))
+                { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
+                if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+                { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
+
+                int newCount = Math.Max(1, (int)(newSpan / spacing) + 1);
+                if (newCount < count)
+                {
+                    _suppressRecalc = true;
+                    CountBox.Text = newCount.ToString(CultureInfo.InvariantCulture);
+                    _suppressRecalc = false;
+                    _prevCount = newCount;
+                }
+            }
+
+            _prevBarsSpan = newSpan;
+            RestartPreviewTimer();
+        }
+
+        private void OnAnyTextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_suppressRecalc) return;
+            RestartPreviewTimer();
+        }
+
+        private void RestartPreviewTimer()
+        {
+            _previewTimer.Stop();
+            _previewTimer.Start();
+        }
+
+        private void PreviewTimer_Tick(object sender, EventArgs e)
+        {
+            _previewTimer.Stop();
+            if (!int.TryParse(CountBox.Text, out int count) || count < 1) return;
+            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0) return;
+            if (!double.TryParse(CoverBox.Text,   NumberStyles.Float, CultureInfo.InvariantCulture, out var cover))   return;
+            if (!double.TryParse(SpanBox.Text,    NumberStyles.Float, CultureInfo.InvariantCulture, out var span))    return;
+            PreviewApplied = true;
+            _onPreview?.Invoke(count, spacing, cover, span);
         }
 
         void OK_Click(object sender, RoutedEventArgs e)
         {
-            if (!int.TryParse(CountBox.Text, out int c) || c < 1)
-            { MessageBox.Show("Nieprawidłowa liczba prętów."); return; }
-            if (!double.TryParse(SpacingBox.Text, out double sp) || sp <= 0)
-            { MessageBox.Show("Nieprawidłowy rozstaw."); return; }
-            if (!double.TryParse(CoverBox.Text, out double cv) || cv < 0)
-            { MessageBox.Show("Nieprawidłowa otulina."); return; }
+            if (!int.TryParse(CountBox.Text, out int count) || count < 1)
+            { MessageBox.Show("Liczba prętów musi być ≥ 1", "Edycja rozkładu"); return; }
+            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+            { MessageBox.Show("Rozstaw musi być > 0", "Edycja rozkładu"); return; }
+            if (!double.TryParse(CoverBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cover) || cover < 0)
+            { MessageBox.Show("Otulina ≥ 0", "Edycja rozkładu"); return; }
+            if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var span) || span < 0)
+            { MessageBox.Show("Rozpiętość ≥ 0", "Edycja rozkładu"); return; }
 
-            ResultCount   = c;
-            ResultSpacing = sp;
-            ResultCover   = cv;
-            DialogResult  = true;
+            if ((count - 1) * spacing > span)
+                span = (count - 1) * spacing;
+
+            ResultCount          = count;
+            ResultSpacing        = spacing;
+            ResultCover          = cover;
+            ResultBarsSpan       = span;
+            ResultRebuildLeader  = CbRebuildLeader?.IsChecked == true;
+            ResultViewingDirection = (ViewDirBox.SelectedItem as ComboBoxItem)?.Content as string ?? "Auto";
+
+            DialogResult = true;
         }
 
         void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;

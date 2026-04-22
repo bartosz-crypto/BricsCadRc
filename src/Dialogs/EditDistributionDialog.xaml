@@ -36,9 +36,9 @@
             <TextBlock Grid.Row="3" Grid.Column="0" Text="Otulina [mm]:" VerticalAlignment="Center"/>
             <TextBox   Grid.Row="3" Grid.Column="1" x:Name="CoverBox" VerticalAlignment="Center"/>
 
-            <!-- BarsSpan (obliczany, readonly) -->
+            <!-- BarsSpan (edytowalne) -->
             <TextBlock Grid.Row="4" Grid.Column="0" Text="Rozpiętość [mm]:" VerticalAlignment="Center"/>
-            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="SpanLabel" VerticalAlignment="Center" Foreground="Gray"/>
+            <TextBox   Grid.Row="4" Grid.Column="1" x:Name="SpanBox" VerticalAlignment="Center"/>
 
             <!-- ViewingDirection -->
             <TextBlock Grid.Row="5" Grid.Column="0"

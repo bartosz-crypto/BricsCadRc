@@ -560,6 +560,7 @@ namespace BricsCadRc.Core
         public static void RebuildWithNewLayout(
             Database db, ObjectId blockRefId,
             int newCount, double newSpacing, double newCover,
+            double? newBarsSpan = null,
             double? newLengthA = null,
             string newViewingDir = null, int newViewSegIdx = -1)
         {
@@ -579,6 +580,8 @@ namespace BricsCadRc.Core
                 bar.ViewingDirection = newViewingDir;
             if (newViewSegIdx >= 0)
                 bar.ViewSegmentIndex = newViewSegIdx;
+            if (newBarsSpan.HasValue)
+                bar.BarsSpan = newBarsSpan.Value;
             double minSpan = (newCount - 1) * newSpacing;
             if (bar.BarsSpan < minSpan)
                 bar.BarsSpan = minSpan;
