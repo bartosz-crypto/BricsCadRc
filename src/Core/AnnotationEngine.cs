@@ -183,6 +183,10 @@ namespace BricsCadRc.Core
             btr.AppendEntity(distLine);
             tr.AddNewlyCreatedDBObject(distLine, true);
 
+            // Kierunek osi dist line — od dolnego do górnego końca (skośna)
+            var rawAxisH    = new Vector3d(bar.SkewEnd - bar.SkewStart, barsSpan, 0);
+            var distAxisH   = rawAxisH.Length > 1e-9 ? rawAxisH.GetNormal() : Vector3d.YAxis;
+
             // 2. Romby/strzałki — pozycje skośne: (dotX, i*spacing), i=0..count-1
             var visSetH = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
             for (int i = 0; i < bar.Count; i++)
@@ -193,9 +197,9 @@ namespace BricsCadRc.Core
                 double dotX      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
 
                 if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(bar.SkewStart, i * bar.Spacing, 0), -Vector3d.YAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(bar.SkewStart, i * bar.Spacing, 0), -distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(bar.SkewEnd, i * bar.Spacing, 0), Vector3d.YAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(bar.SkewEnd, i * bar.Spacing, 0), distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count <= 3 || visSetH.Contains(i))
                     AddDot(tr, btr, new Point3d(dotX, i * bar.Spacing, 0), Scaled(DotRadius, bar));
             }
@@ -291,6 +295,10 @@ namespace BricsCadRc.Core
             btr.AppendEntity(distLine);
             tr.AddNewlyCreatedDBObject(distLine, true);
 
+            // Kierunek osi dist line — od lewego do prawego końca (skośna)
+            var rawAxisV    = new Vector3d(barsSpan, bar.SkewEnd - bar.SkewStart, 0);
+            var distAxisV   = rawAxisV.Length > 1e-9 ? rawAxisV.GetNormal() : Vector3d.XAxis;
+
             // 2. Romby/strzałki — pozycje skośne: (i*spacing, dotY), i=0..count-1
             var visSetV = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
             for (int i = 0; i < bar.Count; i++)
@@ -301,9 +309,9 @@ namespace BricsCadRc.Core
                 double dotY      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
 
                 if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewStart, 0), -Vector3d.XAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewStart, 0), -distAxisV, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewEnd, 0), Vector3d.XAxis, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewEnd, 0), distAxisV, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count <= 3 || visSetV.Contains(i))
                     AddDot(tr, btr, new Point3d(i * bar.Spacing, dotY, 0), Scaled(DotRadius, bar));
             }
@@ -485,21 +493,21 @@ namespace BricsCadRc.Core
             else
                 pts.Add(localPt);
 
-            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt dla count 1-3)
+            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt i skew)
             if (pts.Count >= 2)
             {
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
                 if (bar.Direction == "X")
                 {
                     double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
-                    var old = pts[0];
-                    pts[0] = new Point3d(old.X, distLineEnd, 0);
+                    double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
+                    pts[0] = new Point3d(skewAtEnd, distLineEnd, 0);
                 }
                 else
                 {
                     double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
-                    var old = pts[0];
-                    pts[0] = new Point3d(distLineEnd, old.Y, 0);
+                    double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
+                    pts[0] = new Point3d(distLineEnd, skewAtEnd, 0);
                 }
             }
 
@@ -604,21 +612,21 @@ namespace BricsCadRc.Core
                 pts[pts.Count - 2] = pts[pts.Count - 2] + perpLocal;
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
 
-            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt dla count 1-3)
+            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt i skew)
             if (pts.Count >= 2)
             {
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
                 if (bar.Direction == "X")
                 {
                     double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
-                    var old = pts[0];
-                    pts[0] = new Point3d(old.X, distLineEnd, 0);
+                    double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
+                    pts[0] = new Point3d(skewAtEnd, distLineEnd, 0);
                 }
                 else
                 {
                     double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
-                    var old = pts[0];
-                    pts[0] = new Point3d(distLineEnd, old.Y, 0);
+                    double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
+                    pts[0] = new Point3d(distLineEnd, skewAtEnd, 0);
                 }
             }
 
@@ -1282,7 +1290,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : bar.BarsSpan / 2.0),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderUp ? 1 : 0)),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle),      // [16]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? "") // [17] — punkty leadera "x1,y1;x2,y2;..."
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? ""), // [17] — punkty leadera "x1,y1;x2,y2;..."
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),            // [18]
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart)           // [19]
             );
         }
 
@@ -1315,6 +1325,8 @@ namespace BricsCadRc.Core
             if (v.Length >= 16) bd.LeaderUp           = (short)v[15].Value == 1;
             if (v.Length >= 17) bd.SourceBlockHandle  = v[16].Value?.ToString() ?? "";
             if (v.Length >= 18) bd.LeaderPoints       = (string)v[17].Value ?? "";
+            if (v.Length >= 19) { try { bd.SkewEnd   = Convert.ToDouble(v[18].Value); } catch { bd.SkewEnd   = 0.0; } }
+            if (v.Length >= 20) { try { bd.SkewStart = Convert.ToDouble(v[19].Value); } catch { bd.SkewStart = 0.0; } }
             return bd;
         }
 
