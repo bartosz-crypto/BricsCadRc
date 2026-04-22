@@ -677,7 +677,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.VisibilityMode),      // [21]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? ""),    // [22]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle),                     // [23]
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale)                 // [24] AnnotScale
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale),                // [24] AnnotScale
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewOffset)                 // [25] SkewOffset
             );
         }
 
@@ -722,6 +723,15 @@ namespace BricsCadRc.Core
             else
             {
                 bd.AnnotScale = 1.0;  // fallback dla starych bloków
+            }
+            if (v.Length >= 26)
+            {
+                try { bd.SkewOffset = Convert.ToDouble(v[25].Value); }
+                catch { bd.SkewOffset = 0.0; }
+            }
+            else
+            {
+                bd.SkewOffset = 0.0;
             }
             return bd;
         }
