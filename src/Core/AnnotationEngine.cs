@@ -222,17 +222,18 @@ namespace BricsCadRc.Core
             var leaderPtsH = DecodeLeaderPoints(bar.LeaderPoints);
             if (leaderPtsH.Count < 2)
             {
-                double midY = bar.BarsSpan / 2.0;
-                double hDir = leaderRight ? 1.0 : -1.0;
-                double vDir = leaderUp    ? 1.0 : -1.0;
+                double midY    = bar.BarsSpan / 2.0;
+                double hDir    = leaderRight ? 1.0 : -1.0;
+                double vDir    = leaderUp    ? 1.0 : -1.0;
+                double anchorX = leaderUp    ? bar.SkewEnd : bar.SkewStart;
 
                 if (!leaderHorizontal)
                 {
-                    // Prosta pionowa (Up/Down bez złamania) — arm wzdłuż Y
+                    // Prosta pionowa (Up/Down bez złamania) — arm wzdłuż Y, X jak koniec dist line
                     leaderPtsH = new List<Point3d>
                     {
-                        new Point3d(0, midY,                    0),
-                        new Point3d(0, midY + vDir * ArmLength, 0)
+                        new Point3d(anchorX, midY,                    0),
+                        new Point3d(anchorX, midY + vDir * ArmLength, 0)
                     };
                 }
                 else
@@ -243,9 +244,9 @@ namespace BricsCadRc.Core
                         : midY;
                     leaderPtsH = new List<Point3d>
                     {
-                        new Point3d(0,              midY,  0),  // środek dist line
-                        new Point3d(0,              kinkY, 0),  // punkt złamania
-                        new Point3d(hDir * ArmLength, kinkY, 0) // koniec arma
+                        new Point3d(anchorX,         midY,  0),  // środek dist line
+                        new Point3d(anchorX,         kinkY, 0),  // punkt złamania (ta sama X)
+                        new Point3d(hDir * ArmLength, kinkY, 0)  // koniec arma (poziomy)
                     };
                 }
             }
@@ -334,17 +335,18 @@ namespace BricsCadRc.Core
             var leaderPtsV = DecodeLeaderPoints(bar.LeaderPoints);
             if (leaderPtsV.Count < 2)
             {
-                double midX = bar.BarsSpan / 2.0;
-                double hDir = leaderRight ? 1.0 : -1.0;
-                double vDir = leaderUp    ? 1.0 : -1.0;
+                double midX    = bar.BarsSpan / 2.0;
+                double hDir    = leaderRight ? 1.0 : -1.0;
+                double vDir    = leaderUp    ? 1.0 : -1.0;
+                double anchorY = leaderRight ? bar.SkewEnd : bar.SkewStart;
 
                 if (!leaderVertical)
                 {
-                    // Prosta pozioma (Left/Right bez złamania) — arm wzdłuż X
+                    // Prosta pozioma (Left/Right bez złamania) — arm wzdłuż X, Y jak koniec dist line
                     leaderPtsV = new List<Point3d>
                     {
-                        new Point3d(midX,                    0, 0),
-                        new Point3d(midX + hDir * ArmLength, 0, 0)
+                        new Point3d(midX,                    anchorY, 0),
+                        new Point3d(midX + hDir * ArmLength, anchorY, 0)
                     };
                 }
                 else
@@ -356,8 +358,8 @@ namespace BricsCadRc.Core
                         : midX;
                     leaderPtsV = new List<Point3d>
                     {
-                        new Point3d(midX,  0,                0),  // środek dist line
-                        new Point3d(kinkX, 0,                0),  // punkt złamania
+                        new Point3d(midX,  anchorY, 0),  // środek dist line
+                        new Point3d(kinkX, anchorY, 0),  // punkt złamania
                         new Point3d(kinkX, vDir * ArmLength, 0)   // koniec arma
                     };
                 }

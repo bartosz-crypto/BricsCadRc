@@ -149,7 +149,13 @@ namespace BricsCadRc.Core
                 double xShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(xShift,            y, 0);
                 var    ptE = new Point3d(barWidth + xShift, y, 0);
-                var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
+                if (i == 0 || i == count - 1)
+                {
+                    try { Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
+                        .WriteMessage($"\n[BAR-{i}] xShift={xShift:F2} ptS=({ptS.X:F2},{ptS.Y:F2}) ptE=({ptE.X:F2},{ptE.Y:F2})"); }
+                    catch { }
+                }
+                var line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
