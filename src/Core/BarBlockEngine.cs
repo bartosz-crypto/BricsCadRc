@@ -144,9 +144,11 @@ namespace BricsCadRc.Core
             for (int i = 0; i < count; i++)
             {
                 if (!visibleSet.Contains(i)) continue;
-                double y   = i * bar.Spacing;
-                var    ptS = new Point3d(0, y, 0);
-                var    ptE = new Point3d(barWidth, y, 0);
+                double y        = i * bar.Spacing;
+                double skewFrac = count > 1 ? (double)i / (count - 1) : 0.0;
+                double xShift   = skewFrac * bar.SkewOffset;
+                var    ptS = new Point3d(xShift,            y, 0);
+                var    ptE = new Point3d(barWidth + xShift, y, 0);
                 var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
@@ -171,9 +173,11 @@ namespace BricsCadRc.Core
             for (int i = 0; i < count; i++)
             {
                 if (!visibleSet.Contains(i)) continue;
-                double x   = i * bar.Spacing;
-                var    ptS = new Point3d(x, 0, 0);
-                var    ptE = new Point3d(x, barHeight, 0);
+                double x        = i * bar.Spacing;
+                double skewFrac = count > 1 ? (double)i / (count - 1) : 0.0;
+                double yShift   = skewFrac * bar.SkewOffset;
+                var    ptS = new Point3d(x, yShift,             0);
+                var    ptE = new Point3d(x, barHeight + yShift, 0);
                 var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
