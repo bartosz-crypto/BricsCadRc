@@ -39,26 +39,30 @@ namespace BricsCadRc.Core
             => baseValue * (bar.AnnotScale > 0 ? bar.AnnotScale : 1.0);
 
         // Zwraca punkt końca dist line po stronie leadera (uwzględnia skos i ekstensję).
-        // direction="X": leaderUp→extEnd; direction="Y": leaderRight→extEnd
+        // Ekstensja tylko gdy skew aktywny, tylko po górnym/prawym końcu.
         private static Point3d CalcDistLineTarget(BarData bar, double lineExt)
         {
             if (bar.Direction == "X")
             {
-                double lastBarY  = (bar.Count - 1) * bar.Spacing;
+                double lastBarY = (bar.Count - 1) * bar.Spacing;
                 var bS = new Point3d(bar.SkewStart, -lineExt,            0);
                 var bE = new Point3d(bar.SkewEnd,   lastBarY + lineExt,  0);
-                var ax = (bE - bS).Length > 1e-9 ? (bE - bS).GetNormal() : Vector3d.YAxis;
-                double ext = Scaled(DistEndExtension, bar);
-                return bar.LeaderUp ? (bE + ax * ext) : (bS - ax * ext);
+                bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+                Point3d topEnd = hasSkew
+                    ? bE + (bE - bS).GetNormal() * Scaled(DistEndExtension, bar)
+                    : bE;
+                return bar.LeaderUp ? topEnd : bS;
             }
             else
             {
-                double lastBarX  = (bar.Count - 1) * bar.Spacing;
+                double lastBarX = (bar.Count - 1) * bar.Spacing;
                 var bS = new Point3d(-lineExt,           bar.SkewStart, 0);
                 var bE = new Point3d(lastBarX + lineExt, bar.SkewEnd,   0);
-                var ax = (bE - bS).Length > 1e-9 ? (bE - bS).GetNormal() : Vector3d.XAxis;
-                double ext = Scaled(DistEndExtension, bar);
-                return bar.LeaderRight ? (bE + ax * ext) : (bS - ax * ext);
+                bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+                Point3d topEnd = hasSkew
+                    ? bE + (bE - bS).GetNormal() * Scaled(DistEndExtension, bar)
+                    : bE;
+                return bar.LeaderRight ? topEnd : bS;
             }
         }
 
@@ -197,17 +201,26 @@ namespace BricsCadRc.Core
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarY = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — skośna wzdłuż osi prętów, z ekstensją poza oba końce
+            // 1. Dist line — skośna; ekstensja po górnym końcu tylko gdy skew aktywny
             var baseStartH = new Point3d(bar.SkewStart, -lineExt,            0);
             var baseEndH   = new Point3d(bar.SkewEnd,   lastBarY + lineExt,  0);
-            var axisDir    = (baseEndH - baseStartH).Length > 1e-9
-                ? (baseEndH - baseStartH).GetNormal()
-                : Vector3d.YAxis;
-            double extH    = Scaled(DistEndExtension, bar);
-            var extStartH  = baseStartH - axisDir * extH;
-            var extEndH    = baseEndH   + axisDir * extH;
+            bool hasSkewH  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            Vector3d axisDir;
+            Point3d finalEndH;
+            if (hasSkewH)
+            {
+                axisDir   = (baseEndH - baseStartH).Length > 1e-9
+                    ? (baseEndH - baseStartH).GetNormal()
+                    : Vector3d.YAxis;
+                finalEndH = baseEndH + axisDir * Scaled(DistEndExtension, bar);
+            }
+            else
+            {
+                axisDir   = Vector3d.YAxis;
+                finalEndH = baseEndH;
+            }
 
-            var distLine = new Line(extStartH, extEndH)
+            var distLine = new Line(baseStartH, finalEndH)
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -281,7 +294,7 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
             if (leaderPtsH.Count >= 2)
             {
-                var targetH = leaderUp ? extEndH : extStartH;
+                var targetH = leaderUp ? finalEndH : baseStartH;
                 double deltaX = targetH.X - leaderPtsH[0].X;
                 for (int k = 0; k < leaderPtsH.Count; k++)
                 {
@@ -320,17 +333,26 @@ namespace BricsCadRc.Core
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarX = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — skośna wzdłuż osi prętów, z ekstensją poza oba końce
+            // 1. Dist line — skośna; ekstensja po prawym końcu tylko gdy skew aktywny
             var baseStartV = new Point3d(-lineExt,           bar.SkewStart, 0);
             var baseEndV   = new Point3d(lastBarX + lineExt, bar.SkewEnd,   0);
-            var axisDirV   = (baseEndV - baseStartV).Length > 1e-9
-                ? (baseEndV - baseStartV).GetNormal()
-                : Vector3d.XAxis;
-            double extV    = Scaled(DistEndExtension, bar);
-            var extStartV  = baseStartV - axisDirV * extV;
-            var extEndV    = baseEndV   + axisDirV * extV;
+            bool hasSkewV  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            Vector3d axisDirV;
+            Point3d finalEndV;
+            if (hasSkewV)
+            {
+                axisDirV  = (baseEndV - baseStartV).Length > 1e-9
+                    ? (baseEndV - baseStartV).GetNormal()
+                    : Vector3d.XAxis;
+                finalEndV = baseEndV + axisDirV * Scaled(DistEndExtension, bar);
+            }
+            else
+            {
+                axisDirV  = Vector3d.XAxis;
+                finalEndV = baseEndV;
+            }
 
-            var distLine = new Line(extStartV, extEndV)
+            var distLine = new Line(baseStartV, finalEndV)
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -405,7 +427,7 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
             if (leaderPtsV.Count >= 2)
             {
-                var targetV = leaderRight ? extEndV : extStartV;
+                var targetV = leaderRight ? finalEndV : baseStartV;
                 double deltaY = targetV.Y - leaderPtsV[0].Y;
                 for (int k = 0; k < leaderPtsV.Count; k++)
                 {
