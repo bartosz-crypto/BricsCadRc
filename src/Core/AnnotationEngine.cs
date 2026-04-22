@@ -28,11 +28,12 @@ namespace BricsCadRc.Core
     {
         public const string AnnotAppName = "RC_BAR_ANNOT";
 
-        public const double DefaultTextHeight = 125.0;
-        public const double DotRadius         = 35.0;
-        public const double ArmLength         = 500.0;
-        public const double TextCharWidth     = 65.0;   // txt.shx XScale=0.70 @ H=125
-        public const double TextArmOffset     = 70.0;
+        public const double DefaultTextHeight  = 125.0;
+        public const double DotRadius          = 35.0;
+        public const double ArmLength          = 500.0;
+        public const double TextCharWidth      = 65.0;   // txt.shx XScale=0.70 @ H=125
+        public const double TextArmOffset      = 70.0;
+        private const double DistEndExtension  = 250.0;  // ekstensja dist line poza ostatni pręt
 
         private static double Scaled(double baseValue, BarData bar)
             => baseValue * (bar.AnnotScale > 0 ? bar.AnnotScale : 1.0);
@@ -175,17 +176,18 @@ namespace BricsCadRc.Core
             double barsSpan = bar.BarsSpan;
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarY = (bar.Count - 1) * bar.Spacing;
+            double distEndY = lastBarY + lineExt + Scaled(DistEndExtension, bar);
 
             // [SYNC-Y] tymczasowy log
             try {
                 var edSY = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-                edSY?.WriteMessage($"\n[SYNC-Y] barsSpan={barsSpan:F2} lastBarY={lastBarY:F2} lineExt={lineExt:F2} distLineEndY={(lastBarY + lineExt):F2} upperArrowY={lastBarY:F2}");
+                edSY?.WriteMessage($"\n[SYNC-Y] barsSpan={barsSpan:F2} lastBarY={lastBarY:F2} lineExt={lineExt:F2} distEndY={distEndY:F2} upperArrowY={lastBarY:F2}");
             } catch { }
 
-            // 1. Dist line — skośna: od SkewStart na dole do SkewEnd na pozycji ostatniego pręta
+            // 1. Dist line — skośna: od SkewStart na dole do SkewEnd za ostatni pręt
             var distLine = new Line(
-                new Point3d(bar.SkewStart, -lineExt,            0),
-                new Point3d(bar.SkewEnd,   lastBarY + lineExt,  0))
+                new Point3d(bar.SkewStart, -lineExt,  0),
+                new Point3d(bar.SkewEnd,   distEndY,  0))
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -261,7 +263,7 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę X
             if (leaderPtsH.Count >= 2)
             {
-                double distLineEndY = leaderUp ? (lastBarY + lineExt) : (-lineExt);
+                double distLineEndY = leaderUp ? distEndY : (-lineExt - Scaled(DistEndExtension, bar));
                 double skewAtEnd    = leaderUp ? bar.SkewEnd : bar.SkewStart;
                 double deltaX       = skewAtEnd - leaderPtsH[0].X;
                 for (int k = 0; k < leaderPtsH.Count; k++)
@@ -300,11 +302,12 @@ namespace BricsCadRc.Core
             double barsSpan = bar.BarsSpan;
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarX = (bar.Count - 1) * bar.Spacing;
+            double distEndX = lastBarX + lineExt + Scaled(DistEndExtension, bar);
 
-            // 1. Dist line — skośna: od SkewStart po lewej do SkewEnd na pozycji ostatniego pręta
+            // 1. Dist line — skośna: od SkewStart po lewej do SkewEnd za ostatni pręt
             var distLine = new Line(
-                new Point3d(-lineExt,            bar.SkewStart, 0),
-                new Point3d(lastBarX + lineExt,  bar.SkewEnd,   0))
+                new Point3d(-lineExt,  bar.SkewStart, 0),
+                new Point3d(distEndX,  bar.SkewEnd,   0))
             {
                 Layer      = LayerManager.LeaderLayer,
                 LineWeight = LineWeight.LineWeight018,
@@ -381,7 +384,7 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę Y
             if (leaderPtsV.Count >= 2)
             {
-                double distLineEndX = leaderRight ? (lastBarX + lineExt) : (-lineExt);
+                double distLineEndX = leaderRight ? distEndX : (-lineExt - Scaled(DistEndExtension, bar));
                 double skewAtEnd    = leaderRight ? bar.SkewEnd : bar.SkewStart;
                 double deltaY       = skewAtEnd - leaderPtsV[0].Y;
                 for (int k = 0; k < leaderPtsV.Count; k++)
@@ -523,7 +526,9 @@ namespace BricsCadRc.Core
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
                 if (bar.Direction == "X")
                 {
-                    double distLineEnd = bar.LeaderUp ? ((bar.Count - 1) * bar.Spacing + lineExt) : (-lineExt);
+                    double distLineEnd = bar.LeaderUp
+                        ? ((bar.Count - 1) * bar.Spacing + lineExt + Scaled(DistEndExtension, bar))
+                        : (-lineExt - Scaled(DistEndExtension, bar));
                     double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
                     double deltaX      = skewAtEnd - pts[0].X;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
@@ -531,7 +536,9 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    double distLineEnd = bar.LeaderRight ? ((bar.Count - 1) * bar.Spacing + lineExt) : (-lineExt);
+                    double distLineEnd = bar.LeaderRight
+                        ? ((bar.Count - 1) * bar.Spacing + lineExt + Scaled(DistEndExtension, bar))
+                        : (-lineExt - Scaled(DistEndExtension, bar));
                     double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
                     double deltaY      = skewAtEnd - pts[0].Y;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
@@ -646,7 +653,9 @@ namespace BricsCadRc.Core
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
                 if (bar.Direction == "X")
                 {
-                    double distLineEnd = bar.LeaderUp ? ((bar.Count - 1) * bar.Spacing + lineExt) : (-lineExt);
+                    double distLineEnd = bar.LeaderUp
+                        ? ((bar.Count - 1) * bar.Spacing + lineExt + Scaled(DistEndExtension, bar))
+                        : (-lineExt - Scaled(DistEndExtension, bar));
                     double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
                     double deltaX      = skewAtEnd - pts[0].X;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
@@ -654,7 +663,9 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    double distLineEnd = bar.LeaderRight ? ((bar.Count - 1) * bar.Spacing + lineExt) : (-lineExt);
+                    double distLineEnd = bar.LeaderRight
+                        ? ((bar.Count - 1) * bar.Spacing + lineExt + Scaled(DistEndExtension, bar))
+                        : (-lineExt - Scaled(DistEndExtension, bar));
                     double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
                     double deltaY      = skewAtEnd - pts[0].Y;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
