@@ -168,6 +168,10 @@ namespace BricsCadRc.Core
             Transaction tr, BlockTableRecord btr, Database db,
             BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true)
         {
+            try { Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor
+                .WriteMessage($"\n[BUILD-H] SkewStart={bar.SkewStart:F2} SkewEnd={bar.SkewEnd:F2} Count={bar.Count} BarsSpan={bar.BarsSpan:F2}"); }
+            catch { }
+
             double barsSpan = bar.BarsSpan;
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
 
@@ -1153,7 +1157,7 @@ namespace BricsCadRc.Core
                     updatedBar.LeaderPoints = "";
             }
 
-            // Propaguj AnnotScale z bloku-źródła (trzymamy tylko w RC_BAR_BLOCK)
+            // Propaguj AnnotScale + SkewStart/SkewEnd z bloku-źródła (source of truth = RC_BAR_BLOCK)
             if (existingAnnot != null && !string.IsNullOrEmpty(existingAnnot.SourceBlockHandle))
             {
                 try
@@ -1164,7 +1168,11 @@ namespace BricsCadRc.Core
                         var srcBr = tr.GetObject(srcId, OpenMode.ForRead) as BlockReference;
                         var sourceBlockBarData = srcBr != null ? BarBlockEngine.ReadXData(srcBr) : null;
                         if (sourceBlockBarData != null)
+                        {
                             updatedBar.AnnotScale = sourceBlockBarData.AnnotScale;
+                            updatedBar.SkewStart  = sourceBlockBarData.SkewStart;
+                            updatedBar.SkewEnd    = sourceBlockBarData.SkewEnd;
+                        }
                     }
                 }
                 catch { }
