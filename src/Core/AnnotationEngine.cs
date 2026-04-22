@@ -251,13 +251,18 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // Rescale pierwszego punktu leadera — zawsze startuje na końcu dist line
-            // (uwzględniając lineExt dla count 2-3 oraz skew SkewStart/SkewEnd).
+            // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę X
             if (leaderPtsH.Count >= 2)
             {
                 double distLineEndY = leaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
-                double distLineEndX = leaderUp ? bar.SkewEnd : bar.SkewStart;
-                leaderPtsH[0] = new Point3d(distLineEndX, distLineEndY, 0);
+                double skewAtEnd    = leaderUp ? bar.SkewEnd : bar.SkewStart;
+                double deltaX       = skewAtEnd - leaderPtsH[0].X;
+                for (int k = 0; k < leaderPtsH.Count; k++)
+                {
+                    var p = leaderPtsH[k];
+                    leaderPtsH[k] = new Point3d(p.X + deltaX, p.Y, 0);
+                }
+                leaderPtsH[0] = new Point3d(leaderPtsH[0].X, distLineEndY, 0);
             }
 
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsH);
@@ -365,13 +370,18 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // Rescale pierwszego punktu leadera — zawsze startuje na końcu dist line
-            // (uwzględniając lineExt dla count 2-3 oraz skew SkewStart/SkewEnd).
+            // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę Y
             if (leaderPtsV.Count >= 2)
             {
                 double distLineEndX = leaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
-                double distLineEndY = leaderRight ? bar.SkewEnd : bar.SkewStart;
-                leaderPtsV[0] = new Point3d(distLineEndX, distLineEndY, 0);
+                double skewAtEnd    = leaderRight ? bar.SkewEnd : bar.SkewStart;
+                double deltaY       = skewAtEnd - leaderPtsV[0].Y;
+                for (int k = 0; k < leaderPtsV.Count; k++)
+                {
+                    var p = leaderPtsV[k];
+                    leaderPtsV[k] = new Point3d(p.X, p.Y + deltaY, 0);
+                }
+                leaderPtsV[0] = new Point3d(distLineEndX, leaderPtsV[0].Y, 0);
             }
 
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
@@ -499,7 +509,7 @@ namespace BricsCadRc.Core
             else
                 pts.Add(localPt);
 
-            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt i skew)
+            // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę
             if (pts.Count >= 2)
             {
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
@@ -507,13 +517,17 @@ namespace BricsCadRc.Core
                 {
                     double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
                     double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
-                    pts[0] = new Point3d(skewAtEnd, distLineEnd, 0);
+                    double deltaX      = skewAtEnd - pts[0].X;
+                    for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
+                    pts[0] = new Point3d(pts[0].X, distLineEnd, 0);
                 }
                 else
                 {
                     double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
                     double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
-                    pts[0] = new Point3d(distLineEnd, skewAtEnd, 0);
+                    double deltaY      = skewAtEnd - pts[0].Y;
+                    for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
+                    pts[0] = new Point3d(distLineEnd, pts[0].Y, 0);
                 }
             }
 
@@ -618,7 +632,7 @@ namespace BricsCadRc.Core
                 pts[pts.Count - 2] = pts[pts.Count - 2] + perpLocal;
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
 
-            // Rescale pierwszy punkt leadera — zawsze na końcu dist line (z lineExt i skew)
+            // Rescale leadera — pts[0] na koniec dist line, reszta przesunięta o tę samą deltę
             if (pts.Count >= 2)
             {
                 double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
@@ -626,13 +640,17 @@ namespace BricsCadRc.Core
                 {
                     double distLineEnd = bar.LeaderUp ? (bar.BarsSpan + lineExt) : (-lineExt);
                     double skewAtEnd   = bar.LeaderUp ? bar.SkewEnd : bar.SkewStart;
-                    pts[0] = new Point3d(skewAtEnd, distLineEnd, 0);
+                    double deltaX      = skewAtEnd - pts[0].X;
+                    for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
+                    pts[0] = new Point3d(pts[0].X, distLineEnd, 0);
                 }
                 else
                 {
                     double distLineEnd = bar.LeaderRight ? (bar.BarsSpan + lineExt) : (-lineExt);
                     double skewAtEnd   = bar.LeaderRight ? bar.SkewEnd : bar.SkewStart;
-                    pts[0] = new Point3d(distLineEnd, skewAtEnd, 0);
+                    double deltaY      = skewAtEnd - pts[0].Y;
+                    for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
+                    pts[0] = new Point3d(distLineEnd, pts[0].Y, 0);
                 }
             }
 
