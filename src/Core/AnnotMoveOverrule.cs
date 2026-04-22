@@ -278,9 +278,9 @@ namespace BricsCadRc.Core
                         alongDelta = offset.X;  // BarsSpan wzdłuż X
                         perpDelta  = offset.Y;  // skew wzdłuż Y
                     }
-                    double newBarsSpan   = Math.Max(0, barBlock.BarsSpan + alongDelta);
-                    double newSkewOffset = barBlock.SkewOffset + perpDelta;
-                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan, newSkewOffset);
+                    double newBarsSpan = Math.Max(0, barBlock.BarsSpan + alongDelta);
+                    double newSkewEnd  = barBlock.SkewEnd + perpDelta;
+                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan, newSkewEnd: newSkewEnd);
                     var updatedBar = BarBlockEngine.ReadXData(br);
                     // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
                     if (updatedBar != null)

@@ -146,7 +146,7 @@ namespace BricsCadRc.Core
                 if (!visibleSet.Contains(i)) continue;
                 double y        = i * bar.Spacing;
                 double skewFrac = count > 1 ? (double)i / (count - 1) : 0.0;
-                double xShift   = skewFrac * bar.SkewOffset;
+                double xShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(xShift,            y, 0);
                 var    ptE = new Point3d(barWidth + xShift, y, 0);
                 var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
@@ -175,7 +175,7 @@ namespace BricsCadRc.Core
                 if (!visibleSet.Contains(i)) continue;
                 double x        = i * bar.Spacing;
                 double skewFrac = count > 1 ? (double)i / (count - 1) : 0.0;
-                double yShift   = skewFrac * bar.SkewOffset;
+                double yShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(x, yShift,             0);
                 var    ptE = new Point3d(x, barHeight + yShift, 0);
                 var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
@@ -439,7 +439,9 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // RegenerateBarBlock — wywolywany przez grip span
         // ----------------------------------------------------------------
-        public static void RegenerateBarBlock(BlockReference br, double newBarsSpan, double? newSkewOffset = null)
+        public static void RegenerateBarBlock(BlockReference br, double newBarsSpan,
+                                               double? newSkewStart = null,
+                                               double? newSkewEnd   = null)
         {
             var bar = ReadXData(br);
             if (bar == null || bar.Spacing <= 0) return;
@@ -452,8 +454,8 @@ namespace BricsCadRc.Core
 
             bar.Count    = newCount;
             bar.BarsSpan = newBarsSpan;
-            if (newSkewOffset.HasValue)
-                bar.SkewOffset = newSkewOffset.Value;
+            if (newSkewStart.HasValue) bar.SkewStart = newSkewStart.Value;
+            if (newSkewEnd.HasValue)   bar.SkewEnd   = newSkewEnd.Value;
 
             // Aktualizuj Mark — dla count=1 bez suffix spacing
             int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
@@ -684,7 +686,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? ""),    // [22]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle),                     // [23]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale),                // [24] AnnotScale
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewOffset)                 // [25] SkewOffset
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),                   // [25] SkewEnd (dawny SkewOffset)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart)                  // [26] SkewStart
             );
         }
 
@@ -732,13 +735,18 @@ namespace BricsCadRc.Core
             }
             if (v.Length >= 26)
             {
-                try { bd.SkewOffset = Convert.ToDouble(v[25].Value); }
-                catch { bd.SkewOffset = 0.0; }
+                try { bd.SkewEnd = Convert.ToDouble(v[25].Value); }
+                catch { bd.SkewEnd = 0.0; }
             }
-            else
+            else bd.SkewEnd = 0.0;
+
+            if (v.Length >= 27)
             {
-                bd.SkewOffset = 0.0;
+                try { bd.SkewStart = Convert.ToDouble(v[26].Value); }
+                catch { bd.SkewStart = 0.0; }
             }
+            else bd.SkewStart = 0.0;
+
             return bd;
         }
 

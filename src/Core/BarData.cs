@@ -152,14 +152,11 @@ namespace BricsCadRc.Core
         /// <summary>Kąt obrotu układu prętów w radianach (0 = poziomy, π/2 = pionowy, inne = ukośny).</summary>
         public double Angle { get; set; } = 0.0;
 
-        /// <summary>
-        /// Poziomy offset między pierwszym a ostatnim prętem w lokalnych coords bloku (mm).
-        /// 0 = prosty rozkład (wszystkie pręty startują w tym samym X).
-        /// > 0 = rozkład skośny — ostatni pręt przesunięty o SkewOffset w +X względem pierwszego.
-        /// &lt; 0 = rozkład skośny w przeciwną stronę.
-        /// Dla pręta i w rozkładzie count-prętowym: pręt przesunięty o i/(count-1) * SkewOffset.
-        /// </summary>
-        public double SkewOffset { get; set; } = 0.0;
+        /// <summary>X offset pierwszego pręta (i=0) w lokalnych coords. Na razie zawsze 0 (zmieniany w Etapie 4c).</summary>
+        public double SkewStart { get; set; } = 0.0;
+
+        /// <summary>X offset ostatniego pręta (i=count-1) w lokalnych coords. Zmieniany przez grip[1].</summary>
+        public double SkewEnd { get; set; } = 0.0;
 
         /// <summary>Punkt wstawienia X (w WCS) dla ukośnych prętów — przekazywany do GenerateFromBounds.</summary>
         public double Pt1X { get; set; } = 0.0;
