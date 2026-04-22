@@ -435,7 +435,7 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // RegenerateBarBlock — wywolywany przez grip span
         // ----------------------------------------------------------------
-        public static void RegenerateBarBlock(BlockReference br, double newBarsSpan)
+        public static void RegenerateBarBlock(BlockReference br, double newBarsSpan, double? newSkewOffset = null)
         {
             var bar = ReadXData(br);
             if (bar == null || bar.Spacing <= 0) return;
@@ -448,6 +448,8 @@ namespace BricsCadRc.Core
 
             bar.Count    = newCount;
             bar.BarsSpan = newBarsSpan;
+            if (newSkewOffset.HasValue)
+                bar.SkewOffset = newSkewOffset.Value;
 
             // Aktualizuj Mark — dla count=1 bez suffix spacing
             int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);

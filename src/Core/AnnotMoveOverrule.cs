@@ -266,9 +266,21 @@ namespace BricsCadRc.Core
             {
                 if (isGrip1)
                 {
-                    double delta       = barBlock.Direction == "X" ? offset.Y : offset.X;
-                    double newBarsSpan = Math.Max(0, barBlock.BarsSpan + delta);
-                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan);
+                    // Dekompozycja offsetu: "wzdłuż BarsSpan" (stara delta) + "prostopadle" (skew)
+                    double alongDelta, perpDelta;
+                    if (barBlock.Direction == "X")
+                    {
+                        alongDelta = offset.Y;  // BarsSpan wzdłuż Y
+                        perpDelta  = offset.X;  // skew wzdłuż X (kierunek prętów)
+                    }
+                    else
+                    {
+                        alongDelta = offset.X;  // BarsSpan wzdłuż X
+                        perpDelta  = offset.Y;  // skew wzdłuż Y
+                    }
+                    double newBarsSpan   = Math.Max(0, barBlock.BarsSpan + alongDelta);
+                    double newSkewOffset = barBlock.SkewOffset + perpDelta;
+                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan, newSkewOffset);
                     var updatedBar = BarBlockEngine.ReadXData(br);
                     // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
                     if (updatedBar != null)
