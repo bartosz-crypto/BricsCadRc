@@ -225,24 +225,26 @@ namespace BricsCadRc.Core
             if (bar == null) return null;
             if (bar.Count <= 0 || bar.LengthA <= 0) return null;
 
+            double lastBar  = (bar.Count - 1) * bar.Spacing;
             double barsSpan = Math.Max(0, bar.BarsSpan);
-            double cover = Math.Max(0, bar.Cover);
-            double lenA  = bar.LengthA;
+            double cover    = Math.Max(0, bar.Cover);
+            double lenA     = bar.LengthA;
+            double extY     = Math.Max(0, barsSpan - lastBar);
 
             Point2d p0, p1, p2, p3;
             if (bar.Direction == "X")
             {
-                p0 = new Point2d(-cover,        -cover);
-                p1 = new Point2d(lenA,          -cover);
-                p2 = new Point2d(lenA,           barsSpan + cover);
-                p3 = new Point2d(-cover,         barsSpan + cover);
+                p0 = new Point2d(bar.SkewStart - cover,        -cover);
+                p1 = new Point2d(bar.SkewStart + lenA + cover, -cover);
+                p2 = new Point2d(bar.SkewEnd   + lenA + cover,  lastBar + cover + extY);
+                p3 = new Point2d(bar.SkewEnd   - cover,         lastBar + cover + extY);
             }
             else
             {
-                p0 = new Point2d(-cover,           -cover);
-                p1 = new Point2d(barsSpan + cover, -cover);
-                p2 = new Point2d(barsSpan + cover,  lenA);
-                p3 = new Point2d(-cover,            lenA);
+                p0 = new Point2d(-cover,                   bar.SkewStart - cover);
+                p1 = new Point2d(-cover,                   bar.SkewStart + lenA + cover);
+                p2 = new Point2d(lastBar + cover + extY,   bar.SkewEnd   + lenA + cover);
+                p3 = new Point2d(lastBar + cover + extY,   bar.SkewEnd   - cover);
             }
 
             var poly = new Polyline(4);
