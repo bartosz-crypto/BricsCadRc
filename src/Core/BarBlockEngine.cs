@@ -25,6 +25,16 @@ namespace BricsCadRc.Core
     {
         public const string XAppName = "RC_BAR_BLOCK";
 
+        // Cache świeżych wartości skew podczas drag gripa — DB XData jest nieaktualne
+        // gdy br jest klonem. RefreshOutlineFor czyta stąd zamiast z DB XData.
+        private static readonly Dictionary<long, (double skewStart, double skewEnd)> _skewCache
+            = new Dictionary<long, (double, double)>();
+
+        public static void ClearSkewCache(long handleValue) => _skewCache.Remove(handleValue);
+
+        public static (double skewStart, double skewEnd)? TryGetCachedSkew(long handleValue)
+            => _skewCache.TryGetValue(handleValue, out var v) ? v : ((double, double)?)null;
+
         // ----------------------------------------------------------------
         // Wynik generowania
         // ----------------------------------------------------------------
@@ -449,6 +459,12 @@ namespace BricsCadRc.Core
 
             // Zaktualizuj XData na blockref (jest juz otwarty w grip-op)
             WriteXData(br, bar);
+
+            // Cache świeżych wartości skew — BTR Handle jest stabilne dla klona i DB BR
+            // (BTR jest unikalne per RC_BAR_BLOCK rozkład — nie współdzielone między BR).
+            long cacheKey = br.BlockTableRecord.Handle.Value;
+            if (cacheKey != 0)
+                _skewCache[cacheKey] = (bar.SkewStart, bar.SkewEnd);
 
             // Przebuduj BTR
             using var tr = br.Database.TransactionManager.StartTransaction();

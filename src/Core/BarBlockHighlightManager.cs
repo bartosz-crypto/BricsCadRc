@@ -48,19 +48,13 @@ namespace BricsCadRc.Core
         {
             try
             {
-                var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
-                ed?.WriteMessage($"\n[HL-SEL-FIRE]");
-
                 ClearTransients();
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 if (doc == null) return;
 
                 var sel = doc.Editor.SelectImplied();
                 if (sel.Status != PromptStatus.OK || sel.Value == null)
-                {
-                    ed?.WriteMessage($"\n[HL-SEL-END] transients={_transientsByBlock.Count}");
                     return;
-                }
 
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -89,8 +83,6 @@ namespace BricsCadRc.Core
                     }
                     tr.Commit();
                 }
-
-                ed?.WriteMessage($"\n[HL-SEL-END] transients={_transientsByBlock.Count}");
             }
             catch { }
         }
@@ -224,6 +216,16 @@ namespace BricsCadRc.Core
             var bar = BarBlockEngine.ReadXData(br);
             if (bar == null) return null;
             if (bar.Count <= 0 || bar.LengthA <= 0) return null;
+
+            // Jeśli trwa drag gripa, DB XData ma stary SkewEnd — użyj świeżego z cache.
+            // Klucz = BTR Handle (stabilne dla klona i DB BR, bo BTR jest unikalne per rozkład).
+            long btrHandle = br.BlockTableRecord.Handle.Value;
+            var cached = BarBlockEngine.TryGetCachedSkew(btrHandle);
+            if (cached.HasValue)
+            {
+                bar.SkewStart = cached.Value.skewStart;
+                bar.SkewEnd   = cached.Value.skewEnd;
+            }
 
             double lastBar  = (bar.Count - 1) * bar.Spacing;
             double barsSpan = Math.Max(0, bar.BarsSpan);

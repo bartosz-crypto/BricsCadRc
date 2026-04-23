@@ -240,7 +240,6 @@ namespace BricsCadRc.Core
                 bool   isLast    = (i == bar.Count - 1);
                 double skewFrac  = bar.Count > 1 ? (double)i / (bar.Count - 1) : 0.0;
                 double dotX      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
-
                 if (bar.Count > 3 && isFirst)
                     AddArrow(tr, btr, new Point3d(bar.SkewStart, i * bar.Spacing, 0), -distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
@@ -1244,8 +1243,6 @@ namespace BricsCadRc.Core
                         if (sourceBlockBarData != null)
                         {
                             updatedBar.AnnotScale = sourceBlockBarData.AnnotScale;
-                            updatedBar.SkewStart  = sourceBlockBarData.SkewStart;
-                            updatedBar.SkewEnd    = sourceBlockBarData.SkewEnd;
                         }
                     }
                 }
