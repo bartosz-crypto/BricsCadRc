@@ -220,6 +220,7 @@ namespace BricsCadRc.Core
                 finalEndH = baseEndH;
             }
 
+
             var distLine = new Line(baseStartH, finalEndH)
             {
                 Layer      = LayerManager.LeaderLayer,
@@ -303,6 +304,9 @@ namespace BricsCadRc.Core
                 }
                 leaderPtsH[0] = new Point3d(leaderPtsH[0].X, targetH.Y, 0);
             }
+
+            // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
+            bar.LeaderPoints = EncodeLeaderPoints(leaderPtsH);
 
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsH);
 
@@ -436,6 +440,9 @@ namespace BricsCadRc.Core
                 }
                 leaderPtsV[0] = new Point3d(targetV.X, leaderPtsV[0].Y, 0);
             }
+
+            // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
+            bar.LeaderPoints = EncodeLeaderPoints(leaderPtsV);
 
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
             return bar.ArmTotalLen;
