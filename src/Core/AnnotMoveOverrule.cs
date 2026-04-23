@@ -138,11 +138,14 @@ namespace BricsCadRc.Core
                 ClearGripTransients();
 
 
-                var ins = br.Position;
-                // Grip[0]: środek dist line (nie insertPt)
-                Point3d grip0 = (barAnnot.Direction == "X")
-                    ? new Point3d(ins.X, ins.Y + barAnnot.BarsSpan / 2.0, 0)
-                    : new Point3d(ins.X + barAnnot.BarsSpan / 2.0, ins.Y, 0);
+                // Grip[0]: środek skośnej dist line — midSkew uwzględnia SkewStart/SkewEnd
+                double lastBar0  = (barAnnot.Count - 1) * barAnnot.Spacing;
+                double midAlong0 = lastBar0 / 2.0;
+                double midSkew0  = (barAnnot.SkewStart + barAnnot.SkewEnd) / 2.0;
+                Point3d localGrip0 = (barAnnot.Direction == "X")
+                    ? new Point3d(midSkew0, midAlong0, 0)
+                    : new Point3d(midAlong0, midSkew0, 0);
+                Point3d grip0 = localGrip0.TransformBy(br.BlockTransform);
                 gripPoints.Add(grip0);  // [0] lateral
 
                 // Grip[1]: punkt początku tekstu (z uwzględnieniem Down)
