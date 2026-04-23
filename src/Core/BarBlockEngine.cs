@@ -315,20 +315,6 @@ namespace BricsCadRc.Core
                     var hookTip  = new Point3d(hookBase.X + HookLen * bx,
                                                hookBase.Y + HookLen * by, 0);
 
-                    try
-                    {
-                        var dbgEd = Bricscad.ApplicationServices.Application
-                            .DocumentManager.MdiActiveDocument?.Editor;
-                        dbgEd?.WriteMessage(
-                            $"\n[DEBUG L-BAR] startPt=({startPt.X:F1},{startPt.Y:F1})" +
-                            $" endPt=({endPt.X:F1},{endPt.Y:F1})" +
-                            $" lineDirection=({dx:F3},{dy:F3})\n");
-                        dbgEd?.WriteMessage(
-                            $"[DEBUG L-BAR] hookBasePt=({hookBase.X:F1},{hookBase.Y:F1})" +
-                            $" hookEndPt=({hookTip.X:F1},{hookTip.Y:F1})\n");
-                    }
-                    catch { }
-
                     var hookLine = new Line(hookBase, hookTip) { Layer = layer };
                     btr.AppendEntity(hookLine);
                     tr.AddNewlyCreatedDBObject(hookLine, true);
@@ -616,13 +602,13 @@ namespace BricsCadRc.Core
         /// </summary>
         public static Point3d GripLateral(BlockReference br, BarData bar)
         {
-            var ins = br.Position;
             double c = bar.Cover;
-            // X-bars: prety rozpinaja sie w Y, otulina w kierunku -Y (dol ukladu)
-            // Y-bars: prety rozpinaja sie w X, otulina w kierunku -X (lewy bok)
-            return bar.Direction == "X"
-                ? new Point3d(ins.X, ins.Y - c, 0)
-                : new Point3d(ins.X - c, ins.Y, 0);
+            // Dolny-lewy róg trapezu w lokalnych (spójne z BuildOutline)
+            // Gdy SkewStart != 0, grip przesuwa się razem z outline
+            Point3d local = bar.Direction == "X"
+                ? new Point3d(bar.SkewStart - c, -c, 0)
+                : new Point3d(-c, bar.SkewStart - c, 0);
+            return local.TransformBy(br.BlockTransform);
         }
 
         public static Point3d GripSpan(BlockReference br, BarData bar)
