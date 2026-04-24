@@ -1174,7 +1174,7 @@ namespace BricsCadRc.Commands
                     return;
                 }
 
-                newLength = pline?.Length ?? 0;
+                newLength = pline != null ? SingleBarEngine.GetStraightBarAxisLength(pline) : 0.0;
                 tr.Commit();
             }
 

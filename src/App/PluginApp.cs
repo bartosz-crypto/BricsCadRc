@@ -27,6 +27,9 @@ namespace BricsCadRc.App
             // Auto-aktualizacja rozkładów po rozciągnięciu polilinii pręta (FEATURE E)
             BarGeometryWatcher.Register();
 
+            // TODO Plan C: reaktywacja po refactorze SingleBar na BlockReference
+            // SingleBarGripOverrule.Register();
+
             // Snap grotu MLeadera (etykieta RC_BAR) z powrotem na pręt po edycji
             RcMLeaderOverrule.Register();
 
@@ -52,6 +55,7 @@ namespace BricsCadRc.App
                 doc.CommandCancelled -= OnCommandCancelled;
             }
 
+            // SingleBarGripOverrule.Unregister();
             RcMLeaderOverrule.Unregister();
             BarGeometryWatcher.Unregister();
             BarCopyWatcher.Unregister();

@@ -42,6 +42,7 @@ namespace BricsCadRc.Core
         {
             if (shapeCode == "44") return CirclePoints(paramValues);
             if (shapeCode == "75") return SpiralPoints(paramValues);
+            if (shapeCode == "13") return HairpinPoints(paramValues, diameter);
 
             double r = BarShape.MinBendRadius(diameter);
             var sharp = GetSharpPoints(shapeCode, paramValues, r, diameter);
@@ -111,12 +112,21 @@ namespace BricsCadRc.Core
                 case "11": // hak 90° na prawym końcu
                     return Pts((0, 0), (a, 0), (a, b));
 
-                case "12": // haki 90° na obu końcach
-                    return Pts((0, b), (0, 0), (a, 0), (a, b));
+                case "12": // L-bend z większym promieniem R (R = p[2] = LengthC)
+                    return Pts((0, 0), (a, 0), (a, b));
 
-                // ── Crank 45° (schodek) ───────────────────────────────────────
+                // ── Crank/offset BS 8666 — slope 1:√3 (60° od poziomu) ──────────
+                // A, C mierzone do przecięcia osi (środek crank-u), B = wysokość crank-u
                 case "13":
-                    return Pts((0, 0), (a, 0), (a + b, b), (a + b + c, b));
+                {
+                    const double HALF_B_DX_FACTOR = 0.5 / 1.7320508075688772; // 0.5/√3 ≈ 0.2887
+                    double halfBDx = b * HALF_B_DX_FACTOR;
+                    return Pts(
+                        (0,           0),
+                        (a - halfBDx, 0),
+                        (a + halfBDx, b),
+                        (a + c,       b));
+                }
 
                 // ── Haki 45° i 135° ──────────────────────────────────────────
                 case "14": // hook 45°
@@ -136,9 +146,22 @@ namespace BricsCadRc.Core
                     return Pts((0, a), (0, 0), (b, 0), (b, c));
 
                 // ── Z-bary i cranki ───────────────────────────────────────────
-                case "23": // Z-bar
-                case "24": // Crank łagodny (ta sama geometria)
+                case "23": // Z-bar (BS 8666) — prostokątne zgięcia 90°
                     return Pts((0, 0), (a, 0), (a, b), (a + c, b));
+
+                case "24": // Crank łagodny (BS 8666) — skośny segment C pod kątem 30° od poziomu
+                // TODO: zweryfikować kąt z pełnym tekstem BS 8666:2020 — 30° to prowizorka,
+                //       norma może definiować specyficzny slope (np. 1:6 lub 1:12)
+                {
+                    const double angleRad = Math.PI / 6.0; // 30°
+                    double skosDX = c * Math.Cos(angleRad);
+                    double skosDY = c * Math.Sin(angleRad);
+                    return Pts(
+                        (0,              0),
+                        (a,              0),
+                        (a + skosDX,     skosDY),
+                        (a + skosDX + b, skosDY));
+                }
 
                 case "25": // Hook + crank
                     return Pts((0, 0), (a, 0), (a, b), (a + c, b),
@@ -251,6 +274,51 @@ namespace BricsCadRc.Core
                 double angle = i * Math.PI / 4.0;
                 pts.Add((cx + rad * Math.Cos(angle), cy + rad * Math.Sin(angle)));
             }
+            return pts;
+        }
+
+        // BS 8666 shape 13 — hairpin z łukiem 180°.
+        // A = długa (dolna) noga, B = wysokość pętli oś-do-osi (= 2·r),
+        // C = krótka (górna) noga. Promień łuku = B/2 (parametr usera, NIE MinBendRadius).
+        // Długość fizyczna: (A - B/2) + π·B/2 + (C - B/2) = A + C + B·(π/2 - 1).
+        // TODO: dla B/2 < MinBendRadius(d) bar naruszałby minimalny promień gięcia normy —
+        //       nie blokujemy, plugin rysuje zgodnie z wymiarami podanymi przez usera.
+        private static List<(double X, double Y)> HairpinPoints(double[] paramValues, double diameter)
+        {
+            double a = Param(paramValues, 0);
+            double b = Param(paramValues, 1);
+            double c = Param(paramValues, 2);
+            double r = b / 2.0;
+
+            // Środek łuku półkola: prawy kraniec pętli minus promień, na wysokości B/2
+            double cx = a - r;
+            double cy = r;
+
+            var pts = new List<(double, double)>();
+
+            // 1. Lewy koniec dolnej nogi
+            pts.Add((0.0, 0.0));
+
+            // 2. Punkt styczny dolnej nogi do łuku (= start półkola)
+            pts.Add((cx, 0.0));
+
+            // 3. Półkole 180° od dołu (kąt -π/2) do góry (kąt +π/2), 13 punktów pośrednich
+            //    (12 kroków po 15°). Pomijamy endpoint startu bo już dodany w pkt. 2.
+            const int arcSteps = 12;
+            double startAngle = -Math.PI / 2.0;       // punkt (cx, 0) = dół
+            double sweep = Math.PI;                    // +180°, obrót CCW
+            for (int i = 1; i <= arcSteps; i++)
+            {
+                double t = (double)i / arcSteps;
+                double angle = startAngle + sweep * t;
+                pts.Add((cx + r * Math.Cos(angle), cy + r * Math.Sin(angle)));
+            }
+
+            // Teraz ostatni dodany punkt to (cx, 2r) = (a - r, b) — koniec półkola, góra
+
+            // 4. Lewy koniec górnej nogi
+            pts.Add((a - c, b));
+
             return pts;
         }
 

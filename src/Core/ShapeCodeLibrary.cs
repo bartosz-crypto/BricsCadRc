@@ -58,7 +58,7 @@ namespace BricsCadRc.Core
             Add(new BarShape("22", "Z-bar",
                 new[] { "A", "B", "C", "D" },
                 Svg("<polyline points=\"5,30 5,15 35,15 35,5 55,5\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] - 1.5 * r - 3 * d; }));
+                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + 0.57 * p[2] + p[3] - 0.5 * r - 2.6 * d; }));
 
             Add(new BarShape("23", "Z-bar variant",
                 new[] { "A", "B", "C" },
@@ -208,6 +208,29 @@ namespace BricsCadRc.Core
 
         /// <summary>Zwraca wszystkie zarejestrowane kształty.</summary>
         public static IEnumerable<BarShape> GetAll() => _shapes.Values;
+
+        /// <summary>
+        /// Podzbiór shape codes widoczny w ShapePickerDialog przy tworzeniu nowego pręta.
+        /// Zachowuje kolejność zdefiniowaną w _pickableCodes (nie kolejność insertion do _shapes).
+        /// Pozostałe shape codes są nadal obsługiwane przez Get() — zapewnia kompatybilność
+        /// z istniejącymi prętami w starych DWG które używają shape codes spoza tej listy.
+        /// </summary>
+        public static IEnumerable<BarShape> GetPickable()
+        {
+            foreach (var code in _pickableCodes)
+            {
+                if (_shapes.TryGetValue(code, out var shape))
+                    yield return shape;
+            }
+        }
+
+        // Lista shape codes widocznych w pickerze — kolejność = kolejność wyświetlania w UI.
+        // Żeby pokazać dodatkowy shape code, dodaj go tutaj (musi istnieć w _shapes).
+        // Żeby ukryć shape code, usuń go z tej listy (wpis w _shapes zostaje, pręt nadal działa).
+        private static readonly string[] _pickableCodes = new[]
+        {
+            "00", "11", "13", "15", "21", "33", "44", "46", "51", "63"
+        };
 
         /// <summary>Sprawdza czy podany kod istnieje w rejestrze.</summary>
         public static bool Contains(string code) =>

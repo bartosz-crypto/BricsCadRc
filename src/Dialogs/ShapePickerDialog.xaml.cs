@@ -59,7 +59,7 @@ namespace BricsCadRc.Dialogs
         // ── Budowanie gridu miniaturek ────────────────────────────────────────
         private void BuildShapeGrid()
         {
-            foreach (var shape in ShapeCodeLibrary.GetAll())
+            foreach (var shape in ShapeCodeLibrary.GetPickable())
                 ShapeGrid.Children.Add(BuildCell(shape));
         }
 

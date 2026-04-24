@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
+using Teigha.Geometry;
 
 namespace BricsCadRc.Core
 {
@@ -20,6 +21,16 @@ namespace BricsCadRc.Core
     {
         private static bool _active;
         private static readonly HashSet<ObjectId> _pending = new HashSet<ObjectId>();
+
+        // Reentrancy guard — true gdy watcher sam modyfikuje polyline (RebuildCompanions).
+        // OnObjectModified sprawdza tę flagę żeby nie zakolejkować własnych zmian.
+        private static volatile bool _isRebuilding = false;
+
+        // Ostatnia znana pozycja axis_start każdego bara (klucz = ObjectId).
+        // Używana do detekcji translacji (move entire entity) → leader follow.
+        // In-memory tylko; zerowana przy Unregister (NETUNLOAD).
+        private static readonly Dictionary<ObjectId, Point3d> _lastAxisStart =
+            new Dictionary<ObjectId, Point3d>();
 
         public static void Register()
         {
@@ -49,6 +60,7 @@ namespace BricsCadRc.Core
             catch { }
             _active = false;
             _pending.Clear();
+            _lastAxisStart.Clear();
         }
 
         // ----------------------------------------------------------------
@@ -57,6 +69,7 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static void OnObjectModified(object sender, ObjectEventArgs e)
         {
+            if (_isRebuilding) return; // nie kolejkuj własnych modyfikacji z RebuildCompanions
             try
             {
                 if (!(e.DBObject is Polyline)) return;
@@ -66,6 +79,82 @@ namespace BricsCadRc.Core
                     _pending.Add(e.DBObject.ObjectId);
             }
             catch { }
+        }
+
+        // ----------------------------------------------------------------
+        // Walidacja struktury outline dla shape 00/99
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Sprawdza czy outline polyline dla shape 00/99 ma walidną strukturę prostokąta.
+        /// Walidna = dwa endpointy każdej pary są prostopadłe do osi bar-a i mają długość ≈ diameter.
+        /// Zepsuta = user ruszył pojedynczy vertex, geometria przestała być prostokątem.
+        /// </summary>
+        private static bool IsValidStraightBarOutline(Polyline pl, double diameter)
+        {
+            int total = pl.NumberOfVertices;
+            if (total != 4) return false; // shape 00/99 outline ma dokładnie 4 wierzchołki
+
+            var p0 = pl.GetPoint3dAt(0);  // left[0]
+            var p1 = pl.GetPoint3dAt(1);  // left[1]
+            var p2 = pl.GetPoint3dAt(2);  // right[1]
+            var p3 = pl.GetPoint3dAt(3);  // right[0]
+
+            // Oś bar-a
+            var axisStart = new Teigha.Geometry.Point3d((p0.X + p3.X) / 2.0, (p0.Y + p3.Y) / 2.0, 0);
+            var axisEnd   = new Teigha.Geometry.Point3d((p1.X + p2.X) / 2.0, (p1.Y + p2.Y) / 2.0, 0);
+            var axisVec   = axisEnd - axisStart;
+            double axisLen = axisVec.Length;
+            if (axisLen < 1e-6) return false;
+            var axisDir = axisVec / axisLen;
+
+            // Para startowa: p0 - p3 (left[0] - right[0])
+            var startPair = p0 - p3;
+            double startLen = startPair.Length;
+            if (Math.Abs(startLen - diameter) > 1.0) return false; // długość ≠ diameter
+
+            var startDir = startPair / startLen;
+            double startDot = Math.Abs(axisDir.DotProduct(startDir));
+            if (startDot > 0.01) return false; // nieprostopadła (cosinus > 0.01)
+
+            // Para końcowa: p1 - p2 (left[1] - right[1])
+            var endPair = p1 - p2;
+            double endLen = endPair.Length;
+            if (Math.Abs(endLen - diameter) > 1.0) return false;
+
+            var endDir = endPair / endLen;
+            double endDot = Math.Abs(axisDir.DotProduct(endDir));
+            if (endDot > 0.01) return false;
+
+            return true;
+        }
+
+        // ----------------------------------------------------------------
+        // Leader follow — translatuje MLeader razem z bar-em
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Translatuje leader entity (dowolny typ: MLeader, Line+MText itp.) o podany delta.
+        /// Używa TransformBy(Matrix3d.Displacement) — działa dla każdego Entity.
+        /// </summary>
+        private static void TranslateLeader(Database db, Transaction tr, string labelHandle, Vector3d delta)
+        {
+            if (string.IsNullOrEmpty(labelHandle)) return;
+            if (delta.Length < 1e-6) return;
+
+            long h;
+            if (!long.TryParse(labelHandle, System.Globalization.NumberStyles.HexNumber, null, out h))
+                return;
+
+            ObjectId leaderId;
+            try { leaderId = db.GetObjectId(false, new Handle(h), 0); }
+            catch { return; }
+            if (leaderId.IsNull || leaderId.IsErased) return;
+
+            var ml = tr.GetObject(leaderId, OpenMode.ForWrite) as Entity;
+            if (ml == null) return;
+
+            ml.TransformBy(Matrix3d.Displacement(delta));
         }
 
         // ----------------------------------------------------------------
@@ -100,14 +189,74 @@ namespace BricsCadRc.Core
                         shapeCode = bar.ShapeCode ?? "00";
                         mark      = bar.Mark;
 
+                        // Detekcja translacji bar-a (move entire entity).
+                        // Porównuje current axis_start z ostatnią zapamiętaną pozycją (_lastAxisStart).
+                        // Jeśli delta > 10mm → bar został przesunięty → translatuj leader.
+                        // Threshold 10mm: rozróżnia prawdziwy move (>> 10mm) od drobnego drgania
+                        // przy niewalidnym grip na shape 11+ (zazwyczaj < 10mm).
+                        var currentAxisStart = SingleBarEngine.GetAxisFirstPointFromOutline(pline, shapeCode);
+                        if (_lastAxisStart.TryGetValue(oid, out Point3d oldAxisStart))
+                        {
+                            var moveDelta = currentAxisStart - oldAxisStart;
+                            if (moveDelta.Length > 10.0)
+                            {
+                                try
+                                {
+                                    _isRebuilding = true;
+                                    TranslateLeader(db, tr, bar.LabelHandle, moveDelta);
+                                }
+                                catch { /* defensive */ }
+                                finally
+                                {
+                                    _isRebuilding = false;
+                                }
+                            }
+                        }
+                        _lastAxisStart[oid] = currentAxisStart;
+
                         // Tylko shape 00/99 (prosta) — dla innych pline.Length ≠ parametr A
                         if (shapeCode != "00" && shapeCode != "99")
                         {
+                            // Shape 11+ (zgięte) — nie ma czystego mapowania vertex outline → parametr bar-a.
+                            // Plan B: wycofujemy ruch przez regenerację outline z istniejących parametrów XData.
+                            // Outline "odskakuje" do stanu sprzed grip move. Zmiana parametrów bar-a tylko
+                            // przez dialog RC_EDIT_BAR.
                             tr.Commit();
+
+                            try
+                            {
+                                _isRebuilding = true;
+                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                            }
+                            catch { /* defensive — nie crash watchera na błędzie rebuild */ }
+                            finally
+                            {
+                                _isRebuilding = false;
+                            }
                             continue;
                         }
 
-                        newLength = pline.Length;
+                        // Shape 00/99 — walidacja struktury outline.
+                        // Jeśli user ruszył pojedynczy vertex psując prostokąt → wycofaj ruch przez RebuildCompanions.
+                        // Jeśli struktura jest walidna (stretch wzdłuż osi z zachowaniem diameter) → akceptuj nową długość.
+                        if (!IsValidStraightBarOutline(pline, bar.Diameter))
+                        {
+                            tr.Commit();
+                            try
+                            {
+                                _isRebuilding = true;
+                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                            }
+                            catch { }
+                            finally
+                            {
+                                _isRebuilding = false;
+                            }
+                            continue;
+                        }
+
+                        // Struktura walidna — akceptuj stretch
+                        newLength = SingleBarEngine.GetStraightBarAxisLength(pline);
                         // Pomiń jeśli zmiana < 1mm (numeryczna niedokładność)
                         if (Math.Abs(newLength - bar.LengthA) < 1.0) { tr.Commit(); continue; }
                         tr.Commit();

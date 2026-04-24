@@ -295,12 +295,66 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
-        // BuildVisualEntities — jedna polilinia z ConstantWidth = diameter.
-        // BricsCAD automatycznie obsługuje offset i zaokrąglenia rogów.
-        //
-        // Zwraca listę z jedną encją:
-        //   [0] Polyline z ConstantWidth = diameter (główna — XData tu)
-        //
+        // ComputeOutlineVertices — oblicza wierzchołki outline polyline w WCS.
+        // Wynik: left[0..n-1] + reverse(right[0..n-1]) = 2n punktów.
+        // Zwraca null dla shape 44 (osobna logika 2 okręgów).
+        // ----------------------------------------------------------------
+
+        public static List<Point2d> ComputeOutlineVertices(
+            BarShape shape, double[] paramValues, double diameter,
+            Point3d startPoint, Vector3d direction)
+        {
+            if (shape.Code == "44") return null;
+
+            var localPts = BarGeometryBuilder.GetLocalPoints(shape.Code, paramValues, diameter);
+            int n = localPts.Count;
+            if (n < 2) return null;
+
+            double len = Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y);
+            double ax  = len > 1e-9 ? direction.X / len : 1.0;
+            double ay  = len > 1e-9 ? direction.Y / len : 0.0;
+            double px  = -ay, py = ax;
+
+            double halfD = diameter / 2.0;
+
+            var leftLocal  = new (double X, double Y)[n];
+            var rightLocal = new (double X, double Y)[n];
+
+            for (int i = 0; i < n; i++)
+            {
+                double tx, ty;
+                if      (i == 0)     { tx = localPts[1].X   - localPts[0].X;   ty = localPts[1].Y   - localPts[0].Y; }
+                else if (i == n - 1) { tx = localPts[n-1].X - localPts[n-2].X; ty = localPts[n-1].Y - localPts[n-2].Y; }
+                else                 { tx = localPts[i+1].X - localPts[i-1].X; ty = localPts[i+1].Y - localPts[i-1].Y; }
+
+                double tlen = Math.Sqrt(tx * tx + ty * ty);
+                if (tlen < 1e-9) { tx = 1; ty = 0; }
+                else             { tx /= tlen; ty /= tlen; }
+
+                double nx = -ty, ny = tx;
+                leftLocal[i]  = (localPts[i].X + nx * halfD, localPts[i].Y + ny * halfD);
+                rightLocal[i] = (localPts[i].X - nx * halfD, localPts[i].Y - ny * halfD);
+            }
+
+            var result = new List<Point2d>(2 * n);
+            for (int i = 0; i < n; i++)
+            {
+                double wx = startPoint.X + leftLocal[i].X * ax + leftLocal[i].Y * px;
+                double wy = startPoint.Y + leftLocal[i].X * ay + leftLocal[i].Y * py;
+                result.Add(new Point2d(wx, wy));
+            }
+            for (int i = n - 1; i >= 0; i--)
+            {
+                double wx = startPoint.X + rightLocal[i].X * ax + rightLocal[i].Y * px;
+                double wy = startPoint.Y + rightLocal[i].X * ay + rightLocal[i].Y * py;
+                result.Add(new Point2d(wx, wy));
+            }
+            return result;
+        }
+
+        // ----------------------------------------------------------------
+        // BuildVisualEntities — outline polyline (ConstantWidth=0, Closed=true).
+        // Shape 44: dwa osobne okręgi. Wszystkie inne: ComputeOutlineVertices.
         // direction: dla FLOW 1 zawsze (1,0,0) — poziomy pręt w widoku elewacji
         // ----------------------------------------------------------------
 
@@ -311,25 +365,54 @@ namespace BricsCadRc.Core
             BarShape shape, double[] paramValues, double diameter,
             Point3d startPoint, Vector3d direction)
         {
-            var localPts = BarGeometryBuilder.GetLocalPoints(shape.Code, paramValues, diameter);
-
             double len = Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y);
             double ax  = len > 1e-9 ? direction.X / len : 1.0;
             double ay  = len > 1e-9 ? direction.Y / len : 0.0;
             double px  = -ay, py = ax;
 
-            var pline = new Polyline();
-            pline.ConstantWidth = diameter;
-            for (int i = 0; i < localPts.Count; i++)
-            {
-                double wx = startPoint.X + localPts[i].X * ax + localPts[i].Y * px;
-                double wy = startPoint.Y + localPts[i].X * ay + localPts[i].Y * py;
-                pline.AddVertexAt(i, new Point2d(wx, wy), 0, 0, 0);
-            }
-            if (_closedShapes.Contains(shape.Code))
-                pline.Closed = true;
+            double halfD = diameter / 2.0;
 
-            return new List<Entity> { pline };
+            // ── Shape 44: dwa osobne zamknięte okręgi (outer + inner ring) ──────
+            if (shape.Code == "44")
+            {
+                double ringDiam   = paramValues != null && paramValues.Length > 0
+                    ? paramValues[0] : diameter;
+                double ringRadius = ringDiam / 2.0;
+                double cxLocal    = ringDiam / 2.0;
+                double cyLocal    = ringDiam / 2.0;
+
+                const int circleSteps = 24;
+                var result44 = new List<Entity>(2);
+                foreach (double r in new[] { ringRadius + halfD, ringRadius - halfD })
+                {
+                    var pline44 = new Polyline();
+                    pline44.ConstantWidth = 0;
+                    for (int i = 0; i < circleSteps; i++)
+                    {
+                        double angle = 2.0 * Math.PI * i / circleSteps;
+                        double lx    = cxLocal + r * Math.Cos(angle);
+                        double ly    = cyLocal + r * Math.Sin(angle);
+                        double wx    = startPoint.X + lx * ax + ly * px;
+                        double wy    = startPoint.Y + lx * ay + ly * py;
+                        pline44.AddVertexAt(i, new Point2d(wx, wy), 0, 0, 0);
+                    }
+                    pline44.Closed = true;
+                    result44.Add(pline44);
+                }
+                return result44;
+            }
+
+            // ── Wszystkie pozostałe: outline przez ComputeOutlineVertices ──────
+            var outlinePts = ComputeOutlineVertices(shape, paramValues, diameter, startPoint, direction);
+            if (outlinePts == null || outlinePts.Count < 4)
+                return new List<Entity>();
+
+            var outline = new Polyline();
+            outline.ConstantWidth = 0.0;
+            for (int i = 0; i < outlinePts.Count; i++)
+                outline.AddVertexAt(i, outlinePts[i], 0, 0, 0);
+            outline.Closed = true;
+            return new List<Entity> { outline };
         }
 
         // ----------------------------------------------------------------
@@ -385,33 +468,37 @@ namespace BricsCadRc.Core
 
             using var tr  = db.TransactionManager.StartTransaction();
             string handle = primaryPolyId.Handle.ToString();
-            DeleteLinkedEntities(db, tr, handle);   // usuwa stare towarzyszące (compat)
+            DeleteLinkedEntities(db, tr, handle);
 
             var pline = (Polyline)tr.GetObject(primaryPolyId, OpenMode.ForRead);
             var shape = ShapeCodeLibrary.Get(bar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
-            var lPts  = BarGeometryBuilder.GetLocalPoints(shape.Code, bar.ParamValues, bar.Diameter);
 
-            // startPoint = pt[0] polilinii, bo ConstantWidth — wierzchołki są na osi
-            var pt0        = pline.GetPoint3dAt(0);
-            var startPoint = new Point3d(pt0.X - lPts[0].X, pt0.Y - lPts[0].Y, 0);
-
-            // Przebuduj wierzchołki in-place
-            pline.UpgradeOpen();
-            int oldCount = pline.NumberOfVertices;
-
-            // Dodaj nowe wierzchołki na końcu
-            for (int i = 0; i < lPts.Count; i++)
+            if (shape.Code == "44")
             {
-                double wx = startPoint.X + lPts[i].X;
-                double wy = startPoint.Y + lPts[i].Y;
-                pline.AddVertexAt(oldCount + i, new Point2d(wx, wy), 0, 0, 0);
+                tr.Commit();
+                return;
             }
 
-            // Usuń stare wierzchołki od początku (indeks 0 przesuwa się po każdym usunięciu)
+            var lPts = BarGeometryBuilder.GetLocalPoints(shape.Code, bar.ParamValues, bar.Diameter);
+            if (lPts == null || lPts.Count < 2) { tr.Commit(); return; }
+
+            var pt0        = GetAxisFirstPointFromOutline(pline, bar.ShapeCode);
+            var startPoint = new Point3d(pt0.X - lPts[0].X, pt0.Y - lPts[0].Y, 0);
+
+            var direction  = new Vector3d(1.0, 0.0, 0.0);
+
+            var outlinePts = ComputeOutlineVertices(shape, bar.ParamValues, bar.Diameter, startPoint, direction);
+            if (outlinePts == null || outlinePts.Count < 4) { tr.Commit(); return; }
+
+            pline.UpgradeOpen();
+            int oldCount = pline.NumberOfVertices;
+            for (int i = 0; i < outlinePts.Count; i++)
+                pline.AddVertexAt(oldCount + i, outlinePts[i], 0, 0, 0);
             for (int i = 0; i < oldCount; i++)
                 pline.RemoveVertexAt(0);
-            pline.ConstantWidth = bar.Diameter;
-            pline.Closed = _closedShapes.Contains(shape.Code);
+
+            pline.ConstantWidth = 0.0;
+            pline.Closed = true;
 
             tr.Commit();
         }
@@ -534,6 +621,53 @@ namespace BricsCadRc.Core
             if (parts.Length >= 2 && int.TryParse(parts[1], out int nr))
                 return nr;
             return 0;
+        }
+
+        // ----------------------------------------------------------------
+        // Outline geometry helpers — odtwarzanie osi z outline polyline
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Zwraca pierwszy punkt osi (axis[0]) SingleBar polyline outline w układzie świata.
+        /// Działa dla wszystkich shape codes z outline left+reverse(right) — tj. shape != 44.
+        /// Dla shape 44 (ring) zwraca pline.GetPoint3dAt(0) jako fallback (TODO: osobny fix).
+        /// </summary>
+        public static Point3d GetAxisFirstPointFromOutline(Polyline pl, string shapeCode)
+        {
+            if (shapeCode == "44")
+                return pl.GetPoint3dAt(0); // TODO: ring axis recovery — osobny case do zaimplementowania
+
+            int total = pl.NumberOfVertices;
+            if (total < 4 || total % 2 != 0)
+                return pl.GetPoint3dAt(0); // defensive fallback
+
+            var left0     = pl.GetPoint3dAt(0);
+            var rightLast = pl.GetPoint3dAt(total - 1);
+            return new Point3d(
+                (left0.X + rightLast.X) / 2.0,
+                (left0.Y + rightLast.Y) / 2.0,
+                0);
+        }
+
+        /// <summary>
+        /// Zwraca długość osi prostego SingleBar (shape 00/99) z outline polyline.
+        /// Oś prostego bar-a = segment od axis[0] do axis[n-1], gdzie n = NumberOfVertices/2.
+        /// NIE używać dla shape z zagięciami (shape 11+) — dla nich oś nie jest prostym segmentem.
+        /// </summary>
+        public static double GetStraightBarAxisLength(Polyline pl)
+        {
+            int total = pl.NumberOfVertices;
+            if (total < 4 || total % 2 != 0) return 0.0;
+            int n = total / 2;
+
+            var left0      = pl.GetPoint3dAt(0);
+            var rightLast  = pl.GetPoint3dAt(total - 1);
+            var leftLast   = pl.GetPoint3dAt(n - 1);
+            var rightFirst = pl.GetPoint3dAt(n);
+
+            var axisStart = new Point3d((left0.X + rightLast.X) / 2.0, (left0.Y + rightLast.Y) / 2.0, 0);
+            var axisEnd   = new Point3d((leftLast.X + rightFirst.X) / 2.0, (leftLast.Y + rightFirst.Y) / 2.0, 0);
+            return axisStart.DistanceTo(axisEnd);
         }
 
     }
