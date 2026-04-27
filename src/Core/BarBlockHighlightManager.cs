@@ -233,34 +233,60 @@ namespace BricsCadRc.Core
             double lenA     = bar.LengthA;
             double extY     = Math.Max(0, barsSpan - lastBar);
 
-            Point2d p0, p1, p2, p3;
+            bool   noSkew = Math.Abs(bar.SkewStart) < 1e-6 && Math.Abs(bar.SkewEnd) < 1e-6;
+            double sStart = bar.SkewStart;
+            double sEnd   = bar.SkewEnd;
+
+            Polyline poly;
             if (bar.Direction == "X")
             {
-                p0 = new Point2d(bar.SkewStart - cover,        -cover);
-                p1 = new Point2d(bar.SkewStart + lenA + cover, -cover);
-                p2 = new Point2d(bar.SkewEnd   + lenA + cover,  lastBar + cover + extY);
-                p3 = new Point2d(bar.SkewEnd   - cover,         lastBar + cover + extY);
+                if (noSkew)
+                {
+                    poly = new Polyline(4);
+                    poly.AddVertexAt(0, new Point2d(-cover,          -cover),                  0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(lenA + cover,    -cover),                  0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lenA + cover,    lastBar + cover + extY),  0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(-cover,          lastBar + cover + extY),  0, 0, 0);
+                }
+                else
+                {
+                    // Hexagon — slant matches exact bar progression (slope = SkewEnd/BarsSpan, not /(BarsSpan+2c))
+                    poly = new Polyline(6);
+                    poly.AddVertexAt(0, new Point2d(sStart - cover,        -cover),                   0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(sStart + lenA + cover, -cover),                   0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(sEnd   + lenA + cover, lastBar - cover + extY),   0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(sEnd   + lenA + cover, lastBar + cover + extY),   0, 0, 0);
+                    poly.AddVertexAt(4, new Point2d(sEnd   - cover,        lastBar + cover + extY),   0, 0, 0);
+                    poly.AddVertexAt(5, new Point2d(sStart - cover,        cover),                    0, 0, 0);
+                }
             }
             else
             {
-                p0 = new Point2d(-cover,                   bar.SkewStart - cover);
-                p1 = new Point2d(-cover,                   bar.SkewStart + lenA + cover);
-                p2 = new Point2d(lastBar + cover + extY,   bar.SkewEnd   + lenA + cover);
-                p3 = new Point2d(lastBar + cover + extY,   bar.SkewEnd   - cover);
+                if (noSkew)
+                {
+                    poly = new Polyline(4);
+                    poly.AddVertexAt(0, new Point2d(-cover,                 -cover),               0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(-cover,                 lenA + cover),         0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lastBar + cover + extY, lenA + cover),         0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(lastBar + cover + extY, -cover),               0, 0, 0);
+                }
+                else
+                {
+                    poly = new Polyline(6);
+                    poly.AddVertexAt(0, new Point2d(-cover,                  sStart - cover),         0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(-cover,                  sStart + lenA + cover),  0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lastBar - cover + extY,  sEnd   + lenA + cover),  0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(lastBar + cover + extY,  sEnd   + lenA + cover),  0, 0, 0);
+                    poly.AddVertexAt(4, new Point2d(lastBar + cover + extY,  sEnd   - cover),         0, 0, 0);
+                    poly.AddVertexAt(5, new Point2d(cover,                   sStart - cover),         0, 0, 0);
+                }
             }
 
-            var poly = new Polyline(4);
-            poly.AddVertexAt(0, p0, 0, 0, 0);
-            poly.AddVertexAt(1, p1, 0, 0, 0);
-            poly.AddVertexAt(2, p2, 0, 0, 0);
-            poly.AddVertexAt(3, p3, 0, 0, 0);
             poly.Closed     = true;
             poly.ColorIndex = 3;
             if (!ltId.IsNull) poly.LinetypeId = ltId;
 
-            var mat = Matrix3d.Displacement(br.Position - Point3d.Origin)
-                      * Matrix3d.Rotation(br.Rotation, Vector3d.ZAxis, Point3d.Origin);
-            poly.TransformBy(mat);
+            poly.TransformBy(br.BlockTransform);
 
             return poly;
         }

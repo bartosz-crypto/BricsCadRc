@@ -784,7 +784,7 @@ namespace BricsCadRc.Core
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
 
             // 4. Tymczasowy DBText żeby zmierzyć textLen
-            string textString = $"{bar.Count} {bar.Mark}";
+            string textString = $"{bar.EffectiveCount} {bar.Mark}";
             double scaledTextH = Scaled(DefaultTextHeight, bar);
             double textLen;
             {
@@ -1371,7 +1371,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle),      // [16]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? ""), // [17] — punkty leadera "x1,y1;x2,y2;..."
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),            // [18]
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart)           // [19]
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),          // [19]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)) // [20] CountDisplay (-1 = null)
             );
         }
 
@@ -1406,6 +1407,16 @@ namespace BricsCadRc.Core
             if (v.Length >= 18) bd.LeaderPoints       = (string)v[17].Value ?? "";
             if (v.Length >= 19) { try { bd.SkewEnd   = Convert.ToDouble(v[18].Value); } catch { bd.SkewEnd   = 0.0; } }
             if (v.Length >= 20) { try { bd.SkewStart = Convert.ToDouble(v[19].Value); } catch { bd.SkewStart = 0.0; } }
+            if (v.Length >= 21)
+            {
+                try
+                {
+                    short cd = Convert.ToInt16(v[20].Value);
+                    bd.CountDisplay = cd == -1 ? (int?)null : (int)cd;
+                }
+                catch { bd.CountDisplay = null; }
+            }
+            else bd.CountDisplay = null;
             return bd;
         }
 

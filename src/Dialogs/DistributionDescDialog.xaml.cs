@@ -11,7 +11,8 @@ namespace BricsCadRc.Dialogs
     public partial class DistributionDescDialog : Window
     {
         private readonly BarData _sourceBar;
-        private readonly string  _baseMark;
+        private readonly int     _diameter;
+        private readonly int     _posNr;
 
         public int    BarCount   { get; private set; }
         public double BarSpacing { get; private set; }
@@ -21,7 +22,8 @@ namespace BricsCadRc.Dialogs
         {
             InitializeComponent();
             _sourceBar = sourceBar;
-            _baseMark  = baseMark;
+            _diameter  = sourceBar.Diameter;
+            _posNr     = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
 
             CountBox.Text   = autoCount.ToString();
             SpacingBox.Text = ((int)autoSpacing).ToString();
@@ -34,12 +36,14 @@ namespace BricsCadRc.Dialogs
         {
             if (CountBox == null || SpacingBox == null) return;
 
-            int.TryParse(CountBox.Text,   out int count);
-            int.TryParse(SpacingBox.Text, out int spacing);
-            string suffix = SuffixBox?.Text ?? "";
+            if (!int.TryParse(CountBox.Text,   out int count)   || count   <= 0) return;
+            if (!int.TryParse(SpacingBox.Text, out int spacing) || spacing <= 0) return;
 
-            string label = $"{count} {_baseMark}";
-            if (!string.IsNullOrWhiteSpace(suffix)) label += $" {suffix}";
+            string suffix      = SuffixBox?.Text ?? "";
+            string newBaseMark = BarData.FormatMark(_diameter, _posNr, spacing, count);
+            string label       = string.IsNullOrWhiteSpace(suffix)
+                ? $"{count} {newBaseMark}"
+                : $"{count} {newBaseMark} {suffix}";
             PreviewText.Text = label;
         }
 

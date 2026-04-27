@@ -105,7 +105,7 @@ namespace BricsCadRc.Core
                     if (string.IsNullOrEmpty(barBlock.SourceBarHandle)) continue;
 
                     if (byHandle.TryGetValue(barBlock.SourceBarHandle, out var entry))
-                        entry.TotalCount += barBlock.Count;
+                        entry.TotalCount += barBlock.EffectiveCount;
                 }
 
                 tr.Commit();

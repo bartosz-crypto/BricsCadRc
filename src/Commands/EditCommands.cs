@@ -719,7 +719,7 @@ namespace BricsCadRc.Commands
             { ed.WriteMessage("\nNie znaleziono danych etykiety."); return; }
 
             // Krok 3 — otwórz dialog
-            var dlg = new EditLabelDialog(bar.Count, bar.Mark, bar.Diameter, bar.Spacing, bar.VisibilityMode);
+            var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing, bar.VisibilityMode);
             if (Application.ShowModalWindow(dlg) != true) return;
 
             // Obsługa Manual — user klika pręty
@@ -754,7 +754,7 @@ namespace BricsCadRc.Commands
                 var br = tr.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
                 if (br == null) { tr.Abort(); return; }
 
-                bar.Count          = dlg.ResultCount;
+                bar.CountDisplay   = (dlg.ResultCount != bar.Count) ? (int?)dlg.ResultCount : null;
                 bar.Mark           = dlg.ResultMark;
                 bar.Spacing        = dlg.ResultSpacing;
                 bar.VisibilityMode = dlg.ResultVisibility;
@@ -780,8 +780,8 @@ namespace BricsCadRc.Commands
                                 var barBlock = BarBlockEngine.ReadXData(brBlock);
                                 if (barBlock != null)
                                 {
-                                    barBlock.Mark  = bar.Mark;
-                                    barBlock.Count = bar.Count;
+                                    barBlock.Mark         = bar.Mark;
+                                    barBlock.CountDisplay = bar.CountDisplay;
                                     BarBlockEngine.WriteXData(brBlock, barBlock);
                                 }
                             }
@@ -799,7 +799,7 @@ namespace BricsCadRc.Commands
                     if (obj is DBText txt)
                     {
                         txt.UpgradeOpen();
-                        txt.TextString = $"{bar.Count} {bar.Mark}";
+                        txt.TextString = $"{bar.EffectiveCount} {bar.Mark}";
                         break;  // tylko pierwszy DBText
                     }
                 }

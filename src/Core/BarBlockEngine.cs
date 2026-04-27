@@ -453,22 +453,22 @@ namespace BricsCadRc.Core
             if (newSkewStart.HasValue) bar.SkewStart = newSkewStart.Value;
             if (newSkewEnd.HasValue)   bar.SkewEnd   = newSkewEnd.Value;
 
-            // Aktualizuj Mark — dla count=1 bez suffix spacing
-            int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
-            bar.Mark = BarData.FormatMark(bar.Diameter, posNr, bar.Spacing, newCount);
+            bar.CountDisplay = null;  // reset count override po stretch — EffectiveCount = canonical Count
 
-            // Zaktualizuj XData na blockref (jest juz otwarty w grip-op)
-            WriteXData(br, bar);
-
-            // Cache świeżych wartości skew — BTR Handle jest stabilne dla klona i DB BR
-            // (BTR jest unikalne per RC_BAR_BLOCK rozkład — nie współdzielone między BR).
+            // Cache musi być zaktualizowany PRZED WriteXData — WriteXData fires ObjectModified
+            // natychmiast, a BuildOutline nadpisuje XData wartościami z cache. Stary cache
+            // powodował race condition: outline widział stary SkewEnd mimo nowego XData.
             long cacheKey = br.BlockTableRecord.Handle.Value;
             if (cacheKey != 0)
                 _skewCache[cacheKey] = (bar.SkewStart, bar.SkewEnd);
 
+            // Zaktualizuj XData na blockref (jest juz otwarty w grip-op)
+            WriteXData(br, bar);
+
             // Przebuduj BTR
             using var tr = br.Database.TransactionManager.StartTransaction();
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+
             EraseAllInBtr(tr, btr);
 
             if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, newCount);
@@ -619,11 +619,23 @@ namespace BricsCadRc.Core
         public static Point3d GripLateral(BlockReference br, BarData bar)
         {
             double c = bar.Cover;
-            // Dolny-lewy róg trapezu w lokalnych (spójne z BuildOutline)
-            // Gdy SkewStart != 0, grip przesuwa się razem z outline
-            Point3d local = bar.Direction == "X"
-                ? new Point3d(bar.SkewStart - c, -c, 0)
-                : new Point3d(-c, bar.SkewStart - c, 0);
+            Point3d local;
+            if (bar.Direction == "X")
+            {
+                // non-flipped: edge at local X=0   → grip just before edge (X=-c), below first bar (Y=-c)
+                // flipped:     edge at local X=LengthA → grip just past edge (X=LengthA+c), below first bar (Y=-c)
+                local = bar.Flipped
+                    ? new Point3d(bar.LengthA + c, -c, 0)
+                    : new Point3d(bar.SkewStart - c, -c, 0);
+            }
+            else
+            {
+                // non-flipped: edge at local Y=0   → grip left of first bar (X=-c), just before edge (Y=-c)
+                // flipped:     edge at local Y=LengthA → grip left of first bar (X=-c), just past edge (Y=LengthA+c)
+                local = bar.Flipped
+                    ? new Point3d(-c, bar.LengthA + c, 0)
+                    : new Point3d(-c, bar.SkewStart - c, 0);
+            }
             return local.TransformBy(br.BlockTransform);
         }
 
@@ -631,10 +643,23 @@ namespace BricsCadRc.Core
         {
             // Dla count=1 BarsSpan=0 — grip ląduje na górnym końcu lineExt (35mm)
             // żeby był wizualnie odseparowany od grip[0] (który jest przy cover poniżej origin).
+            double c = bar.Cover;
             double localEnd = bar.Count >= 2 ? bar.BarsSpan : 35.0;
-            Point3d local = bar.Direction == "X"
-                ? new Point3d(0, localEnd, 0)
-                : new Point3d(localEnd, 0, 0);
+            Point3d local;
+            if (bar.Direction == "X")
+            {
+                // align with outline p3 (non-flipped) / p2 (flipped) — include SkewEnd offset
+                local = bar.Flipped
+                    ? new Point3d(bar.SkewEnd + bar.LengthA + c, localEnd + c, 0)
+                    : new Point3d(bar.SkewEnd - c,               localEnd + c, 0);
+            }
+            else
+            {
+                // align with outline p3 (non-flipped) / p2 (flipped) — include SkewEnd offset
+                local = bar.Flipped
+                    ? new Point3d(localEnd + c, bar.SkewEnd + bar.LengthA + c, 0)
+                    : new Point3d(localEnd + c, bar.SkewEnd - c,               0);
+            }
             return local.TransformBy(br.BlockTransform);
         }
 
@@ -689,7 +714,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle),                     // [23]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale),                // [24] AnnotScale
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),                   // [25] SkewEnd (dawny SkewOffset)
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart)                  // [26] SkewStart
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),                 // [26] SkewStart
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [27] CountDisplay (-1 = null)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.Flipped ? 1 : 0))     // [28] Flipped
             );
         }
 
@@ -748,6 +775,24 @@ namespace BricsCadRc.Core
                 catch { bd.SkewStart = 0.0; }
             }
             else bd.SkewStart = 0.0;
+
+            if (v.Length >= 28)
+            {
+                try
+                {
+                    short cd = Convert.ToInt16(v[27].Value);
+                    bd.CountDisplay = cd == -1 ? (int?)null : (int)cd;
+                }
+                catch { bd.CountDisplay = null; }
+            }
+            else bd.CountDisplay = null;
+
+            if (v.Length >= 29)
+            {
+                try { bd.Flipped = (short)v[28].Value != 0; }
+                catch { bd.Flipped = false; }
+            }
+            else bd.Flipped = false;
 
             return bd;
         }

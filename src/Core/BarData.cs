@@ -20,6 +20,15 @@ namespace BricsCadRc.Core
         /// <summary>Liczba pretow w ukladzie</summary>
         public int Count { get; set; }
 
+        /// <summary>Override liczby prętów do etykiety/zestawienia. null = fallback do Count (canonical).</summary>
+        public int? CountDisplay { get; set; }
+
+        /// <summary>Czy rozkład jest "odwrócony" — pręty po przeciwnej stronie krawędzi (Flip w RC_DISTRIBUTION).</summary>
+        public bool Flipped { get; set; }
+
+        /// <summary>Efektywna liczba prętów do wyświetlania — CountDisplay jeśli ustawiony, w przeciwnym razie Count.</summary>
+        public int EffectiveCount => CountDisplay ?? Count;
+
         /// <summary>Kod ksztaltu wg BS8666 np. "00", "11", "21"</summary>
         public string ShapeCode { get; set; } = "00";
 
@@ -188,7 +197,7 @@ namespace BricsCadRc.Core
         public double BarLengthMetres => LengthA / 1000.0;
 
         /// <summary>Calkowity tonaz ukladu w kg</summary>
-        public double TotalMassKg => Count * BarLengthMetres * LinearMass;
+        public double TotalMassKg => EffectiveCount * BarLengthMetres * LinearMass;
 
         public static double GetLinearMass(int diameter)
         {

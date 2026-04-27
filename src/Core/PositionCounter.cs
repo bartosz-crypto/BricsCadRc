@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
@@ -15,6 +16,7 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Zwraca nastepny numer pozycji i zapisuje go w rysunku (automatyczny increment).
         /// </summary>
+        [Obsolete("Use Peek + CommitUsed instead. Atomic reserve causes counter leak on dialog Cancel.")]
         public static int GetNext(Database db)
         {
             using var tr = db.TransactionManager.StartTransaction();
@@ -45,6 +47,30 @@ namespace BricsCadRc.Core
             tr.Commit();
             return next;
         }
+
+        /// <summary>
+        /// Zwraca następny numer pozycji BEZ zapisu do dokumentu. Bezpieczne przed dialogiem —
+        /// counter nie rośnie gdy user kliknie Cancel.
+        /// </summary>
+        public static int Peek(Database db)
+        {
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (nod.Contains(DictKey))
+            {
+                var xrec = (Xrecord)tr.GetObject(nod.GetAt(DictKey), OpenMode.ForRead);
+                var vals = xrec.Data?.AsArray();
+                if (vals != null && vals.Length > 0)
+                    return (short)vals[0].Value + 1;
+            }
+            return 1;
+        }
+
+        /// <summary>
+        /// Zapisuje użyty numer pozycji: max(stored, usedPosNr). Wywoływać tylko po pomyślnym
+        /// dodaniu encji do rysunku — jeśli użytkownik anulował, nie wolno wywoływać.
+        /// </summary>
+        public static void CommitUsed(Database db, int usedPosNr) => Increment(db, usedPosNr);
 
         /// <summary>
         /// Zwraca zbiór wszystkich numerów pozycji już użytych w rysunku

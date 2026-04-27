@@ -32,7 +32,7 @@ namespace BricsCadRc.Commands
 
             // Krok 1 — oblicz sugerowany wolny numer pozycji
             var usedNrs   = PositionCounter.GetUsedPositionNumbers(db);
-            int suggested = PositionCounter.GetNextFreeFrom(usedNrs, PositionCounter.GetNext(db));
+            int suggested = usedNrs.Count == 0 ? 1 : usedNrs.Max() + 1;
 
             // Krok 2 — dialog z kształtem, średnicą, wymiarami i numerem pozycji
             var elevDlg = new BarElevationDialog(suggested);
@@ -59,7 +59,6 @@ namespace BricsCadRc.Commands
             }
 
             barData.Mark = BarData.FormatMark(barData.Diameter, posNr, 0, 1);
-            PositionCounter.Increment(db, posNr);
 
             // --- Krok 5: Wstaw polilinię pręta ---
             ObjectId barId = SingleBarEngine.PlaceBar(db, barData, insertPt);
@@ -399,6 +398,8 @@ namespace BricsCadRc.Commands
             sourceBar.Pt1X      = x0;
             sourceBar.Pt1Y      = y0;
             sourceBar.BarsSpan  = rawSpan;
+            sourceBar.Spacing   = spacing;
+            sourceBar.Flipped   = isFlipped;
 
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1Bound, y1Bound,
@@ -412,7 +413,6 @@ namespace BricsCadRc.Commands
 
             // Krok 6, 8–9 — dialog + jigy + CreateLeader
             string baseMark = BarData.FormatMark(sourceBar.Diameter, posNr, spacing, autoCount);
-            sourceBar.Spacing = spacing;
 
             bool annOk = RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
                 spacing, autoCount, baseMark, barResult.BlockRefId);
@@ -473,36 +473,32 @@ namespace BricsCadRc.Commands
             int    finalCount = descDlg.BarCount;
             string suffix     = descDlg.Suffix ?? "";
             finalSpacing      = descDlg.BarSpacing;
-            string mark       = string.IsNullOrEmpty(suffix)
-                ? baseMark : $"{baseMark} {suffix}";
-            sourceBar.Mark    = mark;
-            sourceBar.Count   = finalCount;
-            sourceBar.Spacing = finalSpacing;
 
-            // Przebuduj blok prętów z wartościami z dialogu (finalCount/finalSpacing mogły się zmienić)
-            double minSpan = (finalCount - 1) * finalSpacing;
-            if (sourceBar.BarsSpan < minSpan)
-                sourceBar.BarsSpan = minSpan;
-            BarBlockEngine.RebuildWithNewLayout(db, blockRefId, finalCount, finalSpacing, sourceBar.Cover);
+            // Odbuduj mark z finalSpacing/finalCount (baseMark ma command-line spacing — nie nadpisuj)
+            string newBaseMark = BarData.FormatMark(
+                sourceBar.Diameter,
+                SingleBarEngine.ExtractPosNr(sourceBar.Mark),
+                finalSpacing, finalCount);
+            string mark = string.IsNullOrEmpty(suffix) ? newBaseMark : $"{newBaseMark} {suffix}";
+            sourceBar.Mark         = mark;
+            sourceBar.CountDisplay = (finalCount != sourceBar.Count) ? (int?)finalCount : null;
 
-            // Zaktualizuj barResult z nowymi wymiarami
-            using (var trRebuild = db.TransactionManager.StartTransaction())
+            // Geometria fizycznego rozkładu BEZ ZMIAN — label-override semantics.
+            // Zaktualizuj XData RC_BAR_BLOCK: tylko Mark i CountDisplay. Count/Spacing canonical bez zmian.
+            using (var trXData = db.TransactionManager.StartTransaction())
             {
-                var brRebuild = trRebuild.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
-                if (brRebuild != null)
+                var brXData = trXData.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+                if (brXData != null)
                 {
-                    bool horizontal2 = sourceBar.Direction == "X";
-                    barResult = new BarBlockEngine.BarBlockResult
+                    var barXd = BarBlockEngine.ReadXData(brXData);
+                    if (barXd != null)
                     {
-                        BlockRefId = blockRefId,
-                        MinPoint   = brRebuild.Position,
-                        MaxPoint   = new Point3d(
-                            brRebuild.Position.X + (horizontal2 ? sourceBar.LengthA : sourceBar.BarsSpan),
-                            brRebuild.Position.Y + (horizontal2 ? sourceBar.BarsSpan : sourceBar.LengthA),
-                            0)
-                    };
+                        barXd.Mark         = sourceBar.Mark;
+                        barXd.CountDisplay = sourceBar.CountDisplay;
+                        BarBlockEngine.WriteXData(brXData, barXd);
+                    }
                 }
-                trRebuild.Commit();
+                trXData.Commit();
             }
 
             // Krok 8 — 3-etapowy JIG
