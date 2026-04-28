@@ -688,11 +688,17 @@ namespace BricsCadRc.Core
             var db = br.Database;
             if (db == null) return;
 
-            string annotHandle = ReadAnnotHandle(br);
-            if (string.IsNullOrEmpty(annotHandle)) return;
-
             try
             {
+                // Zawsze zarejestruj source bar do aktualizacji etykiety — niezależnie od stanu annotacji.
+                var barXd = BarBlockEngine.ReadXData(br);
+                if (barXd != null && !string.IsNullOrEmpty(barXd.SourceBarHandle))
+                    PendingLabelUpdates.Add(barXd.SourceBarHandle);
+
+                // Opcjonalnie usuń powiązaną annotację (jeśli istnieje).
+                string annotHandle = ReadAnnotHandle(br);
+                if (string.IsNullOrEmpty(annotHandle)) return;
+
                 using var tr = db.TransactionManager.StartTransaction();
 
                 if (!long.TryParse(annotHandle, NumberStyles.HexNumber, null, out long hVal))
@@ -707,12 +713,7 @@ namespace BricsCadRc.Core
                 if (annotBr == null) { tr.Commit(); return; }
 
                 annotBr.Erase(true);
-
-                // Zaktualizuj etykietę pręta-źródłowego — przelicz sumę pozostałych rozkładów
-                var barXdErase = BarBlockEngine.ReadXData(br);
                 tr.Commit();
-                if (barXdErase != null && !string.IsNullOrEmpty(barXdErase.SourceBarHandle))
-                    PendingLabelUpdates.Add(barXdErase.SourceBarHandle);
             }
             catch { /* nie przerywaj głównego usuwania */ }
         }

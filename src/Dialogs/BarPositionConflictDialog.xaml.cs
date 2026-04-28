@@ -16,8 +16,8 @@ namespace BricsCadRc.Dialogs
 
         void OK_Click(object sender, RoutedEventArgs e)
         {
-            if (!int.TryParse(PosNrBox.Text, out int nr) || nr < 1 || nr > 99)
-            { MessageBox.Show("Numer pozycji musi być liczbą 1–99."); return; }
+            if (!int.TryParse(PosNrBox.Text, out int nr) || nr < 1)
+            { MessageBox.Show("Numer pozycji musi być >= 1."); return; }
             ResultPosNr  = nr;
             DialogResult = true;
         }

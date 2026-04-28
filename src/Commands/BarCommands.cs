@@ -1302,65 +1302,58 @@ namespace BricsCadRc.Commands
                 trFix.Commit();
             }
 
-            // Krok 3c — zaktualizuj tekst etykiety pręta (MLeader)
-            if (!string.IsNullOrEmpty(updated.LabelHandle))
+            // Krok 3c — zaktualizuj etykietę pręta (MLeader) z poprawnym count ze wszystkich rozkładów
+            AnnotationEngine.UpdateBarLabelCount(db,
+                editId.Handle.Value.ToString("X8"), markOverride: updated.Mark);
+
+            // Krok 4 — propaguj zmiany (Mark, Diameter, LengthA) do powiązanych rozkładów.
+            // Szukamy po SourceBarHandle (nie po posNr) — handle pręta nie zmienia się gdy user
+            // zmienia posNr lub diameter, więc zawsze znajdziemy właściwe rozkłady.
             {
-                using var trLabel = db.TransactionManager.StartTransaction();
+                string myHandle  = editId.Handle.Value.ToString("X8");
+                int    newPosNr  = SingleBarEngine.ExtractPosNr(updated.Mark);
+                var    toRebuild = new System.Collections.Generic.List<(ObjectId id, BarData bar)>();
 
-                // Spróbuj obu formatów — hex i decimal
-                ObjectId lblId = ObjectId.Null;
-                bool found = false;
-
-                // Próba 1: hex
-                if (long.TryParse(updated.LabelHandle,
-                        System.Globalization.NumberStyles.HexNumber,
-                        null, out long lblHValHex))
+                using (var trDist = db.TransactionManager.StartTransaction())
                 {
-                    var h = new Handle(lblHValHex);
-                    if (db.TryGetObjectId(h, out ObjectId idHex) && !idHex.IsNull && !idHex.IsErased)
-                    { lblId = idHex; found = true; }
-                }
-
-                // Próba 2: decimal
-                if (!found && long.TryParse(updated.LabelHandle,
-                        System.Globalization.NumberStyles.Integer,
-                        null, out long lblHValDec))
-                {
-                    var h = new Handle(lblHValDec);
-                    if (db.TryGetObjectId(h, out ObjectId idDec) && !idDec.IsNull && !idDec.IsErased)
-                    { lblId = idDec; found = true; }
-                }
-
-                if (!found) { trLabel.Commit(); }
-                else
-                {
-                    var ml = trLabel.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                    if (ml != null && ml.ContentType == ContentType.MTextContent)
+                    var ms = (BlockTableRecord)trDist.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+                    foreach (ObjectId oid in ms)
                     {
-                        var segments    = updated.Mark.Split('-');
-                        string lblPosNr = segments.Length >= 2 ? segments[1] : "01";
-                        string newLabel = updated.Mark;  // np. "H16-01"
+                        if (oid.IsErased) continue;
+                        var brDist  = trDist.GetObject(oid, OpenMode.ForRead) as BlockReference;
+                        if (brDist == null) continue;
+                        var barDist = BarBlockEngine.ReadXData(brDist);
+                        if (barDist == null) continue;
+                        if (!string.Equals(barDist.SourceBarHandle, myHandle,
+                                StringComparison.OrdinalIgnoreCase)) continue;
 
-                        var mt = ml.MText;
-                        if (mt != null)
-                        {
-                            mt = mt.Clone() as MText;
-                            if (mt != null)
-                            {
-                                mt.Contents = newLabel;
-                                ml.MText    = mt;
-                            }
-                        }
+                        // Odbuduj Mark: zachowaj spacing i suffix, podmień prefix H{dia}-{posNr}
+                        var    mp     = barDist.Mark.Split(' ');
+                        var    cp     = mp[0].Split('-');
+                        string sfx    = mp.Length > 1
+                            ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
+                        int    distSp = cp.Length >= 3
+                            && int.TryParse(cp[2], out int spParsed)
+                            ? spParsed : (int)barDist.Spacing;
+                        string newMark = BarData.FormatMark(
+                            updated.Diameter, newPosNr, distSp, barDist.Count) + sfx;
+
+                        brDist.UpgradeOpen();
+                        barDist.Mark     = newMark;
+                        barDist.Diameter = updated.Diameter;
+                        barDist.LengthA  = updated.LengthA;
+                        BarBlockEngine.WriteXData(brDist, barDist);
+                        toRebuild.Add((oid, barDist));
                     }
-                    trLabel.Commit();
+                    trDist.Commit();
+                }
+
+                foreach (var (id, bd) in toRebuild)
+                {
+                    BarBlockEngine.UpdateBarLength(db, id, updated.LengthA);
+                    AnnotationEngine.SyncAnnotation(db, bd);
                 }
             }
-
-            // Krok 4 — aktualizuj powiązane rozkłady
-            int posNr      = SingleBarEngine.ExtractPosNr(updated.Mark);
-            var distribIds = BarBlockEngine.FindDistributionsByPosNr(db, posNr);
-            foreach (var id in distribIds)
-                BarBlockEngine.UpdateBarLength(db, id, updated.LengthA);
 
             ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }

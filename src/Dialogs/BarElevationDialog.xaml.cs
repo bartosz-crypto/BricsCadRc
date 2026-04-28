@@ -16,6 +16,8 @@ namespace BricsCadRc.Dialogs
 
         private BarShape _selectedShape;
         private bool     _lengthOverridden;
+        private bool     _userTouchedLayer = false;
+        private bool     _isAutoUpdating   = false;
 
         // Tablice RowA..RowE i LabelA..LabelE inicjalizowane po InitializeComponent
         private Grid[]      _paramRows;
@@ -34,6 +36,12 @@ namespace BricsCadRc.Dialogs
 
             // Domyślny kształt: 00 Straight
             SelectShape(ShapeCodeLibrary.Get("00"), paramValues: null);
+
+            // Auto-layer na podstawie suggestedNr (przed podpięciem eventów)
+            SetAutoLayer(suggestedNr);
+
+            PosNrBox.TextChanged          += PosNrBox_TextChanged;
+            LayerCombo.SelectionChanged   += LayerCombo_SelectionChanged;
         }
 
         // ── Wypełnienie dialogu istniejącymi danymi (RC_EDIT_BAR) ───────────
@@ -189,6 +197,33 @@ namespace BricsCadRc.Dialogs
             return 12;
         }
 
+        // ── Auto-layer na podstawie posNr ───────────────────────────────────
+
+        private void PosNrBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_userTouchedLayer) return;
+            if (!int.TryParse(PosNrBox.Text, out int nr) || nr < 1) return;
+            SetAutoLayer(nr);
+        }
+
+        private void LayerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isAutoUpdating) return;
+            _userTouchedLayer = true;
+        }
+
+        private void SetAutoLayer(int posNr)
+        {
+            string targetTag = posNr >= 100 ? "TOP" : "BOT";
+            _isAutoUpdating = true;
+            foreach (ComboBoxItem item in LayerCombo.Items)
+            {
+                if (item.Tag?.ToString() == targetTag)
+                { LayerCombo.SelectedItem = item; break; }
+            }
+            _isAutoUpdating = false;
+        }
+
         // ── OK / Cancel ──────────────────────────────────────────────────────
 
         private void OK_Click(object sender, RoutedEventArgs e)
@@ -200,8 +235,8 @@ namespace BricsCadRc.Dialogs
                 return;
             }
 
-            if (!int.TryParse(PosNrBox.Text, out int pnr) || pnr < 1 || pnr > 99)
-            { MessageBox.Show("Numer pozycji musi być liczbą 1-99."); return; }
+            if (!int.TryParse(PosNrBox.Text, out int pnr) || pnr < 1)
+            { MessageBox.Show("Numer pozycji musi być >= 1."); return; }
             ResultPosNr = pnr.ToString("D2");
 
             int paramCount = _selectedShape.Parameters.Length;

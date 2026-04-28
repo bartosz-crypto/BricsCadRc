@@ -45,19 +45,17 @@ namespace BricsCadRc.Dialogs
 
             CountBox.Text = count.ToString();
 
-            // Prefill z Mark (np. "H12-01-190" → 190), fallback na parametr spacing
+            // Prefill z coreOfMark (np. "H12-01-200" → 200), fallback na parametr spacing.
+            // Używamy segments (z coreOfMark.Split('-')), nie full mark — unika problemu z suffixem
+            // (np. "200 UB" jako ostatni segment przy mark.Split('-') nie parsuje się na double).
             double spacingFromMark = spacing;
-            if (!string.IsNullOrEmpty(mark))
+            if (segments.Length >= 3
+                && double.TryParse(segments[segments.Length - 1],
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out double sp))
             {
-                var mParts = mark.Split('-');
-                if (mParts.Length >= 3
-                    && double.TryParse(mParts[mParts.Length - 1],
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out double sp))
-                {
-                    spacingFromMark = sp;
-                }
+                spacingFromMark = sp;
             }
             SpacingBox.Text = spacingFromMark.ToString("F0");
             SuffixBox.Text     = suffix;

@@ -133,6 +133,10 @@ namespace BricsCadRc.Core
                     try { newBlockData = BarBlockEngine.ReadXData(newBlock); } catch { }
                     if (newBlockData == null) continue;
 
+                    // Bug B fix: każda kopia rozkładu zwiększa count source bara
+                    if (!string.IsNullOrEmpty(newBlockData.SourceBarHandle))
+                        PendingLabelUpdates.Add(newBlockData.SourceBarHandle);
+
                     string oldAnnotHandleStr = newBlockData.AnnotHandle;
                     if (string.IsNullOrEmpty(oldAnnotHandleStr)) continue;
 

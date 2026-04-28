@@ -143,32 +143,11 @@ namespace BricsCadRc.Commands
                 blockRefId = ObjectId.Null;
             }
 
-            // Lokalna metoda pomocnicza — przebudowuje blok + Mark + annotację
+            // Lokalna metoda pomocnicza — przebudowuje blok + annotację (Mark sticky — nie ruszamy)
             void ApplyPreview(int count, double spacing, double cover, double barsSpan)
             {
                 if (count < 1) count = 1;
                 BarBlockEngine.RebuildWithNewLayout(db, blockRefId, count, spacing, cover, newBarsSpan: barsSpan);
-
-                using var trP = db.TransactionManager.StartTransaction();
-                var brP = trP.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
-                if (brP != null)
-                {
-                    var bP = BarBlockEngine.ReadXData(brP);
-                    if (bP != null)
-                    {
-                        var mp = bar.Mark.Split(' ');
-                        var cp = mp[0].Split('-');
-                        string sfx = mp.Length > 1 ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
-                        string markBase = count <= 1
-                            ? (cp.Length >= 2 ? $"{cp[0]}-{cp[1]}" : bar.Mark)
-                            : (cp.Length >= 2 ? $"{cp[0]}-{cp[1]}-{(int)spacing}" : bar.Mark);
-                        bP.Mark = $"{markBase}{sfx}";
-                        bP.Count   = count;
-                        bP.Spacing = spacing;
-                        BarBlockEngine.WriteXData(brP, bP);
-                    }
-                }
-                trP.Commit();
 
                 using var trS = db.TransactionManager.StartTransaction();
                 var brS = trS.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
@@ -344,35 +323,6 @@ namespace BricsCadRc.Commands
                 newLengthA:    newLengthA,
                 newViewingDir: newViewDir,
                 newViewSegIdx: newSegIdx);
-
-            // Krok 3b — zaktualizuj Mark jeśli zmienił się rozstaw (format H{dia}-{posNr}-{spacing})
-            if (Math.Abs(newSpacing - bar.Spacing) > 0.1 || newCount != bar.Count)
-            {
-                using var trMark = db.TransactionManager.StartTransaction();
-                var brMark = trMark.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
-                if (brMark != null)
-                {
-                    var barMark = BarBlockEngine.ReadXData(brMark);
-                    if (barMark != null)
-                    {
-                        // Wyodrębnij H{dia}-{posNr} z aktualnego Mark (przed spacing)
-                        // Format: "H12-01-200" lub "H12-01-200 B1"
-                        var markParts  = bar.Mark.Split(' ');
-                        var coreParts  = markParts[0].Split('-');  // ["H12","01","200"]
-                        string suffix  = markParts.Length > 1
-                            ? " " + string.Join(" ", markParts, 1, markParts.Length - 1)
-                            : "";
-                        string baseNew = coreParts.Length >= 2
-                            ? $"{coreParts[0]}-{coreParts[1]}-{(int)newSpacing}"
-                            : bar.Mark;
-                        barMark.Mark    = baseNew + suffix;
-                        barMark.Count   = newCount;
-                        barMark.Spacing = newSpacing;
-                        BarBlockEngine.WriteXData(brMark, barMark);
-                    }
-                }
-                trMark.Commit();
-            }
 
             // Krok 3c — zaktualizuj etykietę pręta źródłowego
             {
