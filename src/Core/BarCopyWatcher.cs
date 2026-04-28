@@ -44,16 +44,13 @@ namespace BricsCadRc.Core
                 var br = e.DBObject as BlockReference;
                 if (br == null) return;
 
-                var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
                 if (BarBlockEngine.IsBarBlock(br))
                 {
                     _newBlocks.Add(br.ObjectId);
-                    ed?.WriteMessage($"\n[CopyWatcher] ObjAppended BLOCK handle={br.Handle.Value:X} btr={br.BlockTableRecord.Handle.Value:X}");
                 }
                 else if (AnnotationEngine.IsAnnotation(br))
                 {
                     _newAnnots.Add(br.ObjectId);
-                    ed?.WriteMessage($"\n[CopyWatcher] ObjAppended ANNOT handle={br.Handle.Value:X}");
                 }
             }
             catch { }
@@ -77,8 +74,6 @@ namespace BricsCadRc.Core
 
                 if (isCopyLike && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
                 {
-                    var edLog = Application.DocumentManager.MdiActiveDocument?.Editor;
-                    edLog?.WriteMessage($"\n[CopyWatcher] {cmd}: remap {_newBlocks.Count} blocks + {_newAnnots.Count} annots");
                     RemapCopiedPairs();
                 }
             }

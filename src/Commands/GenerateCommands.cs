@@ -93,8 +93,8 @@ namespace BricsCadRc.Commands
             var covResult = ed.GetDistance(covOpts);
             double cover = covResult.Status == PromptStatus.OK ? covResult.Value : defaultCover;
 
-            // 8. Numer pozycji — sekwencyjny, trwaly w rysunku
-            int posNr = PositionCounter.GetNext(db);
+            // 8. Numer pozycji — Peek bez zapisu; CommitUsed po pomyślnym wygenerowaniu
+            int posNr = PositionCounter.Peek(db);
 
             // 9. Zbuduj BarData (Mark w formacie ASD: H12-01-200)
             var bar = new BarData
@@ -116,6 +116,8 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage("\n[RC SLAB] Nie wygenerowano zadnych pretow — sprawdz rozmiar polilinii i otuline.\n");
                 return;
             }
+
+            PositionCounter.CommitUsed(db, posNr);
 
             // 11. Modul annotacji — RC_ANNOT_nnn (dist line + romby + ramie + tekst)
             //     Romby w pozycjach wzglednych (i*spacing) — niezalezne od world coords pretow.

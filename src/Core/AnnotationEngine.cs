@@ -240,12 +240,13 @@ namespace BricsCadRc.Core
                 bool   isLast    = (i == bar.Count - 1);
                 double skewFrac  = bar.Count > 1 ? (double)i / (bar.Count - 1) : 0.0;
                 double dotX      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
+                double dotY      = i * bar.Spacing;
                 if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(bar.SkewStart, i * bar.Spacing, 0), -distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(bar.SkewStart, dotY, 0), -distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(bar.SkewEnd, i * bar.Spacing, 0), distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                    AddArrow(tr, btr, new Point3d(bar.SkewEnd, dotY, 0), distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 else if (bar.Count <= 3 || visSetH.Contains(i))
-                    AddDot(tr, btr, new Point3d(dotX, i * bar.Spacing, 0), Scaled(DotRadius, bar));
+                    AddDot(tr, btr, new Point3d(dotX, dotY, 0), Scaled(DotRadius, bar));
             }
 
             if (bar.Count > 3)

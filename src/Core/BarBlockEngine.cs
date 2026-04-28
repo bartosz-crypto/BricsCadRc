@@ -44,6 +44,7 @@ namespace BricsCadRc.Core
             public ObjectId BlockRefId;
             public Point3d  MinPoint;   // (x0, y0) po otulinie
             public Point3d  MaxPoint;   // (x1, y1) po otulinie
+            public Point3d  BarOrigin;  // insertPt bloku = local(0,0) w WCS, niezależnie od dekoracji
             public bool     IsValid => BlockRefId != ObjectId.Null;
         }
 
@@ -428,7 +429,8 @@ namespace BricsCadRc.Core
             {
                 BlockRefId = blockRef.ObjectId,
                 MinPoint   = ext.MinPoint,
-                MaxPoint   = ext.MaxPoint
+                MaxPoint   = ext.MaxPoint,
+                BarOrigin  = insertPt
             };
         }
 

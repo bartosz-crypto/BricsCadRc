@@ -141,8 +141,6 @@ namespace BricsCadRc.Commands
                     sourceBar.Angle = SingleBarEngine.GetBarAngle(barPline);
                 tr.Commit();
             }
-            ed.WriteMessage($"\n[ANGLE] sourceBar.Angle={sourceBar?.Angle:F4} rad = {sourceBar?.Angle * 180 / Math.PI:F1}°");
-
             // Zapisz handle polilinii pręta — potrzebny do resetu etykiety przy usunięciu rozkładu
             if (sourceBar != null)
                 sourceBar.SourceBarHandle = selResult.ObjectId.Handle.Value.ToString("X8");
@@ -177,13 +175,6 @@ namespace BricsCadRc.Commands
                 sourceBar.ViewingDirection = "Auto";
                 viewLength = GetViewLength(sourceBar);
             }
-
-            ed.WriteMessage(
-                $"\n[RC_DIST] ShapeCode={sourceBar.ShapeCode}" +
-                $"  ParamValues=[{sourceBar.LengthA:F0},{sourceBar.LengthB:F0}," +
-                $"{sourceBar.LengthC:F0},{sourceBar.LengthD:F0},{sourceBar.LengthE:F0}]" +
-                $"  TotalLength={sourceBar.TotalLength:F0}" +
-                $"  viewLength={viewLength:F0}  viewingDir={sourceBar.ViewingDirection}\n");
 
             // --- Krok 3: Zakres rozkładu — pierwszy punkt krawędzi ---
             var pt1Opts = new PromptPointOptions("\nFirst point along edge: ");
@@ -293,12 +284,6 @@ namespace BricsCadRc.Commands
             sourceBar.SymbolSide      = symbolSide;
             sourceBar.SymbolDirection = symbolDir;
 
-            if (BarBlockEngine.GetSymbolCategory(sourceBar.ShapeCode) == BarBlockEngine.BarSymbolCategory.LBar)
-                ed.WriteMessage(
-                    $"\n[DEBUG L-BAR] shapeCode={sourceBar.ShapeCode}" +
-                    $" ParamValues=[{sourceBar.LengthA:F0},{sourceBar.LengthB:F0},{sourceBar.LengthC:F0}]" +
-                    $" viewLength={viewLength:F0} symbolSide={symbolSide}\n");
-
             // --- Krok 4: Pozycja pierwszego preta (otulina) ---
             var covOpts = new PromptDistanceOptions("\nPosition of first bar (mm) <40>: ")
             {
@@ -384,9 +369,10 @@ namespace BricsCadRc.Commands
             double rawSpan = horizontal ? (y1Bound - y0) : (x1Bound - x0);
             int    autoCount = Math.Max(1, (int)(rawSpan / spacing) + 1);
 
-            // Numer pozycji: z marka preta ("H12-13" → 13), lub nowy
-            int posNr = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
-            if (posNr <= 0) posNr = PositionCounter.GetNext(db);
+            // Numer pozycji: z marka preta ("H12-13" → 13), lub nowy (Peek — nie inkrementuj przed OK)
+            int posNr        = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
+            bool newPosAlloc = posNr <= 0;
+            if (newPosAlloc) posNr = PositionCounter.Peek(db);
 
             // Usuń live preview — zaraz pojawią się finalne pręty
             ClearBarPreview(liveTransients);
@@ -417,6 +403,8 @@ namespace BricsCadRc.Commands
             bool annOk = RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
                 spacing, autoCount, baseMark, barResult.BlockRefId);
             if (!annOk) return;
+
+            if (newPosAlloc) PositionCounter.CommitUsed(db, posNr);
 
             // Zaktualizuj Mark w RC_BAR_BLOCK — RunAnnotationFlow zbudowało pełny mark; przepisz do XData bloku
             if (!string.IsNullOrEmpty(sourceBar.Mark) && barResult.IsValid)
@@ -516,7 +504,7 @@ namespace BricsCadRc.Commands
             }
             else
             {
-                minFixed = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X;
+                minFixed = horizontal ? barResult.BarOrigin.Y : barResult.BarOrigin.X;
                 basePos  = horizontal ? barResult.MaxPoint.X : barResult.MaxPoint.Y;
             }
 
@@ -753,7 +741,6 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 9 — CreateLeader
-            ed.WriteMessage($"\n[AF] leaderH={leaderHorizontal} leaderU={leaderUp} leaderR={leaderRight}");
             int posNr = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, sourceBar, leaderHorizontal, posNr,
@@ -905,21 +892,9 @@ namespace BricsCadRc.Commands
                 case "11": case "12": case "14": case "15":
                     return Math.Max(p[0], p[1]);
 
-                // U-bar shape 21 — debug: pokaż A i B, zwróć A (do weryfikacji)
+                // U-bar shape 21 — zwraca A (szerokość widoku)
                 case "21":
-                {
-                    double vl = p[0];   // tymczasowo A — do zweryfikowania w BricsCAD
-                    try
-                    {
-                        Bricscad.ApplicationServices.Application
-                            .DocumentManager.MdiActiveDocument?.Editor
-                            .WriteMessage(
-                                $"\n[DEBUG U-BAR 21] ParamValues=[A={p[0]:F0},B={p[1]:F0},C={p[2]:F0}]" +
-                                $"  viewLength={vl:F0} (używa A)\n");
-                    }
-                    catch { }
-                    return vl;
-                }
+                    return p[0];
 
                 // U-bar / crank — bok A
                 case "13": case "22": case "23":
@@ -993,7 +968,6 @@ namespace BricsCadRc.Commands
 
                 bar.ViewingDirection = "Manual";
                 bar.ViewSegmentIndex = segIdx;
-                ed.WriteMessage($"\n[RC_DIST] Manual view: segment {segIdx}, length={segLen:F0}mm\n");
                 return segLen;
             }
         }
