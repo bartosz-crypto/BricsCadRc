@@ -1467,7 +1467,10 @@ namespace BricsCadRc.Core
                     if (barBlock == null) continue;
                     if (string.Equals(barBlock.SourceBarHandle, sourceBarHandle,
                             StringComparison.OrdinalIgnoreCase))
-                        totalCount += barBlock.Count;
+                    {
+                        if (!BarBlockEngine.IsAnnotAlive(db, barBlock.AnnotHandle)) continue;
+                        totalCount += barBlock.EffectiveCount;
+                    }
                 }
 
                 // Krok 3 — zaktualizuj MLeadera

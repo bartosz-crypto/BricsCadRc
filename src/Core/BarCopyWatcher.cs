@@ -215,8 +215,6 @@ namespace BricsCadRc.Core
             if (oldBtr == null) return;
 
             var refIds = oldBtr.GetBlockReferenceIds(true, true);
-            var ed2 = Application.DocumentManager.MdiActiveDocument?.Editor;
-            ed2?.WriteMessage($"\n[EnsureUniqueBtr] br.Handle={br.Handle.Value:X} oldBtrId={oldBtrId.Handle.Value:X} refCount={refIds.Count}");
             if (refIds.Count <= 1) return;  // Już unikalna — nic nie rób
 
             // Utwórz nową anonimową BTR jako klon starej
@@ -245,7 +243,6 @@ namespace BricsCadRc.Core
             // Przepnij referencję na nową BTR
             br.UpgradeOpen();
             br.BlockTableRecord = newBtrId;
-            ed2?.WriteMessage($"\n[EnsureUniqueBtr] SUKCES — br.Handle={br.Handle.Value:X} przepięty na newBtrId={newBtrId.Handle.Value:X}");
         }
 
         private static bool TryGetObjectId(Database db, string handleStr, out ObjectId id)

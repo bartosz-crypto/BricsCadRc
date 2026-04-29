@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
 
@@ -28,7 +27,6 @@ namespace BricsCadRc.Core
                 // Przytnij do liczby parametrów kształtu (shape ma 1–5 parametrów)
                 var p = new[] { a, b, c, d, e }.Take(shape.Parameters.Length).ToArray();
                 return shape.CalculateTotalLength(p, diameter);
-                // CalculateTotalLength już robi zaokrąglenie do 25mm wewnątrz
             }
             // Fallback dla nieznanych shape codes
             double fallback = Math.Max(a, Math.Max(b, Math.Max(c, Math.Max(d, e))));
@@ -37,8 +35,9 @@ namespace BricsCadRc.Core
 
         // ----------------------------------------------------------------
         // Buduje zestawienie ze wszystkich prętów w rysunku.
-        // Iteruje po RC_SINGLE_BAR (polilinii pręta); sumuje liczby ze wszystkich
-        // powiązanych RC_BAR_BLOCK (rozkładów).
+        // Krok 1: iteruje RC_SINGLE_BAR — tworzy entry z TotalCount=0.
+        // Krok 2: iteruje RC_BAR_BLOCK — sumuje EffectiveCount (honoruje CountDisplay override).
+        // Krok 3: fallback — pręt bez rozkładów zlicza siebie jako 1.
         // ----------------------------------------------------------------
         public static List<BarScheduleEntry> BuildSchedule(Database db)
         {
@@ -67,9 +66,7 @@ namespace BricsCadRc.Core
                     double cutLen = CalcCuttingLength(
                         bar.ShapeCode, bar.Diameter,
                         bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE);
-                    // zaokrąglenie do 25mm już wykonane wewnątrz CalculateTotalLength
 
-                    // Wyciągnij numer pozycji z Mark (np. "H12-01" → "01")
                     string posNr = ExtractPosNrStr(bar.Mark);
 
                     var entry = new BarScheduleEntry
@@ -84,17 +81,38 @@ namespace BricsCadRc.Core
                         D             = bar.LengthD,
                         E             = bar.LengthE,
                         CuttingLength = cutLen,
-                        TotalCount    = GetCountFromLabel(db, tr, bar.LabelHandle),
+                        TotalCount    = 0,
                         LinearMass    = BarData.GetLinearMass(bar.Diameter)
                     };
 
                     byHandle[handle] = entry;
                 }
 
+                // Krok 2 — sumuj EffectiveCount z każdego RC_BAR_BLOCK do odpowiedniego pręta
+                foreach (ObjectId oid in modelSpace)
+                {
+                    if (oid.IsErased) continue;
+                    var br = tr.GetObject(oid, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+
+                    var barBlock = BarBlockEngine.ReadXData(br);
+                    if (barBlock == null || string.IsNullOrEmpty(barBlock.SourceBarHandle)) continue;
+
+                    if (!BarBlockEngine.IsAnnotAlive(db, barBlock.AnnotHandle)) continue;
+
+                    if (byHandle.TryGetValue(barBlock.SourceBarHandle, out var entry))
+                        entry.TotalCount += barBlock.EffectiveCount;
+                }
+
+                // Krok 3 — usuń pręty bez rozkładów (nie pojawiają się w zestawieniu)
+                var toRemove = byHandle.Where(kv => kv.Value.TotalCount == 0).Select(kv => kv.Key).ToList();
+                foreach (var key in toRemove)
+                    byHandle.Remove(key);
+
                 tr.Commit();
             }
 
-            // Krok 2 — posortuj po numerze pozycji (Count zawsze ≥ 1 z ParseLabelCount fallback)
+            // Posortuj po numerze pozycji
             var result = byHandle.Values
                 .OrderBy(e => ParsePosNr(e.PosNr))
                 .ThenBy(e => e.PosNr)
@@ -122,36 +140,6 @@ namespace BricsCadRc.Core
         private static int ParsePosNr(string s)
         {
             return int.TryParse(s, out int n) ? n : 0;
-        }
-
-        // ----------------------------------------------------------------
-        // Pobierz Count z tekstu labela MLeader (np. "7 H12-01" → 7).
-        // Fallback = 1 jeśli label nie istnieje lub nie ma wiodącej liczby.
-        // ----------------------------------------------------------------
-        private static int GetCountFromLabel(Database db, Transaction tr, string labelHandle)
-        {
-            if (string.IsNullOrEmpty(labelHandle)) return 1;
-            if (!long.TryParse(labelHandle,
-                    System.Globalization.NumberStyles.HexNumber, null, out long hVal)) return 1;
-
-            if (!db.TryGetObjectId(new Handle(hVal), out ObjectId lblId)
-                || lblId.IsNull || lblId.IsErased) return 1;
-
-            MLeader ml;
-            try { ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader; }
-            catch { return 1; }
-            if (ml == null) return 1;
-
-            return ParseLabelCount(ml.MText?.Contents ?? "");
-        }
-
-        private static int ParseLabelCount(string labelText)
-        {
-            if (string.IsNullOrEmpty(labelText)) return 1;
-            // Strip MText RTF-like formatting blocks ({\\...}) before parsing
-            var plain = Regex.Replace(labelText, @"\{\\[^}]*\}", "").Trim();
-            var match = Regex.Match(plain, @"^(\d+)\s");
-            return match.Success && int.TryParse(match.Groups[1].Value, out int n) && n > 0 ? n : 1;
         }
     }
 }

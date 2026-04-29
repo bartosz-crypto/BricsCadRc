@@ -837,6 +837,51 @@ namespace BricsCadRc.Core
     }
 
     // ----------------------------------------------------------------
+    // AnnotBlockEraseOverrule — usunięcie RC_BAR_ANNOT triggeruje update MLeader
+    // ----------------------------------------------------------------
+    internal class AnnotBlockEraseOverrule : ObjectOverrule
+    {
+        public override void Erase(DBObject dbObject, bool erasing)
+        {
+            base.Erase(dbObject, erasing);
+
+            if (!erasing) return;
+            if (!(dbObject is BlockReference br)) return;
+
+            var db = br.Database;
+            if (db == null) return;
+
+            var annotXd = AnnotationEngine.ReadAnnotXData(br);
+            if (annotXd == null || string.IsNullOrEmpty(annotXd.SourceBlockHandle)) return;
+
+            try
+            {
+                if (!long.TryParse(annotXd.SourceBlockHandle,
+                        NumberStyles.HexNumber, null, out long sbhv)) return;
+
+                if (!db.TryGetObjectId(new Handle(sbhv), out ObjectId sbId)
+                    || sbId.IsNull || sbId.IsErased) return;
+
+                using var tr = db.TransactionManager.StartTransaction();
+                var sourceBlock = tr.GetObject(sbId, OpenMode.ForRead) as BlockReference;
+                if (sourceBlock != null)
+                {
+                    var barXd = BarBlockEngine.ReadXData(sourceBlock);
+                    if (barXd != null && !string.IsNullOrEmpty(barXd.SourceBarHandle))
+                        PendingLabelUpdates.Add(barXd.SourceBarHandle);
+                }
+                tr.Commit();
+            }
+            catch { }
+        }
+
+        public new void SetCustomFilter()
+        {
+            this.SetXDataFilter("RC_BAR_ANNOT");
+        }
+    }
+
+    // ----------------------------------------------------------------
     // PendingLabelUpdates — opóźniona aktualizacja etykiet po ERASE
     // ----------------------------------------------------------------
     internal static class PendingLabelUpdates
@@ -867,6 +912,7 @@ namespace BricsCadRc.Core
         private static BarBlockTransformOverrule    _barBlockTransform;
         private static BarBlockEraseOverrule        _barBlockErase;
         private static BarPolylineEraseOverrule     _barPolylineErase;
+        private static AnnotBlockEraseOverrule      _annotBlockErase;
 
         public static void Register()
         {
@@ -882,6 +928,9 @@ namespace BricsCadRc.Core
             Overrule.AddOverrule(cls, _barBlockErase,       false);
             _barBlockTransform.SetCustomFilter();
             _barBlockErase.SetCustomFilter();
+            _annotBlockErase = new AnnotBlockEraseOverrule();
+            Overrule.AddOverrule(cls, _annotBlockErase, false);
+            _annotBlockErase.SetCustomFilter();
             _barPolylineErase = new BarPolylineEraseOverrule();
             Overrule.AddOverrule(
                 RXObject.GetClass(typeof(Teigha.DatabaseServices.Polyline)),
@@ -896,6 +945,7 @@ namespace BricsCadRc.Core
             if (_grip == null) return;
             var cls = RXObject.GetClass(typeof(BlockReference));
             Overrule.RemoveOverrule(cls, _barBlockErase);
+            Overrule.RemoveOverrule(cls, _annotBlockErase);
             Overrule.RemoveOverrule(cls, _barBlockTransform);
             Overrule.RemoveOverrule(cls, _transform);
             Overrule.RemoveOverrule(cls, _grip);
@@ -903,6 +953,7 @@ namespace BricsCadRc.Core
                 RXObject.GetClass(typeof(Teigha.DatabaseServices.Polyline)),
                 _barPolylineErase);
             _barBlockErase.Dispose();     _barBlockErase     = null;
+            _annotBlockErase.Dispose();   _annotBlockErase   = null;
             _barBlockTransform.Dispose(); _barBlockTransform = null;
             _transform.Dispose();         _transform         = null;
             _grip.Dispose();              _grip              = null;

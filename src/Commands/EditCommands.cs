@@ -759,6 +759,24 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage($"\nEtykieta zaktualizowana: {dlg.ResultCount} {dlg.ResultMark}\n");
 
+            // Zaktualizuj MLeader RC_SINGLE_BAR — honoruje CountDisplay override
+            {
+                string sourceBarHandle = null;
+                if (!string.IsNullOrEmpty(bar.SourceBlockHandle) &&
+                    long.TryParse(bar.SourceBlockHandle,
+                        System.Globalization.NumberStyles.HexNumber, null, out long sbhvU) &&
+                    db.TryGetObjectId(new Handle(sbhvU), out ObjectId sbIdU) && !sbIdU.IsErased)
+                {
+                    using var trU = db.TransactionManager.StartTransaction();
+                    var brU = trU.GetObject(sbIdU, OpenMode.ForRead) as BlockReference;
+                    var barU = brU != null ? BarBlockEngine.ReadXData(brU) : null;
+                    sourceBarHandle = barU?.SourceBarHandle;
+                    trU.Commit();
+                }
+                if (!string.IsNullOrEmpty(sourceBarHandle))
+                    AnnotationEngine.UpdateBarLabelCount(db, sourceBarHandle, markOverride: bar.Mark);
+            }
+
             // Przebuduj blok prętów jeśli znamy SourceBlockHandle (visibility mogła się zmienić)
             if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
             {
@@ -774,23 +792,9 @@ namespace BricsCadRc.Commands
                 {
                     long hVal = Convert.ToInt64(bar.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
                     if (db.TryGetObjectId(new Handle(hVal), out ObjectId barBlockId) && !barBlockId.IsNull)
-                    {
-                        ed.WriteMessage($"\n[DBG-BEFORE] VisibleIndices={bar.VisibleIndices} Mode={bar.VisibilityMode} safeIndices={safeIndices} SourceHandle={bar.SourceBlockHandle}");
                         BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, safeIndices);
-                        using (var tr2 = db.TransactionManager.StartTransaction())
-                        {
-                            var br2 = tr2.GetObject(barBlockId, OpenMode.ForRead) as BlockReference;
-                            var bar2 = br2 != null ? BarBlockEngine.ReadXData(br2) : null;
-                            ed.WriteMessage($"\n[DBG-AFTER]  VisibleIndices={bar2?.VisibleIndices} Mode={bar2?.VisibilityMode}");
-                            tr2.Commit();
-                        }
-                    }
-                    else
-                    {
-                        ed.WriteMessage($"\n[DBG] barBlockId NIE ZNALEZIONY dla handle={bar.SourceBlockHandle}");
-                    }
                 }
-                catch (System.Exception ex) { ed.WriteMessage($"\n[DBG-EXCEPTION] {ex.GetType().Name}: {ex.Message}"); }
+                catch { }
             }
 
             // Przebuduj annotację (kółka na dist line) z nową widocznością

@@ -860,6 +860,22 @@ namespace BricsCadRc.Core
         public static bool IsBarBlock(Entity entity)
             => entity.GetXDataForApplication(XAppName) != null;
 
+        public static bool IsAnnotAlive(Database db, string annotHandle)
+        {
+            if (string.IsNullOrEmpty(annotHandle)) return false;
+            try
+            {
+                if (long.TryParse(annotHandle,
+                        System.Globalization.NumberStyles.HexNumber, null, out long hv))
+                {
+                    if (db.TryGetObjectId(new Handle(hv), out ObjectId oid))
+                        return !oid.IsErased && oid.IsValid;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         // ----------------------------------------------------------------
         // FindDistributionsByPosNr — szuka wszystkich RC_BAR_BLOCK dla danego posNr
         // ----------------------------------------------------------------
