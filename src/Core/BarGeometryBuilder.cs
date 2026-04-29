@@ -115,19 +115,6 @@ namespace BricsCadRc.Core
                 case "12": // L-bend z większym promieniem R (R = p[2] = LengthC)
                     return Pts((0, 0), (a, 0), (a, b));
 
-                // ── Crank/offset BS 8666 — slope 1:√3 (60° od poziomu) ──────────
-                // A, C mierzone do przecięcia osi (środek crank-u), B = wysokość crank-u
-                case "13":
-                {
-                    const double HALF_B_DX_FACTOR = 0.5 / 1.7320508075688772; // 0.5/√3 ≈ 0.2887
-                    double halfBDx = b * HALF_B_DX_FACTOR;
-                    return Pts(
-                        (0,           0),
-                        (a - halfBDx, 0),
-                        (a + halfBDx, b),
-                        (a + c,       b));
-                }
-
                 // ── Haki 45° i 135° ──────────────────────────────────────────
                 case "14": // hook 45°
                     return Pts((0, 0), (a, 0), (a + b * Cos45, b * Cos45));

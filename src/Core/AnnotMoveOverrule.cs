@@ -695,6 +695,8 @@ namespace BricsCadRc.Core
                 if (barXd != null && !string.IsNullOrEmpty(barXd.SourceBarHandle))
                     PendingLabelUpdates.Add(barXd.SourceBarHandle);
 
+                BarBlockEngine.ClearSkewCache(br.BlockTableRecord.Handle.Value);
+
                 // Opcjonalnie usuń powiązaną annotację (jeśli istnieje).
                 string annotHandle = ReadAnnotHandle(br);
                 if (string.IsNullOrEmpty(annotHandle)) return;
