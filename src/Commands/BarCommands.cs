@@ -76,17 +76,23 @@ namespace BricsCadRc.Commands
             }
 
             Point3d defaultTextPt = new Point3d(barCenter.X - 50, barCenter.Y + 150, 0);
-            var lblOpts = new PromptPointOptions("\nClick label position [Enter=auto]: ")
+            // Custom leader preview: foot-of-perpendicular kursora na oś pręta + clamp do końców
+            List<Point3d> axisPts = new List<Point3d>();
+            using (var trAxis = db.TransactionManager.StartTransaction())
             {
-                AllowNone     = true,
-                UseBasePoint  = true,
-                BasePoint     = barCenter,
-                UseDashedLine = true
-            };
-            var lblResult = ed.GetPoint(lblOpts);
-            Point3d textPt = lblResult.Status == PromptStatus.OK
-                ? lblResult.Value
-                : defaultTextPt;
+                var pline = trAxis.GetObject(barId, OpenMode.ForRead) as Polyline;
+                if (pline != null)
+                    axisPts = SingleBarEngine.GetAxisPointsFromOutline(pline, barData.ShapeCode);
+                trAxis.Commit();
+            }
+
+            var jig = new BarLabelLeaderJig(axisPts, defaultTextPt);
+            PromptResult dragRes = ed.Drag(jig);
+            jig.ClearTransients();
+
+            Point3d textPt = (dragRes.Status == PromptStatus.OK || dragRes.Status == PromptStatus.None)
+                ? jig.SelectedPoint
+                : defaultTextPt;   // ESC → defaultTextPt (zachowuje dotychczasowy kontrakt)
 
             // Smart arrowTip — krawędź pręta najbliżej tekstu
             Point3d arrowTip;

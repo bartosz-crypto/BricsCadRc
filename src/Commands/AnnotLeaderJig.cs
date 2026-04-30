@@ -778,6 +778,100 @@ namespace BricsCadRc.Commands
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // RC_BAR label leader jig: foot-of-perpendicular kursora na osi pręta.
+    // Zwraca SelectedPoint (kliknięty) lub defaultPt (Enter/Esc).
+    // ─────────────────────────────────────────────────────────────────────────
+    internal class BarLabelLeaderJig : DrawJig
+    {
+        private readonly List<Point3d> _axisPts;
+        private readonly Point3d       _defaultPt;
+        private Point3d                _lastCursor;
+        private bool                   _hasCursor = false;
+        private readonly List<Line>    _transients = new List<Line>();
+
+        public Point3d SelectedPoint => _hasCursor ? _lastCursor : _defaultPt;
+
+        public BarLabelLeaderJig(List<Point3d> axisPts, Point3d defaultPt)
+        {
+            _axisPts    = axisPts ?? new List<Point3d>();
+            _defaultPt  = defaultPt;
+            _lastCursor = defaultPt;
+        }
+
+        protected override SamplerStatus Sampler(JigPrompts prompts)
+        {
+            var opts = new JigPromptPointOptions("\nClick label position [Enter=auto]: ")
+            {
+                UserInputControls = UserInputControls.Accept3dCoordinates
+                                  | UserInputControls.NullResponseAccepted
+            };
+            var res = prompts.AcquirePoint(opts);
+
+            if (res.Status == PromptStatus.None)
+            {
+                _hasCursor = false;
+                return SamplerStatus.NoChange;
+            }
+            if (res.Status != PromptStatus.OK) return SamplerStatus.NoChange;
+
+            Point3d cursor = res.Value;
+            if (_hasCursor && (cursor - _lastCursor).Length < 0.01)
+                return SamplerStatus.NoChange;
+
+            _lastCursor = cursor;
+            _hasCursor  = true;
+            RefreshTransients();
+            return SamplerStatus.OK;
+        }
+
+        protected override bool WorldDraw(WorldDraw draw) => true;
+
+        private void RefreshTransients()
+        {
+            ClearTransients();
+            if (_axisPts.Count < 2) return;
+
+            Point3d bestFoot   = _axisPts[0];
+            double  bestDistSq = double.MaxValue;
+            for (int i = 0; i < _axisPts.Count - 1; i++)
+            {
+                Point3d foot = ClosestPointOnSegment(_lastCursor, _axisPts[i], _axisPts[i + 1]);
+                double dx = foot.X - _lastCursor.X, dy = foot.Y - _lastCursor.Y;
+                double dsq = dx * dx + dy * dy;
+                if (dsq < bestDistSq) { bestDistSq = dsq; bestFoot = foot; }
+            }
+
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+            var ln    = new Line(bestFoot, _lastCursor) { ColorIndex = 3 };
+            try   { tm.AddTransient(ln, TransientDrawingMode.DirectTopmost, 128, vpIds); _transients.Add(ln); }
+            catch { ln.Dispose(); }
+        }
+
+        public void ClearTransients()
+        {
+            var tm    = TransientManager.CurrentTransientManager;
+            var vpIds = new IntegerCollection();
+            foreach (var ln in _transients)
+            {
+                try { tm.EraseTransient(ln, vpIds); } catch { }
+                try { ln.Dispose(); }               catch { }
+            }
+            _transients.Clear();
+        }
+
+        private static Point3d ClosestPointOnSegment(Point3d q, Point3d a, Point3d b)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            double lenSq = dx * dx + dy * dy;
+            if (lenSq < 1e-12) return a;
+            double t = ((q.X - a.X) * dx + (q.Y - a.Y) * dy) / lenSq;
+            if (t < 0.0) t = 0.0; else if (t > 1.0) t = 1.0;
+            return new Point3d(a.X + t * dx, a.Y + t * dy, 0);
+        }
+    }
+
     internal class LeaderTransientDrawer : IDisposable
     {
         private readonly List<Entity> _ents = new List<Entity>();
