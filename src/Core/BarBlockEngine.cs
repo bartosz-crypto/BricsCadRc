@@ -459,6 +459,8 @@ namespace BricsCadRc.Core
 
             bar.CountDisplay = null;  // reset count override po stretch — EffectiveCount = canonical Count
 
+            BarData.PromoteMarkIfPurePrefix(bar);
+
             // Cache musi być zaktualizowany PRZED WriteXData — WriteXData fires ObjectModified
             // natychmiast, a BuildOutline nadpisuje XData wartościami z cache. Stary cache
             // powodował race condition: outline widział stary SkewEnd mimo nowego XData.
@@ -599,6 +601,8 @@ namespace BricsCadRc.Core
             double minSpan = (newCount - 1) * newSpacing;
             if (bar.BarsSpan < minSpan)
                 bar.BarsSpan = minSpan;
+
+            BarData.PromoteMarkIfPurePrefix(bar);
 
             WriteXData(br, bar);
 

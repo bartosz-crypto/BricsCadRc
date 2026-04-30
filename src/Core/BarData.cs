@@ -228,5 +228,38 @@ namespace BricsCadRc.Core
             if (count <= 1 || spacing <= 0) return prefix;
             return $"{prefix}-{(int)spacing}";
         }
+
+        /// <summary>
+        /// Gdy bar.Mark to czysty prefix "H{diameter}-{posNr:D2}" (z opcjonalnym
+        /// suffixem oddzielonym spacją), a count > 1 i spacing > 0 — promote
+        /// base-part Mark do formatu ze spacing. Suffix zachowany.
+        ///
+        /// Przykłady (count=2, spacing=200):
+        ///   "H12-01"           → "H12-01-200"
+        ///   "H12-01 B1"        → "H12-01-200 B1"
+        ///   "H12-01-200 B1"    → "H12-01-200 B1"   (sticky)
+        ///   "H12-01-Custom"    → "H12-01-Custom"   (sticky)
+        ///   "H12-01-Custom B1" → "H12-01-Custom B1" (sticky)
+        /// </summary>
+        public static void PromoteMarkIfPurePrefix(BarData bar)
+        {
+            if (bar == null || string.IsNullOrEmpty(bar.Mark)) return;
+            if (bar.Count <= 1 || bar.Spacing <= 0) return;
+
+            // Split po pierwszej spacji: base + (opcjonalnie " " + suffix)
+            int spaceIdx = bar.Mark.IndexOf(' ');
+            string basePart   = spaceIdx < 0 ? bar.Mark : bar.Mark.Substring(0, spaceIdx);
+            string suffixPart = spaceIdx < 0 ? "" : bar.Mark.Substring(spaceIdx);  // zaczyna od " "
+
+            var parts = basePart.Split('-');
+            if (parts.Length < 2 || !int.TryParse(parts[1], out int posNr) || posNr <= 0) return;
+
+            string purePrefix = $"H{bar.Diameter}-{posNr:D2}";
+            if (basePart == purePrefix)
+            {
+                string newBase = FormatMark(bar.Diameter, posNr, bar.Spacing, bar.Count);
+                bar.Mark = newBase + suffixPart;
+            }
+        }
     }
 }
