@@ -9,15 +9,17 @@ namespace BricsCadRc.Dialogs
         private readonly string _posNr;
         private readonly int    _count;
 
-        public int                ResultCount      { get; private set; }
-        public double             ResultSpacing    { get; private set; }
-        public string             ResultMark       { get; private set; } = "";
-        public BarVisibilityMode  ResultVisibility { get; private set; } = BarVisibilityMode.All;
+        public int                ResultCount       { get; private set; }
+        public double             ResultSpacing     { get; private set; }
+        public string             ResultMark        { get; private set; } = "";
+        public BarVisibilityMode  ResultVisibility  { get; private set; } = BarVisibilityMode.All;
+        public bool               ResultShowSpacing { get; private set; } = true;
 
         // mark = pełny aktualny mark np. "H12-01-200 B1"
         // diameter i spacing używane do odbudowania baseMark
         public EditLabelDialog(int count, string mark, int diameter, double spacing,
-            BarVisibilityMode currentVisibility = BarVisibilityMode.All)
+            BarVisibilityMode currentVisibility = BarVisibilityMode.All,
+            bool showSpacing = true)
         {
             InitializeComponent();
             _diameter = diameter;
@@ -60,6 +62,9 @@ namespace BricsCadRc.Dialogs
             SpacingBox.Text = spacingFromMark.ToString("F0");
             SuffixBox.Text     = suffix;
             BaseMarkLabel.Text = coreOfMark;
+            ShowSpacingCheck.IsChecked = showSpacing;
+            SpacingBox.IsEnabled = showSpacing;
+            UpdateBaseMark();
             UpdatePreview();
 
             CountBox.TextChanged   += (s, e) => UpdatePreview();
@@ -69,8 +74,25 @@ namespace BricsCadRc.Dialogs
 
         void UpdateBaseMark()
         {
-            if (double.TryParse(SpacingBox.Text, out double sp) && sp > 0)
-                BaseMarkLabel.Text = BarData.FormatMark(_diameter, int.Parse(_posNr), sp, _count);
+            bool show = ShowSpacingCheck?.IsChecked == true;
+            if (show && double.TryParse(SpacingBox.Text, out double parsedSp) && parsedSp > 0)
+            {
+                // ShowSpacing ON + valid spacing → inline (omija guard count≤1 w FormatMark)
+                BaseMarkLabel.Text = $"H{_diameter}-{int.Parse(_posNr):D2}-{(int)parsedSp}";
+            }
+            else
+            {
+                // ShowSpacing OFF lub brak spacing → prefix bez spacing
+                BaseMarkLabel.Text = BarData.FormatMark(_diameter, int.Parse(_posNr), 0, _count);
+            }
+        }
+
+        void ShowSpacingCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (SpacingBox != null)
+                SpacingBox.IsEnabled = ShowSpacingCheck.IsChecked == true;
+            UpdateBaseMark();
+            UpdatePreview();
         }
 
         void UpdatePreview()
@@ -93,7 +115,8 @@ namespace BricsCadRc.Dialogs
             string baseMark = BaseMarkLabel.Text;
             ResultCount   = c;
             ResultSpacing = sp;
-            ResultMark    = string.IsNullOrEmpty(suffix) ? baseMark : $"{baseMark} {suffix}";
+            ResultMark        = string.IsNullOrEmpty(suffix) ? baseMark : $"{baseMark} {suffix}";
+            ResultShowSpacing = ShowSpacingCheck?.IsChecked == true;
             ResultVisibility = RbMiddle.IsChecked    == true ? BarVisibilityMode.MiddleOnly
                              : RbFirstLast.IsChecked == true ? BarVisibilityMode.FirstLast
                              : RbManual.IsChecked    == true ? BarVisibilityMode.Manual

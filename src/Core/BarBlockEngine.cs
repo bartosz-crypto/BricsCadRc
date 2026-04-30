@@ -724,7 +724,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),                   // [25] SkewEnd (dawny SkewOffset)
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),                 // [26] SkewStart
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [27] CountDisplay (-1 = null)
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.Flipped ? 1 : 0))     // [28] Flipped
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.Flipped ? 1 : 0)),    // [28] Flipped
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.ShowSpacing ? 1 : 0)) // [29] ShowSpacing
             );
         }
 
@@ -801,6 +802,13 @@ namespace BricsCadRc.Core
                 catch { bd.Flipped = false; }
             }
             else bd.Flipped = false;
+
+            if (v.Length >= 30)
+            {
+                try { bd.ShowSpacing = (short)v[29].Value != 0; }
+                catch { bd.ShowSpacing = true; }
+            }
+            else bd.ShowSpacing = true;
 
             return bd;
         }

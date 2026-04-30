@@ -673,8 +673,29 @@ namespace BricsCadRc.Commands
             if (bar == null)
             { ed.WriteMessage("\nNie znaleziono danych etykiety."); return; }
 
-            // Krok 3 — otwórz dialog
-            var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing, bar.VisibilityMode);
+            // Krok 3 — odczytaj ShowSpacing z RC_BAR_BLOCK (flaga nie jest w RC_BAR_ANNOT)
+            bool showSpacing = true;
+            if (!string.IsNullOrEmpty(bar.SourceBlockHandle) &&
+                long.TryParse(bar.SourceBlockHandle, System.Globalization.NumberStyles.HexNumber,
+                              null, out long sbHValShow) &&
+                db.TryGetObjectId(new Handle(sbHValShow), out ObjectId sbIdShow) && !sbIdShow.IsErased)
+            {
+                try
+                {
+                    using var trShow = db.TransactionManager.StartTransaction();
+                    var brShow = trShow.GetObject(sbIdShow, OpenMode.ForRead) as BlockReference;
+                    if (brShow != null)
+                    {
+                        var barShow = BarBlockEngine.ReadXData(brShow);
+                        if (barShow != null) showSpacing = barShow.ShowSpacing;
+                    }
+                    trShow.Commit();
+                }
+                catch { /* fallback true */ }
+            }
+
+            var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing,
+                                          bar.VisibilityMode, showSpacing);
             if (Application.ShowModalWindow(dlg) != true) return;
 
             // Obsługa Manual — user klika pręty
@@ -737,6 +758,7 @@ namespace BricsCadRc.Commands
                                 {
                                     barBlock.Mark         = bar.Mark;
                                     barBlock.CountDisplay = bar.CountDisplay;
+                                    barBlock.ShowSpacing  = dlg.ResultShowSpacing;
                                     BarBlockEngine.WriteXData(brBlock, barBlock);
                                 }
                             }

@@ -15,6 +15,7 @@
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="32"/>
+                <RowDefinition Height="32"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Liczba prętów:" VerticalAlignment="Center"/>
@@ -23,15 +24,20 @@
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Rozstaw [mm]:" VerticalAlignment="Center"/>
             <TextBox   Grid.Row="1" Grid.Column="1" x:Name="SpacingBox" VerticalAlignment="Center"/>
 
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="Oznaczenie (auto):" VerticalAlignment="Center"/>
-            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="BaseMarkLabel"
+            <CheckBox x:Name="ShowSpacingCheck" Grid.Row="2" Grid.ColumnSpan="2"
+                      Content="Pokaż rozstaw w oznaczeniu" Margin="0,4,0,4"
+                      Checked="ShowSpacingCheck_Changed"
+                      Unchecked="ShowSpacingCheck_Changed"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Oznaczenie (auto):" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="BaseMarkLabel"
                        VerticalAlignment="Center" Foreground="Gray"/>
 
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="Suffix (opcjonalny):" VerticalAlignment="Center"/>
-            <TextBox   Grid.Row="3" Grid.Column="1" x:Name="SuffixBox" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Suffix (opcjonalny):" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="4" Grid.Column="1" x:Name="SuffixBox" VerticalAlignment="Center"/>
 
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="Podgląd:" VerticalAlignment="Center"/>
-            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="PreviewLabel"
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Podgląd:" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="PreviewLabel"
                        VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
         </Grid>
 

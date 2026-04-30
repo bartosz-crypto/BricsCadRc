@@ -26,6 +26,9 @@ namespace BricsCadRc.Core
         /// <summary>Czy rozkład jest "odwrócony" — pręty po przeciwnej stronie krawędzi (Flip w RC_DISTRIBUTION).</summary>
         public bool Flipped { get; set; }
 
+        /// <summary>Czy rozstaw pojawia się w oznaczeniu Mark. Domyślnie true.</summary>
+        public bool ShowSpacing { get; set; } = true;
+
         /// <summary>Efektywna liczba prętów do wyświetlania — CountDisplay jeśli ustawiony, w przeciwnym razie Count.</summary>
         public int EffectiveCount => CountDisplay ?? Count;
 
@@ -244,6 +247,7 @@ namespace BricsCadRc.Core
         public static void PromoteMarkIfPurePrefix(BarData bar)
         {
             if (bar == null || string.IsNullOrEmpty(bar.Mark)) return;
+            if (!bar.ShowSpacing) return;
             if (bar.Count <= 1 || bar.Spacing <= 0) return;
 
             // Split po pierwszej spacji: base + (opcjonalnie " " + suffix)
