@@ -216,7 +216,10 @@ namespace BricsCadRc.Commands
                 using var trRe = db.TransactionManager.StartTransaction();
                 var brRe = trRe.GetObject(blockRefId, OpenMode.ForRead) as BlockReference;
                 if (brRe == null) { trRe.Commit(); return; }
-                // Odczytaj kąt z obrotu bloku RC_BAR_BLOCK (uwzględnia ROTATE wykonany przez użytkownika)
+                // Re-read XData — RebuildWithNewLayout (ApplyPreview) pisze Count/Spacing/BarsSpan/LengthA do DB;
+                // lokalny `bar` z początku komendy jest stale (przed-dialogowy).
+                var freshBar = BarBlockEngine.ReadXData(brRe);
+                if (freshBar != null) bar = freshBar;
                 bar.Angle = brRe.Rotation;
                 var insertWCS = brRe.Position;
                 BarBlockEngine.BarBlockResult barResult;
@@ -230,6 +233,7 @@ namespace BricsCadRc.Commands
                     barResult = new BarBlockEngine.BarBlockResult
                     {
                         BlockRefId = blockRefId,
+                        BarOrigin  = insertWCS,
                         MinPoint   = insertWCS,
                         MaxPoint   = new Point3d(
                             insertWCS.X + lengthR * cos + barsSpanR * (-sin),
@@ -242,6 +246,7 @@ namespace BricsCadRc.Commands
                     barResult = new BarBlockEngine.BarBlockResult
                     {
                         BlockRefId = blockRefId,
+                        BarOrigin  = insertWCS,
                         MinPoint   = insertWCS,
                         MaxPoint   = new Point3d(
                             insertWCS.X + (bar.Direction == "X" ? bar.LengthA : bar.BarsSpan),
