@@ -670,5 +670,38 @@ namespace BricsCadRc.Core
             return axisStart.DistanceTo(axisEnd);
         }
 
+        /// <summary>
+        /// Zwraca wszystkie axis points pręta z jego outline polylinii.
+        /// Outline ma 2N vertices: pierwsze N to "left" (od start do end),
+        /// drugie N to "right" (od end do start). axis[i] = mid(left[i], right[N-1-i]).
+        /// Dla shape 44 (ring) — fallback na pierwsze N punktów outline.
+        /// </summary>
+        public static List<Point3d> GetAxisPointsFromOutline(Polyline pl, string shapeCode)
+        {
+            var result = new List<Point3d>();
+            if (pl == null || pl.NumberOfVertices < 2) return result;
+            int total = pl.NumberOfVertices;
+            if (shapeCode == "44")
+            {
+                for (int i = 0; i < total; i++)
+                    result.Add(pl.GetPoint3dAt(i));
+                return result;
+            }
+            if (total % 2 != 0)
+            {
+                for (int i = 0; i < total; i++)
+                    result.Add(pl.GetPoint3dAt(i));
+                return result;
+            }
+            int n = total / 2;
+            for (int i = 0; i < n; i++)
+            {
+                Point3d left  = pl.GetPoint3dAt(i);
+                Point3d right = pl.GetPoint3dAt(total - 1 - i);
+                result.Add(new Point3d((left.X + right.X) * 0.5, (left.Y + right.Y) * 0.5, 0));
+            }
+            return result;
+        }
+
     }
 }
