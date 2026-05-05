@@ -571,18 +571,20 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (pts.Count >= 2)
             {
+                // [p282] pts[0] aktualizuje się wyłącznie przez RebuildDistLineInBtr (Site 5),
+                // które uwzględnia localOffset. Snap do target bez localOffset psuje pts[0] post-MOVE annot.
                 var target = CalcDistLineCenter(bar);
                 if (bar.Direction == "X")
                 {
                     double deltaX = target.X - pts[0].X;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
-                    pts[0] = new Point3d(pts[0].X, target.Y, 0);
+                    // pts[0].Y bez zmian — set przez RebuildDistLineInBtr z localOffset
                 }
                 else
                 {
                     double deltaY = target.Y - pts[0].Y;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
-                    pts[0] = new Point3d(target.X, pts[0].Y, 0);
+                    // pts[0].X bez zmian — set przez RebuildDistLineInBtr z localOffset
                 }
             }
 
@@ -700,18 +702,20 @@ namespace BricsCadRc.Core
             // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (pts.Count >= 2)
             {
+                // [p282] pts[0] aktualizuje się wyłącznie przez RebuildDistLineInBtr (Site 5),
+                // które uwzględnia localOffset. Snap do target bez localOffset psuje pts[0] post-MOVE annot.
                 var target = CalcDistLineCenter(bar);
                 if (bar.Direction == "X")
                 {
                     double deltaX = target.X - pts[0].X;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X + deltaX, pts[k].Y, 0);
-                    pts[0] = new Point3d(pts[0].X, target.Y, 0);
+                    // pts[0].Y bez zmian — set przez RebuildDistLineInBtr z localOffset
                 }
                 else
                 {
                     double deltaY = target.Y - pts[0].Y;
                     for (int k = 0; k < pts.Count; k++) pts[k] = new Point3d(pts[k].X, pts[k].Y + deltaY, 0);
-                    pts[0] = new Point3d(target.X, pts[0].Y, 0);
+                    // pts[0].X bez zmian — set przez RebuildDistLineInBtr z localOffset
                 }
             }
 
