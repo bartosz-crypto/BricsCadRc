@@ -1301,14 +1301,15 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
-        // RebuildDistLineInBtr — p258 ETAP 2: partial rebuild dist line + doty/strzałki/ticki.
-        // Nie rusza leadera (Line ColorIndex=7) ani tekstu (DBText).
-        // Wywoływane (etap 3) po MOVE/COPY block żeby dist line trzymała się prętów.
+        // RebuildDistLineInBtr — p258 ETAP 2: full rebuild dist line + leader + text.
+        // Kasuje dist line + doty/strzałki/ticki + leader (ColorIndex=7) + DBText,
+        // odbudowuje dist line + leader z nowym pts[0] (anchor na dist line po offsecie).
+        // Wywoływane po MOVE/COPY block żeby dist line trzymała się prętów.
         // ----------------------------------------------------------------
 
         /// <summary>
-        /// Partial rebuild: usuwa dist line + doty/strzałki/ticki z BTR annot i odbudowuje
-        /// na podstawie barData. Leader (ColorIndex=7) i DBText zostają bez zmian.
+        /// Full rebuild: usuwa wszystkie entities z BTR annot i odbudowuje
+        /// dist line + leader z pts[0] zaktualizowanym do nowej pozycji dist line.
         /// </summary>
         public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db,
             Point3d? blockPos = null)
@@ -1319,8 +1320,7 @@ namespace BricsCadRc.Core
             var btr = tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite) as BlockTableRecord;
             if (btr == null) { tr.Commit(); return; }
 
-            // 1. Kasuj dist line (non-std linetype), doty (Circle/Hatch), strzałki (Solid),
-            //    ticki (Line bez ColorIndex=7, linetype Continuous lub ByLayer).
+            // 1. Kasuj dist line, doty, strzałki, ticki, leader, text — cały BTR.
             var toErase = new List<ObjectId>();
             foreach (ObjectId entId in btr)
             {
@@ -1328,16 +1328,7 @@ namespace BricsCadRc.Core
                 var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
                 if (ent == null) continue;
 
-                if (ent is Line lnChk)
-                {
-                    bool nonStdLt =
-                        !string.Equals(lnChk.Linetype, "Continuous", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(lnChk.Linetype, "ByLayer",    StringComparison.OrdinalIgnoreCase);
-                    // dist line (non-std linetype) OR tick (ByLayer/Continuous but not leader ColorIndex=7)
-                    if (nonStdLt || lnChk.ColorIndex != 7)
-                        toErase.Add(entId);
-                }
-                else if (ent is Circle || ent is Hatch || ent is Solid)
+                if (ent is Line || ent is Circle || ent is Hatch || ent is Solid || ent is DBText)
                     toErase.Add(entId);
             }
             foreach (var id in toErase)
@@ -1357,6 +1348,23 @@ namespace BricsCadRc.Core
             }
             string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
             BuildDistLineAndDots(tr, btr, barData, ltName, localOffset);
+
+            // p268 — Leader anchor update: pts[0] = nowa pozycja na dist line po offsecie
+            var annotBar = ReadAnnotXData(annotBr);
+            if (annotBar != null && !string.IsNullOrEmpty(annotBar.LeaderPoints))
+            {
+                var pts = DecodeLeaderPoints(annotBar.LeaderPoints);
+                if (pts != null && pts.Count >= 2)
+                {
+                    double lineExt = (barData.Count >= 1 && barData.Count <= 3)
+                                     ? Scaled(DotRadius, barData) : 0.0;
+                    Point3d target = CalcDistLineTarget(barData, lineExt);
+                    pts[0] = new Point3d(target.X + localOffset.X, target.Y + localOffset.Y, 0);
+                    annotBar.LeaderPoints = EncodeLeaderPoints(pts);
+                    WriteAnnotXData(annotBr, annotBar);
+                    BuildMLeaderInBtr(tr, btr, db, annotBar, pts);
+                }
+            }
 
             tr.Commit();
         }
