@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -520,18 +519,19 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static void BuildDistLineAndDots(
             Transaction tr, BlockTableRecord btr,
-            BarData bar, string ltName)
+            BarData bar, string ltName, Vector3d offset = default)
         {
             bool horizontal  = bar.Direction == "X";
             double lineExt   = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarPos = (bar.Count - 1) * bar.Spacing;
+            double ox = offset.X, oy = offset.Y;
 
             Point3d baseStart = horizontal
-                ? new Point3d(bar.SkewStart, -lineExt,             0)
-                : new Point3d(-lineExt,             bar.SkewStart, 0);
+                ? new Point3d(bar.SkewStart + ox, -lineExt + oy,             0)
+                : new Point3d(-lineExt + ox,      bar.SkewStart + oy,        0);
             Point3d baseEnd = horizontal
-                ? new Point3d(bar.SkewEnd,   lastBarPos + lineExt, 0)
-                : new Point3d(lastBarPos + lineExt, bar.SkewEnd,   0);
+                ? new Point3d(bar.SkewEnd + ox,   lastBarPos + lineExt + oy, 0)
+                : new Point3d(lastBarPos + lineExt + ox, bar.SkewEnd + oy,   0);
 
             bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
             Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
@@ -569,22 +569,22 @@ namespace BricsCadRc.Core
                 if (bar.Count > 3 && isFirst)
                 {
                     Point3d tip = horizontal
-                        ? new Point3d(bar.SkewStart, 0,             0)
-                        : new Point3d(0,             bar.SkewStart, 0);
+                        ? new Point3d(bar.SkewStart + ox, oy,                 0)
+                        : new Point3d(ox,                 bar.SkewStart + oy, 0);
                     AddArrow(tr, btr, tip, -axisDir, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 }
                 else if (bar.Count > 3 && isLast)
                 {
                     Point3d tip = horizontal
-                        ? new Point3d(bar.SkewEnd,   lastBarPos, 0)
-                        : new Point3d(lastBarPos, bar.SkewEnd,   0);
+                        ? new Point3d(bar.SkewEnd + ox,   lastBarPos + oy, 0)
+                        : new Point3d(lastBarPos + ox, bar.SkewEnd + oy,   0);
                     AddArrow(tr, btr, tip, axisDir, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
                 }
                 else if (bar.Count <= 3 || visSet.Contains(i))
                 {
                     Point3d center = horizontal
-                        ? new Point3d(skewOff,           i * bar.Spacing, 0)
-                        : new Point3d(i * bar.Spacing, skewOff,           0);
+                        ? new Point3d(skewOff + ox,           i * bar.Spacing + oy, 0)
+                        : new Point3d(i * bar.Spacing + ox, skewOff + oy,           0);
                     AddDot(tr, btr, center, Scaled(DotRadius, bar));
                 }
             }
@@ -594,11 +594,11 @@ namespace BricsCadRc.Core
                 double   tickLen  = Scaled(DotRadius, bar) * 3;
                 Vector3d perpAxis = horizontal ? Vector3d.XAxis : Vector3d.YAxis;
                 Point3d  tick0    = horizontal
-                    ? new Point3d(bar.SkewStart, 0,           0)
-                    : new Point3d(0,           bar.SkewStart, 0);
+                    ? new Point3d(bar.SkewStart + ox, oy,                 0)
+                    : new Point3d(ox,                 bar.SkewStart + oy, 0);
                 Point3d  tick1    = horizontal
-                    ? new Point3d(bar.SkewEnd,   lastBarPos,  0)
-                    : new Point3d(lastBarPos,  bar.SkewEnd,   0);
+                    ? new Point3d(bar.SkewEnd + ox,   lastBarPos + oy,    0)
+                    : new Point3d(lastBarPos + ox,    bar.SkewEnd + oy,   0);
                 AddEndTick(tr, btr, tick0, perpAxis, tickLen);
                 AddEndTick(tr, btr, tick1, perpAxis, tickLen);
             }
@@ -1380,26 +1380,14 @@ namespace BricsCadRc.Core
         /// Partial rebuild: usuwa dist line + doty/strzałki/ticki z BTR annot i odbudowuje
         /// na podstawie barData. Leader (ColorIndex=7) i DBText zostają bez zmian.
         /// </summary>
-        public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db)
+        public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db,
+            Point3d? blockPos = null)
         {
-            // p260 sentinel
-            try {
-                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
-                ed260?.WriteMessage($"\n[p260-RDL-ENTRY] annotBr={(annotBr != null ? annotBr.Position.ToString() : "NULL")} barData={(barData != null ? $"count={barData.Count} barsSpan={barData.BarsSpan:F1}" : "NULL")} db={(db != null ? "OK" : "NULL")}");
-            } catch { }
-
             if (annotBr == null || barData == null || db == null) return;
 
             using var tr = db.TransactionManager.StartTransaction();
             var btr = tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite) as BlockTableRecord;
             if (btr == null) { tr.Commit(); return; }
-
-            // p260 sentinel — przed erase
-            try {
-                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
-                int cnt = 0; foreach (ObjectId _ in btr) cnt++;
-                ed260?.WriteMessage($"\n[p260-RDL-BTR] entities before erase={cnt}");
-            } catch { }
 
             // 1. Kasuj dist line (non-std linetype), doty (Circle/Hatch), strzałki (Solid),
             //    ticki (Line bez ColorIndex=7, linetype Continuous lub ByLayer).
@@ -1428,23 +1416,17 @@ namespace BricsCadRc.Core
                 ent?.Erase();
             }
 
-            // p260 sentinel — po erase, przed rebuild
-            try {
-                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
-                int cnt = 0; foreach (ObjectId _ in btr) if (!_.IsErased) cnt++;
-                ed260?.WriteMessage($"\n[p260-RDL-AFTER-ERASE] entities after erase={cnt} erased={toErase.Count}");
-            } catch { }
-
             // 2. Odbuduj dist line + doty/strzałki/ticki
+            Vector3d localOffset = new Vector3d(0, 0, 0);
+            if (blockPos.HasValue)
+            {
+                bool horizontal = barData.Direction == "X";
+                localOffset = horizontal
+                    ? new Vector3d(0, blockPos.Value.Y - annotBr.Position.Y, 0)
+                    : new Vector3d(blockPos.Value.X - annotBr.Position.X, 0, 0);
+            }
             string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
-            BuildDistLineAndDots(tr, btr, barData, ltName);
-
-            // p260 sentinel — przed commit
-            try {
-                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
-                int cnt = 0; foreach (ObjectId _ in btr) if (!_.IsErased) cnt++;
-                ed260?.WriteMessage($"\n[p260-RDL-AFTER-REBUILD] entities after rebuild={cnt}");
-            } catch { }
+            BuildDistLineAndDots(tr, btr, barData, ltName, localOffset);
 
             tr.Commit();
         }
