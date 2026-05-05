@@ -38,32 +38,15 @@ namespace BricsCadRc.Core
         private static double Scaled(double baseValue, BarData bar)
             => baseValue * (bar.AnnotScale > 0 ? bar.AnnotScale : 1.0);
 
-        // Zwraca punkt końca dist line po stronie leadera (uwzględnia skos i ekstensję).
-        // Ekstensja tylko gdy skew aktywny, tylko po górnym/prawym końcu.
-        private static Point3d CalcDistLineTarget(BarData bar, double lineExt)
+        // Zwraca środek geometryczny dist line w lokalnych BTR coords (0,0)-based.
+        // Używany jako anchor pts[0] leadera — spójny z grip[0] UI (p279/p280).
+        private static Point3d CalcDistLineCenter(BarData bar)
         {
-            if (bar.Direction == "X")
-            {
-                double lastBarY = (bar.Count - 1) * bar.Spacing;
-                var bS = new Point3d(bar.SkewStart, -lineExt,            0);
-                var bE = new Point3d(bar.SkewEnd,   lastBarY + lineExt,  0);
-                bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
-                Point3d topEnd = hasSkew
-                    ? bE + (bE - bS).GetNormal() * Scaled(DistEndExtension, bar)
-                    : bE;
-                return bar.LeaderUp ? topEnd : bS;
-            }
-            else
-            {
-                double lastBarX = (bar.Count - 1) * bar.Spacing;
-                var bS = new Point3d(-lineExt,           bar.SkewStart, 0);
-                var bE = new Point3d(lastBarX + lineExt, bar.SkewEnd,   0);
-                bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
-                Point3d topEnd = hasSkew
-                    ? bE + (bE - bS).GetNormal() * Scaled(DistEndExtension, bar)
-                    : bE;
-                return bar.LeaderRight ? topEnd : bS;
-            }
+            double midAlong = (bar.Count - 1) * bar.Spacing / 2.0;
+            double midSkew  = (bar.SkewStart + bar.SkewEnd) / 2.0;
+            return (bar.Direction == "X")
+                ? new Point3d(midSkew, midAlong, 0)
+                : new Point3d(midAlong, midSkew, 0);
         }
 
         // Domyslna odleglosc annotacji od prawego boku pretow [mm]
@@ -253,10 +236,11 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
+            // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (leaderPtsH.Count >= 2)
             {
-                var targetH = leaderUp ? finalEndH : baseStartH;
+                var c0H = CalcDistLineCenter(bar);
+                var targetH = new Point3d(c0H.X + ox, c0H.Y + oy, 0);
                 double deltaX = targetH.X - leaderPtsH[0].X;
                 for (int k = 0; k < leaderPtsH.Count; k++)
                 {
@@ -351,10 +335,11 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
+            // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (leaderPtsV.Count >= 2)
             {
-                var targetV = leaderRight ? finalEndV : baseStartV;
+                var c0V = CalcDistLineCenter(bar);
+                var targetV = new Point3d(c0V.X + ox, c0V.Y + oy, 0);
                 double deltaY = targetV.Y - leaderPtsV[0].Y;
                 for (int k = 0; k < leaderPtsV.Count; k++)
                 {
@@ -583,11 +568,10 @@ namespace BricsCadRc.Core
             else
                 pts.Add(localPt);
 
-            // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
+            // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (pts.Count >= 2)
             {
-                double le = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
-                var target = CalcDistLineTarget(bar, le);
+                var target = CalcDistLineCenter(bar);
                 if (bar.Direction == "X")
                 {
                     double deltaX = target.X - pts[0].X;
@@ -713,11 +697,10 @@ namespace BricsCadRc.Core
             }
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
 
-            // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
+            // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (pts.Count >= 2)
             {
-                double le = (bar.Count >= 1 && bar.Count <= 3) ? DotRadius : 0.0;
-                var target = CalcDistLineTarget(bar, le);
+                var target = CalcDistLineCenter(bar);
                 if (bar.Direction == "X")
                 {
                     double deltaX = target.X - pts[0].X;
@@ -1366,9 +1349,7 @@ namespace BricsCadRc.Core
                 var pts = DecodeLeaderPoints(annotBar.LeaderPoints);
                 if (pts != null && pts.Count >= 2)
                 {
-                    double lineExt = (barData.Count >= 1 && barData.Count <= 3)
-                                     ? Scaled(DotRadius, barData) : 0.0;
-                    Point3d target = CalcDistLineTarget(barData, lineExt);
+                    Point3d target = CalcDistLineCenter(barData);
                     pts[0] = new Point3d(target.X + localOffset.X, target.Y + localOffset.Y, 0);
                     annotBar.LeaderPoints = EncodeLeaderPoints(pts);
                     WriteAnnotXData(annotBr, annotBar);
