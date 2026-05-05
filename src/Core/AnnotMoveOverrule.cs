@@ -142,9 +142,39 @@ namespace BricsCadRc.Core
                 double lastBar0  = (barAnnot.Count - 1) * barAnnot.Spacing;
                 double midAlong0 = lastBar0 / 2.0;
                 double midSkew0  = (barAnnot.SkewStart + barAnnot.SkewEnd) / 2.0;
+
+                // [p279] Uwzględnij localOffset (block.Pos - annot.Pos) żeby grip[0] UI był
+                // na środku rozkładu prętów w WCS, niezależnie od pozycji annot.
+                // Bez tego po MOVE annot solo grip[0] zeskakuje wraz z annot.
+                Vector3d localOff0 = new Vector3d(0, 0, 0);
+                if (!string.IsNullOrEmpty(barAnnot.SourceBlockHandle))
+                {
+                    try
+                    {
+                        long hvSrc = Convert.ToInt64(
+                            barAnnot.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                        if (br.Database.TryGetObjectId(new Handle(hvSrc), out ObjectId srcId0)
+                            && !srcId0.IsNull && !srcId0.IsErased)
+                        {
+                            using (var trG = br.Database.TransactionManager.StartTransaction())
+                            {
+                                var srcBr0 = trG.GetObject(srcId0, OpenMode.ForRead) as BlockReference;
+                                if (srcBr0 != null)
+                                {
+                                    localOff0 = (barAnnot.Direction == "X")
+                                        ? new Vector3d(0, srcBr0.Position.Y - br.Position.Y, 0)
+                                        : new Vector3d(srcBr0.Position.X - br.Position.X, 0, 0);
+                                }
+                                trG.Commit();
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 Point3d localGrip0 = (barAnnot.Direction == "X")
-                    ? new Point3d(midSkew0, midAlong0, 0)
-                    : new Point3d(midAlong0, midSkew0, 0);
+                    ? new Point3d(midSkew0, midAlong0 + localOff0.Y, 0)
+                    : new Point3d(midAlong0 + localOff0.X, midSkew0, 0);
                 Point3d grip0 = localGrip0.TransformBy(br.BlockTransform);
                 gripPoints.Add(grip0);  // [0] lateral
 
@@ -548,6 +578,32 @@ namespace BricsCadRc.Core
                     blockPos     = srcBr.Position;
                     freshBarData = BarBlockEngine.ReadXData(srcBr);
                     tr.Commit();
+                }
+
+                // [p281] Kink compensation: po MOVE annot solo kink (pts[1..N-2])
+                // musi zostać WCS-stable żeby arm nie rósł z odległością tekstu od bloku.
+                // Kompensujemy lokalne BTR coords przez -V_local. Text (pts[N-1]) zostaje
+                // (intuicyjne: MOVE annot = przesuń tekst). Dla bez-kinka (pts.Count==2)
+                // loop pusty — status quo.
+                if (transform.Translation.Length > 1e-6)
+                {
+                    var kinkPts = AnnotationEngine.DecodeLeaderPoints(annotData.LeaderPoints);
+                    if (kinkPts.Count >= 3)
+                    {
+                        var vLocal = transform.Translation.TransformBy(
+                            annotBr.BlockTransform.Inverse());
+                        for (int i = 1; i < kinkPts.Count - 1; i++)
+                            kinkPts[i] = kinkPts[i] - vLocal;
+                        annotData.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(kinkPts);
+                        using (var trW = db.TransactionManager.StartTransaction())
+                        {
+                            var brW = trW.GetObject(annotBr.ObjectId, OpenMode.ForWrite)
+                                        as BlockReference;
+                            if (brW != null)
+                                AnnotationEngine.WriteAnnotXData(brW, annotData);
+                            trW.Commit();
+                        }
+                    }
                 }
 
                 if (freshBarData != null)
