@@ -195,67 +195,28 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static double BuildHorizontal(
             Transaction tr, BlockTableRecord btr, Database db,
-            BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true)
+            BarData bar, string ltName, bool leaderHorizontal = false, bool leaderRight = true, bool leaderUp = true,
+            Vector3d offset = default)
         {
-            double barsSpan = bar.BarsSpan;
+            double ox = offset.X, oy = offset.Y;
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarY = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — skośna; ekstensja po górnym końcu tylko gdy skew aktywny
-            var baseStartH = new Point3d(bar.SkewStart, -lineExt,            0);
-            var baseEndH   = new Point3d(bar.SkewEnd,   lastBarY + lineExt,  0);
+            // Endpoints with offset — potrzebne do rescale leadera poniżej
+            var baseStartH = new Point3d(bar.SkewStart + ox, -lineExt + oy,           0);
+            var baseEndH   = new Point3d(bar.SkewEnd + ox,   lastBarY + lineExt + oy, 0);
             bool hasSkewH  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
-            Vector3d axisDir;
             Point3d finalEndH;
             if (hasSkewH)
             {
-                axisDir   = (baseEndH - baseStartH).Length > 1e-9
-                    ? (baseEndH - baseStartH).GetNormal()
-                    : Vector3d.YAxis;
-                finalEndH = baseEndH + axisDir * Scaled(DistEndExtension, bar);
+                var axDir = (baseEndH - baseStartH).Length > 1e-9
+                    ? (baseEndH - baseStartH).GetNormal() : Vector3d.YAxis;
+                finalEndH = baseEndH + axDir * Scaled(DistEndExtension, bar);
             }
             else
-            {
-                axisDir   = Vector3d.YAxis;
                 finalEndH = baseEndH;
-            }
 
-
-            var distLine = new Line(baseStartH, finalEndH)
-            {
-                Layer      = LayerManager.LeaderLayer,
-                LineWeight = LineWeight.LineWeight018,
-                Linetype   = ltName
-            };
-            btr.AppendEntity(distLine);
-            tr.AddNewlyCreatedDBObject(distLine, true);
-
-            var distAxisH = axisDir;
-
-            // 2. Romby/strzałki — pozycje skośne: (dotX, i*spacing), i=0..count-1
-            var visSetH = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
-            for (int i = 0; i < bar.Count; i++)
-            {
-                bool   isFirst   = (i == 0);
-                bool   isLast    = (i == bar.Count - 1);
-                double skewFrac  = bar.Count > 1 ? (double)i / (bar.Count - 1) : 0.0;
-                double dotX      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
-                double dotY      = i * bar.Spacing;
-                if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(bar.SkewStart, dotY, 0), -distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
-                else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(bar.SkewEnd, dotY, 0), distAxisH, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
-                else if (bar.Count <= 3 || visSetH.Contains(i))
-                    AddDot(tr, btr, new Point3d(dotX, dotY, 0), Scaled(DotRadius, bar));
-            }
-
-            if (bar.Count > 3)
-            {
-                double tickLen = Scaled(DotRadius, bar) * 3;
-                double topY    = (bar.Count - 1) * bar.Spacing;
-                AddEndTick(tr, btr, new Point3d(bar.SkewStart, 0,    0), Vector3d.XAxis, tickLen);
-                AddEndTick(tr, btr, new Point3d(bar.SkewEnd,   topY, 0), Vector3d.XAxis, tickLen);
-            }
+            BuildDistLineAndDots(tr, btr, bar, ltName, offset);
 
             // === MLeader wielosegmentowy ===
             // Zdekoduj punkty leadera z bar.LeaderPoints
@@ -331,66 +292,28 @@ namespace BricsCadRc.Core
         private static double BuildVertical(
             Transaction tr, BlockTableRecord btr, Database db,
             BarData bar, string ltName,
-            bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true)
+            bool leaderVertical = false, bool leaderRight = true, bool leaderUp = true,
+            Vector3d offset = default)
         {
-            double barsSpan = bar.BarsSpan;
+            double ox = offset.X, oy = offset.Y;
             double lineExt  = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
             double lastBarX = (bar.Count - 1) * bar.Spacing;
 
-            // 1. Dist line — skośna; ekstensja po prawym końcu tylko gdy skew aktywny
-            var baseStartV = new Point3d(-lineExt,           bar.SkewStart, 0);
-            var baseEndV   = new Point3d(lastBarX + lineExt, bar.SkewEnd,   0);
+            // Endpoints with offset — potrzebne do rescale leadera poniżej
+            var baseStartV = new Point3d(-lineExt + ox,           bar.SkewStart + oy, 0);
+            var baseEndV   = new Point3d(lastBarX + lineExt + ox, bar.SkewEnd + oy,   0);
             bool hasSkewV  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
-            Vector3d axisDirV;
             Point3d finalEndV;
             if (hasSkewV)
             {
-                axisDirV  = (baseEndV - baseStartV).Length > 1e-9
-                    ? (baseEndV - baseStartV).GetNormal()
-                    : Vector3d.XAxis;
-                finalEndV = baseEndV + axisDirV * Scaled(DistEndExtension, bar);
+                var axDir = (baseEndV - baseStartV).Length > 1e-9
+                    ? (baseEndV - baseStartV).GetNormal() : Vector3d.XAxis;
+                finalEndV = baseEndV + axDir * Scaled(DistEndExtension, bar);
             }
             else
-            {
-                axisDirV  = Vector3d.XAxis;
                 finalEndV = baseEndV;
-            }
 
-            var distLine = new Line(baseStartV, finalEndV)
-            {
-                Layer      = LayerManager.LeaderLayer,
-                LineWeight = LineWeight.LineWeight018,
-                Linetype   = ltName
-            };
-            btr.AppendEntity(distLine);
-            tr.AddNewlyCreatedDBObject(distLine, true);
-
-            var distAxisV = axisDirV;
-
-            // 2. Romby/strzałki — pozycje skośne: (i*spacing, dotY), i=0..count-1
-            var visSetV = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
-            for (int i = 0; i < bar.Count; i++)
-            {
-                bool   isFirst   = (i == 0);
-                bool   isLast    = (i == bar.Count - 1);
-                double skewFrac  = bar.Count > 1 ? (double)i / (bar.Count - 1) : 0.0;
-                double dotY      = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
-
-                if (bar.Count > 3 && isFirst)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewStart, 0), -distAxisV, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
-                else if (bar.Count > 3 && isLast)
-                    AddArrow(tr, btr, new Point3d(i * bar.Spacing, bar.SkewEnd, 0), distAxisV, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
-                else if (bar.Count <= 3 || visSetV.Contains(i))
-                    AddDot(tr, btr, new Point3d(i * bar.Spacing, dotY, 0), Scaled(DotRadius, bar));
-            }
-
-            if (bar.Count > 3)
-            {
-                double tickLen  = Scaled(DotRadius, bar) * 3;
-                double rightX   = (bar.Count - 1) * bar.Spacing;
-                AddEndTick(tr, btr, new Point3d(0,      bar.SkewStart, 0), Vector3d.YAxis, tickLen);
-                AddEndTick(tr, btr, new Point3d(rightX, bar.SkewEnd,   0), Vector3d.YAxis, tickLen);
-            }
+            BuildDistLineAndDots(tr, btr, bar, ltName, offset);
 
             // === MLeader wielosegmentowy ===
             // Zdekoduj punkty leadera z bar.LeaderPoints
@@ -1322,7 +1245,8 @@ namespace BricsCadRc.Core
                     updatedBar.LeaderPoints = "";
             }
 
-            // Propaguj AnnotScale + SkewStart/SkewEnd z bloku-źródła (source of truth = RC_BAR_BLOCK)
+            // Propaguj AnnotScale z bloku-źródła + oblicz offset dist line
+            var localOffset = new Vector3d(0, 0, 0);
             if (existingAnnot != null && !string.IsNullOrEmpty(existingAnnot.SourceBlockHandle))
             {
                 try
@@ -1332,9 +1256,13 @@ namespace BricsCadRc.Core
                     {
                         var srcBr = tr.GetObject(srcId, OpenMode.ForRead) as BlockReference;
                         var sourceBlockBarData = srcBr != null ? BarBlockEngine.ReadXData(srcBr) : null;
-                        if (sourceBlockBarData != null)
+                        if (sourceBlockBarData != null && srcBr != null)
                         {
                             updatedBar.AnnotScale = sourceBlockBarData.AnnotScale;
+                            bool horizontal = updatedBar.Direction == "X";
+                            localOffset = horizontal
+                                ? new Vector3d(0, srcBr.Position.Y - annotBr.Position.Y, 0)
+                                : new Vector3d(srcBr.Position.X - annotBr.Position.X, 0, 0);
                         }
                     }
                 }
@@ -1356,12 +1284,14 @@ namespace BricsCadRc.Core
 
             if (updatedBar.Direction == "X")
                 armTotalLen = BuildHorizontal(tr, btr, db, updatedBar, ltName,
-                    updatedBar.LeaderHorizontal, updatedBar.LeaderRight, updatedBar.LeaderUp);
+                    updatedBar.LeaderHorizontal, updatedBar.LeaderRight, updatedBar.LeaderUp,
+                    localOffset);
             else
                 armTotalLen = BuildVertical(tr, btr, db, updatedBar, ltName,
                     leaderVertical: updatedBar.LeaderHorizontal,
                     leaderRight:    updatedBar.LeaderRight,
-                    leaderUp:       updatedBar.LeaderUp);
+                    leaderUp:       updatedBar.LeaderUp,
+                    offset:         localOffset);
 
             updatedBar.ArmTotalLen = armTotalLen;
             WriteAnnotXData(annotBr, updatedBar);
