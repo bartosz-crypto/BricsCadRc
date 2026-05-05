@@ -697,10 +697,20 @@ namespace BricsCadRc.Core
             var pts = DecodeLeaderPoints(bar.LeaderPoints);
             if (pts.Count < 2) { tr.Commit(); return; }
 
-            // Kink (pts[N-2]): przesuń tylko o perpLocal
-            // lastPt (pts[N-1]): przesuń o perpLocal + alongLocal
+            // Kink (pts[N-2]): ślizganie wzdłuż arm (pts[0]→kink) — zachowuje kąt arm
+            // lastPt (pts[N-1]): pełen offset użytkownika
             if (pts.Count >= 3)
-                pts[pts.Count - 2] = pts[pts.Count - 2] + perpLocal;
+            {
+                var armVec = pts[pts.Count - 2] - pts[0];
+                double armLen = armVec.Length;
+                if (armLen > 1e-9)
+                {
+                    var armDir = new Vector3d(armVec.X / armLen, armVec.Y / armLen, 0.0);
+                    var deltaTotal = perpLocal + alongLocal;
+                    double slide = deltaTotal.X * armDir.X + deltaTotal.Y * armDir.Y;
+                    pts[pts.Count - 2] = pts[pts.Count - 2] + armDir * slide;
+                }
+            }
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
 
             // Rescale leadera — pts[0] na koniec dist line (wzdłuż osi skośnej)
