@@ -256,5 +256,16 @@ namespace BricsCadRc.Core
             }
             catch { return false; }
         }
+
+        /// <summary>
+        /// True jeśli id należy do świeżo sklonowanego RC_BAR_BLOCK lub RC_BAR_ANNOT
+        /// oczekującego na RemapCopiedPairs w CommandEnded.
+        /// ATR i BBT pomijają rebuild w tym timing window (BTR shared z oryginałem).
+        /// </summary>
+        internal static bool IsCopyPending(ObjectId id)
+        {
+            if (id.IsNull) return false;
+            return _newBlocks.Contains(id) || _newAnnots.Contains(id);
+        }
     }
 }

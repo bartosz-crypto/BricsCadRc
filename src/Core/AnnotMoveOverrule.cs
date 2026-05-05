@@ -525,6 +525,10 @@ namespace BricsCadRc.Core
             var db = annotBr.Database;
             if (db == null) return;
 
+            // [p273] COPY timing window: BTR jeszcze shared z oryginałem, SourceBlockHandle stale.
+            // Rebuild zbędny — block+annot przesunięte o ten sam wektor → localOffset niezmieniony.
+            if (BarCopyWatcher.IsCopyPending(annotBr.ObjectId)) return;
+
             var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
             if (annotData == null || string.IsNullOrEmpty(annotData.SourceBlockHandle)) return;
 
@@ -568,6 +572,9 @@ namespace BricsCadRc.Core
             if (AnnotOverruleState.InGripDrag) return;
 
             if (!(entity is BlockReference br)) return;
+
+            // [p273] COPY timing window: analogicznie jak ATR.
+            if (BarCopyWatcher.IsCopyPending(br.ObjectId)) return;
 
             var db = br.Database;
             if (db == null) return;
