@@ -516,10 +516,40 @@ namespace BricsCadRc.Core
 
         public override void TransformBy(Entity entity, Matrix3d transform)
         {
-            // p258 ETAP 1 — Annot constraint usunięty (ASD-style: annot independent).
-            // Constraint poprzednio wymuszał ruch po jednej osi. Teraz annot porusza się
-            // swobodnie. Block independent — patrz BarBlockTransformOverrule (etap 3).
+            // p258 ETAP 1 — Annot przesuwa się swobodnie (ASD-style: independent).
             base.TransformBy(entity, transform);
+
+            // p265 — Po MOVE annot solo, dist line pozostaje na prętach: rebuild z nowym
+            // offsetem = block.Position (niezmienione) − annot.Position (po move).
+            if (!(entity is BlockReference annotBr)) return;
+            var db = annotBr.Database;
+            if (db == null) return;
+
+            var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
+            if (annotData == null || string.IsNullOrEmpty(annotData.SourceBlockHandle)) return;
+
+            try
+            {
+                long hVal = Convert.ToInt64(
+                    annotData.SourceBlockHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                if (!db.TryGetObjectId(new Handle(hVal), out ObjectId srcId)
+                    || srcId.IsNull || srcId.IsErased) return;
+
+                Point3d blockPos;
+                BarData freshBarData;
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var srcBr = tr.GetObject(srcId, OpenMode.ForRead) as BlockReference;
+                    if (srcBr == null) { tr.Commit(); return; }
+                    blockPos     = srcBr.Position;
+                    freshBarData = BarBlockEngine.ReadXData(srcBr);
+                    tr.Commit();
+                }
+
+                if (freshBarData != null)
+                    AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db, blockPos);
+            }
+            catch { }
         }
     }
 
