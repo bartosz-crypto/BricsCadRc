@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.Runtime;
@@ -1381,11 +1382,24 @@ namespace BricsCadRc.Core
         /// </summary>
         public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db)
         {
+            // p260 sentinel
+            try {
+                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                ed260?.WriteMessage($"\n[p260-RDL-ENTRY] annotBr={(annotBr != null ? annotBr.Position.ToString() : "NULL")} barData={(barData != null ? $"count={barData.Count} barsSpan={barData.BarsSpan:F1}" : "NULL")} db={(db != null ? "OK" : "NULL")}");
+            } catch { }
+
             if (annotBr == null || barData == null || db == null) return;
 
             using var tr = db.TransactionManager.StartTransaction();
             var btr = tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite) as BlockTableRecord;
             if (btr == null) { tr.Commit(); return; }
+
+            // p260 sentinel — przed erase
+            try {
+                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                int cnt = 0; foreach (ObjectId _ in btr) cnt++;
+                ed260?.WriteMessage($"\n[p260-RDL-BTR] entities before erase={cnt}");
+            } catch { }
 
             // 1. Kasuj dist line (non-std linetype), doty (Circle/Hatch), strzałki (Solid),
             //    ticki (Line bez ColorIndex=7, linetype Continuous lub ByLayer).
@@ -1414,9 +1428,23 @@ namespace BricsCadRc.Core
                 ent?.Erase();
             }
 
+            // p260 sentinel — po erase, przed rebuild
+            try {
+                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                int cnt = 0; foreach (ObjectId _ in btr) if (!_.IsErased) cnt++;
+                ed260?.WriteMessage($"\n[p260-RDL-AFTER-ERASE] entities after erase={cnt} erased={toErase.Count}");
+            } catch { }
+
             // 2. Odbuduj dist line + doty/strzałki/ticki
             string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
             BuildDistLineAndDots(tr, btr, barData, ltName);
+
+            // p260 sentinel — przed commit
+            try {
+                var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                int cnt = 0; foreach (ObjectId _ in btr) if (!_.IsErased) cnt++;
+                ed260?.WriteMessage($"\n[p260-RDL-AFTER-REBUILD] entities after rebuild={cnt}");
+            } catch { }
 
             tr.Commit();
         }

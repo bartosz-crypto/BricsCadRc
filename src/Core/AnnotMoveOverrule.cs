@@ -573,15 +573,43 @@ namespace BricsCadRc.Core
                     return;
                 }
 
+                // p260 sentinel
+                try {
+                    var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                    ed260?.WriteMessage($"\n[p260-BBT-PRE] annotBr={(annotBr != null ? "OK" : "NULL")} br={(br != null ? "OK" : "NULL")} translation=({transform.Translation.X:F1},{transform.Translation.Y:F1})");
+                } catch { }
+
                 // p259 ETAP 3 — Po move block, dist line/doty rebuildują się żeby
                 // trafić w nowe pozycje prętów. annot.Position bez zmian (ASD-style).
                 try
                 {
                     var freshBarData = BarBlockEngine.ReadXData(br);
+
+                    // p260 sentinel
+                    try {
+                        var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                        ed260?.WriteMessage($"\n[p260-BBT-DATA] freshBarData={(freshBarData != null ? "OK" : "NULL")} count={freshBarData?.Count} spacing={freshBarData?.Spacing} barsSpan={freshBarData?.BarsSpan:F1}");
+                    } catch { }
+
                     if (freshBarData != null)
+                    {
                         AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db);
+
+                        // p260 sentinel
+                        try {
+                            var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                            ed260?.WriteMessage("\n[p260-BBT-DONE] RebuildDistLineInBtr called OK");
+                        } catch { }
+                    }
                 }
-                catch { /* nie przerywaj TransformBy gdyby rebuild się rozjechał */ }
+                catch (System.Exception ex)
+                {
+                    // p260 sentinel — exception caught
+                    try {
+                        var ed260 = Application.DocumentManager.MdiActiveDocument?.Editor;
+                        ed260?.WriteMessage($"\n[p260-BBT-EXCEPTION] {ex.GetType().Name}: {ex.Message}");
+                    } catch { }
+                }
 
                 tr.Commit();
             }
