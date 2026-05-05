@@ -573,8 +573,15 @@ namespace BricsCadRc.Core
                     return;
                 }
 
-                // p258 ETAP 1 — annotBr.TransformBy usunięty (annot niezależny).
-                // etap 3 — RebuildDistLineInBtr call goes here
+                // p259 ETAP 3 — Po move block, dist line/doty rebuildują się żeby
+                // trafić w nowe pozycje prętów. annot.Position bez zmian (ASD-style).
+                try
+                {
+                    var freshBarData = BarBlockEngine.ReadXData(br);
+                    if (freshBarData != null)
+                        AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db);
+                }
+                catch { /* nie przerywaj TransformBy gdyby rebuild się rozjechał */ }
 
                 tr.Commit();
             }
