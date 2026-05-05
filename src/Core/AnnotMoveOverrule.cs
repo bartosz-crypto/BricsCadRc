@@ -339,18 +339,10 @@ namespace BricsCadRc.Core
 
                                     var origAnnotPos = _annotDragStart[handle];
 
-                                    AnnotOverruleState.BypassConstraint = true;
-                                    try
-                                    {
-                                        annotBr2.Position = new Point3d(
-                                            origAnnotPos.X + offset.X,
-                                            origAnnotPos.Y + offset.Y,
-                                            origAnnotPos.Z);
-                                    }
-                                    finally
-                                    {
-                                        AnnotOverruleState.BypassConstraint = false;
-                                    }
+                                    annotBr2.Position = new Point3d(
+                                        origAnnotPos.X + offset.X,
+                                        origAnnotPos.Y + offset.Y,
+                                        origAnnotPos.Z);
                                 }
                                 trAnnot.Commit();
                             }
@@ -498,16 +490,9 @@ namespace BricsCadRc.Core
                 : new Vector3d(0, offset.Y, 0);
     }
 
-    // ----------------------------------------------------------------
-    // Flaga bypass — ustawiana przez BarBlockTransformOverrule przed
-    // programowym przesunięciem RC_BAR_ANNOT, zdejmowana w finally.
-    // Dzięki temu AnnotTransformOverrule nie constraintuje tego ruchu.
-    // BricsCAD UI jest jednowątkowe — statyczna flaga jest bezpieczna.
-    // ----------------------------------------------------------------
     internal static class AnnotOverruleState
     {
-        public static bool BypassConstraint { get; set; } = false;
-        public static bool InGripDrag       { get; set; } = false;
+        public static bool InGripDrag { get; set; } = false;
     }
 
     // ----------------------------------------------------------------
@@ -531,58 +516,10 @@ namespace BricsCadRc.Core
 
         public override void TransformBy(Entity entity, Matrix3d transform)
         {
-            var br = entity as BlockReference;
-            // Jeśli przesunięcie pochodzi z BarBlockTransformOverrule — nie ograniczaj osi
-            if (AnnotOverruleState.BypassConstraint)
-            {
-                base.TransformBy(entity, transform);
-                return;
-            }
-
-            if (br == null) { base.TransformBy(entity, transform); return; }
-
-            // Blok pretow: swobodny ruch — brak ograniczenia kierunku
-            if (BarBlockEngine.IsBarBlock(br)) { base.TransformBy(entity, transform); return; }
-
-            // Sprawdź kąt obrotu bloku annotacji
-            double annotAngle = 0.0;
-            var barAnnotForAngle = AnnotationEngine.ReadAnnotXData(br);
-            if (barAnnotForAngle != null)
-                annotAngle = br.Rotation;
-
-            // Jeśli blok jest obrócony (ukośne pręty) — przepuść transform bez constraintu
-            if (Math.Abs(annotAngle) > 1e-6)
-            {
-                base.TransformBy(entity, transform);
-                return;
-            }
-
-            // Standardowy constraint dla poziomych/pionowych prętów
-            string dir = null;
-            var bb = BarBlockEngine.ReadXData(br);
-            if (bb != null) dir = bb.Direction;
-            else { var ba = AnnotationEngine.ReadAnnotXData(br); if (ba != null) dir = ba.Direction; }
-
-            if (dir == null) { base.TransformBy(entity, transform); return; }
-
-            var t = transform.Translation;
-
-            // leaderHorizontal (arm boczny dla X-bars): blokujemy X, przepuszczamy Y
-            bool isLeaderHorizontal = false;
-            var barAnnotLH = AnnotationEngine.ReadAnnotXData(br);
-            if (barAnnotLH != null) isLeaderHorizontal = barAnnotLH.LeaderHorizontal;
-
-            var (tx, ty) = AnnotLeaderGeometry.ConstrainTranslation(dir, isLeaderHorizontal, t.X, t.Y);
-
-            var elems = new double[16];
-            for (int row = 0; row < 4; row++)
-                for (int col = 0; col < 4; col++)
-                    elems[row * 4 + col] = transform[row, col];
-            elems[3]  = tx;
-            elems[7]  = ty;
-            elems[11] = 0.0;
-
-            base.TransformBy(entity, new Matrix3d(elems));
+            // p258 ETAP 1 — Annot constraint usunięty (ASD-style: annot independent).
+            // Constraint poprzednio wymuszał ruch po jednej osi. Teraz annot porusza się
+            // swobodnie. Block independent — patrz BarBlockTransformOverrule (etap 3).
+            base.TransformBy(entity, transform);
         }
     }
 
@@ -636,17 +573,12 @@ namespace BricsCadRc.Core
                     return;
                 }
 
-                // Link poprawny — przesuń annot razem z blokiem
-                AnnotOverruleState.BypassConstraint = true;
-                try { annotBr.TransformBy(transform); }
-                finally { AnnotOverruleState.BypassConstraint = false; }
+                // p258 ETAP 1 — annotBr.TransformBy usunięty (annot niezależny).
+                // etap 3 — RebuildDistLineInBtr call goes here
 
                 tr.Commit();
             }
-            catch
-            {
-                AnnotOverruleState.BypassConstraint = false;
-            }
+            catch { }
         }
 
         public new void SetCustomFilter()

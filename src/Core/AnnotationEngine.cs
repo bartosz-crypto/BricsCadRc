@@ -514,6 +514,96 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // BuildDistLineAndDots — p258 ETAP 2: buduje dist line + doty/strzałki/ticki
+        // Wspólna logika dla BuildHorizontal, BuildVertical i RebuildDistLineInBtr.
+        // ----------------------------------------------------------------
+        private static void BuildDistLineAndDots(
+            Transaction tr, BlockTableRecord btr,
+            BarData bar, string ltName)
+        {
+            bool horizontal  = bar.Direction == "X";
+            double lineExt   = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
+            double lastBarPos = (bar.Count - 1) * bar.Spacing;
+
+            Point3d baseStart = horizontal
+                ? new Point3d(bar.SkewStart, -lineExt,             0)
+                : new Point3d(-lineExt,             bar.SkewStart, 0);
+            Point3d baseEnd = horizontal
+                ? new Point3d(bar.SkewEnd,   lastBarPos + lineExt, 0)
+                : new Point3d(lastBarPos + lineExt, bar.SkewEnd,   0);
+
+            bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
+            Vector3d axisDir;
+            Point3d  finalEnd;
+            if (hasSkew)
+            {
+                axisDir  = (baseEnd - baseStart).Length > 1e-9
+                    ? (baseEnd - baseStart).GetNormal() : fallback;
+                finalEnd = baseEnd + axisDir * Scaled(DistEndExtension, bar);
+            }
+            else
+            {
+                axisDir  = fallback;
+                finalEnd = baseEnd;
+            }
+
+            var dl = new Line(baseStart, finalEnd)
+            {
+                Layer      = LayerManager.LeaderLayer,
+                LineWeight = LineWeight.LineWeight018,
+                Linetype   = ltName
+            };
+            btr.AppendEntity(dl);
+            tr.AddNewlyCreatedDBObject(dl, true);
+
+            var visSet = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
+            for (int i = 0; i < bar.Count; i++)
+            {
+                bool   isFirst = (i == 0);
+                bool   isLast  = (i == bar.Count - 1);
+                double frac    = bar.Count > 1 ? (double)i / (bar.Count - 1) : 0.0;
+                double skewOff = bar.SkewStart + frac * (bar.SkewEnd - bar.SkewStart);
+
+                if (bar.Count > 3 && isFirst)
+                {
+                    Point3d tip = horizontal
+                        ? new Point3d(bar.SkewStart, 0,             0)
+                        : new Point3d(0,             bar.SkewStart, 0);
+                    AddArrow(tr, btr, tip, -axisDir, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                }
+                else if (bar.Count > 3 && isLast)
+                {
+                    Point3d tip = horizontal
+                        ? new Point3d(bar.SkewEnd,   lastBarPos, 0)
+                        : new Point3d(lastBarPos, bar.SkewEnd,   0);
+                    AddArrow(tr, btr, tip, axisDir, halfWidth: Scaled(22.5, bar), height: Scaled(151, bar));
+                }
+                else if (bar.Count <= 3 || visSet.Contains(i))
+                {
+                    Point3d center = horizontal
+                        ? new Point3d(skewOff,           i * bar.Spacing, 0)
+                        : new Point3d(i * bar.Spacing, skewOff,           0);
+                    AddDot(tr, btr, center, Scaled(DotRadius, bar));
+                }
+            }
+
+            if (bar.Count > 3)
+            {
+                double   tickLen  = Scaled(DotRadius, bar) * 3;
+                Vector3d perpAxis = horizontal ? Vector3d.XAxis : Vector3d.YAxis;
+                Point3d  tick0    = horizontal
+                    ? new Point3d(bar.SkewStart, 0,           0)
+                    : new Point3d(0,           bar.SkewStart, 0);
+                Point3d  tick1    = horizontal
+                    ? new Point3d(bar.SkewEnd,   lastBarPos,  0)
+                    : new Point3d(lastBarPos,  bar.SkewEnd,   0);
+                AddEndTick(tr, btr, tick0, perpAxis, tickLen);
+                AddEndTick(tr, btr, tick1, perpAxis, tickLen);
+            }
+        }
+
+        // ----------------------------------------------------------------
         // GetArmMidY — odczytuje aktualną pozycję Y linii arm z BTR bloku
         // ----------------------------------------------------------------
 
@@ -1277,6 +1367,58 @@ namespace BricsCadRc.Core
 
             tr.Commit();
             try { annotBr.RecordGraphicsModified(true); } catch { }
+        }
+
+        // ----------------------------------------------------------------
+        // RebuildDistLineInBtr — p258 ETAP 2: partial rebuild dist line + doty/strzałki/ticki.
+        // Nie rusza leadera (Line ColorIndex=7) ani tekstu (DBText).
+        // Wywoływane (etap 3) po MOVE/COPY block żeby dist line trzymała się prętów.
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Partial rebuild: usuwa dist line + doty/strzałki/ticki z BTR annot i odbudowuje
+        /// na podstawie barData. Leader (ColorIndex=7) i DBText zostają bez zmian.
+        /// </summary>
+        public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db)
+        {
+            if (annotBr == null || barData == null || db == null) return;
+
+            using var tr = db.TransactionManager.StartTransaction();
+            var btr = tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite) as BlockTableRecord;
+            if (btr == null) { tr.Commit(); return; }
+
+            // 1. Kasuj dist line (non-std linetype), doty (Circle/Hatch), strzałki (Solid),
+            //    ticki (Line bez ColorIndex=7, linetype Continuous lub ByLayer).
+            var toErase = new List<ObjectId>();
+            foreach (ObjectId entId in btr)
+            {
+                if (entId.IsErased) continue;
+                var ent = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                if (ent == null) continue;
+
+                if (ent is Line lnChk)
+                {
+                    bool nonStdLt =
+                        !string.Equals(lnChk.Linetype, "Continuous", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(lnChk.Linetype, "ByLayer",    StringComparison.OrdinalIgnoreCase);
+                    // dist line (non-std linetype) OR tick (ByLayer/Continuous but not leader ColorIndex=7)
+                    if (nonStdLt || lnChk.ColorIndex != 7)
+                        toErase.Add(entId);
+                }
+                else if (ent is Circle || ent is Hatch || ent is Solid)
+                    toErase.Add(entId);
+            }
+            foreach (var id in toErase)
+            {
+                var ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                ent?.Erase();
+            }
+
+            // 2. Odbuduj dist line + doty/strzałki/ticki
+            string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            BuildDistLineAndDots(tr, btr, barData, ltName);
+
+            tr.Commit();
         }
 
         /// <summary>
