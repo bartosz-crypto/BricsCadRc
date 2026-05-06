@@ -367,8 +367,8 @@ namespace BricsCadRc.Core
             LayerManager.EnsureLayersExist(db);
 
             double barLength, rawSpan;
-            if (horizontal) { barLength = x1 - x0 - 2.0 * bar.Cover; rawSpan = y1 - y0; }
-            else             { barLength = y1 - y0 - 2.0 * bar.Cover; rawSpan = x1 - x0; }
+            if (horizontal) { barLength = x1 - x0; rawSpan = y1 - y0; }
+            else             { barLength = y1 - y0; rawSpan = x1 - x0; }
 
             if (barLength <= 0) return empty;
 
@@ -377,10 +377,6 @@ namespace BricsCadRc.Core
                 bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
 
             bar.LengthA = barLength;
-
-            // Cover przesuwa insertPt w kierunku startu (cover od strony krawędzi)
-            if (horizontal) x0 += bar.Cover;
-            else             y0 += bar.Cover;
 
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
