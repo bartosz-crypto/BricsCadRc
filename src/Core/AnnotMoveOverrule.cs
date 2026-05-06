@@ -580,20 +580,21 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
 
-                // [p284] Pełna kompensacja pts[1..N-1] po MOVE annot solo: kink + text
-                // wszystkie WCS-stable. MOVE annot nic nie zmienia wizualnie. Do
-                // przesunięcia tekstu user używa drag grip[1] (UpdateLeaderInBlock /
-                // UpdateLastSegmentWithShift przetwarza grip[1] niezależnie od ATR).
+                // [p281] Kink compensation: po MOVE annot solo kink (pts[1..N-2])
+                // musi zostać WCS-stable żeby arm nie rósł z odległością tekstu od bloku.
+                // Kompensujemy lokalne BTR coords przez -V_local. Text (pts[N-1]) zostaje
+                // (intuicyjne: MOVE annot = przesuń tekst). Dla bez-kinka (pts.Count==2)
+                // loop pusty — status quo.
                 if (transform.Translation.Length > 1e-6)
                 {
-                    var pts = AnnotationEngine.DecodeLeaderPoints(annotData.LeaderPoints);
-                    if (pts.Count >= 2)  // każdy leader (z lub bez kinka)
+                    var kinkPts = AnnotationEngine.DecodeLeaderPoints(annotData.LeaderPoints);
+                    if (kinkPts.Count >= 3)
                     {
                         var vLocal = transform.Translation.TransformBy(
                             annotBr.BlockTransform.Inverse());
-                        for (int i = 1; i < pts.Count; i++)  // pts[1..N-1] wszystkie
-                            pts[i] = pts[i] - vLocal;
-                        annotData.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(pts);
+                        for (int i = 1; i < kinkPts.Count - 1; i++)
+                            kinkPts[i] = kinkPts[i] - vLocal;
+                        annotData.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(kinkPts);
                         using (var trW = db.TransactionManager.StartTransaction())
                         {
                             var brW = trW.GetObject(annotBr.ObjectId, OpenMode.ForWrite)
