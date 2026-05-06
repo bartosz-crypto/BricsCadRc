@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
+using Teigha.Geometry;
 using Teigha.Runtime;
 
 namespace BricsCadRc.Core
@@ -101,6 +102,9 @@ namespace BricsCadRc.Core
             if (doc == null) return;
             var db = doc.Database;
 
+            // p298+p303: relink'owane pary do normalize + rebuild po commit
+            var rebuildPairs = new List<(ObjectId annotId, ObjectId blockId)>();
+
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // Krok 1: zapewnij niezależne BTR dla każdej skopiowanej pary
@@ -191,6 +195,7 @@ namespace BricsCadRc.Core
                         matchedNewAnnot.UpgradeOpen();
                         matchedNewAnnotData.SourceBlockHandle = newBlockHex;
                         AnnotationEngine.WriteAnnotXData(matchedNewAnnot, matchedNewAnnotData);
+                        rebuildPairs.Add((matchedNewAnnot.ObjectId, newBlockId));
                     }
                     else
                     {
@@ -202,6 +207,61 @@ namespace BricsCadRc.Core
                 }
 
                 tr.Commit();
+            }
+
+            // p298+p303: normalize det=-1 -> det=+1, rebuild dist line per pair
+            foreach (var (annotId, blockId) in rebuildPairs)
+            {
+                try
+                {
+                    // Krok A: normalize ScaleFactors jeśli mirror (det=-1)
+                    using (var trNorm = db.TransactionManager.StartTransaction())
+                    {
+                        var blk = trNorm.GetObject(blockId, OpenMode.ForWrite) as BlockReference;
+                        var ann = trNorm.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+
+                        bool blkNeedsNorm = blk != null && (blk.ScaleFactors.X < 0 || blk.ScaleFactors.Y < 0
+                            || System.Math.Abs(System.Math.Abs(blk.Rotation) - System.Math.PI) < 1e-3);
+                        if (blkNeedsNorm)
+                        {
+                            Point3d vMin;
+                            try   { vMin = blk.GeometricExtents.MinPoint; }
+                            catch { vMin = blk.Position; }
+                            blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+                            blk.Rotation     = 0.0;
+                            blk.Position     = vMin;
+                        }
+
+                        bool annNeedsNorm = ann != null && (ann.ScaleFactors.X < 0 || ann.ScaleFactors.Y < 0
+                            || System.Math.Abs(System.Math.Abs(ann.Rotation) - System.Math.PI) < 1e-3);
+                        if (annNeedsNorm)
+                        {
+                            Point3d aVMin;
+                            try   { aVMin = ann.GeometricExtents.MinPoint; }
+                            catch { aVMin = ann.Position; }
+                            ann.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+                            ann.Rotation     = 0.0;
+                            ann.Position     = aVMin;
+                        }
+
+                        trNorm.Commit();
+                    }
+
+                    // Krok B: rebuild annot BTR (RebuildDistLineInBtr otwiera własną transakcję)
+                    using (var trReb = db.TransactionManager.StartTransaction())
+                    {
+                        var blk = trReb.GetObject(blockId, OpenMode.ForRead) as BlockReference;
+                        var ann = trReb.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                        if (blk != null && ann != null)
+                        {
+                            var barData = BarBlockEngine.ReadXData(blk);
+                            if (barData != null)
+                                AnnotationEngine.RebuildDistLineInBtr(ann, barData, db, blk.Position);
+                        }
+                        trReb.Commit();
+                    }
+                }
+                catch { }
             }
         }
 
