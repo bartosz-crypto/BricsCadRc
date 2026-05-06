@@ -243,14 +243,22 @@ namespace BricsCadRc.Commands
                 }
                 else
                 {
+                    var bt     = brRe.BlockTransform;
+                    double signX = Vector3d.XAxis.TransformBy(bt).X >= 0 ? 1.0 : -1.0;
+                    double signY = Vector3d.YAxis.TransformBy(bt).Y >= 0 ? 1.0 : -1.0;
+                    double dx    = signX * (bar.Direction == "X" ? bar.LengthA : bar.BarsSpan);
+                    double dy    = signY * (bar.Direction == "X" ? bar.BarsSpan : bar.LengthA);
                     barResult = new BarBlockEngine.BarBlockResult
                     {
                         BlockRefId = blockRefId,
                         BarOrigin  = insertWCS,
-                        MinPoint   = insertWCS,
+                        MinPoint   = new Point3d(
+                            dx >= 0 ? insertWCS.X        : insertWCS.X + dx,
+                            dy >= 0 ? insertWCS.Y        : insertWCS.Y + dy,
+                            0),
                         MaxPoint   = new Point3d(
-                            insertWCS.X + (bar.Direction == "X" ? bar.LengthA : bar.BarsSpan),
-                            insertWCS.Y + (bar.Direction == "X" ? bar.BarsSpan : bar.LengthA),
+                            dx >= 0 ? insertWCS.X + dx   : insertWCS.X,
+                            dy >= 0 ? insertWCS.Y + dy   : insertWCS.Y,
                             0)
                     };
                 }
