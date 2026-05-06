@@ -773,6 +773,9 @@ namespace BricsCadRc.Commands
             Point3d pt1, Point3d pt2, bool edgeHorizontal, bool flipped,
             double barLength, List<Line> transients)
         {
+            // Approximate live preview shown BEFORE user is prompted for
+            // actual cover/spacing. Final geometry uses prompted values via
+            // GenerateFromBounds. Hardcoded constants are intentional — see p310 decision.
             const double cover = 40.0, spacing = 200.0;
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
