@@ -10,6 +10,40 @@ namespace BricsCadRc.Commands
 {
     public static class PunchingTagCommands
     {
+        [CommandMethod("RC_PUNCHING_TAG")]
+        public static void RcPunchingTag()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc.Editor;
+
+            var dlg = new OpenFileDialog {
+                Title  = "Select source punching analysis file",
+                Filter = "CAD Files|*.dwg;*.dxf|DWG (*.dwg)|*.dwg|DXF (*.dxf)|*.dxf"
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            try
+            {
+                var src = PunchingTagEngine.ReadSource(dlg.FileName);
+                var map = PunchingTagEngine.BuildMapping(src);
+                ed.WriteMessage($"\n[RC_PUNCHING_TAG] Source: {src.Circles.Count} piles, " +
+                                $"{src.PhLabels.Count} PH labels. Mapped: {map.Mapped}.");
+
+                var stats = PunchingTagEngine.AnnotateTarget(doc, map);
+
+                ed.WriteMessage($"\n[RC_PUNCHING_TAG] Tagged {stats.Tagged} piles. " +
+                                $"Skipped {stats.Skipped} (no PH match). " +
+                                $"OrphanIds {stats.OrphanIds}. " +
+                                $"Cleaned {stats.Cleaned} existing entities. " +
+                                $"Mapping warnings: {map.Warnings.Count}. " +
+                                $"Annotation warnings: {stats.Warnings.Count}.");
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[RC_PUNCHING_TAG] EXCEPTION: {ex.Message}");
+            }
+        }
+
         [CommandMethod("RC_PUNCHING_TAG_DEBUG")]
         public static void RcPunchingTagDebug()
         {
