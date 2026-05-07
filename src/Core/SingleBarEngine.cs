@@ -86,7 +86,7 @@ namespace BricsCadRc.Core
             foreach (var ent in entities)
             {
                 ent.Layer      = layerName;
-                ent.ColorIndex = 7;
+                ent.ColorIndex = 256;
                 ent.LineWeight = LineWeight.LineWeight000;
             }
 
@@ -176,9 +176,10 @@ namespace BricsCadRc.Core
 
             var mt = new MText();
             mt.SetDatabaseDefaults(db);
-            mt.Contents   = labelText;
-            mt.TextHeight = 70.0;
-            var stTable   = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            mt.Contents    = labelText;
+            mt.TextHeight  = 70.0;
+            mt.ColorIndex  = 256;
+            var stTable    = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
             if (stTable.Has(LayerManager.AnnotTextStyle))
                 mt.TextStyleId = stTable[LayerManager.AnnotTextStyle];
             mt.Location = textPt;
@@ -190,7 +191,7 @@ namespace BricsCadRc.Core
             ml.MText        = mt;
             ml.TextLocation = textPt;
             ml.Layer        = LayerManager.AnnotLayer;
-            ml.ColorIndex   = 2;   // żółty — jak annotacje ASD
+            ml.ColorIndex   = 256;
 
             int li  = ml.AddLeader();
             int lni = ml.AddLeaderLine(li);

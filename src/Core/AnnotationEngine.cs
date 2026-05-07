@@ -134,6 +134,7 @@ namespace BricsCadRc.Core
             // ArmMidY już zainicjalizowane powyżej (przed BuildHorizontal)
 
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            blockRef.ColorIndex = 256;
             if (Math.Abs(bar.Angle) > 1e-6)
                 blockRef.Rotation = bar.Angle;
             space.AppendEntity(blockRef);
@@ -363,7 +364,8 @@ namespace BricsCadRc.Core
         private static void AddKinkCircle(Transaction tr, BlockTableRecord btr, Point3d center, double r)
         {
             var circle = new Circle(center, Vector3d.ZAxis, r);
-            circle.Layer = LayerManager.LeaderLayer;
+            circle.Layer       = LayerManager.LeaderLayer;
+            circle.ColorIndex  = 256;
             btr.AppendEntity(circle);
             tr.AddNewlyCreatedDBObject(circle, true);
         }
@@ -375,12 +377,14 @@ namespace BricsCadRc.Core
         private static void AddDot(Transaction tr, BlockTableRecord btr, Point3d c, double r)
         {
             var circle = new Circle(c, Vector3d.ZAxis, r);
-            circle.Layer = LayerManager.LeaderLayer;
+            circle.Layer       = LayerManager.LeaderLayer;
+            circle.ColorIndex  = 256;
             btr.AppendEntity(circle);
             tr.AddNewlyCreatedDBObject(circle, true);
 
             var hatch = new Hatch();
-            hatch.Layer = LayerManager.LeaderLayer;
+            hatch.Layer       = LayerManager.LeaderLayer;
+            hatch.ColorIndex  = 256;
             hatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
             hatch.Associative = false;
             btr.AppendEntity(hatch);
@@ -405,7 +409,8 @@ namespace BricsCadRc.Core
             solid.SetPointAt(1, new Point3d(p2.X, p2.Y, 0));
             solid.SetPointAt(2, new Point3d(p3.X, p3.Y, 0));
             solid.SetPointAt(3, new Point3d(p3.X, p3.Y, 0));
-            solid.Layer = LayerManager.LeaderLayer;
+            solid.Layer       = LayerManager.LeaderLayer;
+            solid.ColorIndex  = 256;
             btr.AppendEntity(solid);
             tr.AddNewlyCreatedDBObject(solid, true);
         }
@@ -416,7 +421,8 @@ namespace BricsCadRc.Core
                 center - perpDir * halfLen,
                 center + perpDir * halfLen
             );
-            line.Layer = LayerManager.LeaderLayer;
+            line.Layer       = LayerManager.LeaderLayer;
+            line.ColorIndex  = 256;
             btr.AppendEntity(line);
             tr.AddNewlyCreatedDBObject(line, true);
         }
@@ -460,6 +466,7 @@ namespace BricsCadRc.Core
             var dl = new Line(baseStart, finalEnd)
             {
                 Layer      = LayerManager.LeaderLayer,
+                ColorIndex = 256,
                 LineWeight = LineWeight.LineWeight018,
                 Linetype   = ltName
             };
@@ -597,7 +604,7 @@ namespace BricsCadRc.Core
             foreach (ObjectId eid in btr)
             {
                 var ent = tr.GetObject(eid, OpenMode.ForRead);
-                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                if (ent is Line ln && ln.Linetype == "Continuous")
                     idsToErase.Add(eid);
                 if (ent is DBText)
                     idsToErase.Add(eid);
@@ -649,7 +656,7 @@ namespace BricsCadRc.Core
             foreach (ObjectId eid in btr)
             {
                 var ent = tr.GetObject(eid, OpenMode.ForRead);
-                if (ent is Line ln && ln.Linetype == "Continuous" && ln.ColorIndex == 7)
+                if (ent is Line ln && ln.Linetype == "Continuous")
                     idsToErase.Add(eid);
                 if (ent is DBText) idsToErase.Add(eid);
             }
@@ -731,7 +738,7 @@ namespace BricsCadRc.Core
                 bool willErase = false;
                 if (ent is Line ln)
                 {
-                    willErase = ln.Linetype == "Continuous" && ln.ColorIndex == 7;
+                    willErase = ln.Linetype == "Continuous";
                     if (willErase) idsToErase.Add(eid);
                 }
                 else if (ent is DBText tx)
@@ -766,7 +773,7 @@ namespace BricsCadRc.Core
                 var seg = new Line(leaderPts[i], leaderPts[i + 1])
                 {
                     Layer      = LayerManager.LeaderLayer,
-                    ColorIndex = 7,
+                    ColorIndex = 256,
                     LineWeight = LineWeight.LineWeight018,
                     Linetype   = "Continuous"
                 };
@@ -828,7 +835,7 @@ namespace BricsCadRc.Core
             var landingLine  = new Line(landingStart, landingEnd)
             {
                 Layer      = LayerManager.LeaderLayer,
-                ColorIndex = 7,
+                ColorIndex = 256,
                 LineWeight = LineWeight.LineWeight018,
                 Linetype   = "Continuous"
             };

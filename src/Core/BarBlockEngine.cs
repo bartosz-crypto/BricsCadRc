@@ -125,6 +125,7 @@ namespace BricsCadRc.Core
 
             var insertPt = new Point3d(x0, y0, 0);
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            blockRef.ColorIndex = 256;
             space.AppendEntity(blockRef);
             tr.AddNewlyCreatedDBObject(blockRef, true);
 
@@ -160,7 +161,7 @@ namespace BricsCadRc.Core
                 double xShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(xShift,            y, 0);
                 var    ptE = new Point3d(barWidth + xShift, y, 0);
-                var line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
+                var line = new Line(ptS, ptE) { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
@@ -189,7 +190,7 @@ namespace BricsCadRc.Core
                 double yShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(x, yShift,             0);
                 var    ptE = new Point3d(x, barHeight + yShift, 0);
-                var    line = new Line(ptS, ptE) { Layer = barLayer, LineWeight = lw };
+                var    line = new Line(ptS, ptE) { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
                 btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
@@ -326,7 +327,7 @@ namespace BricsCadRc.Core
                     var hookTip  = new Point3d(hookBase.X + HookLen * bx,
                                                hookBase.Y + HookLen * by, 0);
 
-                    var hookLine = new Line(hookBase, hookTip) { Layer = layer };
+                    var hookLine = new Line(hookBase, hookTip) { Layer = layer, ColorIndex = 256 };
                     btr.AppendEntity(hookLine);
                     tr.AddNewlyCreatedDBObject(hookLine, true);
                     break;
@@ -342,7 +343,7 @@ namespace BricsCadRc.Core
         private static void AppendCircle(Transaction tr, BlockTableRecord btr,
             string layer, Point3d center, double radius)
         {
-            var circle = new Circle(center, Vector3d.ZAxis, radius) { Layer = layer };
+            var circle = new Circle(center, Vector3d.ZAxis, radius) { Layer = layer, ColorIndex = 256 };
             btr.AppendEntity(circle);
             tr.AddNewlyCreatedDBObject(circle, true);
         }
@@ -409,6 +410,7 @@ namespace BricsCadRc.Core
                 ? new Point3d(bar.Pt1X, bar.Pt1Y, 0)
                 : new Point3d(x0, y0, 0);
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
+            blockRef.ColorIndex = 256;
             if (Math.Abs(bar.Angle) > 1e-6)
                 blockRef.Rotation = bar.Angle;
             space.AppendEntity(blockRef);
