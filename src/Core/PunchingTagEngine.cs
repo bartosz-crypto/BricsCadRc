@@ -363,6 +363,7 @@ namespace BricsCadRc.Core
                 var phRegex = new Regex(@"PH([1-9])", RegexOptions.None);
                 var anchorRegex = new Regex(@"(\^I)?APPLICABLE FOR PILES?\s*(?:.*)?$",
                                             RegexOptions.IgnoreCase);
+                var locationsRegex = new Regex(@"\(\d+No LOCATIONS?\)", RegexOptions.None);
 
                 // 4. Iterate ModelSpace for MText on AP-TEXT
                 foreach (ObjectId oid in ms)
@@ -411,9 +412,35 @@ namespace BricsCadRc.Core
                     else
                         newTail = tabPrefix + "APPLICABLE FOR PILES " + string.Join(", ", piles);
 
-                    // e+f. Replace and write
+                    // e. Build truncated pre-anchor portion, then replace (NNo LOCATIONS?)
+                    string truncated = raw.Substring(0, anchorStart);
+                    var locMatch = locationsRegex.Match(truncated);
+                    if (locMatch.Success)
+                    {
+                        string locReplacement;
+                        if (count == 0)
+                            locReplacement = "(N/A)";
+                        else if (count == 1)
+                            locReplacement = "(1No LOCATION)";
+                        else
+                            locReplacement = $"({count}No LOCATIONS)";
+
+                        truncated = truncated.Substring(0, locMatch.Index)
+                                  + locReplacement
+                                  + truncated.Substring(locMatch.Index + locMatch.Length);
+                    }
+                    else
+                    {
+                        stats.Warnings.Add(new MappingWarning {
+                            Kind    = "no-locations-anchor",
+                            Message = $"AP-TEXT MTEXT for {ph} missing (NNo LOCATION) " +
+                                      $"pattern — count not updated"
+                        });
+                    }
+
+                    // f. Write both transformations in single UpgradeOpen
                     mt.UpgradeOpen();
-                    mt.Contents = raw.Substring(0, anchorStart) + newTail;
+                    mt.Contents = truncated + newTail;
                     stats.Updated++;
                 }
 
