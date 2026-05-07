@@ -273,7 +273,7 @@ namespace BricsCadRc.Core
                     mt.ColorIndex  = 4;
                     mt.TextHeight  = 120.0;
                     mt.Attachment  = AttachmentPoint.TopLeft;
-                    mt.Location    = new Point3d(item.Anchor.X, item.Anchor.Y - 100.0, item.Anchor.Z);
+                    mt.Location    = new Point3d(item.Anchor.X, item.Anchor.Y - 80.0, item.Anchor.Z);
                     mt.TextStyleId = wygStyleId;
                     ms.AppendEntity(mt);
                     tr.AddNewlyCreatedDBObject(mt, true);
