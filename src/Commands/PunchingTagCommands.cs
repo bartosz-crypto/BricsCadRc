@@ -36,6 +36,13 @@ namespace BricsCadRc.Commands
                                 $"Mapping warnings: {dlg.Mapping.Warnings.Count}. " +
                                 $"Annotation warnings: {stats.Warnings.Count}.");
 
+                var applicable = PunchingTagEngine.UpdateApplicablePiles(doc, dlg.Mapping);
+                ed.WriteMessage($"\n[RC_PUNCHING_TAG] AP-TEXT updated: " +
+                                $"{applicable.Updated} MTEXTs, " +
+                                $"{applicable.Skipped} skipped (no anchor), " +
+                                $"{applicable.NoPhDetected} skipped (no PH detected). " +
+                                $"Warnings: {applicable.Warnings.Count}.");
+
                 int cap = 30;
                 int shown = 0;
                 foreach (var w in dlg.Mapping.Warnings)
@@ -48,7 +55,13 @@ namespace BricsCadRc.Commands
                     if (shown++ >= cap) break;
                     ed.WriteMessage($"\n  [{w.Kind}] {w.Message}");
                 }
-                int total = dlg.Mapping.Warnings.Count + stats.Warnings.Count;
+                foreach (var w in applicable.Warnings)
+                {
+                    if (shown++ >= cap) break;
+                    ed.WriteMessage($"\n  [{w.Kind}] {w.Message}");
+                }
+                int total = dlg.Mapping.Warnings.Count + stats.Warnings.Count
+                          + applicable.Warnings.Count;
                 if (total > cap)
                     ed.WriteMessage($"\n  ... and {total - cap} more warnings");
             }

@@ -70,6 +70,14 @@ namespace BricsCadRc.Core
             public List<MappingWarning> Warnings = new List<MappingWarning>();
         }
 
+        public sealed class ApplicableUpdateStats
+        {
+            public int Updated;
+            public int Skipped;
+            public int NoPhDetected;
+            public List<MappingWarning> Warnings = new List<MappingWarning>();
+        }
+
         // ----------------------------------------------------------------
         // Private types
         // ----------------------------------------------------------------
@@ -295,6 +303,121 @@ namespace BricsCadRc.Core
                     stats.Tagged++;
                 }
 
+                tr.Commit();
+            }
+
+            return stats;
+        }
+
+        public static ApplicableUpdateStats UpdateApplicablePiles(
+            Document doc,
+            MappingResult mapping)
+        {
+            var stats = new ApplicableUpdateStats();
+            var db    = doc.Database;
+
+            // 1. Build inverse mapping PH -> sorted pile list
+            var phToPiles = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in mapping.PileIdToPh)
+            {
+                List<string> lst;
+                if (!phToPiles.TryGetValue(kv.Value, out lst))
+                {
+                    lst = new List<string>();
+                    phToPiles[kv.Value] = lst;
+                }
+                lst.Add(kv.Key);
+            }
+            foreach (var lst in phToPiles.Values)
+            {
+                lst.Sort((a, b) =>
+                {
+                    int ia = 0, ib = 0;
+                    bool aOk = a.Length > 1 && a[0] == 'P' && int.TryParse(a.Substring(1), out ia);
+                    bool bOk = b.Length > 1 && b[0] == 'P' && int.TryParse(b.Substring(1), out ib);
+                    if (aOk && bOk) return ia.CompareTo(ib);
+                    return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+
+            // 2. Open doc database with write access
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // 3. Verify AP-TEXT layer
+                var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                if (!lt.Has("AP-TEXT"))
+                {
+                    stats.Warnings.Add(new MappingWarning {
+                        Kind    = "missing-layer",
+                        Message = "layer 'AP-TEXT' not found — applicable update skipped"
+                    });
+                    tr.Commit();
+                    return stats;
+                }
+
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(
+                    bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                var phRegex = new Regex(@"PH([1-9])", RegexOptions.None);
+                var anchorRegex = new Regex(@"(\^I)?APPLICABLE FOR PILES?\s*(?:.*)?$",
+                                            RegexOptions.IgnoreCase);
+
+                // 4. Iterate ModelSpace for MText on AP-TEXT
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased) continue;
+                    var mt = tr.GetObject(oid, OpenMode.ForRead) as MText;
+                    if (mt == null) continue;
+                    if (!string.Equals(mt.Layer, "AP-TEXT", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string raw = mt.Contents ?? string.Empty;
+
+                    // b. Find PH zone
+                    var phMatch = phRegex.Match(raw);
+                    if (!phMatch.Success)
+                    {
+                        stats.NoPhDetected++;
+                        continue;
+                    }
+                    string ph = "PH" + phMatch.Groups[1].Value;
+
+                    // c. Find anchor
+                    var anchorMatch = anchorRegex.Match(raw);
+                    if (!anchorMatch.Success)
+                    {
+                        stats.Skipped++;
+                        stats.Warnings.Add(new MappingWarning {
+                            Kind    = "no-anchor",
+                            Message = $"AP-TEXT MTEXT ({ph}) has no 'APPLICABLE FOR PILE' anchor"
+                        });
+                        continue;
+                    }
+                    string tabPrefix  = anchorMatch.Groups[1].Value; // "" or "^I"
+                    int    anchorStart = anchorMatch.Index;
+
+                    // d. Compose new tail
+                    List<string> piles;
+                    if (!phToPiles.TryGetValue(ph, out piles)) piles = new List<string>();
+                    int count = piles.Count;
+
+                    string newTail;
+                    if (count == 0)
+                        newTail = tabPrefix + "APPLICABLE FOR PILES N/A";
+                    else if (count == 1)
+                        newTail = tabPrefix + "APPLICABLE FOR PILE " + piles[0];
+                    else
+                        newTail = tabPrefix + "APPLICABLE FOR PILES " + string.Join(", ", piles);
+
+                    // e+f. Replace and write
+                    mt.UpgradeOpen();
+                    mt.Contents = raw.Substring(0, anchorStart) + newTail;
+                    stats.Updated++;
+                }
+
+                // 5. Commit
                 tr.Commit();
             }
 
