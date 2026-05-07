@@ -5,6 +5,7 @@ using Bricscad.EditorInput;
 using Microsoft.Win32;
 using Teigha.Runtime;
 using BricsCadRc.Core;
+using BricsCadRc.Dialogs;
 
 namespace BricsCadRc.Commands
 {
@@ -16,27 +17,40 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc.Editor;
 
-            var dlg = new OpenFileDialog {
-                Title  = "Select source punching analysis file",
-                Filter = "CAD Files|*.dwg;*.dxf|DWG (*.dwg)|*.dwg|DXF (*.dxf)|*.dxf"
-            };
-            if (dlg.ShowDialog() != true) return;
+            var dlg = new PunchingTagDialog();
+            if (Application.ShowModalWindow(dlg) != true) return;
 
             try
             {
-                var src = PunchingTagEngine.ReadSource(dlg.FileName);
-                var map = PunchingTagEngine.BuildMapping(src);
-                ed.WriteMessage($"\n[RC_PUNCHING_TAG] Source: {src.Circles.Count} piles, " +
-                                $"{src.PhLabels.Count} PH labels. Mapped: {map.Mapped}.");
+                ed.WriteMessage($"\n[RC_PUNCHING_TAG] Source: " +
+                    $"{dlg.Source.Circles.Count} piles, " +
+                    $"{dlg.Source.PhLabels.Count} PH labels. " +
+                    $"Mapped: {dlg.Mapping.Mapped}.");
 
-                var stats = PunchingTagEngine.AnnotateTarget(doc, map);
+                var stats = PunchingTagEngine.AnnotateTarget(doc, dlg.Mapping);
 
                 ed.WriteMessage($"\n[RC_PUNCHING_TAG] Tagged {stats.Tagged} piles. " +
                                 $"Skipped {stats.Skipped} (no PH match). " +
                                 $"OrphanIds {stats.OrphanIds}. " +
                                 $"Cleaned {stats.Cleaned} existing entities. " +
-                                $"Mapping warnings: {map.Warnings.Count}. " +
+                                $"Mapping warnings: {dlg.Mapping.Warnings.Count}. " +
                                 $"Annotation warnings: {stats.Warnings.Count}.");
+
+                int cap = 30;
+                int shown = 0;
+                foreach (var w in dlg.Mapping.Warnings)
+                {
+                    if (shown++ >= cap) break;
+                    ed.WriteMessage($"\n  [{w.Kind}] {w.Message}");
+                }
+                foreach (var w in stats.Warnings)
+                {
+                    if (shown++ >= cap) break;
+                    ed.WriteMessage($"\n  [{w.Kind}] {w.Message}");
+                }
+                int total = dlg.Mapping.Warnings.Count + stats.Warnings.Count;
+                if (total > cap)
+                    ed.WriteMessage($"\n  ... and {total - cap} more warnings");
             }
             catch (System.Exception ex)
             {
