@@ -64,6 +64,39 @@ namespace BricsCadRc.Commands
                           + applicable.Warnings.Count;
                 if (total > cap)
                     ed.WriteMessage($"\n  ... and {total - cap} more warnings");
+
+                // Pop-up with summary + full warnings list (only when warnings exist)
+                var allWarnings = new List<string>();
+                foreach (var w in dlg.Mapping.Warnings)
+                    allWarnings.Add($"[{w.Kind}] {w.Message}");
+                foreach (var w in stats.Warnings)
+                    allWarnings.Add($"[{w.Kind}] {w.Message}");
+                foreach (var w in applicable.Warnings)
+                    allWarnings.Add($"[{w.Kind}] {w.Message}");
+
+                if (allWarnings.Count > 0)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine($"Source: {dlg.Source.Circles.Count} piles, " +
+                                  $"{dlg.Source.PhLabels.Count} PH labels.");
+                    sb.AppendLine($"Mapped: {dlg.Mapping.Mapped} piles. " +
+                                  $"Mapping warnings: {dlg.Mapping.Warnings.Count}.");
+                    sb.AppendLine();
+                    sb.AppendLine($"Tagged: {stats.Tagged} piles.");
+                    sb.AppendLine($"Skipped: {stats.Skipped} (no PH match).");
+                    sb.AppendLine($"Orphan pile-ids: {stats.OrphanIds}.");
+                    sb.AppendLine($"Cleaned: {stats.Cleaned} pre-existing entities.");
+                    sb.AppendLine($"Annotation warnings: {stats.Warnings.Count}.");
+                    sb.AppendLine();
+                    sb.AppendLine($"AP-TEXT updated: {applicable.Updated} MTEXTs.");
+                    sb.AppendLine($"AP-TEXT skipped (no anchor): {applicable.Skipped}.");
+                    sb.AppendLine($"AP-TEXT skipped (no PH): {applicable.NoPhDetected}.");
+                    sb.AppendLine($"AP-TEXT warnings: {applicable.Warnings.Count}.");
+
+                    var resultsDlg = new PunchingTagResultsDialog(
+                        sb.ToString().TrimEnd(), allWarnings);
+                    Application.ShowModalWindow(resultsDlg);
+                }
             }
             catch (System.Exception ex)
             {
