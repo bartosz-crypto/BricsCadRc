@@ -112,6 +112,11 @@ namespace BricsCadRc.Commands
 
             try
             {
+                int prevErased = PunchingTagEngine.DeleteSummaryBars(doc);
+                if (prevErased > 0)
+                    ed.WriteMessage(
+                        $"\n[RC_PUNCHING_SUMMARY_BARS] Removed {prevErased} entities from previous run.");
+
                 PunchingTagEngine.PhCountTotals totals;
                 try
                 {
@@ -220,7 +225,10 @@ namespace BricsCadRc.Commands
                             continue;
                         }
 
-                        // Override XData Count = realCount (RC_SCHEDULE reads this)
+                        // Store real total in CountDisplay (slot [27]).
+                        // Count (slot [3]) stays at 1 (auto-set by GenerateFromBounds).
+                        // Rebuild paths read Count=1 -> single bar preserved visually.
+                        // RC_SCHEDULE reads EffectiveCount = CountDisplay ?? Count = realCount.
                         using (var trCount = db.TransactionManager.StartTransaction())
                         {
                             var brCount = trCount.GetObject(
@@ -230,7 +238,7 @@ namespace BricsCadRc.Commands
                                 var xd = BarBlockEngine.ReadXData(brCount);
                                 if (xd != null)
                                 {
-                                    xd.Count = realCount;
+                                    xd.CountDisplay = realCount;
                                     BarBlockEngine.WriteXData(brCount, xd);
                                 }
                             }

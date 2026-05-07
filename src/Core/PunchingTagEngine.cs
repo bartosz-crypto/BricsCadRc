@@ -742,5 +742,93 @@ namespace BricsCadRc.Core
 
             return result;
         }
+
+        // ----------------------------------------------------------------
+        // DeleteSummaryBars — erase all 501/502 summary entities.
+        // Called at start of RC_PUNCHING_SUMMARY_BARS for idempotent re-runs.
+        // ----------------------------------------------------------------
+
+        public static int DeleteSummaryBars(Document doc)
+        {
+            var db = doc.Database;
+            int erased = 0;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(
+                    bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                // Phase 1a: find RC_SINGLE_BAR polylines with Mark = "H12-501" / "H16-502"
+                var summaryPolylineHandles = new HashSet<long>();
+                var toErase = new HashSet<long>();
+
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased) continue;
+                    var ent = tr.GetObject(oid, OpenMode.ForRead) as Entity;
+                    if (!(ent is Polyline pl)) continue;
+
+                    var sxd = SingleBarEngine.ReadXData(pl);
+                    if (sxd == null || !IsSummaryMark(sxd.Mark)) continue;
+
+                    summaryPolylineHandles.Add(pl.Handle.Value);
+                    toErase.Add(pl.Handle.Value);
+
+                    if (!string.IsNullOrEmpty(sxd.LabelHandle)
+                        && long.TryParse(sxd.LabelHandle,
+                            System.Globalization.NumberStyles.HexNumber, null, out long lblH))
+                        toErase.Add(lblH);
+                }
+
+                // Phase 1b: find RC_BAR_BLOCK block refs whose SourceBarHandle points to
+                // one of those polylines; collect them + their AnnotHandle
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased) continue;
+                    var ent = tr.GetObject(oid, OpenMode.ForRead) as Entity;
+                    if (!(ent is BlockReference br)) continue;
+
+                    var bxd = BarBlockEngine.ReadXData(br);
+                    if (bxd == null) continue;
+
+                    if (!string.IsNullOrEmpty(bxd.SourceBarHandle)
+                        && long.TryParse(bxd.SourceBarHandle,
+                            System.Globalization.NumberStyles.HexNumber, null, out long srcH)
+                        && summaryPolylineHandles.Contains(srcH))
+                    {
+                        toErase.Add(br.Handle.Value);
+
+                        if (!string.IsNullOrEmpty(bxd.AnnotHandle)
+                            && long.TryParse(bxd.AnnotHandle,
+                                System.Globalization.NumberStyles.HexNumber, null, out long annotH))
+                            toErase.Add(annotH);
+                    }
+                }
+
+                // Phase 2: resolve handles -> ObjectIds and erase
+                foreach (var h in toErase)
+                {
+                    ObjectId oid;
+                    if (db.TryGetObjectId(new Handle(h), out oid) && !oid.IsErased)
+                    {
+                        var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
+                        if (ent != null) { ent.Erase(); erased++; }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return erased;
+        }
+
+        private static bool IsSummaryMark(string mark)
+        {
+            if (string.IsNullOrEmpty(mark)) return false;
+            return mark.Equals("H12-501", StringComparison.OrdinalIgnoreCase)
+                || mark.Equals("H16-502", StringComparison.OrdinalIgnoreCase);
+        }
     }
 }
