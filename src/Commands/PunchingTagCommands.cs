@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using Microsoft.Win32;
+using Teigha.DatabaseServices;
+using Teigha.Geometry;
 using Teigha.Runtime;
 using BricsCadRc.Core;
 using BricsCadRc.Dialogs;
@@ -99,6 +101,189 @@ namespace BricsCadRc.Commands
             {
                 ed.WriteMessage($"\n[RC_PUNCHING_TAG] EXCEPTION: {ex.Message}");
             }
+        }
+
+        [CommandMethod("RC_PUNCHING_SUMMARY_BARS")]
+        public static void RcPunchingSummaryBars()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc.Editor;
+            var db  = doc.Database;
+
+            try
+            {
+                PunchingTagEngine.PhCountTotals totals;
+                try
+                {
+                    totals = PunchingTagEngine.ReadPhCountsFromActiveDrawing(doc);
+                }
+                catch (InvalidOperationException ioe)
+                {
+                    ed.WriteMessage($"\n{ioe.Message}");
+                    return;
+                }
+
+                if (totals.TotalForPos501 == 0 && totals.TotalForPos502 == 0)
+                {
+                    ed.WriteMessage(
+                        "\n[RC_PUNCHING_SUMMARY_BARS] No PH counts found in " +
+                        "AP-TEXT MTEXTs — run RC_PUNCHING_TAG first.");
+                    return;
+                }
+
+                var dlg = new PunchingSummaryDialog(totals);
+                if (Application.ShowModalWindow(dlg) != true) return;
+
+                // Collect placement points outside document lock
+                var placements = new List<(int posNr, int realCount, Point3d insertPt)>();
+
+                if (dlg.Wants501)
+                {
+                    var ptRes = ed.GetPoint(
+                        "\nClick placement point for Poz. 501 (H12 × 2250mm): ");
+                    if (ptRes.Status != PromptStatus.OK) return;
+                    placements.Add((501, dlg.Count501, ptRes.Value));
+                }
+
+                if (dlg.Wants502)
+                {
+                    var ptRes = ed.GetPoint(
+                        "\nClick placement point for Poz. 502 (H16 × 2500mm): ");
+                    if (ptRes.Status != PromptStatus.OK) return;
+                    placements.Add((502, dlg.Count502, ptRes.Value));
+                }
+
+                using (doc.LockDocument())
+                {
+                    foreach (var (posNr, realCount, insertPt) in placements)
+                    {
+                        int    dia     = posNr == 501 ? 12 : 16;
+                        double lenA    = posNr == 501 ? 2250.0 : 2500.0;
+                        const  string layerCode = "T1";
+
+                        // 1) RC_BAR — elevation polyline
+                        var elevBar = BuildSummaryBarData(dia, posNr, lenA, layerCode);
+                        elevBar.Mark = BarData.FormatMark(dia, posNr, 0, 1);  // "H12-501"
+                        ObjectId barId = SingleBarEngine.PlaceBar(db, elevBar, insertPt);
+
+                        // 2) Elevation label: arrow at bar body, text above-right
+                        Point3d textPt = new Point3d(
+                            insertPt.X + lenA * 0.5,
+                            insertPt.Y + 200.0, 0);
+                        Point3d arrowTip;
+                        using (var trTip = db.TransactionManager.StartTransaction())
+                        {
+                            arrowTip = SingleBarEngine.GetBarArrowTip(barId, elevBar, textPt, trTip);
+                            trTip.Commit();
+                        }
+                        ObjectId labelId = SingleBarEngine.PlaceBarLabel(
+                            db, arrowTip, textPt, elevBar.Mark, barId);
+                        if (!labelId.IsNull)
+                        {
+                            using (var trLbl = db.TransactionManager.StartTransaction())
+                            {
+                                var barEnt = trLbl.GetObject(barId, OpenMode.ForWrite) as Entity;
+                                if (barEnt != null)
+                                {
+                                    elevBar.LabelHandle = labelId.Handle.ToString();
+                                    SingleBarEngine.WriteXData(barEnt, elevBar);
+                                }
+                                trLbl.Commit();
+                            }
+                        }
+
+                        // 3) RC_DISTRIBUTION — 1 bar drawn visually, realCount in XData
+                        var distBar = BuildSummaryBarData(dia, posNr, lenA, layerCode);
+                        distBar.Mark            = BarData.FormatMark(dia, posNr, 1000.0, 2); // "H12-501-1000"
+                        distBar.Spacing         = 1000.0;
+                        distBar.Direction       = "X";
+                        distBar.Count           = 0;   // auto-calc → 1 (span 100 < spacing 1000)
+                        distBar.SourceBarHandle = barId.Handle.Value.ToString("X8");
+
+                        // Place 1000mm below RC_BAR; span=100mm gives count=1
+                        const double distOffset = 1000.0;
+                        const double cover      = 40.0;
+                        double distX0 = insertPt.X;
+                        double distX1 = insertPt.X + lenA;
+                        double distY0 = insertPt.Y - distOffset - cover;
+                        double distY1 = distY0 + 100.0;
+
+                        var barResult = BarBlockEngine.GenerateFromBounds(
+                            db, distX0, distY0, distX1, distY1,
+                            distBar, horizontal: true, posNr: posNr);
+
+                        if (!barResult.IsValid)
+                        {
+                            ed.WriteMessage(
+                                $"\n[RC_PUNCHING_SUMMARY_BARS] Failed to generate " +
+                                $"distribution for poz. {posNr} — skipping.");
+                            continue;
+                        }
+
+                        // Override XData Count = realCount (RC_SCHEDULE reads this)
+                        using (var trCount = db.TransactionManager.StartTransaction())
+                        {
+                            var brCount = trCount.GetObject(
+                                barResult.BlockRefId, OpenMode.ForWrite) as BlockReference;
+                            if (brCount != null)
+                            {
+                                var xd = BarBlockEngine.ReadXData(brCount);
+                                if (xd != null)
+                                {
+                                    xd.Count = realCount;
+                                    BarBlockEngine.WriteXData(brCount, xd);
+                                }
+                            }
+                            trCount.Commit();
+                        }
+
+                        // 4) Annotation leader (visual based on Count=1, label on EffectiveCount)
+                        distBar.CountDisplay = realCount;  // label shows real total
+                        // distBar.Count = 1 (set by GenerateFromBounds auto-calc)
+                        // distBar.BarsSpan = 100mm (set by GenerateFromBounds)
+
+                        var annotResult = AnnotationEngine.CreateLeader(
+                            db, barResult, distBar,
+                            leaderHorizontal: true, posNr: posNr,
+                            barsHorizontal: true,
+                            leaderRight: true, leaderUp: true);
+
+                        if (annotResult.BlockRefId != ObjectId.Null)
+                            BarBlockEngine.LinkAnnotation(
+                                db, barResult.BlockRefId, annotResult.BlockRefId);
+
+                        // 5) Reserve position number
+                        PositionCounter.CommitUsed(db, posNr);
+
+                        ed.WriteMessage(
+                            $"\n[RC_PUNCHING_SUMMARY_BARS] Poz. {posNr}: " +
+                            $"{distBar.Mark} × {realCount}");
+                    }
+                }
+
+                ed.WriteMessage(
+                    $"\n[RC_PUNCHING_SUMMARY_BARS] Done — " +
+                    $"{placements.Count} position(s) created.");
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage(
+                    $"\n[RC_PUNCHING_SUMMARY_BARS] EXCEPTION: {ex.Message}");
+            }
+        }
+
+        private static BarData BuildSummaryBarData(
+            int dia, int posNr, double lengthA, string layerCode)
+        {
+            return new BarData
+            {
+                Diameter  = dia,
+                ShapeCode = "00",
+                LengthA   = lengthA,
+                LayerCode = layerCode,
+                Position  = "TOP",
+                Cover     = 40.0,
+            };
         }
 
         [CommandMethod("RC_PUNCHING_TAG_DEBUG")]
