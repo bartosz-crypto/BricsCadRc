@@ -770,7 +770,7 @@ namespace BricsCadRc.Core
                     var ent = tr.GetObject(oid, OpenMode.ForRead) as Entity;
                     if (!(ent is Polyline pl)) continue;
 
-                    var sxd = SingleBarEngine.ReadXData(pl);
+                    var sxd = SingleBarEngine.ReadBarXData(pl);
                     if (sxd == null || !IsSummaryMark(sxd.Mark)) continue;
 
                     summaryPolylineHandles.Add(pl.Handle.Value);
