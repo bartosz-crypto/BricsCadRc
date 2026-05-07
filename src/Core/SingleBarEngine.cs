@@ -82,10 +82,12 @@ namespace BricsCadRc.Core
             var entities = BuildVisualEntities(shape, bar.ParamValues, bar.Diameter,
                                                insertPt, new Vector3d(1, 0, 0));
 
-            string layerName = LayerManager.GetLayerName(bar.LayerCode);
+            // RC_BAR template (elevation view) on LeaderLayer (white, color 7).
+            // BarData.LayerCode drives distribution bars inside RC_BAR_BLOCK,
+            // not the elevation template.
             foreach (var ent in entities)
             {
-                ent.Layer      = layerName;
+                ent.Layer      = LayerManager.LeaderLayer;
                 ent.ColorIndex = 256;
                 ent.LineWeight = LineWeight.LineWeight000;
             }
