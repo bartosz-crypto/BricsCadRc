@@ -624,54 +624,6 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
-        /// <summary>
-        /// Przesuwa ostatni segment leadera (kink + lastPt) o podaną deltę WCS.
-        /// Zachowuje kąt wszystkich segmentów — tylko ostatnie dwa punkty są przesunięte.
-        /// </summary>
-        public static void UpdateLastSegment(BlockReference br, Vector3d shiftWCS)
-        {
-            var db = br.Database;
-            using var tr = db.TransactionManager.StartTransaction();
-            var brRw = tr.GetObject(br.ObjectId, OpenMode.ForWrite) as BlockReference;
-            if (brRw == null) { tr.Commit(); return; }
-
-            var bar = ReadAnnotXData(brRw);
-            if (bar == null) { tr.Commit(); return; }
-
-            var inv = brRw.BlockTransform.Inverse();
-            var shiftLocal = shiftWCS.TransformBy(inv);
-
-            var pts = DecodeLeaderPoints(bar.LeaderPoints);
-            if (pts.Count < 2) { tr.Commit(); return; }
-
-            if (pts.Count >= 3)
-                pts[pts.Count - 2] = pts[pts.Count - 2] + shiftLocal;
-            pts[pts.Count - 1] = pts[pts.Count - 1] + shiftLocal;
-
-            bar.LeaderPoints = EncodeLeaderPoints(pts);
-
-            var btr = (BlockTableRecord)tr.GetObject(
-                brRw.BlockTableRecord, OpenMode.ForWrite);
-            var idsToErase = new List<ObjectId>();
-            foreach (ObjectId eid in btr)
-            {
-                var ent = tr.GetObject(eid, OpenMode.ForRead);
-                if (ent is Line ln && ln.Linetype == "Continuous")
-                    idsToErase.Add(eid);
-                if (ent is DBText) idsToErase.Add(eid);
-            }
-            foreach (var eid in idsToErase)
-            {
-                var ent = tr.GetObject(eid, OpenMode.ForWrite);
-                ent.Erase();
-            }
-
-            BuildMLeaderInBtr(tr, btr, db, bar, pts);
-            WriteAnnotXData(brRw, bar);
-            tr.Commit();
-        }
-
-        // ----------------------------------------------------------------
         public static void UpdateLastSegmentWithShift(
             BlockReference br, Vector3d perpShiftWCS, Vector3d alongShiftWCS)
         {
