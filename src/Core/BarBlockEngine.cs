@@ -587,6 +587,7 @@ namespace BricsCadRc.Core
 
             bar.Count    = newCount;
             bar.Spacing  = newSpacing;
+            BarData.TryUpdateAutoMarkSpacing(bar, newSpacing);  // p331: aktualizuj spacing w Mark
             bar.Cover    = newCover;
             if (newLengthA.HasValue && newLengthA.Value > 0)
                 bar.LengthA = newLengthA.Value;

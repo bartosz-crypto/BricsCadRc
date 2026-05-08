@@ -265,5 +265,35 @@ namespace BricsCadRc.Core
                 bar.Mark = newBase + suffixPart;
             }
         }
+
+        /// <summary>
+        /// Aktualizuje komponent spacing zaszyty w bar.Mark gdy Mark ma format
+        /// auto-generated ("H{d}-{posNr}-{spacing} {optional_suffix}").
+        /// Np. "H10-01-200 B1" + newSpacing=100 → "H10-01-100 B1".
+        ///
+        /// Działanie tylko gdy regex matchuje format auto-spacing — custom labels
+        /// (np. "H10-01-CUSTOM" lub po RC_EDIT_LABEL z dowolnym tekstem) zostają
+        /// nietknięte (de-facto manual override przez nie-dopasowanie regex).
+        ///
+        /// Komplementarna do PromoteMarkIfPurePrefix:
+        ///   - PromoteMarkIfPurePrefix: "H10-01" (pure prefix) → "H10-01-{spacing}"
+        ///   - TryUpdateAutoMarkSpacing: "H10-01-{old}" → "H10-01-{new}"
+        /// Mutual exclusive — pure prefix nie matchuje regex tutaj, auto-spacing
+        /// nie matchuje pure-prefix check tam.
+        /// </summary>
+        public static void TryUpdateAutoMarkSpacing(BarData bar, double newSpacing)
+        {
+            if (bar == null || string.IsNullOrEmpty(bar.Mark)) return;
+
+            // Pattern: H{diam}-{posNr}-{spacing}{optional " suffix"}
+            // - group 1: prefix "H10-01-" (zachowany)
+            // - group 2: spacing "200" (do zastąpienia)
+            // - group 3: optional " B1" (zachowany jeśli istnieje)
+            var m = System.Text.RegularExpressions.Regex.Match(
+                bar.Mark, @"^(H\d+-\d+-)(\d+)( .*)?$");
+            if (!m.Success) return; // custom Mark — nie tykać
+
+            bar.Mark = m.Groups[1].Value + (int)newSpacing + (m.Groups[3].Success ? m.Groups[3].Value : "");
+        }
     }
 }
