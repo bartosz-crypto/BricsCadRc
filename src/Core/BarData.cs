@@ -29,6 +29,9 @@ namespace BricsCadRc.Core
         /// <summary>Czy rozstaw pojawia się w oznaczeniu Mark. Domyślnie true.</summary>
         public bool ShowSpacing { get; set; } = true;
 
+        /// <summary>True gdy Mark był ręcznie edytowany przez RC_EDIT_LABEL — blokuje auto-update spacingu.</summary>
+        public bool IsLabelManual { get; set; } = false;
+
         /// <summary>Efektywna liczba prętów do wyświetlania — CountDisplay jeśli ustawiony, w przeciwnym razie Count.</summary>
         public int EffectiveCount => CountDisplay ?? Count;
 
@@ -249,6 +252,7 @@ namespace BricsCadRc.Core
             if (bar == null || string.IsNullOrEmpty(bar.Mark)) return;
             if (!bar.ShowSpacing) return;
             if (bar.Count <= 1 || bar.Spacing <= 0) return;
+            if (bar.IsLabelManual) return;  // p334: respect manual override
 
             // Split po pierwszej spacji: base + (opcjonalnie " " + suffix)
             int spaceIdx = bar.Mark.IndexOf(' ');
@@ -284,6 +288,7 @@ namespace BricsCadRc.Core
         public static void TryUpdateAutoMarkSpacing(BarData bar, double newSpacing)
         {
             if (bar == null || string.IsNullOrEmpty(bar.Mark)) return;
+            if (bar.IsLabelManual) return;  // p334: respect manual override
 
             // Pattern: H{diam}-{posNr}-{spacing}{optional " suffix"}
             // - group 1: prefix "H10-01-" (zachowany)

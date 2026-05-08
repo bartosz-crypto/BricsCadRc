@@ -1417,7 +1417,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? ""), // [17] — punkty leadera "x1,y1;x2,y2;..."
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),            // [18]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),          // [19]
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)) // [20] CountDisplay (-1 = null)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [20] CountDisplay (-1 = null)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0))  // [21] IsLabelManual
             );
         }
 
@@ -1462,6 +1463,14 @@ namespace BricsCadRc.Core
                 catch { bd.CountDisplay = null; }
             }
             else bd.CountDisplay = null;
+
+            if (v.Length >= 22)
+            {
+                try { bd.IsLabelManual = (short)v[21].Value != 0; }
+                catch { bd.IsLabelManual = false; }
+            }
+            else bd.IsLabelManual = false;
+
             return bd;
         }
 

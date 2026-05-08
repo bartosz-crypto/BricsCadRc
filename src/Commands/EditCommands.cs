@@ -744,6 +744,7 @@ namespace BricsCadRc.Commands
                 bar.VisibilityMode = dlg.ResultVisibility;
                 bar.VisibleIndices = newVisibleIndices;
                 // bar.Diameter — nie zmieniamy, pochodzi z pręta
+                bar.IsLabelManual  = true;  // p334: manual override after RC_EDIT_LABEL
 
                 AnnotationEngine.WriteAnnotXData(br, bar);
 
@@ -764,9 +765,10 @@ namespace BricsCadRc.Commands
                                 var barBlock = BarBlockEngine.ReadXData(brBlock);
                                 if (barBlock != null)
                                 {
-                                    barBlock.Mark         = bar.Mark;
-                                    barBlock.CountDisplay = bar.CountDisplay;
-                                    barBlock.ShowSpacing  = dlg.ResultShowSpacing;
+                                    barBlock.Mark          = bar.Mark;
+                                    barBlock.CountDisplay  = bar.CountDisplay;
+                                    barBlock.ShowSpacing   = dlg.ResultShowSpacing;
+                                    barBlock.IsLabelManual = true;  // p334: manual override sync
                                     BarBlockEngine.WriteXData(brBlock, barBlock);
                                 }
                             }
