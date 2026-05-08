@@ -50,8 +50,7 @@ namespace BricsCadRc.App
             var src = new RibbonPanelSource { Title = "Zbrojenie", Id = "RC_PANEL_GEN" };
 
             src.Items.Add(MakeButton("Generuj z plyty", "RC_GENERATE_SLAB", "Generuje prety w obrysie polilinii plyty (z otuling)"));
-            src.Items.Add(MakeButton("Generuj B1/B2",   "RC_GENERATE_BOT",  "Generuje uklad pretow - dolna warstwa (B1 i B2) [prostokat]"));
-            src.Items.Add(MakeButton("Generuj T1/T2",   "RC_GENERATE_TOP",  "Generuje uklad pretow - gorna warstwa (T1 i T2) [prostokat]"));
+            src.Items.Add(MakeButton("Generuj B1",      "RC_GENERUJ_B1",    "Auto-generuje dolna warstwe B1 (H10-XX, rozstaw 200) z biblioteki rebar_bottom"));
 
             return new RibbonPanel { Source = src };
         }

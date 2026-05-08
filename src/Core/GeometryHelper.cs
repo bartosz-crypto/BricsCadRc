@@ -71,6 +71,30 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Polyline is "effectively closed" if pl.Closed=true OR last vertex == first vertex.
+        /// Both patterns render identically; different DXF/DWG generators produce one or other.
+        /// </summary>
+        public static bool IsEffectivelyClosed(Polyline pl, double tol = 1e-3)
+        {
+            if (pl == null || pl.NumberOfVertices < 3) return false;
+            if (pl.Closed) return true;
+            var first = pl.GetPoint2dAt(0);
+            var last  = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+            return first.GetDistanceTo(last) < tol;
+        }
+
+        /// <summary>
+        /// Snap value down to nearest grid multiple, clamped to [min, max].
+        /// Returns -1 if value below min (caller should error).
+        /// </summary>
+        public static double SnapDownToGrid(double value, double gridSize, double min, double max)
+        {
+            if (value < min) return -1;
+            if (value > max) value = max;
+            return Math.Floor(value / gridSize) * gridSize;
+        }
+
+        /// <summary>
         /// Infer bar direction from polyline first segment geometry.
         /// Returns "X" (horizontal) when |dx| &gt;= |dy|, "Y" otherwise.
         /// Reliable for axis-aligned bars; returns "X" for diagonal bars.
