@@ -37,6 +37,15 @@ namespace BricsCadRc.Core
         /// </summary>
         public const double LeaderArmExtension  = 2400.0;
 
+        /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
+        public const double MaxLastBarDistanceFromEdge = 70.0;
+
+        /// <summary>Hard lower bound for adjusted spacing (below this -> reject adjustment).</summary>
+        public const double MinAdjustedSpacing = 192.0;
+
+        /// <summary>Soft lower bound for adjusted spacing (below 194, above 192 -> accept with warning).</summary>
+        public const double SoftMinAdjustedSpacing = 194.0;
+
         // ----------------------------------------------------------------
         // Public entry point
         // ----------------------------------------------------------------
@@ -399,21 +408,84 @@ namespace BricsCadRc.Core
             int diameter, double snappedLen, double spacing,
             string layerCode, string filterDirection)
         {
-            // Cover-inset bounds (GenerateFromBounds expects post-cover bounds)
-            double x0 = slabBbox.MinPoint.X + cover;
-            double y0 = slabBbox.MinPoint.Y + cover;
-            double x1 = slabBbox.MaxPoint.X - cover;
-            double y1 = slabBbox.MaxPoint.Y - cover;
-
+            // Bar geometry: anchored to slab origin corner (cover offset),
+            // length = template snappedLen (NOT slab span).
+            // Multi-distribution for slab spans > snappedLen + 2*cover: TBD (future Etap).
+            //
+            // For B1 (horizontal): bar axis along X, snappedLen sets x-span.
+            //                       Distribution stack along Y, slab covers y-span.
+            // For B2 (vertical):    swapped (snappedLen sets y-span, slab covers x-span).
             bool horizontal = filterDirection == "X";
             int  posNr      = SingleBarEngine.ExtractPosNr(templateBar.Mark);
             if (posNr <= 0) posNr = 1;
 
+            double x0, y0, x1, y1;
+            if (horizontal)
+            {
+                x0 = slabBbox.MinPoint.X + cover;
+                x1 = x0 + snappedLen;                          // bar end = start + template length
+                y0 = slabBbox.MinPoint.Y + cover;
+                y1 = slabBbox.MaxPoint.Y - cover;
+            }
+            else
+            {
+                x0 = slabBbox.MinPoint.X + cover;
+                x1 = slabBbox.MaxPoint.X - cover;
+                y0 = slabBbox.MinPoint.Y + cover;
+                y1 = y0 + snappedLen;
+            }
+
+            // Compute adjusted spacing if needed (last bar too far from slab edge)
+            // For B1 (horizontal): bars stack along Y axis, availableSpan = y1 - y0,
+            //                       slabSpan = slabBbox.MaxY - slabBbox.MinY
+            // For B2 (vertical):   bars stack along X axis (analogous - flag for Etap 2)
+            double availableSpan = horizontal
+                ? (y1 - y0)
+                : (x1 - x0);
+            double slabSpanTotal = horizontal
+                ? (slabBbox.MaxPoint.Y - slabBbox.MinPoint.Y)
+                : (slabBbox.MaxPoint.X - slabBbox.MinPoint.X);
+
+            var (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
+                availableSpan, spacing, cover, slabSpanTotal);
+
+            // Emit warning for adjustment statuses
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc?.Editor;
+            if (adjustStatus == 2 && ed != null)
+            {
+                ed.WriteMessage(
+                    $"\n*** WARNING *** [AutoRebar] Adjusted spacing {effectiveSpacing:F1}mm " +
+                    $"is below soft minimum 194mm but above hard minimum 192mm. Label will show nominal 200mm.\n");
+            }
+            else if (adjustStatus == 3 && ed != null)
+            {
+                ed.WriteMessage(
+                    $"\n*** WARNING *** [AutoRebar] Cannot adjust spacing - would require < 192mm. " +
+                    $"Keeping nominal {spacing:F0}mm; last bar will be > 70mm from edge.\n");
+            }
+            else if (adjustStatus == 1 && ed != null)
+            {
+                ed.WriteMessage(
+                    $"\n[AutoRebar] Adjusted spacing to {effectiveSpacing:F1}mm to keep last bar " +
+                    $"within 70mm of slab edge. Label shows nominal 200mm.\n");
+            }
+
             // Step 3: build distBar — Mark with spacing + " {layerCode}" suffix (issue #3 fix)
             var distBar = BuildBarData(diameter, posNr, snappedLen, layerCode);
+            // Mark uses NOMINAL spacing (e.g. 200) - actual effective spacing may differ.
             string baseMark     = BarData.FormatMark(diameter, posNr, spacing, 2);  // "H10-01-200"
             distBar.Mark        = $"{baseMark} {layerCode}";                         // "H10-01-200 B1"
-            distBar.Spacing     = spacing;
+            distBar.Spacing     = effectiveSpacing;  // ACTUAL geometric spacing (may differ from nominal)
+
+            // IsLabelManual=true ZAWSZE gdy bylo adjustment (status 1, 2, lub 3 z keep-nominal).
+            // Powod: jesli IsLabelManual=false i adjustment status=1, kolejne RC_EDIT_DISTRIBUTION
+            // wywola TryUpdateAutoMarkSpacing(bar, 198.0) -> Mark zmieni sie na "H10-01-198 B1"
+            // (regex match), co lamie "label pokazuje nominal" requirement.
+            // Status=3 (reject + keep nominal spacing) tez IsLabelManual=true defensywnie -
+            // user moze ja pozniej manualnie obnizyc, chcemy zachowac "200" label.
+            if (adjustStatus != 0)
+                distBar.IsLabelManual = true;
             distBar.Direction   = filterDirection;
             distBar.Count       = 0;   // auto-calc by GenerateFromBounds
             distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");     // X8 padded (issue #4 fix)
@@ -434,12 +506,37 @@ namespace BricsCadRc.Core
                 new Point3d(0, armEndY, 0),  // end   — Y preserved = last bar + 2400mm
             });
 
+            // Step 3.6: custom insertPt for annot block.
+            // Default insertPt in CreateLeader = (MaxX + AnnotDefaultOffset=300, MinY, 0)
+            // = 300mm to the right of distribution = POZA OBRYSEM PLYTY for AutoRebar
+            // use case. We want annot centered on dist line span:
+            //   B1/T1 (horizontal bars):  X = mid-span, Y = first bar Y
+            //   B2/T2 (vertical bars):    X = first bar X, Y = mid-span (axis swap)
+            Point3d annotInsertPt;
+            if (horizontal)
+            {
+                // Dist line wzdluz Y (X-bars), srodek wzdluz X osi pretow
+                annotInsertPt = new Point3d(
+                    barResult.MinPoint.X + snappedLen / 2.0,
+                    barResult.MinPoint.Y,
+                    0);
+            }
+            else
+            {
+                // Dist line wzdluz X (Y-bars), srodek wzdluz Y osi pretow
+                annotInsertPt = new Point3d(
+                    barResult.MinPoint.X,
+                    barResult.MinPoint.Y + snappedLen / 2.0,
+                    0);
+            }
+
             // Step 4: annotation leader
             // leaderHorizontal=false → straight arm parallel to dist line span axis
             // (extension of dist line, not L-shape with sideways text).
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
+                customInsertPt: annotInsertPt,
                 barsHorizontal: horizontal, leaderRight: true, leaderUp: true);
 
             // Step 5: CRITICAL — bidirectional link dist ↔ annot (issue #2, #5 fix)
@@ -448,6 +545,13 @@ namespace BricsCadRc.Core
 
             // Step 6: register posNr (idempotent if already committed from template creation)
             PositionCounter.CommitUsed(db, posNr);
+
+            // Step 7: show outline — mirrors post-creation implied-selection trigger in RC_DISTRIBUTION
+            BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
+
+            // Step 8: update template bar MLeader count label
+            AnnotationEngine.UpdateBarLabelCount(
+                db, distBar.SourceBarHandle ?? "", markOverride: distBar.Mark);
 
             return true;
         }
@@ -466,6 +570,40 @@ namespace BricsCadRc.Core
                 Cover      = DefaultCover,
                 Count      = 1,
             };
+        }
+
+        /// <summary>
+        /// Compute adjusted spacing to satisfy max-distance-from-edge constraint.
+        /// Returns (adjustedSpacing, status) where status is:
+        ///   0 = no adjustment needed (nominal spacing OK)
+        ///   1 = adjustment applied silently (new spacing >= 194)
+        ///   2 = adjustment applied with warning (192 <= new spacing &lt; 194)
+        ///   3 = adjustment rejected (new spacing &lt; 192) - returns nominal spacing
+        /// </summary>
+        private static (double adjustedSpacing, int status) ComputeAdjustedSpacing(
+            double availableSpan, double nominalSpacing, double cover, double slabSpan)
+        {
+            // Nominal count (jak GenerateFromBounds: count = floor(span/spacing) + 1)
+            int nominalCount = (int)Math.Floor(availableSpan / nominalSpacing) + 1;
+
+            // Last bar Y position (relative to slab origin, accounting for cover offset y0)
+            double nominalLastBarY = cover + (nominalCount - 1) * nominalSpacing;
+            double nominalDistanceToEdge = slabSpan - nominalLastBarY;
+
+            if (nominalDistanceToEdge <= MaxLastBarDistanceFromEdge)
+                return (nominalSpacing, 0);  // no adjustment needed
+
+            // Try adding 1 more bar: new count = nominalCount + 1
+            // New spacing fills full availableSpan: span / (count - 1)
+            int newCount = nominalCount + 1;
+            double newSpacing = availableSpan / (newCount - 1);
+
+            if (newSpacing >= SoftMinAdjustedSpacing)
+                return (newSpacing, 1);  // silent acceptance
+            if (newSpacing >= MinAdjustedSpacing)
+                return (newSpacing, 2);  // accept with warning
+
+            return (nominalSpacing, 3);  // reject - geometric impossibility
         }
     }
 }

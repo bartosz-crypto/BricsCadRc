@@ -86,7 +86,8 @@ namespace BricsCadRc.Core
                        cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
                     || cmd == "MIRROR" || cmd.StartsWith("ARRAY")
-                    || cmd == "RC_DISTRIBUTION" || cmd == "RC_BAR_BLOCK" || cmd == "RC_BAR";
+                    || cmd == "RC_DISTRIBUTION" || cmd == "RC_BAR_BLOCK" || cmd == "RC_BAR"
+                    || cmd.StartsWith("RC_GENERUJ");
 
                 if (shouldClear)
                 {
