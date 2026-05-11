@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
@@ -36,6 +37,15 @@ namespace BricsCadRc.Core
         /// Text lands at (anchorX, BarsSpan + LeaderArmExtension) in local block coords.
         /// </summary>
         public const double LeaderArmExtension  = 2400.0;
+
+        /// <summary>Minimum overlap between adjacent distributions (hard).</summary>
+        public const double OverlapMin    = 400.0;
+
+        /// <summary>Target overlap (algorithm aims for this value).</summary>
+        public const double OverlapTarget = 500.0;
+
+        /// <summary>Maximum overlap (hard).</summary>
+        public const double OverlapMax    = 650.0;
 
         /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
         public const double MaxLastBarDistanceFromEdge = 70.0;
@@ -79,50 +89,83 @@ namespace BricsCadRc.Core
             }
             if (plan == null) return -1;
 
-            ObjectId templateBarId = ObjectId.Null;
-            BarData  templateBar   = null;
-            bool     templateReused;
+            // Compute available span (for B1 horizontal: along X; for B2 vertical: along Y)
+            bool horizontal = filterDirection == "X";
+            double available = horizontal
+                ? plan.SlabBbox.MaxPoint.X - plan.SlabBbox.MinPoint.X - 2 * cover
+                : plan.SlabBbox.MaxPoint.Y - plan.SlabBbox.MinPoint.Y - 2 * cover;
 
+            var distPlan = ComputeDistributionPlan(available, spacing);
+            if (distPlan.Count == 0)
+            {
+                ed.WriteMessage("\n[AutoRebar] Brak prawidłowego rozwiązania multi-distribution.\n");
+                return -1;
+            }
+
+            ed.WriteMessage($"\n[AutoRebar] Plan: {distPlan.Count} rozkład(ów), długości: " +
+                string.Join(", ", distPlan.Select(d => $"{d.length:F0}mm")) + "\n");
+
+            int generated = 0;
             using (doc.LockDocument())
             {
                 // Phase 2a: cleanup old distributions on this slab
                 EraseOldDistributions(db, plan.OldDistributionsToErase);
 
-                // Phase 2b: get existing template OR create new
-                if (plan.MatchedTemplate.HasValue)
+                // Phase 2b+c: per-dist template ensure + distribution generate
+                foreach (var (xOffset, length) in distPlan)
                 {
-                    templateBarId  = plan.MatchedTemplate.Value.id;
-                    templateBar    = plan.MatchedTemplate.Value.bar;
-                    templateReused = true;
-                    ed.WriteMessage($"\n[AutoRebar] Reusing template {templateBar.Mark} L={plan.SnappedLen}mm\n");
-                }
-                else
-                {
-                    (templateBarId, templateBar) = CreateNewTemplate(
-                        db, plan.RebarBbox, plan.ExistingTemplateCount,
-                        diameter, plan.SnappedLen, layerCode);
-                    templateReused = false;
-                    ed.WriteMessage($"\n[AutoRebar] Utworzono template {templateBar.Mark} L={plan.SnappedLen}mm w {sourceLayer}\n");
-                }
+                    ObjectId templateBarId = ObjectId.Null;
+                    BarData  templateBar   = null;
+                    bool     templateReused = false;
 
-                // Phase 2c: distribution + annotation chain (mirrors RC_PUNCHING_SUMMARY_BARS)
-                bool ok = GenerateDistributionWithLeader(
-                    db, plan.SlabBbox, cover,
-                    templateBarId, templateBar,
-                    diameter, plan.SnappedLen, spacing, layerCode, filterDirection);
+                    // Try match existing template by length (re-scan per dist for freshness)
+                    using (var trMatch = db.TransactionManager.StartTransaction())
+                    {
+                        var freshTemplates = ScanTemplates(db, trMatch, plan.RebarBbox, filterDirection, diameter);
+                        foreach (var (tid, tb) in freshTemplates)
+                        {
+                            if (Math.Abs(tb.LengthA - length) < 1.0)
+                            {
+                                templateBarId  = tid;
+                                templateBar    = tb;
+                                templateReused = true;
+                                break;
+                            }
+                        }
+                        trMatch.Commit();
+                    }
 
-                if (!ok)
-                {
-                    ed.WriteMessage("\n[AutoRebar] Generowanie rozkładu nie powiodło się.\n");
-                    return -1;
+                    if (!templateReused)
+                    {
+                        int existingCount;
+                        using (var trCount = db.TransactionManager.StartTransaction())
+                        {
+                            var freshTemplates = ScanTemplates(db, trCount, plan.RebarBbox, filterDirection, diameter);
+                            existingCount = freshTemplates.Count;
+                            trCount.Commit();
+                        }
+
+                        (templateBarId, templateBar) = CreateNewTemplate(
+                            db, plan.RebarBbox, existingCount, diameter, length, layerCode);
+                        ed.WriteMessage($"\n[AutoRebar] Utworzono template {templateBar.Mark} L={length:F0}mm\n");
+                    }
+                    else
+                    {
+                        ed.WriteMessage($"\n[AutoRebar] Reusing template {templateBar.Mark} L={length:F0}mm\n");
+                    }
+
+                    bool ok = GenerateDistributionWithLeaderAtOffset(
+                        db, plan.SlabBbox, cover, xOffset,
+                        templateBarId, templateBar,
+                        diameter, length, spacing, layerCode, filterDirection);
+
+                    if (ok) generated++;
                 }
             }
 
             ed.WriteMessage(
-                $"\n[AutoRebar] Wygenerowano rozkład {layerCode}: {templateBar.Mark} " +
-                $"L={plan.SnappedLen}mm spacing={spacing}mm " +
-                $"({(templateReused ? "reused" : "created")} template).\n");
-            return 1;
+                $"\n[AutoRebar] Wygenerowano {generated} z {distPlan.Count} rozkładów {layerCode}.\n");
+            return generated;
         }
 
         // ----------------------------------------------------------------
@@ -399,31 +442,27 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// Generates distribution on slab + annotation leader + bidirectional link.
-        /// Mirrors RC_PUNCHING_SUMMARY_BARS chain steps 3–5.
+        /// Generates single distribution + annotation at given x-offset within slab.
+        /// For multi-distribution: offset shifts bar bounds along distribution axis.
+        /// Length passed explicitly (per-dist, from ComputeDistributionPlan).
         /// </summary>
-        private static bool GenerateDistributionWithLeader(
-            Database db, Extents3d slabBbox, double cover,
+        private static bool GenerateDistributionWithLeaderAtOffset(
+            Database db, Extents3d slabBbox, double cover, double xOffset,
             ObjectId templateBarId, BarData templateBar,
-            int diameter, double snappedLen, double spacing,
+            int diameter, double length, double spacing,
             string layerCode, string filterDirection)
         {
-            // Bar geometry: anchored to slab origin corner (cover offset),
-            // length = template snappedLen (NOT slab span).
-            // Multi-distribution for slab spans > snappedLen + 2*cover: TBD (future Etap).
-            //
-            // For B1 (horizontal): bar axis along X, snappedLen sets x-span.
-            //                       Distribution stack along Y, slab covers y-span.
-            // For B2 (vertical):    swapped (snappedLen sets y-span, slab covers x-span).
             bool horizontal = filterDirection == "X";
-            int  posNr      = SingleBarEngine.ExtractPosNr(templateBar.Mark);
-            if (posNr <= 0) posNr = 1;
 
+            // Bounds: bar at xOffset within slab+cover region.
+            // For horizontal: x ∈ [slabMinX+cover+xOffset, slabMinX+cover+xOffset+length]
+            //                 y ∈ [slabMinY+cover, slabMaxY-cover]
+            // For vertical: axes swapped.
             double x0, y0, x1, y1;
             if (horizontal)
             {
-                x0 = slabBbox.MinPoint.X + cover;
-                x1 = x0 + snappedLen;                          // bar end = start + template length
+                x0 = slabBbox.MinPoint.X + cover + xOffset;
+                x1 = x0 + length;
                 y0 = slabBbox.MinPoint.Y + cover;
                 y1 = slabBbox.MaxPoint.Y - cover;
             }
@@ -431,17 +470,11 @@ namespace BricsCadRc.Core
             {
                 x0 = slabBbox.MinPoint.X + cover;
                 x1 = slabBbox.MaxPoint.X - cover;
-                y0 = slabBbox.MinPoint.Y + cover;
-                y1 = y0 + snappedLen;
+                y0 = slabBbox.MinPoint.Y + cover + xOffset;
+                y1 = y0 + length;
             }
 
-            // Compute adjusted spacing if needed (last bar too far from slab edge)
-            // For B1 (horizontal): bars stack along Y axis, availableSpan = y1 - y0,
-            //                       slabSpan = slabBbox.MaxY - slabBbox.MinY
-            // For B2 (vertical):   bars stack along X axis (analogous - flag for Etap 2)
-            double availableSpan = horizontal
-                ? (y1 - y0)
-                : (x1 - x0);
+            double availableSpan = horizontal ? (y1 - y0) : (x1 - x0);
             double slabSpanTotal = horizontal
                 ? (slabBbox.MaxPoint.Y - slabBbox.MinPoint.Y)
                 : (slabBbox.MaxPoint.X - slabBbox.MinPoint.X);
@@ -449,110 +482,76 @@ namespace BricsCadRc.Core
             var (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
                 availableSpan, spacing, cover, slabSpanTotal);
 
-            // Emit warning for adjustment statuses
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
-            if (adjustStatus == 2 && ed != null)
+            if (adjustStatus != 0 && ed != null)
             {
-                ed.WriteMessage(
-                    $"\n*** WARNING *** [AutoRebar] Adjusted spacing {effectiveSpacing:F1}mm " +
-                    $"is below soft minimum 194mm but above hard minimum 192mm. Label will show nominal 200mm.\n");
-            }
-            else if (adjustStatus == 3 && ed != null)
-            {
-                ed.WriteMessage(
-                    $"\n*** WARNING *** [AutoRebar] Cannot adjust spacing - would require < 192mm. " +
-                    $"Keeping nominal {spacing:F0}mm; last bar will be > 70mm from edge.\n");
-            }
-            else if (adjustStatus == 1 && ed != null)
-            {
-                ed.WriteMessage(
-                    $"\n[AutoRebar] Adjusted spacing to {effectiveSpacing:F1}mm to keep last bar " +
-                    $"within 70mm of slab edge. Label shows nominal 200mm.\n");
+                string msg = adjustStatus == 1
+                    ? $"[AutoRebar] Adjusted spacing to {effectiveSpacing:F1}mm. Label nominal 200mm."
+                    : adjustStatus == 2
+                        ? $"*** WARNING *** [AutoRebar] Spacing {effectiveSpacing:F1}mm in soft-min range (192-194)."
+                        : $"*** WARNING *** [AutoRebar] Cannot adjust; last bar > 70mm from edge.";
+                ed.WriteMessage($"\n{msg}\n");
             }
 
-            // Step 3: build distBar — Mark with spacing + " {layerCode}" suffix (issue #3 fix)
-            var distBar = BuildBarData(diameter, posNr, snappedLen, layerCode);
-            // Mark uses NOMINAL spacing (e.g. 200) - actual effective spacing may differ.
-            string baseMark     = BarData.FormatMark(diameter, posNr, spacing, 2);  // "H10-01-200"
-            distBar.Mark        = $"{baseMark} {layerCode}";                         // "H10-01-200 B1"
-            distBar.Spacing     = effectiveSpacing;  // ACTUAL geometric spacing (may differ from nominal)
+            int posNr = SingleBarEngine.ExtractPosNr(templateBar.Mark);
+            if (posNr <= 0) posNr = 1;
 
-            // IsLabelManual=true ZAWSZE gdy bylo adjustment (status 1, 2, lub 3 z keep-nominal).
-            // Powod: jesli IsLabelManual=false i adjustment status=1, kolejne RC_EDIT_DISTRIBUTION
-            // wywola TryUpdateAutoMarkSpacing(bar, 198.0) -> Mark zmieni sie na "H10-01-198 B1"
-            // (regex match), co lamie "label pokazuje nominal" requirement.
-            // Status=3 (reject + keep nominal spacing) tez IsLabelManual=true defensywnie -
-            // user moze ja pozniej manualnie obnizyc, chcemy zachowac "200" label.
-            if (adjustStatus != 0)
-                distBar.IsLabelManual = true;
-            distBar.Direction   = filterDirection;
-            distBar.Count       = 0;   // auto-calc by GenerateFromBounds
-            distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");     // X8 padded (issue #4 fix)
+            var distBar = BuildBarData(diameter, posNr, length, layerCode);
+            string baseMark = BarData.FormatMark(diameter, posNr, spacing, 2);
+            distBar.Mark            = $"{baseMark} {layerCode}";
+            distBar.Spacing         = effectiveSpacing;
+            distBar.Direction       = filterDirection;
+            distBar.Count           = 0;
+            distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");
+            if (adjustStatus != 0) distBar.IsLabelManual = true;
 
-            // Step 3: distribution block
+            // Step 3: generate distribution block (sets distBar.BarsSpan via reference)
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1, y1, distBar, horizontal, posNr);
-
             if (!barResult.IsValid) return false;
 
-            // Step 3.5: pre-set leader points — arm from dist center to LeaderArmExtension above last bar.
-            // BuildHorizontal/Vertical skip default construction (mid-span + 500mm) when ≥2 pts decoded.
-            // Rescale pins pts[0].Y to BarsSpan/2; pts[1].Y is preserved.
-            double armEndY  = distBar.BarsSpan + LeaderArmExtension;
+            // Step 3.5: pre-set leader points using actual BarsSpan (set by GenerateFromBounds).
+            // pts[0].Y pinned to BarsSpan/2 by BuildH/V rescale; pts[1].Y preserved = last bar + 2400mm.
+            double armEndY = distBar.BarsSpan + LeaderArmExtension;
             distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
             {
-                new Point3d(0, 0,       0),  // start — Y pinned to BarsSpan/2 by rescale
-                new Point3d(0, armEndY, 0),  // end   — Y preserved = last bar + 2400mm
+                new Point3d(0, 0,       0),
+                new Point3d(0, armEndY, 0),
             });
 
-            // Step 3.6: custom insertPt for annot block.
-            // Default insertPt in CreateLeader = (MaxX + AnnotDefaultOffset=300, MinY, 0)
-            // = 300mm to the right of distribution = POZA OBRYSEM PLYTY for AutoRebar
-            // use case. We want annot centered on dist line span:
-            //   B1/T1 (horizontal bars):  X = mid-span, Y = first bar Y
-            //   B2/T2 (vertical bars):    X = first bar X, Y = mid-span (axis swap)
+            // Step 3.6: annotation insert centered on this dist's bar span (NOT slab center).
             Point3d annotInsertPt;
             if (horizontal)
             {
-                // Dist line wzdluz Y (X-bars), srodek wzdluz X osi pretow
                 annotInsertPt = new Point3d(
-                    barResult.MinPoint.X + snappedLen / 2.0,
+                    barResult.MinPoint.X + length / 2.0,
                     barResult.MinPoint.Y,
                     0);
             }
             else
             {
-                // Dist line wzdluz X (Y-bars), srodek wzdluz Y osi pretow
                 annotInsertPt = new Point3d(
                     barResult.MinPoint.X,
-                    barResult.MinPoint.Y + snappedLen / 2.0,
+                    barResult.MinPoint.Y + length / 2.0,
                     0);
             }
 
-            // Step 4: annotation leader
-            // leaderHorizontal=false → straight arm parallel to dist line span axis
-            // (extension of dist line, not L-shape with sideways text).
+            // Step 4: annotation
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
                 customInsertPt: annotInsertPt,
                 barsHorizontal: horizontal, leaderRight: true, leaderUp: true);
 
-            // Step 5: CRITICAL — bidirectional link dist ↔ annot (issue #2, #5 fix)
+            // Step 5: bidirectional link dist ↔ annot
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
-            // Step 6: register posNr (idempotent if already committed from template creation)
-            PositionCounter.CommitUsed(db, posNr);
-
-            // Step 7: show outline — mirrors post-creation implied-selection trigger in RC_DISTRIBUTION
+            // Step 6: show outline
             BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
 
-            // Step 8: update template bar MLeader count label
-            AnnotationEngine.UpdateBarLabelCount(
-                db, distBar.SourceBarHandle ?? "", markOverride: distBar.Mark);
-
+            PositionCounter.CommitUsed(db, posNr);
             return true;
         }
 
@@ -570,6 +569,94 @@ namespace BricsCadRc.Core
                 Cover      = DefaultCover,
                 Count      = 1,
             };
+        }
+
+        /// <summary>
+        /// Compute multi-distribution plan: how many distributions, what length each, what offset.
+        /// Equal-as-possible algorithm with mixed fallback (last dist shorter).
+        ///
+        /// Returns list of (xOffset, length) per distribution. xOffset = position from
+        /// slab+cover origin (absolute x0_dist = slabMinX + cover + xOffset).
+        /// For slab fitting single dist (available &lt;= TemplateMaxLen) returns single entry.
+        /// </summary>
+        private static List<(double xOffset, double length)> ComputeDistributionPlan(
+            double available, double targetSpacing)
+        {
+            var result = new List<(double, double)>();
+
+            // Single-dist case (+0.5mm epsilon for slab geometry imprecision - CAD vertex
+            // snapping can give slab.dx like 6080.0001mm, available 6000.0001mm. Epsilon
+            // is subgrid (TemplateGridStep=250mm), nie wplywa na SnapDownToGrid behavior).
+            if (available <= TemplateMaxLen + 0.5)
+            {
+                double L = GeometryHelper.SnapDownToGrid(
+                    available, TemplateGridStep, TemplateMinLen, TemplateMaxLen);
+                if (L > 0)
+                    result.Add((0.0, L));
+                return result;
+            }
+
+            // Multi-dist: compute N_min
+            // available = N*L - (N-1)*O, max L = 6000, max O = 650
+            //   → N >= (available - 650) / (6000 - 650)
+            int N_min = (int)Math.Ceiling((available - OverlapMax) / (TemplateMaxLen - OverlapMax));
+            if (N_min < 2) N_min = 2;
+
+            // Hard upper bound (prevent runaway)
+            int N_max = (int)Math.Ceiling((available - OverlapMin) / (TemplateMinLen - OverlapMin)) + 1;
+
+            // Try equal-length solution for each N
+            for (int N = N_min; N <= N_max; N++)
+            {
+                double L_raw     = (available + (N - 1) * OverlapTarget) / N;
+                double L_snapped = Math.Round(L_raw / TemplateGridStep) * TemplateGridStep;
+
+                if (L_snapped < TemplateMinLen || L_snapped > TemplateMaxLen) continue;
+
+                double O_actual = (N * L_snapped - available) / (N - 1);
+                if (O_actual >= OverlapMin && O_actual <= OverlapMax)
+                {
+                    for (int i = 0; i < N; i++)
+                        result.Add((i * (L_snapped - O_actual), L_snapped));
+                    return result;
+                }
+
+                // Try L_snapped ± gridStep
+                foreach (int delta in new[] { -1, 1 })
+                {
+                    double L_try = L_snapped + delta * TemplateGridStep;
+                    if (L_try < TemplateMinLen || L_try > TemplateMaxLen) continue;
+                    double O_try = (N * L_try - available) / (N - 1);
+                    if (O_try >= OverlapMin && O_try <= OverlapMax)
+                    {
+                        for (int i = 0; i < N; i++)
+                            result.Add((i * (L_try - O_try), L_try));
+                        return result;
+                    }
+                }
+            }
+
+            // Mixed fallback: first (N-1) dists at 6000mm, last dist shorter.
+            // O between adjacent = OverlapTarget (by construction).
+            for (int N = 2; N <= N_max; N++)
+            {
+                double L_last_raw = available - (N - 1) * (TemplateMaxLen - OverlapTarget);
+                if (L_last_raw < TemplateMinLen || L_last_raw > TemplateMaxLen) continue;
+
+                double L_last = Math.Round(L_last_raw / TemplateGridStep) * TemplateGridStep;
+                if (L_last < TemplateMinLen || L_last > TemplateMaxLen) continue;
+
+                for (int i = 0; i < N - 1; i++)
+                    result.Add((i * (TemplateMaxLen - OverlapTarget), TemplateMaxLen));
+                result.Add(((N - 1) * (TemplateMaxLen - OverlapTarget), L_last));
+                return result;
+            }
+
+            // Best-effort fallback (extreme edge case)
+            double fallbackL = GeometryHelper.SnapDownToGrid(
+                Math.Min(available, TemplateMaxLen), TemplateGridStep, TemplateMinLen, TemplateMaxLen);
+            if (fallbackL > 0) result.Add((0.0, fallbackL));
+            return result;
         }
 
         /// <summary>
