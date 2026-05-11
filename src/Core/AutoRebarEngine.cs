@@ -47,6 +47,27 @@ namespace BricsCadRc.Core
         /// <summary>Maximum overlap (hard).</summary>
         public const double OverlapMax    = 650.0;
 
+        /// <summary>
+        /// UB template params per slab thickness.
+        /// Shape "21" U-bar: A (left leg), B (bottom width), C (right leg).
+        /// Plan-view bar length = LengthA (longest leg).
+        /// </summary>
+        public const int    UBDiameter    = 12;
+
+        public const double UB_225_LengthA = 700.0;
+        public const double UB_225_LengthB = 140.0;
+        public const double UB_225_LengthC = 700.0;
+
+        public const double UB_300_LengthA = 665.0;
+        public const double UB_300_LengthB = 215.0;
+        public const double UB_300_LengthC = 665.0;
+
+        /// <summary>UB posNr is ALWAYS 01 for B1 (per user spec).</summary>
+        public const int    UBPosNrB1     = 1;
+
+        /// <summary>UB Mark suffix — distinct from straight bar suffix " B1".</summary>
+        public const string UBSuffix      = "UB";
+
         /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
         public const double MaxLastBarDistanceFromEdge = 70.0;
 
@@ -165,6 +186,176 @@ namespace BricsCadRc.Core
 
             ed.WriteMessage(
                 $"\n[AutoRebar] Wygenerowano {generated} z {distPlan.Count} rozkładów {layerCode}.\n");
+            return generated;
+        }
+
+        /// <summary>
+        /// Generate UB (U-bar shape 21) distributions on slab edges.
+        /// Creates 2 distributions (left + right slab edges), both using same template
+        /// (Mark "H12-01-200 UB"). SymbolSide differs per dist (Left vs Right) so
+        /// circle markers appear only on outer ends (at slab edges).
+        ///
+        /// Per user spec (Q1-Q9):
+        /// - posNr=01 ALWAYS for UB B1 (with conflict warning if already used)
+        /// - Diameter H12 for both 225 and 300 slabs
+        /// - Bar length in plan = LengthA (longest leg projection)
+        /// - SymbolSide=Left for left UB, Right for right UB
+        /// - Spacing 200mm with auto-adjustment (per ComputeAdjustedSpacing)
+        /// </summary>
+        public static int GenerateUBLayer(
+            Document doc,
+            ObjectId slabPolyId,
+            string   sourceLayer,    // "rebar_bottom"
+            string   layerCode,      // "B1"
+            int      slabThickness,  // 225 or 300
+            double   spacing = DefaultSpacing,
+            double   cover   = DefaultCover)
+        {
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            // Pick UB params per thickness
+            double ubLengthA, ubLengthB, ubLengthC;
+            if (slabThickness == 225)
+            {
+                ubLengthA = UB_225_LengthA;
+                ubLengthB = UB_225_LengthB;
+                ubLengthC = UB_225_LengthC;
+            }
+            else if (slabThickness == 300)
+            {
+                ubLengthA = UB_300_LengthA;
+                ubLengthB = UB_300_LengthB;
+                ubLengthC = UB_300_LengthC;
+            }
+            else
+            {
+                ed.WriteMessage($"\n[AutoRebar UB] Nieobsługiwana grubość: {slabThickness}mm (225 lub 300).\n");
+                return -1;
+            }
+
+            // Check posNr 01 conflict
+            var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
+            if (usedNrs.Contains(UBPosNrB1))
+            {
+                bool sameUB = IsExistingPosNr01UB(db, UBDiameter);
+                if (!sameUB)
+                {
+                    var dlgResult = System.Windows.MessageBox.Show(
+                        $"PosNr 01 jest już używany przez inny pręt (nie UB H{UBDiameter}).\n" +
+                        "AutoRebar UB ZAWSZE używa posNr=01. Kontynuować?\n\n" +
+                        "Tak = wymuś posNr=01 (może spowodować konflikt w schedule)\n" +
+                        "Nie = anuluj operację",
+                        "AutoRebar UB - Konflikt PosNr",
+                        System.Windows.MessageBoxButton.YesNo,
+                        System.Windows.MessageBoxImage.Warning);
+                    if (dlgResult != System.Windows.MessageBoxResult.Yes)
+                    {
+                        ed.WriteMessage("\n[AutoRebar UB] Anulowane przez użytkownika.\n");
+                        return -1;
+                    }
+                }
+            }
+
+            // Phase 1 (read-only tx): validate, scan, plan
+            Extents3d slabBbox;
+            Extents3d rebarBbox;
+            List<(ObjectId distId, ObjectId annotId)> oldUBs;
+            (ObjectId, BarData)? matchedTemplate;
+            int existingUBTemplateCount;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (!(tr.GetObject(slabPolyId, OpenMode.ForRead) is Polyline slabPl))
+                {
+                    ed.WriteMessage("\nWybrana encja nie jest polilinią.\n");
+                    tr.Commit();
+                    return -1;
+                }
+                if (!GeometryHelper.IsEffectivelyClosed(slabPl))
+                {
+                    ed.WriteMessage("\nObrys płyty musi być zamknięty.\n");
+                    tr.Commit();
+                    return -1;
+                }
+                if (!GeometryHelper.IsAxisAlignedPolyline(slabPl))
+                {
+                    ed.WriteMessage("\n[AutoRebar UB] Etap 1 nie obsługuje płyt pod kątem.\n");
+                    tr.Commit();
+                    return -1;
+                }
+
+                slabBbox = GeometryHelper.PolylineBbox(slabPl);
+                var slabCentroid = GeometryHelper.Centroid(slabBbox);
+
+                var rects = ScanLayerRectangles(db, tr, sourceLayer);
+                if (rects.Count == 0)
+                {
+                    ed.WriteMessage($"\nBrak prostokątów na warstwie '{sourceLayer}'.\n");
+                    tr.Commit();
+                    return -1;
+                }
+                (_, rebarBbox) = FindNearestRect(rects, slabCentroid);
+
+                var ubTemplates = ScanUBTemplates(db, tr, rebarBbox, UBDiameter);
+                existingUBTemplateCount = ubTemplates.Count;
+
+                matchedTemplate = null;
+                foreach (var (tid, tb) in ubTemplates)
+                {
+                    if (Math.Abs(tb.LengthA - ubLengthA) < 1.0 &&
+                        Math.Abs(tb.LengthB - ubLengthB) < 1.0 &&
+                        Math.Abs(tb.LengthC - ubLengthC) < 1.0)
+                    {
+                        matchedTemplate = (tid, tb);
+                        break;
+                    }
+                }
+
+                oldUBs = ScanOldUBDistributions(db, tr, slabBbox, layerCode);
+                tr.Commit();
+            }
+
+            int generated = 0;
+            using (doc.LockDocument())
+            {
+                EraseOldDistributions(db, oldUBs);
+
+                ObjectId templateBarId;
+                BarData  templateBar;
+                if (matchedTemplate.HasValue)
+                {
+                    templateBarId = matchedTemplate.Value.Item1;
+                    templateBar   = matchedTemplate.Value.Item2;
+                    ed.WriteMessage($"\n[AutoRebar UB] Reusing UB template H{UBDiameter}-01 " +
+                        $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
+                }
+                else
+                {
+                    (templateBarId, templateBar) = CreateUBTemplate(
+                        db, rebarBbox, existingUBTemplateCount,
+                        UBDiameter, ubLengthA, ubLengthB, ubLengthC, layerCode);
+                    ed.WriteMessage($"\n[AutoRebar UB] Created UB template H{UBDiameter}-01 " +
+                        $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
+                }
+
+                // Left UB: x0 = slabMinX+cover, x1 = x0+LengthA, SymbolSide="Left"
+                bool ok = GenerateUBDistribution(
+                    db, slabBbox, cover, templateBarId, templateBar,
+                    ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
+                    isLeftSide: true);
+                if (ok) generated++;
+
+                // Right UB: x1 = slabMaxX-cover, x0 = x1-LengthA, SymbolSide="Right"
+                ok = GenerateUBDistribution(
+                    db, slabBbox, cover, templateBarId, templateBar,
+                    ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
+                    isLeftSide: false);
+                if (ok) generated++;
+            }
+
+            ed.WriteMessage(
+                $"\n[AutoRebar UB] Wygenerowano {generated} z 2 rozkładów UB B1 (grubość {slabThickness}mm).\n");
             return generated;
         }
 
@@ -333,9 +524,93 @@ namespace BricsCadRc.Core
                 if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
                 var bar = BarBlockEngine.ReadXData(br);
                 if (bar == null || bar.LayerCode != layerCode) continue;
+                // Filter by Mark suffix to exclude UB and future variants from straight-bar cleanup.
+                // UB Marks end with " UB", B1 Marks end with " B1" — symmetric with ScanOldUBDistributions.
+                if (string.IsNullOrEmpty(bar.Mark)) continue;
+                if (!bar.Mark.EndsWith($" {layerCode}")) continue;
                 if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
 
                 // Resolve annotation via AnnotHandle
+                ObjectId annotId = ObjectId.Null;
+                if (!string.IsNullOrEmpty(bar.AnnotHandle))
+                {
+                    try
+                    {
+                        long h = Convert.ToInt64(bar.AnnotHandle, 16);
+                        if (db.TryGetObjectId(new Handle(h), out ObjectId aid))
+                            annotId = aid;
+                    }
+                    catch { }
+                }
+                result.Add((oid, annotId));
+            }
+            return result;
+        }
+
+        /// <summary>Check if existing posNr=01 entity is UB H{diameter} (safe reuse) or different type (conflict).</summary>
+        private static bool IsExistingPosNr01UB(Database db, int diameter)
+        {
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased) continue;
+                    if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                    var bar = SingleBarEngine.ReadBarXData(pl);
+                    if (bar != null && bar.Diameter == diameter
+                        && bar.ShapeCode == "21"
+                        && SingleBarEngine.ExtractPosNr(bar.Mark) == 1)
+                    {
+                        tr.Commit();
+                        return true;
+                    }
+                }
+                tr.Commit();
+            }
+            return false;
+        }
+
+        /// <summary>Scan UB templates (shape "21") in rebar box.</summary>
+        private static List<(ObjectId, BarData)> ScanUBTemplates(
+            Database db, Transaction tr, Extents3d rebarBbox, int diameter)
+        {
+            var result = new List<(ObjectId, BarData)>();
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                var bar = SingleBarEngine.ReadBarXData(pl);
+                if (bar == null) continue;
+                if (bar.ShapeCode != "21") continue;
+                if (bar.Diameter != diameter) continue;
+                var insPt = pl.GetPoint3dAt(0);
+                if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
+                result.Add((oid, bar));
+            }
+            return result;
+        }
+
+        /// <summary>Scan old UB distributions on slab (identified by Mark suffix " UB").</summary>
+        private static List<(ObjectId, ObjectId)> ScanOldUBDistributions(
+            Database db, Transaction tr, Extents3d slabBbox, string layerCode)
+        {
+            var result = new List<(ObjectId, ObjectId)>();
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
+                var bar = BarBlockEngine.ReadXData(br);
+                if (bar == null || bar.LayerCode != layerCode) continue;
+                if (string.IsNullOrEmpty(bar.Mark)) continue;
+                if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
+                if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
+
                 ObjectId annotId = ObjectId.Null;
                 if (!string.IsNullOrEmpty(bar.AnnotHandle))
                 {
@@ -423,6 +698,57 @@ namespace BricsCadRc.Core
                 db, arrowTip, textPt, elevBar.Mark, barId);
 
             // Save labelId in template XData
+            if (!labelId.IsNull)
+            {
+                using (var trLbl = db.TransactionManager.StartTransaction())
+                {
+                    var barEnt = trLbl.GetObject(barId, OpenMode.ForWrite) as Entity;
+                    if (barEnt != null)
+                    {
+                        elevBar.LabelHandle = labelId.Handle.ToString();
+                        SingleBarEngine.WriteXData(barEnt, elevBar);
+                    }
+                    trLbl.Commit();
+                }
+            }
+
+            PositionCounter.CommitUsed(db, posNr);
+            return (barId, elevBar);
+        }
+
+        /// <summary>Create new UB template (shape "21") in rebar box.</summary>
+        private static (ObjectId barId, BarData elevBar) CreateUBTemplate(
+            Database db, Extents3d rebarBbox, int existingCount,
+            int diameter, double lengthA, double lengthB, double lengthC, string layerCode)
+        {
+            // posNr ALWAYS 01 for UB B1
+            int posNr = UBPosNrB1;
+
+            double insertX = rebarBbox.MinPoint.X + TemplateOffsetX;
+            double insertY = rebarBbox.MaxPoint.Y - TemplateOffsetY - TemplateSpacingY * existingCount;
+            var insertPt = new Point3d(insertX, insertY, 0);
+
+            var elevBar = BuildBarData(diameter, posNr, lengthA, layerCode);
+            elevBar.ShapeCode = "21";
+            elevBar.LengthA   = lengthA;
+            elevBar.LengthB   = lengthB;
+            elevBar.LengthC   = lengthC;
+            elevBar.Mark = BarData.FormatMark(diameter, posNr, 0, 1);  // "H12-01"
+
+            ObjectId barId = SingleBarEngine.PlaceBar(db, elevBar, insertPt);
+
+            Point3d textPt = new Point3d(
+                insertPt.X + lengthA * 0.5,
+                insertPt.Y + TemplateLabelOffsetY,
+                0);
+            Point3d arrowTip;
+            using (var trTip = db.TransactionManager.StartTransaction())
+            {
+                arrowTip = SingleBarEngine.GetBarArrowTip(barId, elevBar, textPt, trTip);
+                trTip.Commit();
+            }
+            ObjectId labelId = SingleBarEngine.PlaceBarLabel(db, arrowTip, textPt, elevBar.Mark, barId);
+
             if (!labelId.IsNull)
             {
                 using (var trLbl = db.TransactionManager.StartTransaction())
@@ -549,6 +875,111 @@ namespace BricsCadRc.Core
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
             // Step 6: show outline
+            BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
+
+            PositionCounter.CommitUsed(db, posNr);
+            return true;
+        }
+
+        /// <summary>
+        /// Generate single UB distribution (left or right slab edge).
+        /// Bounds anchored at slab edge: outer end of bars = exactly at cover line.
+        /// SymbolSide differs per side so circles appear only on outer ends.
+        /// </summary>
+        private static bool GenerateUBDistribution(
+            Database db, Extents3d slabBbox, double cover,
+            ObjectId templateBarId, BarData templateBar,
+            double lengthA, double lengthB, double lengthC,
+            double spacing, string layerCode, bool isLeftSide)
+        {
+            // X bounds: bar plan-view length = lengthA
+            // Left UB:  x0 = slabMinX+cover (outer end at slab edge), x1 = x0+lengthA
+            // Right UB: x1 = slabMaxX-cover (outer end at slab edge), x0 = x1-lengthA
+            double x0, x1;
+            if (isLeftSide)
+            {
+                x0 = slabBbox.MinPoint.X + cover;
+                x1 = x0 + lengthA;
+            }
+            else
+            {
+                x1 = slabBbox.MaxPoint.X - cover;
+                x0 = x1 - lengthA;
+            }
+
+            // Y bounds: full slab.dy with cover
+            double y0 = slabBbox.MinPoint.Y + cover;
+            double y1 = slabBbox.MaxPoint.Y - cover;
+
+            double availSpacingSpan = y1 - y0;
+            double slabSpan = slabBbox.MaxPoint.Y - slabBbox.MinPoint.Y;
+            var (effSpacing, adjStatus) = ComputeAdjustedSpacing(availSpacingSpan, spacing, cover, slabSpan);
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var ed  = doc?.Editor;
+            if (adjStatus != 0 && ed != null)
+            {
+                string side = isLeftSide ? "Left" : "Right";
+                string msg = adjStatus == 1
+                    ? $"[AutoRebar UB {side}] Adjusted spacing to {effSpacing:F1}mm. Label nominal 200mm."
+                    : adjStatus == 2
+                        ? $"*** WARNING *** [AutoRebar UB {side}] Spacing {effSpacing:F1}mm in soft-min range."
+                        : $"*** WARNING *** [AutoRebar UB {side}] Cannot adjust; last bar > 70mm from edge.";
+                ed.WriteMessage($"\n{msg}\n");
+            }
+
+            int posNr = UBPosNrB1;
+
+            var distBar = BuildBarData(UBDiameter, posNr, lengthA, layerCode);
+            distBar.ShapeCode = "21";
+            distBar.LengthA   = lengthA;
+            distBar.LengthB   = lengthB;
+            distBar.LengthC   = lengthC;
+
+            // Mark with UB suffix (NOT " B1")
+            string baseMark = BarData.FormatMark(UBDiameter, posNr, spacing, 2);
+            distBar.Mark            = $"{baseMark} {UBSuffix}";  // "H12-01-200 UB"
+            distBar.Spacing         = effSpacing;
+            distBar.Direction       = "X";
+            distBar.Count           = 0;
+            distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");
+            if (adjStatus != 0) distBar.IsLabelManual = true;
+
+            // Circle markers on outer end only (at slab edge)
+            distBar.SymbolSide = isLeftSide ? "Left" : "Right";
+
+            // Step 1: generate distribution block (sets distBar.BarsSpan)
+            var barResult = BarBlockEngine.GenerateFromBounds(
+                db, x0, y0, x1, y1, distBar, horizontal: true, posNr);
+            if (!barResult.IsValid) return false;
+
+            // Step 2: leader points using actual BarsSpan (must be AFTER GenerateFromBounds)
+            double armEndY = distBar.BarsSpan + LeaderArmExtension;
+            distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
+            {
+                new Point3d(0, 0,       0),
+                new Point3d(0, armEndY, 0),
+            });
+
+            // Step 3: annotation insert centered on bar span (use explicit bounds, NOT barResult.MinPoint —
+            // circle markers via SymbolSide="Left"/"Right" pollute GeometricExtents by ±35mm,
+            // shifting MinPoint and causing dist line misalignment with bars)
+            var annotInsertPt = new Point3d(
+                x0 + lengthA / 2.0,
+                y0,
+                0);
+
+            // Step 4: annotation
+            var annotResult = AnnotationEngine.CreateLeader(
+                db, barResult, distBar,
+                leaderHorizontal: false, posNr: posNr,
+                customInsertPt: annotInsertPt,
+                barsHorizontal: true, leaderRight: true, leaderUp: true);
+
+            // Step 5: bidirectional link + outline
+            if (annotResult.BlockRefId != ObjectId.Null)
+                BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
+
             BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
 
             PositionCounter.CommitUsed(db, posNr);
