@@ -473,12 +473,28 @@ namespace BricsCadRc.Core
 
                 foreach (var (xEdge, yLow, yHigh, symbolSide) in validSegments)
                 {
+                    // Per-endpoint external detection (Q19=b, analog B1 strip semantics)
+                    bool lowerIsExternal = Math.Abs(yLow  - slabBbox.MinPoint.Y) < 1e-3;
+                    bool upperIsExternal = Math.Abs(yHigh - slabBbox.MaxPoint.Y) < 1e-3;
+
+                    double lowerOffset = lowerIsExternal ? cover : spacing / 2.0;
+                    double upperOffset = upperIsExternal ? cover : spacing / 2.0;
+
+                    // Q20=b: SpacingMode per upper endpoint (analog B1 GenerateLayer)
+                    SpacingMode spacingMode = upperIsExternal
+                        ? SpacingMode.AdjustedExternal
+                        : SpacingMode.ContinuousInternal;
+
                     ed.WriteMessage($"\n[AutoRebar UB] Segment X={xEdge:F0} Y=[{yLow:F0}..{yHigh:F0}] " +
-                                    $"length {yHigh - yLow:F0}mm SymbolSide={symbolSide}\n");
+                        $"length {yHigh - yLow:F0}mm SymbolSide={symbolSide} " +
+                        $"endpoints(L={(lowerIsExternal ? "ext" : "int")},U={(upperIsExternal ? "ext" : "int")}) " +
+                        $"mode={spacingMode}\n");
 
                     bool ok = GenerateUBDistribution(
-                        db, xEdge, yLow, yHigh, cover, templateBarId, templateBar,
+                        db, xEdge, yLow, yHigh, lowerOffset, upperOffset,
+                        templateBarId, templateBar,
                         ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
+                        spacingMode,
                         slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
                     if (ok) generated++;
                 }
@@ -1173,44 +1189,68 @@ namespace BricsCadRc.Core
         /// </summary>
         private static bool GenerateUBDistribution(
             Database db,
-            double xEdge, double yLow, double yHigh, double cover,
+            double xEdge, double yLow, double yHigh,
+            double lowerOffset, double upperOffset,
             ObjectId templateBarId, BarData templateBar,
             double lengthA, double lengthB, double lengthC,
             double spacing, string layerCode, string symbolSide,
+            SpacingMode spacingMode,
             double slabMinY, double slabMaxY)
         {
-            // X bounds: bar plan-view length = lengthA
-            // Left wall (symbolSide=Left): bar starts at xEdge+cover, extends right by lengthA
-            // Right wall (symbolSide=Right): bar ends at xEdge-cover, extends left by lengthA
+            // X bounds: bar extends INTO slab from edge by lengthA, minus horizontal cover.
+            // DefaultCover (50mm) for X-direction — independent of Y offsets (lowerOffset/upperOffset).
             double x0, x1;
-            if (symbolSide == "Left")
-            {
-                x0 = xEdge + cover;
-                x1 = x0 + lengthA;
-            }
-            else
-            {
-                x1 = xEdge - cover;
-                x0 = x1 - lengthA;
-            }
+            if (symbolSide == "Left")  { x0 = xEdge + DefaultCover; x1 = x0 + lengthA; }
+            else                       { x1 = xEdge - DefaultCover; x0 = x1 - lengthA; }
 
-            // Y bounds: segment endpoints with cover
-            double y0 = yLow  + cover;
-            double y1 = yHigh - cover;
+            // Y bounds: per-endpoint offsets (cover for external, spacing/2 for internal)
+            double y0 = yLow  + lowerOffset;
+            double y1 = yHigh - upperOffset;
 
             double availSpacingSpan = y1 - y0;
-            double slabSpan = yHigh - yLow;  // segment physical span
-            var (effSpacing, adjStatus) = ComputeAdjustedSpacing(availSpacingSpan, spacing, cover, slabSpan);
+            double segmentSpan      = yHigh - yLow;
+
+            double effSpacing = spacing;
+            int    adjStatus  = 0;
+            switch (spacingMode)
+            {
+                case SpacingMode.Nominal:
+                    break;
+                case SpacingMode.AdjustedExternal:
+                    (effSpacing, adjStatus) = ComputeAdjustedSpacing(
+                        availSpacingSpan, spacing, lowerOffset, segmentSpan);
+                    break;
+                case SpacingMode.ContinuousInternal:
+                    (effSpacing, adjStatus) = ComputeContinuousSpacing(
+                        availSpacingSpan, spacing);
+                    break;
+            }
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (adjStatus != 0 && ed != null)
             {
-                string msg = adjStatus == 1
-                    ? $"[AutoRebar UB {symbolSide}] Adjusted spacing to {effSpacing:F1}mm. Label nominal 200mm."
-                    : adjStatus == 2
-                        ? $"*** WARNING *** [AutoRebar UB {symbolSide}] Spacing {effSpacing:F1}mm in soft-min range."
-                        : $"*** WARNING *** [AutoRebar UB {symbolSide}] Cannot adjust; last bar > 70mm from edge.";
+                string side = symbolSide;
+                string msg;
+                if (spacingMode == SpacingMode.AdjustedExternal)
+                {
+                    msg = adjStatus == 1
+                        ? $"[AutoRebar UB {side}] AdjExt spacing {effSpacing:F1}mm. Label nominal {spacing:F0}mm."
+                        : adjStatus == 2
+                            ? $"*** WARNING *** [AutoRebar UB {side}] AdjExt spacing {effSpacing:F1}mm in soft-min range."
+                            : $"*** WARNING *** [AutoRebar UB {side}] AdjExt cannot adjust; last bar > 70mm from edge.";
+                }
+                else if (spacingMode == SpacingMode.ContinuousInternal)
+                {
+                    msg = adjStatus == 1
+                        ? $"[AutoRebar UB {side}] ContInt spacing {effSpacing:F1}mm " +
+                          $"(deviation {Math.Abs(effSpacing - spacing) / spacing * 100:F1}%). Label nominal {spacing:F0}mm."
+                        : $"*** WARNING *** [AutoRebar UB {side}] ContInt deviation > 15%, fallback nominal {spacing:F0}mm.";
+                }
+                else
+                {
+                    msg = $"[AutoRebar UB {side}] Unexpected status {adjStatus} for mode {spacingMode}";
+                }
                 ed.WriteMessage($"\n{msg}\n");
             }
 
