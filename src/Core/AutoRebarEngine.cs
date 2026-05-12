@@ -110,21 +110,24 @@ namespace BricsCadRc.Core
             }
             if (plan == null) return -1;
 
-            // Compute available span (for B1 horizontal: along X; for B2 vertical: along Y)
             bool horizontal = filterDirection == "X";
-            double available = horizontal
-                ? plan.SlabBbox.MaxPoint.X - plan.SlabBbox.MinPoint.X - 2 * cover
-                : plan.SlabBbox.MaxPoint.Y - plan.SlabBbox.MinPoint.Y - 2 * cover;
 
-            var distPlan = ComputeDistributionPlan(available, spacing);
-            if (distPlan.Count == 0)
+            // Strip decomposition (Etap 1E)
+            var strips = DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox);
+            int validStrips   = strips.Count(s => s.Valid);
+            int skippedStrips = strips.Count - validStrips;
+
+            ed.WriteMessage($"\n[AutoRebar] Strips: {strips.Count} total, " +
+                            $"{validStrips} valid, {skippedStrips} skipped.\n");
+
+            foreach (var s in strips.Where(s => !s.Valid))
+                ed.WriteMessage($"\n[AutoRebar] Skip strip Y={s.YLow:F0}..{s.YHigh:F0}: {s.SkipReason}\n");
+
+            if (validStrips == 0)
             {
-                ed.WriteMessage("\n[AutoRebar] Brak prawidłowego rozwiązania multi-distribution.\n");
+                ed.WriteMessage($"\n[AutoRebar] No valid strips — abort.\n");
                 return -1;
             }
-
-            ed.WriteMessage($"\n[AutoRebar] Plan: {distPlan.Count} rozkład(ów), długości: " +
-                string.Join(", ", distPlan.Select(d => $"{d.length:F0}mm")) + "\n");
 
             int generated = 0;
             using (doc.LockDocument())
@@ -132,80 +135,113 @@ namespace BricsCadRc.Core
                 // Phase 2a: cleanup old distributions on this slab
                 EraseOldDistributions(db, plan.OldDistributionsToErase);
 
-                // Phase 2b+c: per-dist template ensure + distribution generate
-                foreach (var (xOffset, length) in distPlan)
+                foreach (var strip in strips.Where(s => s.Valid))
                 {
-                    ObjectId templateBarId = ObjectId.Null;
-                    BarData  templateBar   = null;
-                    bool     templateReused = false;
+                    double stripHeight = strip.YHigh - strip.YLow;
 
-                    // Try match existing template by length (re-scan per dist for freshness)
-                    using (var trMatch = db.TransactionManager.StartTransaction())
+                    // Thin strip skip
+                    if (stripHeight < 50.0)
                     {
-                        var freshTemplates = ScanTemplates(db, trMatch, plan.RebarBbox, filterDirection, diameter);
-                        foreach (var (tid, tb) in freshTemplates)
+                        ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Strip " +
+                            $"Y={strip.YLow:F0}..{strip.YHigh:F0} h={stripHeight:F0}mm < 50mm — skipped\n");
+                        continue;
+                    }
+
+                    // First/last bar offsets per Q7=B
+                    double lowerOffset = strip.LowerIsExternal ? cover : spacing / 2.0;
+                    double upperOffset = strip.UpperIsExternal ? cover : spacing / 2.0;
+                    double y0 = strip.YLow  + lowerOffset;
+                    double y1 = strip.YHigh - upperOffset;
+
+                    // Try-fit single bar for short strips
+                    bool singleBarMode = stripHeight < spacing || (y1 - y0) <= 0;
+                    if (singleBarMode)
+                    {
+                        double yCenter = (strip.YLow + strip.YHigh) * 0.5;
+                        y0 = yCenter;
+                        y1 = yCenter;
+                        ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Strip " +
+                            $"Y={strip.YLow:F0}..{strip.YHigh:F0} h={stripHeight:F0}mm < spacing " +
+                            $"— 1 bar centered at Y={yCenter:F0}\n");
+                    }
+
+                    bool applyAdjustment = !singleBarMode && strip.UpperIsExternal;
+
+                    // X multi-dist plan for this strip
+                    double xAvailable = (strip.XHigh - strip.XLow) - 2.0 * cover;
+                    var distPlan = ComputeDistributionPlan(xAvailable, spacing);
+                    if (distPlan.Count == 0)
+                    {
+                        ed.WriteMessage($"\n[AutoRebar] Strip Y={strip.YLow:F0}..{strip.YHigh:F0}: " +
+                            $"brak rozwiązania dist plan (xAvailable={xAvailable:F0}mm) — skipped\n");
+                        continue;
+                    }
+
+                    ed.WriteMessage($"\n[AutoRebar] Strip Y={strip.YLow:F0}..{strip.YHigh:F0} " +
+                        $"(h={stripHeight:F0}mm, external: lower={strip.LowerIsExternal}, " +
+                        $"upper={strip.UpperIsExternal}): {distPlan.Count} dist, " +
+                        $"lengths: " + string.Join(",", distPlan.Select(d => $"{d.length:F0}")) + "\n");
+
+                    foreach (var (xOffset, length) in distPlan)
+                    {
+                        ObjectId templateBarId = ObjectId.Null;
+                        BarData  templateBar   = null;
+                        bool     templateReused = false;
+
+                        using (var trMatch = db.TransactionManager.StartTransaction())
                         {
-                            if (Math.Abs(tb.LengthA - length) < 1.0)
+                            var freshTemplates = ScanTemplates(db, trMatch, plan.RebarBbox,
+                                                               filterDirection, diameter);
+                            foreach (var (tid, tb) in freshTemplates)
                             {
-                                templateBarId  = tid;
-                                templateBar    = tb;
-                                templateReused = true;
-                                break;
+                                if (Math.Abs(tb.LengthA - length) < 1.0)
+                                {
+                                    templateBarId  = tid;
+                                    templateBar    = tb;
+                                    templateReused = true;
+                                    break;
+                                }
                             }
+                            trMatch.Commit();
                         }
-                        trMatch.Commit();
-                    }
 
-                    if (!templateReused)
-                    {
-                        int existingCount;
-                        using (var trCount = db.TransactionManager.StartTransaction())
+                        if (!templateReused)
                         {
-                            var freshTemplates = ScanTemplates(db, trCount, plan.RebarBbox, filterDirection, diameter);
-                            existingCount = freshTemplates.Count;
-                            trCount.Commit();
+                            int existingCount;
+                            using (var trCount = db.TransactionManager.StartTransaction())
+                            {
+                                var freshTemplates = ScanTemplates(db, trCount, plan.RebarBbox,
+                                                                   filterDirection, diameter);
+                                existingCount = freshTemplates.Count;
+                                trCount.Commit();
+                            }
+                            (templateBarId, templateBar) = CreateNewTemplate(
+                                db, plan.RebarBbox, existingCount, diameter, length, layerCode);
+                            ed.WriteMessage($"\n[AutoRebar] Utworzono template {templateBar.Mark} " +
+                                            $"L={length:F0}mm\n");
+                        }
+                        else
+                        {
+                            ed.WriteMessage($"\n[AutoRebar] Reusing template {templateBar.Mark} " +
+                                            $"L={length:F0}mm\n");
                         }
 
-                        (templateBarId, templateBar) = CreateNewTemplate(
-                            db, plan.RebarBbox, existingCount, diameter, length, layerCode);
-                        ed.WriteMessage($"\n[AutoRebar] Utworzono template {templateBar.Mark} L={length:F0}mm\n");
-                    }
-                    else
-                    {
-                        ed.WriteMessage($"\n[AutoRebar] Reusing template {templateBar.Mark} L={length:F0}mm\n");
-                    }
+                        double x0 = strip.XLow + cover + xOffset;
+                        double x1 = x0 + length;
 
-                    double x0, y0, x1, y1;
-                    if (horizontal)
-                    {
-                        x0 = plan.SlabBbox.MinPoint.X + cover + xOffset;
-                        x1 = x0 + length;
-                        y0 = plan.SlabBbox.MinPoint.Y + cover;
-                        y1 = plan.SlabBbox.MaxPoint.Y - cover;
-                    }
-                    else
-                    {
-                        x0 = plan.SlabBbox.MinPoint.X + cover;
-                        x1 = plan.SlabBbox.MaxPoint.X - cover;
-                        y0 = plan.SlabBbox.MinPoint.Y + cover + xOffset;
-                        y1 = y0 + length;
-                    }
-                    double slabSpanForAdjusted = horizontal
-                        ? plan.SlabBbox.MaxPoint.Y - plan.SlabBbox.MinPoint.Y
-                        : plan.SlabBbox.MaxPoint.X - plan.SlabBbox.MinPoint.X;
+                        bool ok = GenerateDistributionWithLeaderAtOffset(
+                            db, x0, y0, x1, y1,
+                            templateBarId, templateBar,
+                            diameter, length, spacing, layerCode, filterDirection,
+                            lowerOffset, stripHeight, applyAdjustment);
 
-                    bool ok = GenerateDistributionWithLeaderAtOffset(
-                        db, x0, y0, x1, y1,
-                        templateBarId, templateBar,
-                        diameter, length, spacing, layerCode, filterDirection,
-                        cover, slabSpanForAdjusted);
-
-                    if (ok) generated++;
+                        if (ok) generated++;
+                    }
                 }
             }
 
             ed.WriteMessage(
-                $"\n[AutoRebar] Wygenerowano {generated} z {distPlan.Count} rozkładów {layerCode}.\n");
+                $"\n[AutoRebar] Wygenerowano {generated} rozkładów {layerCode}.\n");
             return generated;
         }
 
@@ -383,6 +419,18 @@ namespace BricsCadRc.Core
         // Phase 1 — read-only plan (inside caller's transaction)
         // ----------------------------------------------------------------
 
+        private class YStrip
+        {
+            public double YLow;
+            public double YHigh;
+            public double XLow;
+            public double XHigh;
+            public bool   LowerIsExternal;
+            public bool   UpperIsExternal;
+            public bool   Valid;
+            public string SkipReason;
+        }
+
         private class Phase1Result
         {
             public Extents3d                             SlabBbox;
@@ -391,6 +439,7 @@ namespace BricsCadRc.Core
             public int                                   ExistingTemplateCount;
             public (ObjectId id, BarData bar)?           MatchedTemplate;   // null if no length match
             public List<(ObjectId distId, ObjectId annotId)> OldDistributionsToErase;
+            public List<Point2d>                         SlabVertices;
         }
 
         private static Phase1Result BuildPlan(
@@ -421,6 +470,7 @@ namespace BricsCadRc.Core
             }
 
             var slabBbox     = GeometryHelper.PolylineBbox(slabPl);
+            var slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
             var slabCentroid = GeometryHelper.Centroid(slabBbox);
 
             // 2. Compute required bar length and snap to 250mm grid
@@ -473,7 +523,92 @@ namespace BricsCadRc.Core
                 ExistingTemplateCount    = templates.Count,
                 MatchedTemplate          = match,
                 OldDistributionsToErase  = oldDists,
+                SlabVertices             = slabVertices,
             };
+        }
+
+        // ----------------------------------------------------------------
+        // Strip decomposition helpers
+        // ----------------------------------------------------------------
+
+        private static bool XIntersectionsEqual(List<double> a, List<double> b, double eps = 0.1)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (Math.Abs(a[i] - b[i]) > eps) return false;
+            return true;
+        }
+
+        private static List<YStrip> DecomposeIntoYStrips(List<Point2d> vertices, Extents3d slabBbox)
+        {
+            var strips = new List<YStrip>();
+
+            // Phase A: unique Y-coords sorted + dedup epsilon 1e-3
+            var rawYs = new List<double>();
+            foreach (var v in vertices)
+                rawYs.Add(v.Y);
+            rawYs.Sort();
+
+            var yCoords = new List<double>();
+            foreach (double y in rawYs)
+            {
+                if (yCoords.Count == 0 || Math.Abs(y - yCoords[yCoords.Count - 1]) >= 1e-3)
+                    yCoords.Add(y);
+            }
+
+            if (yCoords.Count < 2) return strips;
+
+            // Phase B: filter phantom vertices (compare ray-cast y-0.5 vs y+0.5)
+            // Keep first + last always; check inner ones
+            var filteredYs = new List<double> { yCoords[0] };
+            for (int i = 1; i < yCoords.Count - 1; i++)
+            {
+                double yc = yCoords[i];
+                var xsBelow = GeometryHelper.FindIntersectionsH(vertices, yc - 0.5);
+                var xsAbove = GeometryHelper.FindIntersectionsH(vertices, yc + 0.5);
+                if (!XIntersectionsEqual(xsBelow, xsAbove))
+                    filteredYs.Add(yc);
+            }
+            filteredYs.Add(yCoords[yCoords.Count - 1]);
+
+            // Phase C: build strips per Y-pair
+            double slabMinY = slabBbox.MinPoint.Y;
+            double slabMaxY = slabBbox.MaxPoint.Y;
+
+            for (int i = 0; i < filteredYs.Count - 1; i++)
+            {
+                double yLow  = filteredYs[i];
+                double yHigh = filteredYs[i + 1];
+
+                double yMid = (yLow + yHigh) * 0.5 + 0.1;
+                var xs = GeometryHelper.FindIntersectionsH(vertices, yMid);
+
+                if (xs.Count != 2)
+                {
+                    string reason = xs.Count > 2
+                        ? $"Multi-span detected ({xs.Count / 2} intervals), Etap 1G future"
+                        : $"Degenerate strip ({xs.Count} intersections at mid-Y={yMid:F1})";
+                    strips.Add(new YStrip
+                    {
+                        YLow = yLow, YHigh = yHigh,
+                        Valid = false, SkipReason = reason
+                    });
+                    continue;
+                }
+
+                strips.Add(new YStrip
+                {
+                    YLow            = yLow,
+                    YHigh           = yHigh,
+                    XLow            = xs[0],
+                    XHigh           = xs[1],
+                    LowerIsExternal = Math.Abs(yLow  - slabMinY) < 1e-3,
+                    UpperIsExternal = Math.Abs(yHigh - slabMaxY) < 1e-3,
+                    Valid           = true,
+                });
+            }
+
+            return strips;
         }
 
         // ----------------------------------------------------------------
@@ -801,14 +936,20 @@ namespace BricsCadRc.Core
             int diameter, double length, double spacing,
             string layerCode, string filterDirection,
             double coverForAdjusted,
-            double slabSpanForAdjusted)
+            double slabSpanForAdjusted,
+            bool applyAdjustment = true)
         {
             bool horizontal = filterDirection == "X";
 
             double availableSpan = horizontal ? (y1 - y0) : (x1 - x0);
 
-            var (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
-                availableSpan, spacing, coverForAdjusted, slabSpanForAdjusted);
+            double effectiveSpacing = spacing;
+            int    adjustStatus     = 0;
+            if (applyAdjustment)
+            {
+                (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
+                    availableSpan, spacing, coverForAdjusted, slabSpanForAdjusted);
+            }
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
