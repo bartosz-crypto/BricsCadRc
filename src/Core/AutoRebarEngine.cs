@@ -165,7 +165,13 @@ namespace BricsCadRc.Core
                             $"— 1 bar centered at Y={yCenter:F0}\n");
                     }
 
-                    bool applyAdjustment = !singleBarMode && strip.UpperIsExternal;
+                    SpacingMode spacingMode;
+                    if (singleBarMode)
+                        spacingMode = SpacingMode.Nominal;
+                    else if (strip.UpperIsExternal)
+                        spacingMode = SpacingMode.AdjustedExternal;
+                    else
+                        spacingMode = SpacingMode.ContinuousInternal;
 
                     // X multi-dist plan for this strip
                     double xAvailable = (strip.XHigh - strip.XLow) - 2.0 * cover;
@@ -233,7 +239,7 @@ namespace BricsCadRc.Core
                             db, x0, y0, x1, y1,
                             templateBarId, templateBar,
                             diameter, length, spacing, layerCode, filterDirection,
-                            lowerOffset, stripHeight, applyAdjustment,
+                            lowerOffset, stripHeight, spacingMode,
                             plan.SlabBbox.MinPoint.Y,
                             plan.SlabBbox.MaxPoint.Y);
 
@@ -422,6 +428,23 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // Phase 1 — read-only plan (inside caller's transaction)
         // ----------------------------------------------------------------
+
+        private enum SpacingMode
+        {
+            /// <summary>Use nominalSpacing as-is, no redistribution. Single bar mode,
+            /// or fallback when other modes can't apply.</summary>
+            Nominal,
+
+            /// <summary>Existing logic: 70mm-from-edge check, may zagęścić if last bar
+            /// too far from external upper edge. For rect slab and strips with
+            /// UpperIsExternal=true.</summary>
+            AdjustedExternal,
+
+            /// <summary>NEW p373: force last bar at y1 by redistributing count,
+            /// achieving continuity through internal cut. For strips with
+            /// UpperIsExternal=false.</summary>
+            ContinuousInternal
+        }
 
         private class YStrip
         {
@@ -941,7 +964,7 @@ namespace BricsCadRc.Core
             string layerCode, string filterDirection,
             double coverForAdjusted,
             double slabSpanForAdjusted,
-            bool applyAdjustment,
+            SpacingMode spacingMode,
             double slabMinY,
             double slabMaxY)
         {
@@ -951,21 +974,47 @@ namespace BricsCadRc.Core
 
             double effectiveSpacing = spacing;
             int    adjustStatus     = 0;
-            if (applyAdjustment)
+            switch (spacingMode)
             {
-                (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
-                    availableSpan, spacing, coverForAdjusted, slabSpanForAdjusted);
+                case SpacingMode.Nominal:
+                    // No adjustment — single bar mode or explicit nominal
+                    break;
+
+                case SpacingMode.AdjustedExternal:
+                    (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
+                        availableSpan, spacing, coverForAdjusted, slabSpanForAdjusted);
+                    break;
+
+                case SpacingMode.ContinuousInternal:
+                    (effectiveSpacing, adjustStatus) = ComputeContinuousSpacing(
+                        availableSpan, spacing);
+                    break;
             }
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (adjustStatus != 0 && ed != null)
             {
-                string msg = adjustStatus == 1
-                    ? $"[AutoRebar] Adjusted spacing to {effectiveSpacing:F1}mm. Label nominal 200mm."
-                    : adjustStatus == 2
-                        ? $"*** WARNING *** [AutoRebar] Spacing {effectiveSpacing:F1}mm in soft-min range (192-194)."
-                        : $"*** WARNING *** [AutoRebar] Cannot adjust; last bar > 70mm from edge.";
+                string msg;
+                if (spacingMode == SpacingMode.AdjustedExternal)
+                {
+                    msg = adjustStatus == 1
+                        ? $"[AutoRebar] AdjExt spacing {effectiveSpacing:F1}mm. Label nominal {spacing:F0}mm."
+                        : adjustStatus == 2
+                            ? $"*** WARNING *** [AutoRebar] AdjExt spacing {effectiveSpacing:F1}mm in soft-min range (192-194)."
+                            : $"*** WARNING *** [AutoRebar] AdjExt cannot adjust; last bar > 70mm from edge.";
+                }
+                else if (spacingMode == SpacingMode.ContinuousInternal)
+                {
+                    msg = adjustStatus == 1
+                        ? $"[AutoRebar] ContInt spacing {effectiveSpacing:F1}mm " +
+                          $"(deviation {Math.Abs(effectiveSpacing - spacing) / spacing * 100:F1}%). Label nominal {spacing:F0}mm."
+                        : $"*** WARNING *** [AutoRebar] ContInt deviation > 15%, fallback nominal {spacing:F0}mm — gap to next strip may differ from spacing.";
+                }
+                else
+                {
+                    msg = $"[AutoRebar] Unexpected status {adjustStatus} for mode {spacingMode}";
+                }
                 ed.WriteMessage($"\n{msg}\n");
             }
 
@@ -1216,6 +1265,43 @@ namespace BricsCadRc.Core
             });
 
             return (leaderUp, encoded);
+        }
+
+        /// <summary>
+        /// Compute spacing for ContinuousInternal mode — force last bar at y1
+        /// (= yHigh - spacing/2) so gap to next strip's first bar equals nominalSpacing.
+        /// Q11=a deviation threshold ±15%, Q12=i pick count closer to nominal.
+        ///
+        /// Returns (effectiveSpacing, status):
+        ///   status 0 = no adjustment needed (nominal works exactly OR single bar)
+        ///   status 1 = continuous mode applied (deviation ≤ 15%, silent OK)
+        ///   status 2 = deviation > threshold, fallback to nominal (gap warn)
+        /// </summary>
+        private static (double effectiveSpacing, int status) ComputeContinuousSpacing(
+            double availableSpan, double nominalSpacing)
+        {
+            if (availableSpan <= 0) return (nominalSpacing, 0);  // degenerate
+
+            int nominalCount = (int)Math.Floor(availableSpan / nominalSpacing) + 1;
+            if (nominalCount < 2) return (nominalSpacing, 0);    // only 1 bar fits
+
+            // If nominal spacing already lands last bar exactly at y1 → no change
+            double nominalLastBarRel = (nominalCount - 1) * nominalSpacing;
+            if (Math.Abs(nominalLastBarRel - availableSpan) < 0.5)
+                return (nominalSpacing, 0);
+
+            // Try count = nominalCount and nominalCount+1
+            double effSpacing1 = availableSpan / (nominalCount - 1);  // sparser
+            double effSpacing2 = availableSpan / nominalCount;         // denser
+
+            double delta1 = Math.Abs(effSpacing1 - nominalSpacing);
+            double delta2 = Math.Abs(effSpacing2 - nominalSpacing);
+
+            double chosen    = (delta1 <= delta2) ? effSpacing1 : effSpacing2;
+            double deviation = Math.Abs(chosen - nominalSpacing) / nominalSpacing;
+
+            if (deviation > 0.15) return (nominalSpacing, 2);  // fallback + warn
+            return (chosen, 1);                                  // continuous applied
         }
 
         /// Returns list of (xOffset, length) per distribution. xOffset = position from

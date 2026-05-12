@@ -375,7 +375,12 @@ namespace BricsCadRc.Core
 
             bar.BarsSpan = rawSpan;
             if (bar.Count <= 1)
-                bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing) + 1);
+                // p375 fix: FP safety. When bar.Spacing was computed as (availableSpan / N)
+                // upstream (e.g., AutoRebarEngine ContinuousInternal mode), back-division
+                // can give N - epsilon instead of N, causing truncation undershoot.
+                // Tiny additive epsilon ensures integer conversion behaves correctly
+                // without affecting genuine fractional ratios.
+                bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing + 1e-9) + 1);
 
             bar.LengthA = barLength;
 
