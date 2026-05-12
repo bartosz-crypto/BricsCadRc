@@ -44,49 +44,20 @@ namespace BricsCadRc.Commands
             var ed = doc.Editor;
             var db = doc.Database;
 
-            while (true)
+            var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
+            if (slabId.IsNull) return;
+
+            try
             {
-                var opts = new PromptEntityOptions(
-                    $"\nWybierz obrys płyty (LWPOLYLINE na warstwie {SlabLayer}):");
-                opts.SetRejectMessage("\nMusi być to LWPOLYLINE.\n");
-                opts.AddAllowedClass(typeof(Polyline), true);
-
-                var res = ed.GetEntity(opts);
-                if (res.Status == PromptStatus.Cancel) return;
-                if (res.Status != PromptStatus.OK) continue;
-
-                bool layerOk = false;
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    if (tr.GetObject(res.ObjectId, OpenMode.ForRead) is Polyline pl)
-                    {
-                        if (pl.Layer == SlabLayer)
-                        {
-                            layerOk = true;
-                        }
-                        else
-                        {
-                            ed.WriteMessage(
-                                $"\nPolilinia jest na warstwie '{pl.Layer}', wymagana '{SlabLayer}'. Spróbuj ponownie.\n");
-                        }
-                    }
-                    tr.Commit();
-                }
-                if (!layerOk) continue;
-
-                try
-                {
-                    AutoRebarEngine.GenerateLayer(
-                        doc, res.ObjectId,
-                        sourceLayer:     sourceLayer,
-                        filterDirection: filterDirection,
-                        layerCode:       layerCode);
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage($"\n[AutoRebar] Błąd: {ex.Message}\n");
-                }
-                return;
+                AutoRebarEngine.GenerateLayer(doc, slabId, sourceLayer, filterDirection, layerCode);
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[AutoRebar] Blad: {ex.Message}\n");
+            }
+            finally
+            {
+                if (isDrawn) SlabPicker.Cleanup(db, slabId);
             }
         }
     }

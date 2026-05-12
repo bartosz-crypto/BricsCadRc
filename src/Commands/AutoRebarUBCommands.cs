@@ -37,42 +37,23 @@ namespace BricsCadRc.Commands
                 if (!int.TryParse(thickRes.StringResult, out thickness)) thickness = 300;
             }
 
-            // Prompt: slab polyline
-            while (true)
+            var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
+            if (slabId.IsNull) return;
+
+            try
             {
-                var opts = new PromptEntityOptions(
-                    $"\nWybierz obrys płyty (LWPOLYLINE na warstwie {SlabLayer}):");
-                opts.SetRejectMessage("\nMusi być to LWPOLYLINE.\n");
-                opts.AddAllowedClass(typeof(Polyline), true);
-                var res = ed.GetEntity(opts);
-                if (res.Status == PromptStatus.Cancel) return;
-                if (res.Status != PromptStatus.OK) continue;
-
-                bool layerOk = false;
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    if (tr.GetObject(res.ObjectId, OpenMode.ForRead) is Polyline pl)
-                    {
-                        if (pl.Layer == SlabLayer) layerOk = true;
-                        else ed.WriteMessage(
-                            $"\nPolilinia na warstwie '{pl.Layer}', wymagana '{SlabLayer}'.\n");
-                    }
-                    tr.Commit();
-                }
-                if (!layerOk) continue;
-
-                try
-                {
-                    AutoRebarEngine.GenerateUBLayer(doc, res.ObjectId,
-                        sourceLayer:    "rebar_bottom",
-                        layerCode:      "B1",
-                        slabThickness:  thickness);
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage($"\n[AutoRebar UB] Błąd: {ex.Message}\n");
-                }
-                return;
+                AutoRebarEngine.GenerateUBLayer(doc, slabId,
+                    sourceLayer: "rebar_bottom",
+                    layerCode: "B1",
+                    slabThickness: thickness);
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[AutoRebar UB] Blad: {ex.Message}\n");
+            }
+            finally
+            {
+                if (isDrawn) SlabPicker.Cleanup(db, slabId);
             }
         }
     }

@@ -278,9 +278,9 @@ namespace BricsCadRc.Core
                     tr.Commit();
                     return -1;
                 }
-                if (!GeometryHelper.IsAxisAlignedPolyline(slabPl))
+                if (slabPl.Layer != "RC-TEMP-OUTLINE" && !GeometryHelper.IsAxisAlignedPolyline(slabPl))
                 {
-                    ed.WriteMessage("\n[AutoRebar UB] Etap 1 nie obsługuje płyt pod kątem.\n");
+                    ed.WriteMessage("\n[AutoRebar UB] Etap 1 nie obsługuje płyt pod kątem (NIE drawn).\n");
                     tr.Commit();
                     return -1;
                 }
@@ -392,9 +392,11 @@ namespace BricsCadRc.Core
                 ed.WriteMessage("\nObrys płyty musi być zamknięty.\n");
                 return null;
             }
-            if (!GeometryHelper.IsAxisAlignedPolyline(slabPl))
+            // Note: axis-aligned check skipped for drawn polylines on RC-TEMP-OUTLINE layer.
+            // Drawn polylines may be non-axis-aligned; engine uses bbox semantics in either case.
+            if (slabPl.Layer != "RC-TEMP-OUTLINE" && !GeometryHelper.IsAxisAlignedPolyline(slabPl))
             {
-                ed.WriteMessage("\n[AutoRebar] Etap 1 nie obsługuje płyt pod kątem. Obróć do osi lub użyj RC_GENERATE_SLAB.\n");
+                ed.WriteMessage("\n[AutoRebar] Etap 1 nie obsługuje płyt pod kątem (NIE drawn).\n");
                 return null;
             }
 
