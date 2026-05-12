@@ -175,10 +175,30 @@ namespace BricsCadRc.Core
                         ed.WriteMessage($"\n[AutoRebar] Reusing template {templateBar.Mark} L={length:F0}mm\n");
                     }
 
+                    double x0, y0, x1, y1;
+                    if (horizontal)
+                    {
+                        x0 = plan.SlabBbox.MinPoint.X + cover + xOffset;
+                        x1 = x0 + length;
+                        y0 = plan.SlabBbox.MinPoint.Y + cover;
+                        y1 = plan.SlabBbox.MaxPoint.Y - cover;
+                    }
+                    else
+                    {
+                        x0 = plan.SlabBbox.MinPoint.X + cover;
+                        x1 = plan.SlabBbox.MaxPoint.X - cover;
+                        y0 = plan.SlabBbox.MinPoint.Y + cover + xOffset;
+                        y1 = y0 + length;
+                    }
+                    double slabSpanForAdjusted = horizontal
+                        ? plan.SlabBbox.MaxPoint.Y - plan.SlabBbox.MinPoint.Y
+                        : plan.SlabBbox.MaxPoint.X - plan.SlabBbox.MinPoint.X;
+
                     bool ok = GenerateDistributionWithLeaderAtOffset(
-                        db, plan.SlabBbox, cover, xOffset,
+                        db, x0, y0, x1, y1,
                         templateBarId, templateBar,
-                        diameter, length, spacing, layerCode, filterDirection);
+                        diameter, length, spacing, layerCode, filterDirection,
+                        cover, slabSpanForAdjusted);
 
                     if (ok) generated++;
                 }
@@ -775,40 +795,20 @@ namespace BricsCadRc.Core
         /// Length passed explicitly (per-dist, from ComputeDistributionPlan).
         /// </summary>
         private static bool GenerateDistributionWithLeaderAtOffset(
-            Database db, Extents3d slabBbox, double cover, double xOffset,
+            Database db,
+            double x0, double y0, double x1, double y1,
             ObjectId templateBarId, BarData templateBar,
             int diameter, double length, double spacing,
-            string layerCode, string filterDirection)
+            string layerCode, string filterDirection,
+            double coverForAdjusted,
+            double slabSpanForAdjusted)
         {
             bool horizontal = filterDirection == "X";
 
-            // Bounds: bar at xOffset within slab+cover region.
-            // For horizontal: x ∈ [slabMinX+cover+xOffset, slabMinX+cover+xOffset+length]
-            //                 y ∈ [slabMinY+cover, slabMaxY-cover]
-            // For vertical: axes swapped.
-            double x0, y0, x1, y1;
-            if (horizontal)
-            {
-                x0 = slabBbox.MinPoint.X + cover + xOffset;
-                x1 = x0 + length;
-                y0 = slabBbox.MinPoint.Y + cover;
-                y1 = slabBbox.MaxPoint.Y - cover;
-            }
-            else
-            {
-                x0 = slabBbox.MinPoint.X + cover;
-                x1 = slabBbox.MaxPoint.X - cover;
-                y0 = slabBbox.MinPoint.Y + cover + xOffset;
-                y1 = y0 + length;
-            }
-
             double availableSpan = horizontal ? (y1 - y0) : (x1 - x0);
-            double slabSpanTotal = horizontal
-                ? (slabBbox.MaxPoint.Y - slabBbox.MinPoint.Y)
-                : (slabBbox.MaxPoint.X - slabBbox.MinPoint.X);
 
             var (effectiveSpacing, adjustStatus) = ComputeAdjustedSpacing(
-                availableSpan, spacing, cover, slabSpanTotal);
+                availableSpan, spacing, coverForAdjusted, slabSpanForAdjusted);
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;

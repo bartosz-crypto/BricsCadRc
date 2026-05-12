@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 
@@ -105,6 +106,112 @@ namespace BricsCadRc.Core
             var a = pl.GetPoint2dAt(0);
             var b = pl.GetPoint2dAt(1);
             return Math.Abs(b.X - a.X) >= Math.Abs(b.Y - a.Y) ? "X" : "Y";
+        }
+
+        // ----------------------------------------------------------------
+        // Ray casting / scanline — polygon intersection helpers
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Zwraca odcinki poziomej linii y=coord przyciete do wielokata.
+        /// Wyniki to pary (xStart, xEnd) w granicach [xMin, xMax].
+        /// </summary>
+        public static List<(double, double)> ClipHorizontalLine(
+            List<Point2d> vertices, double y, double xMin, double xMax)
+        {
+            var xs = FindIntersectionsH(vertices, y);
+            return PairSegments(xs, xMin, xMax);
+        }
+
+        /// <summary>
+        /// Zwraca odcinki pionowej linii x=coord przyciete do wielokata.
+        /// Wyniki to pary (yStart, yEnd) w granicach [yMin, yMax].
+        /// </summary>
+        public static List<(double, double)> ClipVerticalLine(
+            List<Point2d> vertices, double x, double yMin, double yMax)
+        {
+            var ys = FindIntersectionsV(vertices, x);
+            return PairSegments(ys, yMin, yMax);
+        }
+
+        public static List<double> FindIntersectionsH(List<Point2d> vertices, double y)
+        {
+            var result = new List<double>();
+            int n = vertices.Count;
+
+            for (int i = 0; i < n; i++)
+            {
+                var p1 = vertices[i];
+                var p2 = vertices[(i + 1) % n];
+
+                // Pomijaj krawedzie rownolegle do linii skanowania
+                if (Math.Abs(p1.Y - p2.Y) < 1e-9) continue;
+
+                // Sprawdz czy linia y przechodzi przez krawedz
+                // (wylaczamy dokladnie gorny punkt zeby uniknac podwojnego liczenia)
+                if ((p1.Y <= y && p2.Y > y) || (p2.Y <= y && p1.Y > y))
+                {
+                    double t = (y - p1.Y) / (p2.Y - p1.Y);
+                    double x = p1.X + t * (p2.X - p1.X);
+                    result.Add(x);
+                }
+            }
+
+            result.Sort();
+            return result;
+        }
+
+        public static List<double> FindIntersectionsV(List<Point2d> vertices, double x)
+        {
+            var result = new List<double>();
+            int n = vertices.Count;
+
+            for (int i = 0; i < n; i++)
+            {
+                var p1 = vertices[i];
+                var p2 = vertices[(i + 1) % n];
+
+                if (Math.Abs(p1.X - p2.X) < 1e-9) continue;
+
+                if ((p1.X <= x && p2.X > x) || (p2.X <= x && p1.X > x))
+                {
+                    double t = (x - p1.X) / (p2.X - p1.X);
+                    double y = p1.Y + t * (p2.Y - p1.Y);
+                    result.Add(y);
+                }
+            }
+
+            result.Sort();
+            return result;
+        }
+
+        /// <summary>Laczy posortowane przeciecia w pary i przycina do zakresu.</summary>
+        public static List<(double, double)> PairSegments(List<double> coords, double min, double max)
+        {
+            var segments = new List<(double, double)>();
+
+            for (int i = 0; i + 1 < coords.Count; i += 2)
+            {
+                double a = coords[i];
+                double b = coords[i + 1];
+
+                // Przytnij do zakresu z otuling
+                double clampA = Math.Max(a, min);
+                double clampB = Math.Min(b, max);
+
+                if (clampA < clampB - 1e-6)
+                    segments.Add((clampA, clampB));
+            }
+
+            return segments;
+        }
+
+        public static List<Point2d> GetPolylineVertices(Polyline pline)
+        {
+            var pts = new List<Point2d>();
+            for (int i = 0; i < pline.NumberOfVertices; i++)
+                pts.Add(pline.GetPoint2dAt(i));
+            return pts;
         }
     }
 }
