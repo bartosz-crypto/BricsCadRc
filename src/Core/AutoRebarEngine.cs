@@ -233,7 +233,9 @@ namespace BricsCadRc.Core
                             db, x0, y0, x1, y1,
                             templateBarId, templateBar,
                             diameter, length, spacing, layerCode, filterDirection,
-                            lowerOffset, stripHeight, applyAdjustment);
+                            lowerOffset, stripHeight, applyAdjustment,
+                            plan.SlabBbox.MinPoint.Y,
+                            plan.SlabBbox.MaxPoint.Y);
 
                         if (ok) generated++;
                     }
@@ -399,14 +401,16 @@ namespace BricsCadRc.Core
                 bool ok = GenerateUBDistribution(
                     db, slabBbox, cover, templateBarId, templateBar,
                     ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
-                    isLeftSide: true);
+                    isLeftSide: true,
+                    slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
                 if (ok) generated++;
 
                 // Right UB: x1 = slabMaxX-cover, x0 = x1-LengthA, SymbolSide="Right"
                 ok = GenerateUBDistribution(
                     db, slabBbox, cover, templateBarId, templateBar,
                     ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
-                    isLeftSide: false);
+                    isLeftSide: false,
+                    slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
                 if (ok) generated++;
             }
 
@@ -937,7 +941,9 @@ namespace BricsCadRc.Core
             string layerCode, string filterDirection,
             double coverForAdjusted,
             double slabSpanForAdjusted,
-            bool applyAdjustment = true)
+            bool applyAdjustment,
+            double slabMinY,
+            double slabMaxY)
         {
             bool horizontal = filterDirection == "X";
 
@@ -980,14 +986,35 @@ namespace BricsCadRc.Core
                 db, x0, y0, x1, y1, distBar, horizontal, posNr);
             if (!barResult.IsValid) return false;
 
-            // Step 3.5: pre-set leader points using actual BarsSpan (set by GenerateFromBounds).
-            // pts[0].Y pinned to BarsSpan/2 by BuildH/V rescale; pts[1].Y preserved = last bar + 2400mm.
-            double armEndY = distBar.BarsSpan + LeaderArmExtension;
-            distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
+            // Step 3.5: pre-set leader points using arm-from-slab-edge math.
+            // Direction (up/down) chosen per Q8 (bar positions vs slab edges),
+            // Q9 tie-break: up. armEndY_local relative to annotInsertY_world.
+            double firstBarY    = barResult.MinPoint.Y;
+            double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
+            double annotInsertY = horizontal
+                ? barResult.MinPoint.Y                   // per current annotInsertPt definition
+                : barResult.MinPoint.Y + length / 2.0;  // (vertical case for B2 future)
+
+            // p372 scope = horizontal bars only (B1). Skip if vertical (B2 future).
+            bool leaderUp;
+            if (horizontal)
             {
-                new Point3d(0, 0,       0),
-                new Point3d(0, armEndY, 0),
-            });
+                var (lu, encoded) = ComputeAnnotLeaderForHorizontalBars(
+                    firstBarY, lastBarY, annotInsertY, slabMinY, slabMaxY);
+                leaderUp = lu;
+                distBar.LeaderPoints = encoded;
+            }
+            else
+            {
+                // B2 future — fallback do starej logiki (zachowane dla compatibility)
+                leaderUp = true;
+                double armEndY = distBar.BarsSpan + LeaderArmExtension;
+                distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
+                {
+                    new Point3d(0, 0,       0),
+                    new Point3d(0, armEndY, 0),
+                });
+            }
 
             // Step 3.6: annotation insert centered on this dist's bar span (NOT slab center).
             Point3d annotInsertPt;
@@ -1011,7 +1038,7 @@ namespace BricsCadRc.Core
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
                 customInsertPt: annotInsertPt,
-                barsHorizontal: horizontal, leaderRight: true, leaderUp: true);
+                barsHorizontal: horizontal, leaderRight: true, leaderUp: leaderUp);
 
             // Step 5: bidirectional link dist ↔ annot
             if (annotResult.BlockRefId != ObjectId.Null)
@@ -1033,7 +1060,8 @@ namespace BricsCadRc.Core
             Database db, Extents3d slabBbox, double cover,
             ObjectId templateBarId, BarData templateBar,
             double lengthA, double lengthB, double lengthC,
-            double spacing, string layerCode, bool isLeftSide)
+            double spacing, string layerCode, bool isLeftSide,
+            double slabMinY, double slabMaxY)
         {
             // X bounds: bar plan-view length = lengthA
             // Left UB:  x0 = slabMinX+cover (outer end at slab edge), x1 = x0+lengthA
@@ -1096,13 +1124,16 @@ namespace BricsCadRc.Core
                 db, x0, y0, x1, y1, distBar, horizontal: true, posNr);
             if (!barResult.IsValid) return false;
 
-            // Step 2: leader points using actual BarsSpan (must be AFTER GenerateFromBounds)
-            double armEndY = distBar.BarsSpan + LeaderArmExtension;
-            distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
-            {
-                new Point3d(0, 0,       0),
-                new Point3d(0, armEndY, 0),
-            });
+            // Step 2: leader points using arm-from-slab-edge math.
+            // UB B1 = horizontal bars (shape 21 U-bar, distributed along Y).
+            // Annot direction same logic as B1 — proximity bars to slab edges.
+            double firstBarY    = barResult.MinPoint.Y;
+            double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
+            double annotInsertY = y0;  // per current UB annotInsertPt definition
+
+            var (leaderUp, encoded) = ComputeAnnotLeaderForHorizontalBars(
+                firstBarY, lastBarY, annotInsertY, slabMinY, slabMaxY);
+            distBar.LeaderPoints = encoded;
 
             // Step 3: annotation insert centered on bar span (use explicit bounds, NOT barResult.MinPoint —
             // circle markers via SymbolSide="Left"/"Right" pollute GeometricExtents by ±35mm,
@@ -1117,7 +1148,7 @@ namespace BricsCadRc.Core
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
                 customInsertPt: annotInsertPt,
-                barsHorizontal: true, leaderRight: true, leaderUp: true);
+                barsHorizontal: true, leaderRight: true, leaderUp: leaderUp);
 
             // Step 5: bidirectional link + outline
             if (annotResult.BlockRefId != ObjectId.Null)
@@ -1149,6 +1180,44 @@ namespace BricsCadRc.Core
         /// Compute multi-distribution plan: how many distributions, what length each, what offset.
         /// Equal-as-possible algorithm with mixed fallback (last dist shorter).
         ///
+        /// <summary>
+        /// Computes pre-set LeaderPoints and leaderUp flag for horizontal-bar
+        /// distribution annotation, based on proximity of dist bars to slab
+        /// external edges (Q8 = bar positions criterion, Q9 = up tie-break).
+        ///
+        /// Pre-set LeaderPoints są LOKALNE do annotation block origin
+        /// (annotInsertY_world). Returned encoded string is ready for
+        /// distBar.LeaderPoints assignment.
+        /// </summary>
+        /// <returns>(leaderUp flag for CreateLeader, encoded LeaderPoints for distBar)</returns>
+        private static (bool leaderUp, string leaderPointsEncoded) ComputeAnnotLeaderForHorizontalBars(
+            double firstBarY_world,
+            double lastBarY_world,
+            double annotInsertY_world,
+            double slabMinY,
+            double slabMaxY)
+        {
+            double distFirstBarToSlabMin = firstBarY_world - slabMinY;
+            double distLastBarToSlabMax  = slabMaxY - lastBarY_world;
+
+            // Q9: <= ensures tie-break = up (rect slab backward compat)
+            bool leaderUp = distLastBarToSlabMax <= distFirstBarToSlabMin;
+
+            double armEndY_world = leaderUp
+                ? slabMaxY + LeaderArmExtension
+                : slabMinY - LeaderArmExtension;
+
+            double armEndY_local = armEndY_world - annotInsertY_world;
+
+            string encoded = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
+            {
+                new Point3d(0, 0,             0),
+                new Point3d(0, armEndY_local, 0),
+            });
+
+            return (leaderUp, encoded);
+        }
+
         /// Returns list of (xOffset, length) per distribution. xOffset = position from
         /// slab+cover origin (absolute x0_dist = slabMinX + cover + xOffset).
         /// For slab fitting single dist (available &lt;= TemplateMaxLen) returns single entry.
