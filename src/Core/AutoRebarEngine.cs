@@ -68,6 +68,10 @@ namespace BricsCadRc.Core
         /// <summary>UB Mark suffix — distinct from straight bar suffix " B1".</summary>
         public const string UBSuffix      = "UB";
 
+        /// <summary>Min vertical edge length for UB B1 segment generation (Q17).
+        /// Shorter edges skipped + warning.</summary>
+        public const double UBMinSegmentLength = 1000.0;
+
         /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
         public const double MaxLastBarDistanceFromEdge = 70.0;
 
@@ -327,6 +331,7 @@ namespace BricsCadRc.Core
             List<(ObjectId distId, ObjectId annotId)> oldUBs;
             (ObjectId, BarData)? matchedTemplate;
             int existingUBTemplateCount;
+            List<Point2d> slabVertices;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -349,7 +354,8 @@ namespace BricsCadRc.Core
                     return -1;
                 }
 
-                slabBbox = GeometryHelper.PolylineBbox(slabPl);
+                slabBbox     = GeometryHelper.PolylineBbox(slabPl);
+                slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
                 var slabCentroid = GeometryHelper.Centroid(slabBbox);
 
                 var rects = ScanLayerRectangles(db, tr, sourceLayer);
@@ -380,6 +386,68 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
 
+            // Edge enumeration — classify all polyline edges
+            var edges = GeometryHelper.EnumerateAxisAlignedEdges(slabVertices);
+
+            int horizontalCount = 0;
+            int diagonalCount   = 0;
+            int zeroLengthCount = 0;
+            var verticalCandidates = new List<GeometryHelper.PolylineEdge>();
+
+            foreach (var e in edges)
+            {
+                switch (e.Orientation)
+                {
+                    case GeometryHelper.EdgeOrientation.Vertical:   verticalCandidates.Add(e); break;
+                    case GeometryHelper.EdgeOrientation.Horizontal: horizontalCount++; break;
+                    case GeometryHelper.EdgeOrientation.Diagonal:   diagonalCount++; break;
+                    case GeometryHelper.EdgeOrientation.ZeroLength: zeroLengthCount++; break;
+                }
+            }
+
+            if (horizontalCount > 0)
+                ed.WriteMessage($"\n[AutoRebar UB] Skipped {horizontalCount} horizontal edge(s) " +
+                                $"(UB B1 = vertical only; use UB B2 future)\n");
+            if (diagonalCount > 0)
+                ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Skipped {diagonalCount} " +
+                                $"diagonal edge(s) — axis-aligned slabs only\n");
+
+            // Filter by min length and compute SymbolSide per segment
+            var validSegments = new List<(double xEdge, double yLow, double yHigh, string symbolSide)>();
+            int tooShortCount = 0;
+
+            foreach (var seg in verticalCandidates)
+            {
+                if (seg.Length < UBMinSegmentLength)
+                {
+                    ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Vertical edge " +
+                        $"X={seg.Start.X:F0} length {seg.Length:F0}mm < {UBMinSegmentLength:F0}mm, skipped\n");
+                    tooShortCount++;
+                    continue;
+                }
+
+                double xEdge = seg.Start.X;
+                double yLow  = Math.Min(seg.Start.Y, seg.End.Y);
+                double yHigh = Math.Max(seg.Start.Y, seg.End.Y);
+
+                // SymbolSide auto-detect: sample point slightly RIGHT of edge midpoint
+                double midY      = (yLow + yHigh) * 0.5;
+                var    testPoint = new Teigha.Geometry.Point2d(xEdge + 0.1, midY);
+                bool   interiorOnRight = GeometryHelper.IsPointInsidePolygon(slabVertices, testPoint);
+                string symbolSide = interiorOnRight ? "Left" : "Right";
+
+                validSegments.Add((xEdge, yLow, yHigh, symbolSide));
+            }
+
+            ed.WriteMessage($"\n[AutoRebar UB] Vertical segments: {verticalCandidates.Count} total, " +
+                            $"{validSegments.Count} valid, {tooShortCount} too short.\n");
+
+            if (validSegments.Count == 0)
+            {
+                ed.WriteMessage($"\n[AutoRebar UB] No valid vertical segments — abort.\n");
+                return -1;
+            }
+
             int generated = 0;
             using (doc.LockDocument())
             {
@@ -403,25 +471,22 @@ namespace BricsCadRc.Core
                         $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
                 }
 
-                // Left UB: x0 = slabMinX+cover, x1 = x0+LengthA, SymbolSide="Left"
-                bool ok = GenerateUBDistribution(
-                    db, slabBbox, cover, templateBarId, templateBar,
-                    ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
-                    isLeftSide: true,
-                    slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
-                if (ok) generated++;
+                foreach (var (xEdge, yLow, yHigh, symbolSide) in validSegments)
+                {
+                    ed.WriteMessage($"\n[AutoRebar UB] Segment X={xEdge:F0} Y=[{yLow:F0}..{yHigh:F0}] " +
+                                    $"length {yHigh - yLow:F0}mm SymbolSide={symbolSide}\n");
 
-                // Right UB: x1 = slabMaxX-cover, x0 = x1-LengthA, SymbolSide="Right"
-                ok = GenerateUBDistribution(
-                    db, slabBbox, cover, templateBarId, templateBar,
-                    ubLengthA, ubLengthB, ubLengthC, spacing, layerCode,
-                    isLeftSide: false,
-                    slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
-                if (ok) generated++;
+                    bool ok = GenerateUBDistribution(
+                        db, xEdge, yLow, yHigh, cover, templateBarId, templateBar,
+                        ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
+                        slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
+                    if (ok) generated++;
+                }
             }
 
             ed.WriteMessage(
-                $"\n[AutoRebar UB] Wygenerowano {generated} z 2 rozkładów UB B1 (grubość {slabThickness}mm).\n");
+                $"\n[AutoRebar UB] Wygenerowano {generated} z {validSegments.Count} rozkładów UB B1 " +
+                $"(grubość {slabThickness}mm).\n");
             return generated;
         }
 
@@ -793,6 +858,7 @@ namespace BricsCadRc.Core
                 if (bar == null || bar.LayerCode != layerCode) continue;
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
+                if (bar.Direction != "X") continue;  // Q16=b: defensive for future UB B2 (Direction="Y")
                 if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
 
                 ObjectId annotId = ObjectId.Null;
@@ -1106,45 +1172,45 @@ namespace BricsCadRc.Core
         /// SymbolSide differs per side so circles appear only on outer ends.
         /// </summary>
         private static bool GenerateUBDistribution(
-            Database db, Extents3d slabBbox, double cover,
+            Database db,
+            double xEdge, double yLow, double yHigh, double cover,
             ObjectId templateBarId, BarData templateBar,
             double lengthA, double lengthB, double lengthC,
-            double spacing, string layerCode, bool isLeftSide,
+            double spacing, string layerCode, string symbolSide,
             double slabMinY, double slabMaxY)
         {
             // X bounds: bar plan-view length = lengthA
-            // Left UB:  x0 = slabMinX+cover (outer end at slab edge), x1 = x0+lengthA
-            // Right UB: x1 = slabMaxX-cover (outer end at slab edge), x0 = x1-lengthA
+            // Left wall (symbolSide=Left): bar starts at xEdge+cover, extends right by lengthA
+            // Right wall (symbolSide=Right): bar ends at xEdge-cover, extends left by lengthA
             double x0, x1;
-            if (isLeftSide)
+            if (symbolSide == "Left")
             {
-                x0 = slabBbox.MinPoint.X + cover;
+                x0 = xEdge + cover;
                 x1 = x0 + lengthA;
             }
             else
             {
-                x1 = slabBbox.MaxPoint.X - cover;
+                x1 = xEdge - cover;
                 x0 = x1 - lengthA;
             }
 
-            // Y bounds: full slab.dy with cover
-            double y0 = slabBbox.MinPoint.Y + cover;
-            double y1 = slabBbox.MaxPoint.Y - cover;
+            // Y bounds: segment endpoints with cover
+            double y0 = yLow  + cover;
+            double y1 = yHigh - cover;
 
             double availSpacingSpan = y1 - y0;
-            double slabSpan = slabBbox.MaxPoint.Y - slabBbox.MinPoint.Y;
+            double slabSpan = yHigh - yLow;  // segment physical span
             var (effSpacing, adjStatus) = ComputeAdjustedSpacing(availSpacingSpan, spacing, cover, slabSpan);
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
             if (adjStatus != 0 && ed != null)
             {
-                string side = isLeftSide ? "Left" : "Right";
                 string msg = adjStatus == 1
-                    ? $"[AutoRebar UB {side}] Adjusted spacing to {effSpacing:F1}mm. Label nominal 200mm."
+                    ? $"[AutoRebar UB {symbolSide}] Adjusted spacing to {effSpacing:F1}mm. Label nominal 200mm."
                     : adjStatus == 2
-                        ? $"*** WARNING *** [AutoRebar UB {side}] Spacing {effSpacing:F1}mm in soft-min range."
-                        : $"*** WARNING *** [AutoRebar UB {side}] Cannot adjust; last bar > 70mm from edge.";
+                        ? $"*** WARNING *** [AutoRebar UB {symbolSide}] Spacing {effSpacing:F1}mm in soft-min range."
+                        : $"*** WARNING *** [AutoRebar UB {symbolSide}] Cannot adjust; last bar > 70mm from edge.";
                 ed.WriteMessage($"\n{msg}\n");
             }
 
@@ -1166,7 +1232,7 @@ namespace BricsCadRc.Core
             if (adjStatus != 0) distBar.IsLabelManual = true;
 
             // Circle markers on outer end only (at slab edge)
-            distBar.SymbolSide = isLeftSide ? "Left" : "Right";
+            distBar.SymbolSide = symbolSide;
 
             // Step 1: generate distribution block (sets distBar.BarsSpan)
             var barResult = BarBlockEngine.GenerateFromBounds(

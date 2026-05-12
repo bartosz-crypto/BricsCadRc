@@ -213,5 +213,84 @@ namespace BricsCadRc.Core
                 pts.Add(pline.GetPoint2dAt(i));
             return pts;
         }
+
+        // ----------------------------------------------------------------
+        // Edge orientation classification
+        // ----------------------------------------------------------------
+
+        public enum EdgeOrientation
+        {
+            Vertical,
+            Horizontal,
+            Diagonal,
+            ZeroLength
+        }
+
+        public class PolylineEdge
+        {
+            public Point2d Start;
+            public Point2d End;
+            public EdgeOrientation Orientation;
+            public double Length;
+        }
+
+        /// <summary>
+        /// Enumerates edges of polyline with axis-aligned orientation classification.
+        /// Handles both pl.Closed=true and vertex-repeated closed patterns (per IsEffectivelyClosed).
+        /// </summary>
+        public static List<PolylineEdge> EnumerateAxisAlignedEdges(
+            List<Point2d> vertices, double eps = 1e-3)
+        {
+            var result = new List<PolylineEdge>();
+            if (vertices == null || vertices.Count < 2) return result;
+
+            int n = vertices.Count;
+
+            // Detect vertex-repeated close (last vertex == first vertex)
+            bool vertexRepeated = (n >= 3 &&
+                                  vertices[0].GetDistanceTo(vertices[n - 1]) < eps);
+            int edgeCount = vertexRepeated ? n - 1 : n;
+
+            for (int i = 0; i < edgeCount; i++)
+            {
+                var a = vertices[i];
+                var b = vertices[(i + 1) % n];
+
+                double dx = Math.Abs(b.X - a.X);
+                double dy = Math.Abs(b.Y - a.Y);
+
+                EdgeOrientation orient;
+                if (dx < eps && dy < eps)         orient = EdgeOrientation.ZeroLength;
+                else if (dx < eps)                orient = EdgeOrientation.Vertical;
+                else if (dy < eps)                orient = EdgeOrientation.Horizontal;
+                else                              orient = EdgeOrientation.Diagonal;
+
+                result.Add(new PolylineEdge
+                {
+                    Start       = a,
+                    End         = b,
+                    Orientation = orient,
+                    Length      = a.GetDistanceTo(b)
+                });
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Tests if a 2D point is inside an arbitrary polygon using ray-cast parity test.
+        /// Reuses FindIntersectionsH for consistency with B1 strip decomposition logic.
+        /// </summary>
+        public static bool IsPointInsidePolygon(List<Point2d> vertices, Point2d test)
+        {
+            if (vertices == null || vertices.Count < 3) return false;
+
+            var xsAtY = FindIntersectionsH(vertices, test.Y);
+            int leftCount = 0;
+            foreach (double x in xsAtY)
+                if (x < test.X) leftCount++;
+
+            return (leftCount % 2) == 1;
+        }
     }
 }
