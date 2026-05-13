@@ -24,10 +24,11 @@ namespace BricsCadRc.Commands
                 layerCode:       "B1");
         }
 
-        // Etap 2+ — uncomment when engine support is confirmed:
-        // [CommandMethod("RC_GENERUJ_B2", CommandFlags.Modal)]
-        // public void GenerateB2() => GenerateForLayer("rebar_bottom", "Y", "B2");
-        //
+        // Etap 1B Faza 2: B2 active (Y-bars). T1/T2 wymaga rebar_top layer
+        // support — uncomment when ready (Etap 2+).
+        [CommandMethod("RC_GENERUJ_B2", CommandFlags.Modal)]
+        public void GenerateB2() => GenerateForLayer("rebar_bottom", "Y", "B2");
+
         // [CommandMethod("RC_GENERUJ_T1", CommandFlags.Modal)]
         // public void GenerateT1() => GenerateForLayer("rebar_top", "X", "T1");
         //

@@ -116,12 +116,12 @@ namespace BricsCadRc.Core
 
             bool horizontal = filterDirection == "X";
 
-            // Strip decomposition (Etap 1E)
-            // Faza 1: unconditional YStrips → StripBounds adapter.
-            // Faza 2 dorzuca dispatch dla XStrips (B2).
-            List<StripBounds> strips = DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox)
-                .Select(s => ToStripBounds(s))
-                .ToList();
+            // Strip decomposition (Etap 1E + 1B Faza 2 dispatch).
+            // horizontal=true (X-bars/B1) → DecomposeIntoYStrips (Y-axis scan).
+            // horizontal=false (Y-bars/B2) → DecomposeIntoXStrips (X-axis scan).
+            List<StripBounds> strips = horizontal
+                ? DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox).Select(s => ToStripBounds(s)).ToList()
+                : DecomposeIntoXStrips(plan.SlabVertices, plan.SlabBbox).Select(s => ToStripBounds(s)).ToList();
             int validStrips   = strips.Count(s => s.Valid);
             int skippedStrips = strips.Count - validStrips;
 
@@ -205,7 +205,7 @@ namespace BricsCadRc.Core
                         using (var trMatch = db.TransactionManager.StartTransaction())
                         {
                             var freshTemplates = ScanTemplates(db, trMatch, plan.RebarBbox,
-                                                               filterDirection, diameter);
+                                                               diameter);
                             foreach (var (tid, tb) in freshTemplates)
                             {
                                 if (Math.Abs(tb.LengthA - length) < 1.0)
@@ -225,7 +225,7 @@ namespace BricsCadRc.Core
                             using (var trCount = db.TransactionManager.StartTransaction())
                             {
                                 var freshTemplates = ScanTemplates(db, trCount, plan.RebarBbox,
-                                                                   filterDirection, diameter);
+                                                                   diameter);
                                 existingCount = freshTemplates.Count;
                                 trCount.Commit();
                             }
@@ -243,13 +243,22 @@ namespace BricsCadRc.Core
                         double x0 = strip.PerpLow + cover + xOffset;   // bar start (perp axis)
                         double x1 = x0 + length;
 
+                        // Map local scan/perp → WCS bbox for GenerateFromBounds.
+                        // B1 (horizontal=true):  scan=Y, perp=X → wcsX=perp(x0/x1),  wcsY=scan(y0/y1)
+                        // B2 (horizontal=false): scan=X, perp=Y → wcsX=scan(y0/y1), wcsY=perp(x0/x1)
+                        double wcsX0   = horizontal ? x0 : y0;
+                        double wcsY0   = horizontal ? y0 : x0;
+                        double wcsX1   = horizontal ? x1 : y1;
+                        double wcsY1   = horizontal ? y1 : x1;
+                        double slabMin = horizontal ? plan.SlabBbox.MinPoint.Y : plan.SlabBbox.MinPoint.X;
+                        double slabMax = horizontal ? plan.SlabBbox.MaxPoint.Y : plan.SlabBbox.MaxPoint.X;
+
                         bool ok = GenerateDistributionWithLeaderAtOffset(
-                            db, x0, y0, x1, y1,
+                            db, wcsX0, wcsY0, wcsX1, wcsY1,
                             templateBarId, templateBar,
                             diameter, length, spacing, layerCode, filterDirection,
                             lowerOffset, stripHeight, spacingMode,
-                            plan.SlabBbox.MinPoint.Y,
-                            plan.SlabBbox.MaxPoint.Y);
+                            slabMin, slabMax);
 
                         if (ok) generated++;
                     }
@@ -635,7 +644,7 @@ namespace BricsCadRc.Core
             var (_, rebarBbox) = FindNearestRect(rects, slabCentroid);
 
             // 4. Scan existing templates in rebar box (Direction inferred + Diameter match)
-            var templates = ScanTemplates(db, tr, rebarBbox, filterDirection, diameter);
+            var templates = ScanTemplates(db, tr, rebarBbox, diameter);
 
             // 5. Match by length (tolerance ±1mm)
             (ObjectId id, BarData bar)? match = null;
@@ -886,8 +895,7 @@ namespace BricsCadRc.Core
         }
 
         private static List<(ObjectId, BarData)> ScanTemplates(
-            Database db, Transaction tr, Extents3d rebarBbox,
-            string filterDirection, int diameter)
+            Database db, Transaction tr, Extents3d rebarBbox, int diameter)
         {
             var result = new List<(ObjectId, BarData)>();
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -902,7 +910,8 @@ namespace BricsCadRc.Core
                 if (bar.Diameter != diameter) continue;
                 var insPt = pl.GetPoint3dAt(0);
                 if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
-                if (GeometryHelper.InferDirectionFromPolyline(pl) != filterDirection) continue;
+                // Etap 1E: usunięto filter InferDirectionFromPolyline — B1/B2 share template pool.
+                // Match po diameter + length (downstream), Direction irrelevant for elev template.
                 result.Add((oid, bar));
             }
             return result;
@@ -1179,8 +1188,8 @@ namespace BricsCadRc.Core
             double coverForAdjusted,
             double slabSpanForAdjusted,
             SpacingMode spacingMode,
-            double slabMinY,
-            double slabMaxY)
+            double slabMinY,     // B1: slab Y bounds; B2: slab X bounds (dispatch from GenerateLayer)
+            double slabMaxY)     // (param names kept for B1 backward compat; semantics differ for B2)
         {
             bool horizontal = filterDirection == "X";
 
@@ -1258,8 +1267,10 @@ namespace BricsCadRc.Core
                 ? barResult.MinPoint.Y                   // per current annotInsertPt definition
                 : barResult.MinPoint.Y + length / 2.0;  // (vertical case for B2 future)
 
-            // p372 scope = horizontal bars only (B1). Skip if vertical (B2 future).
+            // Etap 1C: proximity dispatch — B1 Y-axis via ComputeAnnotLeaderForHorizontalBars,
+            // B2 X-axis via ComputeAnnotLeaderForVerticalBars.
             bool leaderUp;
+            bool leaderRight = true;  // B1: always right (leaderRight unused for X-bars); B2: computed below
             if (horizontal)
             {
                 var (lu, encoded) = ComputeAnnotLeaderForHorizontalBars(
@@ -1269,14 +1280,17 @@ namespace BricsCadRc.Core
             }
             else
             {
-                // B2 future — fallback do starej logiki (zachowane dla compatibility)
-                leaderUp = true;
-                double armEndY = distBar.BarsSpan + LeaderArmExtension;
-                distBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
-                {
-                    new Point3d(0, 0,       0),
-                    new Point3d(0, armEndY, 0),
-                });
+                // Etap 1C: proximity-based X-axis leader.
+                // slabMinY/slabMaxY for B2 = X coords (dispatch from GenerateLayer Zmiana B).
+                var (lr, encodedV) = ComputeAnnotLeaderForVerticalBars(
+                    firstBarX_world:    barResult.MinPoint.X,
+                    lastBarX_world:     barResult.MinPoint.X + distBar.BarsSpan,
+                    annotInsertX_world: barResult.MinPoint.X,
+                    slabMinX: slabMinY,
+                    slabMaxX: slabMaxY);
+                leaderRight = lr;
+                leaderUp    = true;
+                distBar.LeaderPoints = encodedV;
             }
 
             // Step 3.6: annotation insert centered on this dist's bar span (NOT slab center).
@@ -1301,7 +1315,7 @@ namespace BricsCadRc.Core
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
                 customInsertPt: annotInsertPt,
-                barsHorizontal: horizontal, leaderRight: true, leaderUp: leaderUp);
+                barsHorizontal: horizontal, leaderRight: leaderRight, leaderUp: leaderUp);
 
             // Step 5: bidirectional link dist ↔ annot
             if (annotResult.BlockRefId != ObjectId.Null)
@@ -1503,6 +1517,41 @@ namespace BricsCadRc.Core
             });
 
             return (leaderUp, encoded);
+        }
+
+        /// <summary>
+        /// Compute annotation leader direction (right/left) and pre-set LeaderPoints
+        /// for vertical bars (B2, Direction="Y"). Mirror of ComputeAnnotLeaderForHorizontalBars
+        /// on X-axis. Leader points in local annotation BTR coords (X-axis, Y=0).
+        /// slabMinX/slabMaxX — passed as slabMinY/slabMaxY from caller; for B2 these are X coords.
+        /// </summary>
+        /// <returns>(leaderRight flag for CreateLeader, encoded LeaderPoints for distBar)</returns>
+        private static (bool leaderRight, string leaderPointsEncoded) ComputeAnnotLeaderForVerticalBars(
+            double firstBarX_world,
+            double lastBarX_world,
+            double annotInsertX_world,
+            double slabMinX,
+            double slabMaxX)
+        {
+            double distFirstBarToSlabMin = firstBarX_world - slabMinX;
+            double distLastBarToSlabMax  = slabMaxX - lastBarX_world;
+
+            // Q9 analog: <= tie-break = right (positive X, backward compat rect case)
+            bool leaderRight = distLastBarToSlabMax <= distFirstBarToSlabMin;
+
+            double armEndX_world = leaderRight
+                ? slabMaxX + LeaderArmExtension
+                : slabMinX - LeaderArmExtension;
+
+            double armEndX_local = armEndX_world - annotInsertX_world;
+
+            string encoded = AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
+            {
+                new Point3d(0,             0, 0),
+                new Point3d(armEndX_local, 0, 0),
+            });
+
+            return (leaderRight, encoded);
         }
 
         /// <summary>
