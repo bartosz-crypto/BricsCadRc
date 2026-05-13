@@ -539,6 +539,18 @@ namespace BricsCadRc.Core
             public string SkipReason;
         }
 
+        private class XStrip
+        {
+            public double XLow;
+            public double XHigh;
+            public double YLow;
+            public double YHigh;
+            public bool   LowerIsExternal;
+            public bool   UpperIsExternal;
+            public bool   Valid;
+            public string SkipReason;
+        }
+
         private class Phase1Result
         {
             public Extents3d                             SlabBbox;
@@ -712,6 +724,78 @@ namespace BricsCadRc.Core
                     XHigh           = xs[1],
                     LowerIsExternal = Math.Abs(yLow  - slabMinY) < 1e-3,
                     UpperIsExternal = Math.Abs(yHigh - slabMaxY) < 1e-3,
+                    Valid           = true,
+                });
+            }
+
+            return strips;
+        }
+
+        private static List<XStrip> DecomposeIntoXStrips(List<Point2d> vertices, Extents3d slabBbox)
+        {
+            var strips = new List<XStrip>();
+
+            // Phase A: unique X-coords sorted + dedup epsilon 1e-3
+            var rawXs = new List<double>();
+            foreach (var v in vertices)
+                rawXs.Add(v.X);
+            rawXs.Sort();
+
+            var xCoords = new List<double>();
+            foreach (double x in rawXs)
+            {
+                if (xCoords.Count == 0 || Math.Abs(x - xCoords[xCoords.Count - 1]) >= 1e-3)
+                    xCoords.Add(x);
+            }
+
+            if (xCoords.Count < 2) return strips;
+
+            // Phase B: filter phantom vertices (compare ray-cast x-0.5 vs x+0.5)
+            // Keep first + last always; check inner ones
+            var filteredXs = new List<double> { xCoords[0] };
+            for (int i = 1; i < xCoords.Count - 1; i++)
+            {
+                double xc = xCoords[i];
+                var ysLeft  = GeometryHelper.FindIntersectionsV(vertices, xc - 0.5);
+                var ysRight = GeometryHelper.FindIntersectionsV(vertices, xc + 0.5);
+                if (!XIntersectionsEqual(ysLeft, ysRight))
+                    filteredXs.Add(xc);
+            }
+            filteredXs.Add(xCoords[xCoords.Count - 1]);
+
+            // Phase C: build strips per X-pair
+            double slabMinX = slabBbox.MinPoint.X;
+            double slabMaxX = slabBbox.MaxPoint.X;
+
+            for (int i = 0; i < filteredXs.Count - 1; i++)
+            {
+                double xLow  = filteredXs[i];
+                double xHigh = filteredXs[i + 1];
+
+                double xMid = (xLow + xHigh) * 0.5 + 0.1;
+                var ys = GeometryHelper.FindIntersectionsV(vertices, xMid);
+
+                if (ys.Count != 2)
+                {
+                    string reason = ys.Count > 2
+                        ? $"Multi-span detected ({ys.Count / 2} intervals), Etap 1G future"
+                        : $"Degenerate strip ({ys.Count} intersections at mid-X={xMid:F1})";
+                    strips.Add(new XStrip
+                    {
+                        XLow = xLow, XHigh = xHigh,
+                        Valid = false, SkipReason = reason
+                    });
+                    continue;
+                }
+
+                strips.Add(new XStrip
+                {
+                    XLow            = xLow,
+                    XHigh           = xHigh,
+                    YLow            = ys[0],
+                    YHigh           = ys[1],
+                    LowerIsExternal = Math.Abs(xLow  - slabMinX) < 1e-3,
+                    UpperIsExternal = Math.Abs(xHigh - slabMaxX) < 1e-3,
                     Valid           = true,
                 });
             }
