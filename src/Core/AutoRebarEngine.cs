@@ -117,7 +117,11 @@ namespace BricsCadRc.Core
             bool horizontal = filterDirection == "X";
 
             // Strip decomposition (Etap 1E)
-            var strips = DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox);
+            // Faza 1: unconditional YStrips → StripBounds adapter.
+            // Faza 2 dorzuca dispatch dla XStrips (B2).
+            List<StripBounds> strips = DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox)
+                .Select(s => ToStripBounds(s))
+                .ToList();
             int validStrips   = strips.Count(s => s.Valid);
             int skippedStrips = strips.Count - validStrips;
 
@@ -125,7 +129,7 @@ namespace BricsCadRc.Core
                             $"{validStrips} valid, {skippedStrips} skipped.\n");
 
             foreach (var s in strips.Where(s => !s.Valid))
-                ed.WriteMessage($"\n[AutoRebar] Skip strip Y={s.YLow:F0}..{s.YHigh:F0}: {s.SkipReason}\n");
+                ed.WriteMessage($"\n[AutoRebar] Skip strip scan={s.ScanLow:F0}..{s.ScanHigh:F0}: {s.SkipReason}\n");
 
             if (validStrips == 0)
             {
@@ -141,32 +145,32 @@ namespace BricsCadRc.Core
 
                 foreach (var strip in strips.Where(s => s.Valid))
                 {
-                    double stripHeight = strip.YHigh - strip.YLow;
+                    double stripHeight = strip.ScanHigh - strip.ScanLow;
 
                     // Thin strip skip
                     if (stripHeight < 50.0)
                     {
                         ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Strip " +
-                            $"Y={strip.YLow:F0}..{strip.YHigh:F0} h={stripHeight:F0}mm < 50mm — skipped\n");
+                            $"scan={strip.ScanLow:F0}..{strip.ScanHigh:F0} h={stripHeight:F0}mm < 50mm — skipped\n");
                         continue;
                     }
 
                     // First/last bar offsets per Q7=B
                     double lowerOffset = strip.LowerIsExternal ? cover : spacing / 2.0;
                     double upperOffset = strip.UpperIsExternal ? cover : spacing / 2.0;
-                    double y0 = strip.YLow  + lowerOffset;
-                    double y1 = strip.YHigh - upperOffset;
+                    double y0 = strip.ScanLow  + lowerOffset;   // first bar pos (scan axis)
+                    double y1 = strip.ScanHigh - upperOffset;   // last bar pos  (scan axis)
 
                     // Try-fit single bar for short strips
                     bool singleBarMode = stripHeight < spacing || (y1 - y0) <= 0;
                     if (singleBarMode)
                     {
-                        double yCenter = (strip.YLow + strip.YHigh) * 0.5;
+                        double yCenter = (strip.ScanLow + strip.ScanHigh) * 0.5;
                         y0 = yCenter;
                         y1 = yCenter;
                         ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Strip " +
-                            $"Y={strip.YLow:F0}..{strip.YHigh:F0} h={stripHeight:F0}mm < spacing " +
-                            $"— 1 bar centered at Y={yCenter:F0}\n");
+                            $"scan={strip.ScanLow:F0}..{strip.ScanHigh:F0} h={stripHeight:F0}mm < spacing " +
+                            $"— 1 bar centered at scan={yCenter:F0}\n");
                     }
 
                     SpacingMode spacingMode;
@@ -178,16 +182,16 @@ namespace BricsCadRc.Core
                         spacingMode = SpacingMode.ContinuousInternal;
 
                     // X multi-dist plan for this strip
-                    double xAvailable = (strip.XHigh - strip.XLow) - 2.0 * cover;
+                    double xAvailable = (strip.PerpHigh - strip.PerpLow) - 2.0 * cover;
                     var distPlan = ComputeDistributionPlan(xAvailable, spacing);
                     if (distPlan.Count == 0)
                     {
-                        ed.WriteMessage($"\n[AutoRebar] Strip Y={strip.YLow:F0}..{strip.YHigh:F0}: " +
+                        ed.WriteMessage($"\n[AutoRebar] Strip scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
                             $"brak rozwiązania dist plan (xAvailable={xAvailable:F0}mm) — skipped\n");
                         continue;
                     }
 
-                    ed.WriteMessage($"\n[AutoRebar] Strip Y={strip.YLow:F0}..{strip.YHigh:F0} " +
+                    ed.WriteMessage($"\n[AutoRebar] Strip scan={strip.ScanLow:F0}..{strip.ScanHigh:F0} " +
                         $"(h={stripHeight:F0}mm, external: lower={strip.LowerIsExternal}, " +
                         $"upper={strip.UpperIsExternal}): {distPlan.Count} dist, " +
                         $"lengths: " + string.Join(",", distPlan.Select(d => $"{d.length:F0}")) + "\n");
@@ -236,7 +240,7 @@ namespace BricsCadRc.Core
                                             $"L={length:F0}mm\n");
                         }
 
-                        double x0 = strip.XLow + cover + xOffset;
+                        double x0 = strip.PerpLow + cover + xOffset;   // bar start (perp axis)
                         double x1 = x0 + length;
 
                         bool ok = GenerateDistributionWithLeaderAtOffset(
@@ -551,6 +555,18 @@ namespace BricsCadRc.Core
             public string SkipReason;
         }
 
+        private class StripBounds
+        {
+            public double ScanLow;          // primary axis low (perpendicular to bars)
+            public double ScanHigh;         // primary axis high
+            public double PerpLow;          // along-bar axis low
+            public double PerpHigh;         // along-bar axis high
+            public bool   LowerIsExternal;
+            public bool   UpperIsExternal;
+            public bool   Valid;
+            public string SkipReason;
+        }
+
         private class Phase1Result
         {
             public Extents3d                             SlabBbox;
@@ -801,6 +817,38 @@ namespace BricsCadRc.Core
             }
 
             return strips;
+        }
+
+        private static StripBounds ToStripBounds(YStrip s)
+        {
+            // YStrip: scan axis = Y, perp axis = X (X-bars rozciągają się X→X)
+            return new StripBounds
+            {
+                ScanLow         = s.YLow,
+                ScanHigh        = s.YHigh,
+                PerpLow         = s.XLow,
+                PerpHigh        = s.XHigh,
+                LowerIsExternal = s.LowerIsExternal,
+                UpperIsExternal = s.UpperIsExternal,
+                Valid           = s.Valid,
+                SkipReason      = s.SkipReason,
+            };
+        }
+
+        private static StripBounds ToStripBounds(XStrip s)
+        {
+            // XStrip: scan axis = X, perp axis = Y (Y-bars rozciągają się Y→Y)
+            return new StripBounds
+            {
+                ScanLow         = s.XLow,
+                ScanHigh        = s.XHigh,
+                PerpLow         = s.YLow,
+                PerpHigh        = s.YHigh,
+                LowerIsExternal = s.LowerIsExternal,
+                UpperIsExternal = s.UpperIsExternal,
+                Valid           = s.Valid,
+                SkipReason      = s.SkipReason,
+            };
         }
 
         // ----------------------------------------------------------------
