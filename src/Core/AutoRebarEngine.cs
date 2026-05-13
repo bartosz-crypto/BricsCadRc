@@ -72,6 +72,19 @@ namespace BricsCadRc.Core
         /// Shorter edges skipped + warning.</summary>
         public const double UBMinSegmentLength = 1000.0;
 
+        // UB B2 constants (Y-bars, horizontal edges) — separate from UB B1
+        private const double UBB2_225_LengthA   = 715.0;
+        private const double UBB2_225_LengthB   = 115.0;
+        private const double UBB2_225_LengthC   = 715.0;
+        private const string UBB2_225_ShapeCode = "13";
+
+        private const double UBB2_300_LengthA   = 675.0;
+        private const double UBB2_300_LengthB   = 190.0;
+        private const double UBB2_300_LengthC   = 675.0;
+        private const string UBB2_300_ShapeCode = "21";
+
+        private const int UBPosNrB2 = 2;
+
         /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
         public const double MaxLastBarDistanceFromEdge = 70.0;
 
@@ -289,30 +302,53 @@ namespace BricsCadRc.Core
             string   sourceLayer,    // "rebar_bottom"
             string   layerCode,      // "B1"
             int      slabThickness,  // 225 or 300
+            string   filterDirection,
             double   spacing = DefaultSpacing,
             double   cover   = DefaultCover)
         {
             var ed = doc.Editor;
             var db = doc.Database;
 
-            // Pick UB params per thickness
+            // Pick UB params per thickness + direction (UB B1 = X-bars vertical edges,
+            // UB B2 = Y-bars horizontal edges with separate constants).
+            bool   isUBB1 = filterDirection == "X";
             double ubLengthA, ubLengthB, ubLengthC;
-            if (slabThickness == 225)
+            string ubShapeCode;
+            int    ubPosNr;
+            if (isUBB1)
             {
-                ubLengthA = UB_225_LengthA;
-                ubLengthB = UB_225_LengthB;
-                ubLengthC = UB_225_LengthC;
-            }
-            else if (slabThickness == 300)
-            {
-                ubLengthA = UB_300_LengthA;
-                ubLengthB = UB_300_LengthB;
-                ubLengthC = UB_300_LengthC;
+                // UB B1 — existing constants, hardcoded shape "21"
+                if (slabThickness == 225)
+                { ubLengthA = UB_225_LengthA; ubLengthB = UB_225_LengthB; ubLengthC = UB_225_LengthC; }
+                else if (slabThickness == 300)
+                { ubLengthA = UB_300_LengthA; ubLengthB = UB_300_LengthB; ubLengthC = UB_300_LengthC; }
+                else
+                {
+                    ed.WriteMessage($"\n[AutoRebar UB] Nieobsługiwana grubość: {slabThickness}mm (225 lub 300).\n");
+                    return -1;
+                }
+                ubShapeCode = "21";
+                ubPosNr     = UBPosNrB1;
             }
             else
             {
-                ed.WriteMessage($"\n[AutoRebar UB] Nieobsługiwana grubość: {slabThickness}mm (225 lub 300).\n");
-                return -1;
+                // UB B2 — new constants, shape dispatch per thickness (225->"13", 300->"21")
+                if (slabThickness == 225)
+                {
+                    ubLengthA = UBB2_225_LengthA; ubLengthB = UBB2_225_LengthB; ubLengthC = UBB2_225_LengthC;
+                    ubShapeCode = UBB2_225_ShapeCode;
+                }
+                else if (slabThickness == 300)
+                {
+                    ubLengthA = UBB2_300_LengthA; ubLengthB = UBB2_300_LengthB; ubLengthC = UBB2_300_LengthC;
+                    ubShapeCode = UBB2_300_ShapeCode;
+                }
+                else
+                {
+                    ed.WriteMessage($"\n[AutoRebar UB] Nieobsługiwana grubość: {slabThickness}mm (225 lub 300).\n");
+                    return -1;
+                }
+                ubPosNr = UBPosNrB2;
             }
 
             // Check posNr 01 conflict
@@ -402,25 +438,30 @@ namespace BricsCadRc.Core
             // Edge enumeration — classify all polyline edges
             var edges = GeometryHelper.EnumerateAxisAlignedEdges(slabVertices);
 
-            int horizontalCount = 0;
-            int diagonalCount   = 0;
-            int zeroLengthCount = 0;
-            var verticalCandidates = new List<GeometryHelper.PolylineEdge>();
+            var verticalCandidates   = new List<GeometryHelper.PolylineEdge>();
+            var horizontalCandidates = new List<GeometryHelper.PolylineEdge>();
+            int diagonalCount        = 0;
+            int zeroLengthCount      = 0;
 
             foreach (var e in edges)
             {
                 switch (e.Orientation)
                 {
                     case GeometryHelper.EdgeOrientation.Vertical:   verticalCandidates.Add(e); break;
-                    case GeometryHelper.EdgeOrientation.Horizontal: horizontalCount++; break;
+                    case GeometryHelper.EdgeOrientation.Horizontal: horizontalCandidates.Add(e); break;
                     case GeometryHelper.EdgeOrientation.Diagonal:   diagonalCount++; break;
                     case GeometryHelper.EdgeOrientation.ZeroLength: zeroLengthCount++; break;
                 }
             }
 
-            if (horizontalCount > 0)
-                ed.WriteMessage($"\n[AutoRebar UB] Skipped {horizontalCount} horizontal edge(s) " +
-                                $"(UB B1 = vertical only; use UB B2 future)\n");
+            // Direction dispatch: UB B1 → vertical edges (X-bars), UB B2 → horizontal edges (Y-bars)
+            var    candidates   = isUBB1 ? verticalCandidates : horizontalCandidates;
+            int    skippedCount = isUBB1 ? horizontalCandidates.Count : verticalCandidates.Count;
+            string skippedKind  = isUBB1 ? "horizontal" : "vertical";
+
+            if (skippedCount > 0)
+                ed.WriteMessage($"\n[AutoRebar UB] Skipped {skippedCount} {skippedKind} edge(s) " +
+                                $"(filterDirection={filterDirection})\n");
             if (diagonalCount > 0)
                 ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Skipped {diagonalCount} " +
                                 $"diagonal edge(s) — axis-aligned slabs only\n");
@@ -429,12 +470,12 @@ namespace BricsCadRc.Core
             var validSegments = new List<(double xEdge, double yLow, double yHigh, string symbolSide)>();
             int tooShortCount = 0;
 
-            foreach (var seg in verticalCandidates)
+            foreach (var seg in candidates)
             {
                 if (seg.Length < UBMinSegmentLength)
                 {
-                    ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Vertical edge " +
-                        $"X={seg.Start.X:F0} length {seg.Length:F0}mm < {UBMinSegmentLength:F0}mm, skipped\n");
+                    ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Edge " +
+                        $"length {seg.Length:F0}mm < {UBMinSegmentLength:F0}mm, skipped\n");
                     tooShortCount++;
                     continue;
                 }
@@ -452,12 +493,12 @@ namespace BricsCadRc.Core
                 validSegments.Add((xEdge, yLow, yHigh, symbolSide));
             }
 
-            ed.WriteMessage($"\n[AutoRebar UB] Vertical segments: {verticalCandidates.Count} total, " +
+            ed.WriteMessage($"\n[AutoRebar UB] Segments ({filterDirection}): {candidates.Count} total, " +
                             $"{validSegments.Count} valid, {tooShortCount} too short.\n");
 
             if (validSegments.Count == 0)
             {
-                ed.WriteMessage($"\n[AutoRebar UB] No valid vertical segments — abort.\n");
+                ed.WriteMessage($"\n[AutoRebar UB] No valid segments — abort.\n");
                 return -1;
             }
 
@@ -479,7 +520,8 @@ namespace BricsCadRc.Core
                 {
                     (templateBarId, templateBar) = CreateUBTemplate(
                         db, rebarBbox, existingUBTemplateCount,
-                        UBDiameter, ubLengthA, ubLengthB, ubLengthC, layerCode);
+                        UBDiameter, ubLengthA, ubLengthB, ubLengthC, layerCode,
+                        ubPosNr, ubShapeCode);
                     ed.WriteMessage($"\n[AutoRebar UB] Created UB template H{UBDiameter}-01 " +
                         $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
                 }
@@ -508,7 +550,8 @@ namespace BricsCadRc.Core
                         templateBarId, templateBar,
                         ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
                         spacingMode,
-                        slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y);
+                        slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y,
+                        ubPosNr, ubShapeCode, filterDirection);
                     if (ok) generated++;
                 }
             }
@@ -1126,21 +1169,21 @@ namespace BricsCadRc.Core
         /// <summary>Create new UB template (shape "21") in rebar box.</summary>
         private static (ObjectId barId, BarData elevBar) CreateUBTemplate(
             Database db, Extents3d rebarBbox, int existingCount,
-            int diameter, double lengthA, double lengthB, double lengthC, string layerCode)
+            int diameter, double lengthA, double lengthB, double lengthC, string layerCode,
+            int posNr, string shapeCode)
         {
-            // posNr ALWAYS 01 for UB B1
-            int posNr = UBPosNrB1;
+            // posNr i shapeCode parametryczne (UB B1 → 1/"21", UB B2 → 2/"13" lub "21")
 
             double insertX = rebarBbox.MinPoint.X + TemplateOffsetX;
             double insertY = rebarBbox.MaxPoint.Y - TemplateOffsetY - TemplateSpacingY * existingCount;
             var insertPt = new Point3d(insertX, insertY, 0);
 
             var elevBar = BuildBarData(diameter, posNr, lengthA, layerCode);
-            elevBar.ShapeCode = "21";
+            elevBar.ShapeCode = shapeCode;
             elevBar.LengthA   = lengthA;
             elevBar.LengthB   = lengthB;
             elevBar.LengthC   = lengthC;
-            elevBar.Mark = BarData.FormatMark(diameter, posNr, 0, 1);  // "H12-01"
+            elevBar.Mark = BarData.FormatMark(diameter, posNr, 0, 1);  // "H12-01" or "H12-02"
 
             ObjectId barId = SingleBarEngine.PlaceBar(db, elevBar, insertPt);
 
@@ -1341,7 +1384,8 @@ namespace BricsCadRc.Core
             double lengthA, double lengthB, double lengthC,
             double spacing, string layerCode, string symbolSide,
             SpacingMode spacingMode,
-            double slabMinY, double slabMaxY)
+            double slabMinY, double slabMaxY,
+            int posNr, string shapeCode, string filterDirection)
         {
             // X bounds: bar extends INTO slab from edge by lengthA, minus horizontal cover.
             // DefaultCover (50mm) for X-direction — independent of Y offsets (lowerOffset/upperOffset).
@@ -1400,19 +1444,17 @@ namespace BricsCadRc.Core
                 ed.WriteMessage($"\n{msg}\n");
             }
 
-            int posNr = UBPosNrB1;
-
             var distBar = BuildBarData(UBDiameter, posNr, lengthA, layerCode);
-            distBar.ShapeCode = "21";
+            distBar.ShapeCode = shapeCode;
             distBar.LengthA   = lengthA;
             distBar.LengthB   = lengthB;
             distBar.LengthC   = lengthC;
 
-            // Mark with UB suffix (NOT " B1")
+            // Mark with UB suffix (NOT " B1" / " B2")
             string baseMark = BarData.FormatMark(UBDiameter, posNr, spacing, 2);
-            distBar.Mark            = $"{baseMark} {UBSuffix}";  // "H12-01-200 UB"
+            distBar.Mark            = $"{baseMark} {UBSuffix}";  // "H12-01-200 UB" or "H12-02-200 UB"
             distBar.Spacing         = effSpacing;
-            distBar.Direction       = "X";
+            distBar.Direction       = filterDirection;
             distBar.Count           = 0;
             distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");
             if (adjStatus != 0) distBar.IsLabelManual = true;

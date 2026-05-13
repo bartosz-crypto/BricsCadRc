@@ -45,7 +45,8 @@ namespace BricsCadRc.Commands
                 AutoRebarEngine.GenerateUBLayer(doc, slabId,
                     sourceLayer: "rebar_bottom",
                     layerCode: "B1",
-                    slabThickness: thickness);
+                    slabThickness: thickness,
+                    filterDirection: "X");
             }
             catch (System.Exception ex)
             {
