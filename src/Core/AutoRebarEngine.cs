@@ -351,17 +351,17 @@ namespace BricsCadRc.Core
                 ubPosNr = UBPosNrB2;
             }
 
-            // Check posNr 01 conflict
+            // Check posNr conflict
             var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
-            if (usedNrs.Contains(UBPosNrB1))
+            if (usedNrs.Contains(ubPosNr))
             {
-                bool sameUB = IsExistingPosNr01UB(db, UBDiameter);
+                bool sameUB = IsExistingPosNrUB(db, UBDiameter, ubPosNr);
                 if (!sameUB)
                 {
                     var dlgResult = System.Windows.MessageBox.Show(
-                        $"PosNr 01 jest już używany przez inny pręt (nie UB H{UBDiameter}).\n" +
-                        "AutoRebar UB ZAWSZE używa posNr=01. Kontynuować?\n\n" +
-                        "Tak = wymuś posNr=01 (może spowodować konflikt w schedule)\n" +
+                        $"PosNr {ubPosNr:D2} jest już używany przez inny pręt (nie UB H{UBDiameter}).\n" +
+                        $"AutoRebar UB używa posNr={ubPosNr:D2}. Kontynuować?\n\n" +
+                        "Tak = wymuś posNr (może spowodować konflikt w schedule)\n" +
                         "Nie = anuluj operację",
                         "AutoRebar UB - Konflikt PosNr",
                         System.Windows.MessageBoxButton.YesNo,
@@ -431,7 +431,7 @@ namespace BricsCadRc.Core
                     }
                 }
 
-                oldUBs = ScanOldUBDistributions(db, tr, slabBbox, layerCode);
+                oldUBs = ScanOldUBDistributions(db, tr, slabBbox, layerCode, filterDirection);
                 tr.Commit();
             }
 
@@ -467,7 +467,7 @@ namespace BricsCadRc.Core
                                 $"diagonal edge(s) — axis-aligned slabs only\n");
 
             // Filter by min length and compute SymbolSide per segment
-            var validSegments = new List<(double xEdge, double yLow, double yHigh, string symbolSide)>();
+            var validSegments = new List<(double edgeCoord, double segLow, double segHigh, string symbolSide)>();
             int tooShortCount = 0;
 
             foreach (var seg in candidates)
@@ -480,17 +480,32 @@ namespace BricsCadRc.Core
                     continue;
                 }
 
-                double xEdge = seg.Start.X;
-                double yLow  = Math.Min(seg.Start.Y, seg.End.Y);
-                double yHigh = Math.Max(seg.Start.Y, seg.End.Y);
+                // Axis dispatch: UB B1 (vertical edge) — edgeCoord=X, segLow/High=Y bounds.
+                // UB B2 (horizontal edge) — edgeCoord=Y, segLow/High=X bounds.
+                double edgeCoord, segLow, segHigh;
+                if (isUBB1)
+                {
+                    edgeCoord = seg.Start.X;
+                    segLow    = Math.Min(seg.Start.Y, seg.End.Y);
+                    segHigh   = Math.Max(seg.Start.Y, seg.End.Y);
+                }
+                else
+                {
+                    edgeCoord = seg.Start.Y;
+                    segLow    = Math.Min(seg.Start.X, seg.End.X);
+                    segHigh   = Math.Max(seg.Start.X, seg.End.X);
+                }
 
-                // SymbolSide auto-detect: sample point slightly RIGHT of edge midpoint
-                double midY      = (yLow + yHigh) * 0.5;
-                var    testPoint = new Teigha.Geometry.Point2d(xEdge + 0.1, midY);
-                bool   interiorOnRight = GeometryHelper.IsPointInsidePolygon(slabVertices, testPoint);
-                string symbolSide = interiorOnRight ? "Left" : "Right";
+                // Auto-detect inward direction: sample point slightly OFFSET from edge midpoint
+                // to positive side (right of vertical edge, above horizontal edge).
+                double midSeg = (segLow + segHigh) * 0.5;
+                Teigha.Geometry.Point2d testPoint = isUBB1
+                    ? new Teigha.Geometry.Point2d(edgeCoord + 0.1, midSeg)   // right of vertical edge
+                    : new Teigha.Geometry.Point2d(midSeg, edgeCoord + 0.1);  // above horizontal edge
+                bool   interiorOnPositiveSide = GeometryHelper.IsPointInsidePolygon(slabVertices, testPoint);
+                string symbolSide = interiorOnPositiveSide ? "Left" : "Right";
 
-                validSegments.Add((xEdge, yLow, yHigh, symbolSide));
+                validSegments.Add((edgeCoord, segLow, segHigh, symbolSide));
             }
 
             ed.WriteMessage($"\n[AutoRebar UB] Segments ({filterDirection}): {candidates.Count} total, " +
@@ -526,11 +541,16 @@ namespace BricsCadRc.Core
                         $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
                 }
 
-                foreach (var (xEdge, yLow, yHigh, symbolSide) in validSegments)
+                // Axis dispatch: across-axis is Y dla UB B1 (vertical edges, dist along Y)
+                // vs X dla UB B2 (horizontal edges, dist along X). Loop-invariant.
+                double slabAcrossMin = isUBB1 ? slabBbox.MinPoint.Y : slabBbox.MinPoint.X;
+                double slabAcrossMax = isUBB1 ? slabBbox.MaxPoint.Y : slabBbox.MaxPoint.X;
+
+                foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
                     // Per-endpoint external detection (Q19=b, analog B1 strip semantics)
-                    bool lowerIsExternal = Math.Abs(yLow  - slabBbox.MinPoint.Y) < 1e-3;
-                    bool upperIsExternal = Math.Abs(yHigh - slabBbox.MaxPoint.Y) < 1e-3;
+                    bool lowerIsExternal = Math.Abs(segLow  - slabAcrossMin) < 1e-3;
+                    bool upperIsExternal = Math.Abs(segHigh - slabAcrossMax) < 1e-3;
 
                     double lowerOffset = lowerIsExternal ? cover : spacing / 2.0;
                     double upperOffset = upperIsExternal ? cover : spacing / 2.0;
@@ -540,17 +560,17 @@ namespace BricsCadRc.Core
                         ? SpacingMode.AdjustedExternal
                         : SpacingMode.ContinuousInternal;
 
-                    ed.WriteMessage($"\n[AutoRebar UB] Segment X={xEdge:F0} Y=[{yLow:F0}..{yHigh:F0}] " +
-                        $"length {yHigh - yLow:F0}mm SymbolSide={symbolSide} " +
+                    ed.WriteMessage($"\n[AutoRebar UB] Segment edge={edgeCoord:F0} seg=[{segLow:F0}..{segHigh:F0}] " +
+                        $"length {segHigh - segLow:F0}mm SymbolSide={symbolSide} " +
                         $"endpoints(L={(lowerIsExternal ? "ext" : "int")},U={(upperIsExternal ? "ext" : "int")}) " +
                         $"mode={spacingMode}\n");
 
                     bool ok = GenerateUBDistribution(
-                        db, xEdge, yLow, yHigh, lowerOffset, upperOffset,
+                        db, edgeCoord, segLow, segHigh, lowerOffset, upperOffset,
                         templateBarId, templateBar,
                         ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
                         spacingMode,
-                        slabBbox.MinPoint.Y, slabBbox.MaxPoint.Y,
+                        slabAcrossMin, slabAcrossMax,
                         ubPosNr, ubShapeCode, filterDirection);
                     if (ok) generated++;
                 }
@@ -996,8 +1016,8 @@ namespace BricsCadRc.Core
             return result;
         }
 
-        /// <summary>Check if existing posNr=01 entity is UB H{diameter} (safe reuse) or different type (conflict).</summary>
-        private static bool IsExistingPosNr01UB(Database db, int diameter)
+        /// <summary>Check if existing posNr entity is UB H{diameter} (safe reuse) or different type (conflict).</summary>
+        private static bool IsExistingPosNrUB(Database db, int diameter, int posNr)
         {
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -1009,8 +1029,8 @@ namespace BricsCadRc.Core
                     if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
                     var bar = SingleBarEngine.ReadBarXData(pl);
                     if (bar != null && bar.Diameter == diameter
-                        && bar.ShapeCode == "21"
-                        && SingleBarEngine.ExtractPosNr(bar.Mark) == 1)
+                        && (bar.ShapeCode == "21" || bar.ShapeCode == "13")
+                        && SingleBarEngine.ExtractPosNr(bar.Mark) == posNr)
                     {
                         tr.Commit();
                         return true;
@@ -1021,7 +1041,7 @@ namespace BricsCadRc.Core
             return false;
         }
 
-        /// <summary>Scan UB templates (shape "21") in rebar box.</summary>
+        /// <summary>Scan UB templates (shape "21" or "13") in rebar box.</summary>
         private static List<(ObjectId, BarData)> ScanUBTemplates(
             Database db, Transaction tr, Extents3d rebarBbox, int diameter)
         {
@@ -1034,7 +1054,8 @@ namespace BricsCadRc.Core
                 if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
                 var bar = SingleBarEngine.ReadBarXData(pl);
                 if (bar == null) continue;
-                if (bar.ShapeCode != "21") continue;
+                // Etap 2 Faza B: UB B1 + UB B2 share template pool (shape "21" OR "13" dla 225mm).
+                if (bar.ShapeCode != "21" && bar.ShapeCode != "13") continue;
                 if (bar.Diameter != diameter) continue;
                 var insPt = pl.GetPoint3dAt(0);
                 if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
@@ -1045,7 +1066,7 @@ namespace BricsCadRc.Core
 
         /// <summary>Scan old UB distributions on slab (identified by Mark suffix " UB").</summary>
         private static List<(ObjectId, ObjectId)> ScanOldUBDistributions(
-            Database db, Transaction tr, Extents3d slabBbox, string layerCode)
+            Database db, Transaction tr, Extents3d slabBbox, string layerCode, string filterDirection)
         {
             var result = new List<(ObjectId, ObjectId)>();
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -1058,7 +1079,7 @@ namespace BricsCadRc.Core
                 if (bar == null || bar.LayerCode != layerCode) continue;
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
-                if (bar.Direction != "X") continue;  // Q16=b: defensive for future UB B2 (Direction="Y")
+                if (bar.Direction != filterDirection) continue;
                 if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
 
                 ObjectId annotId = ObjectId.Null;
@@ -1378,27 +1399,28 @@ namespace BricsCadRc.Core
         /// </summary>
         private static bool GenerateUBDistribution(
             Database db,
-            double xEdge, double yLow, double yHigh,
+            double edgeCoord, double segLow, double segHigh,
             double lowerOffset, double upperOffset,
             ObjectId templateBarId, BarData templateBar,
             double lengthA, double lengthB, double lengthC,
             double spacing, string layerCode, string symbolSide,
             SpacingMode spacingMode,
-            double slabMinY, double slabMaxY,
+            double slabMinAcross, double slabMaxAcross,
             int posNr, string shapeCode, string filterDirection)
         {
-            // X bounds: bar extends INTO slab from edge by lengthA, minus horizontal cover.
-            // DefaultCover (50mm) for X-direction — independent of Y offsets (lowerOffset/upperOffset).
-            double x0, x1;
-            if (symbolSide == "Left")  { x0 = xEdge + DefaultCover; x1 = x0 + lengthA; }
-            else                       { x1 = xEdge - DefaultCover; x0 = x1 - lengthA; }
+            bool isXBars = filterDirection == "X";
 
-            // Y bounds: per-endpoint offsets (cover for external, spacing/2 for internal)
-            double y0 = yLow  + lowerOffset;
-            double y1 = yHigh - upperOffset;
+            // Bar bounds (along bar axis = perpendicular to edge, extends INTO slab from edge).
+            double barLow, barHigh;
+            if (symbolSide == "Left")  { barLow = edgeCoord + DefaultCover; barHigh = barLow  + lengthA; }
+            else                       { barHigh = edgeCoord - DefaultCover; barLow  = barHigh - lengthA; }
 
-            double availSpacingSpan = y1 - y0;
-            double segmentSpan      = yHigh - yLow;
+            // Dist bounds (along edge axis = distribution axis): per-endpoint offsets.
+            double distLow  = segLow  + lowerOffset;
+            double distHigh = segHigh - upperOffset;
+
+            double availSpacingSpan = distHigh - distLow;
+            double segmentSpan      = segHigh - segLow;
 
             double effSpacing = spacing;
             int    adjStatus  = 0;
@@ -1462,36 +1484,63 @@ namespace BricsCadRc.Core
             // Circle markers on outer end only (at slab edge)
             distBar.SymbolSide = symbolSide;
 
+            // Map bar/dist intermediates → WCS x0/y0/x1/y1 per direction.
+            double x0, y0, x1, y1;
+            if (isXBars)
+            {
+                // UB B1 — bar along X, distribution along Y
+                x0 = barLow;  x1 = barHigh;  y0 = distLow;  y1 = distHigh;
+            }
+            else
+            {
+                // UB B2 — bar along Y, distribution along X
+                y0 = barLow;  y1 = barHigh;  x0 = distLow;  x1 = distHigh;
+            }
+
             // Step 1: generate distribution block (sets distBar.BarsSpan)
             var barResult = BarBlockEngine.GenerateFromBounds(
-                db, x0, y0, x1, y1, distBar, horizontal: true, posNr);
+                db, x0, y0, x1, y1, distBar, horizontal: isXBars, posNr);
             if (!barResult.IsValid) return false;
 
-            // Step 2: leader points using arm-from-slab-edge math.
-            // UB B1 = horizontal bars (shape 21 U-bar, distributed along Y).
-            // Annot direction same logic as B1 — proximity bars to slab edges.
-            double firstBarY    = barResult.MinPoint.Y;
-            double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
-            double annotInsertY = y0;  // per current UB annotInsertPt definition
-
-            var (leaderUp, encoded) = ComputeAnnotLeaderForHorizontalBars(
-                firstBarY, lastBarY, annotInsertY, slabMinY, slabMaxY);
+            // Step 2: leader points — dispatch per direction.
+            bool   leaderUp    = false;
+            bool   leaderRight = true;
+            string encoded;
+            if (isXBars)
+            {
+                // UB B1: bars horizontal, leader vertical, proximity in Y
+                double firstBarY    = barResult.MinPoint.Y;
+                double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
+                double annotInsertY = y0;
+                (leaderUp, encoded) = ComputeAnnotLeaderForHorizontalBars(
+                    firstBarY, lastBarY, annotInsertY, slabMinAcross, slabMaxAcross);
+            }
+            else
+            {
+                // UB B2: bars vertical, leader horizontal, proximity in X
+                double firstBarX    = barResult.MinPoint.X;
+                double lastBarX     = barResult.MinPoint.X + distBar.BarsSpan;
+                double annotInsertX = x0;
+                (leaderRight, encoded) = ComputeAnnotLeaderForVerticalBars(
+                    firstBarX, lastBarX, annotInsertX, slabMinAcross, slabMaxAcross);
+            }
             distBar.LeaderPoints = encoded;
 
-            // Step 3: annotation insert centered on bar span (use explicit bounds, NOT barResult.MinPoint —
-            // circle markers via SymbolSide="Left"/"Right" pollute GeometricExtents by ±35mm,
-            // shifting MinPoint and causing dist line misalignment with bars)
-            var annotInsertPt = new Point3d(
-                x0 + lengthA / 2.0,
-                y0,
-                0);
+            // Step 3: annotation insert point — dispatch per direction.
+            // (Use explicit bounds, NOT barResult.MinPoint — circle markers via SymbolSide
+            // pollute GeometricExtents by ±35mm, causing dist line misalignment.)
+            var annotInsertPt = isXBars
+                ? new Point3d(x0 + lengthA / 2.0, y0, 0)
+                : new Point3d(x0, y0 + lengthA / 2.0, 0);
 
             // Step 4: annotation
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
-                leaderHorizontal: false, posNr: posNr,
+                leaderHorizontal: !isXBars, posNr: posNr,
                 customInsertPt: annotInsertPt,
-                barsHorizontal: true, leaderRight: true, leaderUp: leaderUp);
+                barsHorizontal: isXBars,
+                leaderRight: leaderRight,
+                leaderUp: leaderUp);
 
             // Step 5: bidirectional link + outline
             if (annotResult.BlockRefId != ObjectId.Null)
