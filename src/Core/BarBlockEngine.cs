@@ -113,7 +113,7 @@ namespace BricsCadRc.Core
                     EraseAllInBtr(tr, oldBtr);
                     oldBtr.Erase();
                 }
-                else blockName = $"RC_SLAB_BARS_{posNr:D3}_{DateTime.Now.Ticks % 100000L}";
+                else blockName = $"RC_SLAB_BARS_{posNr:D3}_{Guid.NewGuid():N}";
             }
 
             var btr   = new BlockTableRecord { Name = blockName };
@@ -397,7 +397,7 @@ namespace BricsCadRc.Core
                     EraseAllInBtr(tr, oldBtr);
                     oldBtr.Erase();
                 }
-                else blockName = $"RC_SLAB_BARS_{posNr:D3}_{DateTime.Now.Ticks % 100000L}";
+                else blockName = $"RC_SLAB_BARS_{posNr:D3}_{Guid.NewGuid():N}";
             }
 
             var btr   = new BlockTableRecord { Name = blockName };

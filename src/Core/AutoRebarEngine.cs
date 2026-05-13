@@ -565,14 +565,24 @@ namespace BricsCadRc.Core
                         $"endpoints(L={(lowerIsExternal ? "ext" : "int")},U={(upperIsExternal ? "ext" : "int")}) " +
                         $"mode={spacingMode}\n");
 
-                    bool ok = GenerateUBDistribution(
-                        db, edgeCoord, segLow, segHigh, lowerOffset, upperOffset,
-                        templateBarId, templateBar,
-                        ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
-                        spacingMode,
-                        slabAcrossMin, slabAcrossMax,
-                        ubPosNr, ubShapeCode, filterDirection);
-                    if (ok) generated++;
+                    // Strategy D: per-segment try/catch — gdyby 1 segment crashował,
+                    // pozostałe nadal się generują. Bez tego cała komenda abortuje.
+                    try
+                    {
+                        bool ok = GenerateUBDistribution(
+                            db, edgeCoord, segLow, segHigh, lowerOffset, upperOffset,
+                            templateBarId, templateBar,
+                            ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
+                            spacingMode,
+                            slabAcrossMin, slabAcrossMax,
+                            ubPosNr, ubShapeCode, filterDirection);
+                        if (ok) generated++;
+                    }
+                    catch (System.Exception ex)
+                    {
+                        ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] Segment edge={edgeCoord:F0} " +
+                            $"seg=[{segLow:F0}..{segHigh:F0}] failed: {ex.Message}\n");
+                    }
                 }
             }
 
