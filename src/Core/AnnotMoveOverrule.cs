@@ -819,10 +819,14 @@ namespace BricsCadRc.Core
                         lblId = id;
                 }
 
-                if (lblId.IsNull) { tr.Commit(); return; }
-
-                var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                ml?.Erase(true);
+                // Etap 3: erase MLeader warunkowo — mógł być już skasowany przez BricsCAD
+                // w multi-select scenario (MLeader erased first, przed RC_SINGLE_BAR overrule).
+                // Cascade do distributions wykonuje się zawsze.
+                if (!lblId.IsNull)
+                {
+                    var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
+                    ml?.Erase(true);
+                }
 
                 // Usuń też wszystkie rozkłady (RC_BAR_BLOCK) powiązane z tym prętem
                 string plineHandle = pline.Handle.Value.ToString("X8");
