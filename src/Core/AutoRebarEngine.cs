@@ -1205,9 +1205,13 @@ namespace BricsCadRc.Core
         {
             // posNr i shapeCode parametryczne (UB B1 → 1/"21", UB B2 → 2/"13" lub "21")
 
-            double insertX = rebarBbox.MinPoint.X + TemplateOffsetX;
-            double insertY = rebarBbox.MaxPoint.Y - TemplateOffsetY - TemplateSpacingY * existingCount;
-            var insertPt = new Point3d(insertX, insertY, 0);
+            // User-requested: UB templates from RIGHT edge of rebar box.
+            // Shape "21" (U-bar) bar width in X = lengthB (the bend dimension);
+            // shape "13" (hairpin) bar width in X = lengthA.
+            double barWidth = shapeCode == "13" ? lengthA : lengthB;
+            double insertX  = rebarBbox.MaxPoint.X - TemplateOffsetX - barWidth;
+            double insertY  = rebarBbox.MaxPoint.Y - TemplateOffsetY - TemplateSpacingY * existingCount;
+            var insertPt    = new Point3d(insertX, insertY, 0);
 
             var elevBar = BuildBarData(diameter, posNr, lengthA, layerCode);
             elevBar.ShapeCode = shapeCode;
@@ -1219,7 +1223,7 @@ namespace BricsCadRc.Core
             ObjectId barId = SingleBarEngine.PlaceBar(db, elevBar, insertPt);
 
             Point3d textPt = new Point3d(
-                insertPt.X + lengthA * 0.5,
+                insertPt.X + barWidth * 0.5,            // centered over actual bar geometry
                 insertPt.Y + TemplateLabelOffsetY,
                 0);
             Point3d arrowTip;
