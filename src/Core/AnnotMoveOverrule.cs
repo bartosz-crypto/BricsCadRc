@@ -54,16 +54,12 @@ namespace BricsCadRc.Core
         private static readonly Dictionary<long, Point3d> _dragStartLastPt
             = new Dictionary<long, Point3d>();
 
-        // Klucz: ObjectId annotacji, wartość: oryginalna pozycja przed dragiem.
-        // Czyszczone przy final commit (sukces) lub w OnCommandCancelled (ESC).
-        internal static readonly Dictionary<ObjectId, Point3d> PendingAnnotRestore
-            = new Dictionary<ObjectId, Point3d>();
 
         // Transienty podglądu dragu arm — czyszczone przed każdym nowym wywołaniem MoveGripPointsAt
         // i przy GetGripPoints (nowa interakcja).
         private static readonly List<Entity> _gripTransients = new List<Entity>();
 
-        private static void ClearGripTransients()
+        internal static void ClearGripTransients()
         {
             if (_gripTransients.Count == 0) return;
             var tm = TransientManager.CurrentTransientManager;
@@ -87,6 +83,141 @@ namespace BricsCadRc.Core
                 _gripTransients.Add(ln);
             }
             catch { ln.Dispose(); }
+        }
+
+        // ── Odroczone zmiany grip-dragu ─────────────────────────────────────
+        // BricsCAD woła MoveGripPointsAt w trakcie dragu także na PRAWDZIWYM obiekcie,
+        // a przy ESC cofa tylko sam blockref — nie przebudowany BTR, annotację ani etykietę.
+        // Dlatego w trakcie dragu tylko rysujemy podgląd i zapamiętujemy ostatni stan,
+        // a do bazy zapisujemy raz, w CommandEnded (ApplyPendingGripEdits). ESC = nic do cofania.
+        private static readonly Dictionary<ObjectId, (double span, double skewEnd)> _pendingSpan
+            = new Dictionary<ObjectId, (double span, double skewEnd)>();
+        private static readonly Dictionary<ObjectId, Vector3d> _pendingAnnotMove
+            = new Dictionary<ObjectId, Vector3d>();
+        // Ostatni rozkład, dla którego pokazano gripy — gdy drag idzie na klonie (ObjectId.Null).
+        private static ObjectId _lastGripOwner = ObjectId.Null;
+
+        /// <summary>Czyści stan dragu i transienty (koniec / anulowanie komendy).</summary>
+        internal static void ResetDragState()
+        {
+            ClearGripTransients();
+            _pendingSpan.Clear();
+            _pendingAnnotMove.Clear();
+            _dragOrigPos.Clear();
+            _annotDragStart.Clear();
+        }
+
+        private static ObjectId RealId(BlockReference br)
+            => br.ObjectId.IsNull ? _lastGripOwner : br.ObjectId;
+
+        /// <summary>
+        /// Zapisuje do bazy zmiany z zakończonego grip-dragu (wołane z CommandEnded).
+        /// </summary>
+        internal static void ApplyPendingGripEdits(Database db)
+        {
+            ClearGripTransients();
+            if (db == null || (_pendingSpan.Count == 0 && _pendingAnnotMove.Count == 0)) return;
+
+            var spans = new Dictionary<ObjectId, (double span, double skewEnd)>(_pendingSpan);
+            var moves = new Dictionary<ObjectId, Vector3d>(_pendingAnnotMove);
+            _pendingSpan.Clear();
+            _pendingAnnotMove.Clear();
+
+            foreach (var kv in spans)
+            {
+                if (kv.Key.IsNull || kv.Key.IsErased || kv.Key.Database != db) continue;
+                try
+                {
+                    BarData updated = null;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var br = tr.GetObject(kv.Key, OpenMode.ForWrite) as BlockReference;
+                        if (br != null)
+                        {
+                            BarBlockEngine.RegenerateBarBlock(br, kv.Value.span, newSkewEnd: kv.Value.skewEnd);
+                            updated = BarBlockEngine.ReadXData(br);
+                        }
+                        tr.Commit();
+                    }
+                    if (updated != null)
+                    {
+                        AnnotationEngine.SyncAnnotation(db, updated);
+                        AnnotationEngine.UpdateBarLabelCount(db, updated.SourceBarHandle ?? "",
+                                                             markOverride: updated.Mark);
+                    }
+                }
+                catch (System.Exception ex) { Log.Error($"ApplyPendingGripEdits.Span {kv.Key}", ex); }
+            }
+
+            foreach (var kv in moves)
+            {
+                if (kv.Key.IsNull || kv.Key.IsErased || kv.Key.Database != db) continue;
+                try
+                {
+                    using var tr = db.TransactionManager.StartTransaction();
+                    var annot = tr.GetObject(kv.Key, OpenMode.ForWrite) as BlockReference;
+                    if (annot != null)
+                        annot.Position = annot.Position + kv.Value;
+                    tr.Commit();
+                }
+                catch (System.Exception ex) { Log.Error($"ApplyPendingGripEdits.Move {kv.Key}", ex); }
+            }
+        }
+
+        private static ObjectId ResolveAnnotId(BlockReference br, BarData barBlock)
+        {
+            if (br.Database == null || string.IsNullOrEmpty(barBlock.AnnotHandle)) return ObjectId.Null;
+            if (!long.TryParse(barBlock.AnnotHandle, System.Globalization.NumberStyles.HexNumber,
+                               null, out long hv)) return ObjectId.Null;
+            if (br.Database.TryGetObjectId(new Handle(hv), out ObjectId id) && !id.IsNull && !id.IsErased)
+                return id;
+            return ObjectId.Null;
+        }
+
+        /// <summary>Podgląd span-grip: linie prętów dla nowego BarsSpan/SkewEnd (bez zapisu do bazy).</summary>
+        private static void DrawSpanPreview(BlockReference br, BarData bar, double newBarsSpan, double newSkewEnd)
+        {
+            ClearGripTransients();
+            if (bar.Spacing <= 0) return;
+            int count = Math.Max(1, (int)(newBarsSpan / bar.Spacing + 1e-9) + 1);
+            if (count > 2000) count = 2000; // bezpiecznik na absurdalny drag
+            var xf = br.BlockTransform;
+            for (int i = 0; i < count; i++)
+            {
+                double along = i * bar.Spacing;
+                double frac  = count > 1 ? (double)i / (count - 1) : 0.0;
+                double shift = bar.SkewStart + frac * (newSkewEnd - bar.SkewStart);
+                Point3d a, b;
+                if (bar.Direction == "X") { a = new Point3d(shift, along, 0); b = new Point3d(shift + bar.LengthA, along, 0); }
+                else                      { a = new Point3d(along, shift, 0); b = new Point3d(along, shift + bar.LengthA, 0); }
+                AddGripTransientLine(a.TransformBy(xf), b.TransformBy(xf), 4);
+            }
+        }
+
+        /// <summary>Podgląd annotacji przesuniętej o offset — BlockReference poza bazą jako transient.</summary>
+        private static void DrawAnnotGhost(Database db, ObjectId annotId, Vector3d offset)
+        {
+            if (db == null) return;
+            using var tr = db.TransactionManager.StartTransaction();
+            var annot = tr.GetObject(annotId, OpenMode.ForRead) as BlockReference;
+            if (annot != null)
+            {
+                var ghost = new BlockReference(annot.Position + offset, annot.BlockTableRecord)
+                {
+                    Rotation     = annot.Rotation,
+                    ScaleFactors = annot.ScaleFactors,
+                    Normal       = annot.Normal,
+                    ColorIndex   = 4,
+                };
+                try
+                {
+                    TransientManager.CurrentTransientManager.AddTransient(
+                        ghost, TransientDrawingMode.DirectShortTerm, 128, new IntegerCollection());
+                    _gripTransients.Add(ghost);
+                }
+                catch { ghost.Dispose(); }
+            }
+            tr.Commit();
         }
 
         public override bool IsApplicable(RXObject overruledSubject)
@@ -117,6 +248,8 @@ namespace BricsCadRc.Core
                 _dragOrigPos.Remove(0L);          // wyczyść też cache klonu z poprzedniego drag
                 _annotDragStart.Remove(br.ObjectId.Handle.Value);
                 _annotDragStart.Remove(0L);
+                if (!br.ObjectId.IsNull) _lastGripOwner = br.ObjectId;
+                ClearGripTransients();
 
                 gripPoints.Add(BarBlockEngine.GripLateral(br, barBlock)); // [0] krawedz plyty (cover offset)
                 gripPoints.Add(BarBlockEngine.GripSpan(br, barBlock)); // [1] span resize
@@ -294,38 +427,42 @@ namespace BricsCadRc.Core
         private static void ApplyGripMove(Entity entity, BlockReference br, Vector3d offset, bool isGrip1)
         {
             // --- RC_BAR_BLOCK ---
+            // Zasada: w trakcie dragu (klon LUB prawdziwy obiekt — BricsCAD woła oba) NIE
+            // zapisujemy do bazy BTR/annotacji/etykiety — tylko transienty + stan w _pending*.
+            // Zapis raz, w CommandEnded (ApplyPendingGripEdits). ESC → ResetDragState, nic do cofania.
+            // Wcześniej każda klatka dragu przebudowywała współdzielony BTR, annotację i etykietę
+            // (lag, śmieci w UNDO, stan pośredni po ESC).
             var barBlock = BarBlockEngine.ReadXData(br);
             if (barBlock != null)
             {
                 if (isGrip1)
                 {
-                    // Dekompozycja offsetu: "wzdłuż BarsSpan" (stara delta) + "prostopadle" (skew)
+                    // Offset w WCS → układ lokalny bloku (obrócone rozkłady rozciągały się
+                    // wcześniej w złym kierunku).
+                    var localOff = offset.RotateBy(-br.Rotation, Vector3d.ZAxis);
+
+                    // Dekompozycja offsetu: "wzdłuż BarsSpan" + "prostopadle" (skew)
                     double alongDelta, perpDelta;
                     if (barBlock.Direction == "X")
                     {
-                        alongDelta = offset.Y;  // BarsSpan wzdłuż Y
-                        perpDelta  = offset.X;  // skew wzdłuż X (kierunek prętów)
+                        alongDelta = localOff.Y;  // BarsSpan wzdłuż Y
+                        perpDelta  = localOff.X;  // skew wzdłuż X (kierunek prętów)
                     }
                     else
                     {
-                        alongDelta = offset.X;  // BarsSpan wzdłuż X
-                        perpDelta  = offset.Y;  // skew wzdłuż Y
+                        alongDelta = localOff.X;  // BarsSpan wzdłuż X
+                        perpDelta  = localOff.Y;  // skew wzdłuż Y
                     }
+
+                    // Tylko podgląd + zapamiętanie stanu. XData na blockref jest nietknięte,
+                    // więc barBlock to zawsze stan sprzed dragu, a offset jest kumulatywny.
                     double newBarsSpan = Math.Max(0, barBlock.BarsSpan + alongDelta);
                     double newSkewEnd  = barBlock.SkewEnd + perpDelta;
-                    BarBlockEngine.RegenerateBarBlock(br, newBarsSpan, newSkewEnd: newSkewEnd);
-                    var updatedBar = BarBlockEngine.ReadXData(br);
-                    // Synchronizuj annotacje — nowa liczba pretow i nowy barsSpan
-                    if (updatedBar != null)
-                    {
-                        AnnotationEngine.SyncAnnotation(br.Database, updatedBar);
+                    DrawSpanPreview(br, barBlock, newBarsSpan, newSkewEnd);
 
-                        // Zaktualizuj etykietę pręta-źródłowego (MLeader) — nowa liczba prętów
-                        AnnotationEngine.UpdateBarLabelCount(
-                            br.Database,
-                            updatedBar.SourceBarHandle ?? "",
-                            markOverride: updatedBar.Mark);
-                    }
+                    var realId = RealId(br);
+                    if (!realId.IsNull)
+                        _pendingSpan[realId] = (newBarsSpan, newSkewEnd);
                 }
                 else
                 {
@@ -341,56 +478,13 @@ namespace BricsCadRc.Core
                     try { entity.TransformBy(Matrix3d.Displacement(disp)); }
                     finally { AnnotOverruleState.InGripDrag = false; }
 
-                    // handle=0 → klon BricsCAD (rubber-band preview) → synchronizuj annotację
-                    // handle≠0 → prawdziwy obiekt (final commit) → annotacja już na miejscu, pomijamy
-                    bool isPreviewClone = (handle == 0);
-
-                    if (isPreviewClone)
+                    // Annotacja: w trakcie dragu tylko "duch", przesunięcie w bazie w CommandEnded.
+                    var annotId = ResolveAnnotId(br, barBlock);
+                    ClearGripTransients();
+                    if (!annotId.IsNull)
                     {
-                        if (!string.IsNullOrEmpty(barBlock.AnnotHandle) &&
-                            long.TryParse(barBlock.AnnotHandle,
-                                System.Globalization.NumberStyles.HexNumber,
-                                null, out long annotHVal))
-                        {
-                            var annotHandle2 = new Handle(annotHVal);
-                            if (br.Database.TryGetObjectId(annotHandle2, out ObjectId annotId2)
-                                && !annotId2.IsNull && !annotId2.IsErased)
-                            {
-                                using var trAnnot = br.Database.TransactionManager.StartTransaction();
-                                var annotBr2 = trAnnot.GetObject(annotId2, OpenMode.ForWrite) as BlockReference;
-                                if (annotBr2 != null)
-                                {
-                                    if (!_annotDragStart.ContainsKey(handle))
-                                        _annotDragStart[handle] = annotBr2.Position;
-
-                                    // Zapamiętaj oryginalną pozycję do ewentualnego restore przy ESC
-                                    if (!PendingAnnotRestore.ContainsKey(annotId2))
-                                        PendingAnnotRestore[annotId2] = annotBr2.Position;
-
-                                    var origAnnotPos = _annotDragStart[handle];
-
-                                    annotBr2.Position = new Point3d(
-                                        origAnnotPos.X + offset.X,
-                                        origAnnotPos.Y + offset.Y,
-                                        origAnnotPos.Z);
-                                }
-                                trAnnot.Commit();
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Final commit — wyczyść PendingAnnotRestore, restore nie będzie potrzebny
-                        var barFinal = BarBlockEngine.ReadXData(br);
-                        if (barFinal != null && !string.IsNullOrEmpty(barFinal.AnnotHandle))
-                        {
-                            if (long.TryParse(barFinal.AnnotHandle,
-                                    System.Globalization.NumberStyles.HexNumber, null, out long hv))
-                            {
-                                if (br.Database.TryGetObjectId(new Handle(hv), out ObjectId finalAnnotId))
-                                    PendingAnnotRestore.Remove(finalAnnotId);
-                            }
-                        }
+                        DrawAnnotGhost(br.Database, annotId, offset);
+                        _pendingAnnotMove[annotId] = offset;
                     }
                 }
                 return;

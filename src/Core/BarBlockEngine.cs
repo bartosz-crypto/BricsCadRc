@@ -449,8 +449,9 @@ namespace BricsCadRc.Core
             if (bar == null || bar.Spacing <= 0) return;
 
             newBarsSpan = Math.Max(0, newBarsSpan);
+            // +1e-9: 2999.9999/200 ma dać 16 prętów, nie 15 (błąd zmiennoprzecinkowy po dragu)
             int newCount = bar.Spacing > 0
-                ? (int)(newBarsSpan / bar.Spacing) + 1
+                ? (int)(newBarsSpan / bar.Spacing + 1e-9) + 1
                 : 1;
             if (newCount < 1) newCount = 1;
 
@@ -463,12 +464,10 @@ namespace BricsCadRc.Core
 
             BarData.PromoteMarkIfPurePrefix(bar);
 
-            // Cache musi być zaktualizowany PRZED WriteXData — WriteXData fires ObjectModified
-            // natychmiast, a BuildOutline nadpisuje XData wartościami z cache. Stary cache
-            // powodował race condition: outline widział stary SkewEnd mimo nowego XData.
-            long cacheKey = br.BlockTableRecord.Handle.Value;
-            if (cacheKey != 0)
-                _skewCache[cacheKey] = (bar.SkewStart, bar.SkewEnd);
+            // _skewCache NIE jest już aktualizowany: służył do podglądu, gdy drag zapisywał
+            // do bazy klatka po klatce. Teraz zapis jest jeden (po puszczeniu gripa), XData jest
+            // źródłem prawdy, a cache zostawał nieaktualny po Ctrl+Z (obrys skośny mimo cofnięcia).
+            ClearSkewCache(br.BlockTableRecord.Handle.Value);
 
             // Zaktualizuj XData na blockref (jest juz otwarty w grip-op)
             WriteXData(br, bar);

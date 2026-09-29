@@ -58,7 +58,16 @@ namespace BricsCadRc.App
         static void OnCommandEnded(object sender, CommandEventArgs e)
         {
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
-            if (doc?.Database == null) return;
+            if (doc?.Database == null) { AnnotGripOverrule.ResetDragState(); return; }
+
+            // Zakończony grip-drag: zapisz zmiany rozkładu raz, po puszczeniu gripa.
+            try
+            {
+                using (doc.LockDocument())
+                    AnnotGripOverrule.ApplyPendingGripEdits(doc.Database);
+            }
+            catch (System.Exception ex) { Log.Error("PluginApp.ApplyPendingGripEdits", ex); }
+            finally { AnnotGripOverrule.ResetDragState(); }
 
             // Po U/UNDO/REDO niczego nie poprawiamy — każda modyfikacja kasuje stos REDO.
             if (DocumentWatch.IsUndoCommand(e.GlobalCommandName))
@@ -73,34 +82,17 @@ namespace BricsCadRc.App
 
         static void OnCommandCancelled(object sender, CommandEventArgs e)
         {
+            // ESC w trakcie grip-dragu: podgląd był tylko transientem, w bazie nic się nie
+            // zmieniło — wystarczy sprzątnąć transienty i stan dragu (dawny PendingAnnotRestore
+            // nie jest już potrzebny).
+            AnnotGripOverrule.ResetDragState();
+
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
             if (doc?.Database == null) return;
 
             // Anulowana komenda też mogła zakolejkować aktualizacje etykiet (np. ERASE w trakcie)
             try { PendingLabelUpdates.FlushAll(doc.Database); }
             catch (System.Exception ex) { Log.Error("PluginApp.OnCommandCancelled", ex); }
-
-            if (e.GlobalCommandName != "GRIP_STRETCH") return;
-            if (AnnotGripOverrule.PendingAnnotRestore.Count == 0) return;
-
-            var db = doc.Database;
-
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                foreach (var kvp in AnnotGripOverrule.PendingAnnotRestore)
-                {
-                    try
-                    {
-                        var annotBr = tr.GetObject(kvp.Key, OpenMode.ForWrite) as BlockReference;
-                        if (annotBr != null)
-                            annotBr.Position = kvp.Value;
-                    }
-                    catch (System.Exception ex) { Log.Error("PluginApp.RestoreAnnot", ex); }
-                }
-                tr.Commit();
-            }
-
-            AnnotGripOverrule.PendingAnnotRestore.Clear();
         }
     }
 }

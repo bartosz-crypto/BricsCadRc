@@ -26,17 +26,23 @@ namespace BricsCadRc.Core
             DocumentWatch.Subscribe("BarBlockHighlightManager",
                 d =>
                 {
-                    d.ImpliedSelectionChanged += OnSelectionChanged;
-                    d.Database.ObjectModified += OnObjectModified;
-                    d.Database.ObjectAppended += OnObjectAppended;
+                    d.ImpliedSelectionChanged   += OnSelectionChanged;
+                    d.Database.ObjectModified   += OnObjectModified;
+                    d.Database.ObjectAppended   += OnObjectAppended;
+                    d.Database.ObjectUnappended += OnObjectAppended;   // UNDO usuwa dodane linie
+                    d.Database.ObjectReappended += OnObjectAppended;   // REDO / UNDO przywraca
+                    d.CommandEnded              += OnCommandEnded;
                 },
                 d =>
                 {
                     d.ImpliedSelectionChanged -= OnSelectionChanged;
+                    d.CommandEnded            -= OnCommandEnded;
                     try
                     {
-                        d.Database.ObjectModified -= OnObjectModified;
-                        d.Database.ObjectAppended -= OnObjectAppended;
+                        d.Database.ObjectModified   -= OnObjectModified;
+                        d.Database.ObjectAppended   -= OnObjectAppended;
+                        d.Database.ObjectUnappended -= OnObjectAppended;
+                        d.Database.ObjectReappended -= OnObjectAppended;
                     }
                     catch { }
                 });
@@ -50,6 +56,8 @@ namespace BricsCadRc.Core
         {
             DocumentWatch.Unsubscribe("BarBlockHighlightManager");
             try { Application.DocumentManager.DocumentToBeDeactivated -= OnDocumentToBeDeactivated; } catch { }
+            if (_idleHooked) { Application.Idle -= OnIdle; _idleHooked = false; }
+            _dirty.Clear();
             ClearTransients();
             _registered = false;
         }
@@ -103,24 +111,70 @@ namespace BricsCadRc.Core
             catch { }
         }
 
+        // ── Odświeżanie obrysu ODROCZONE do Application.Idle ─────────────────
+        // Wcześniej obrys był przebudowywany wewnątrz notyfikacji ObjectModified/Appended:
+        //   - przy UNDO czytał XData bloku zanim BricsCAD skończył przywracać stan
+        //     (obrys zostawał skośny po Ctrl+Z, choć pręty i XData wróciły),
+        //   - przy przebudowie BTR odświeżał się dla każdej dodanej linii (lag).
+        // Teraz notyfikacje tylko oznaczają blok jako "brudny", a przebudowa idzie raz, w Idle.
+        private static readonly HashSet<ObjectId> _dirty = new HashSet<ObjectId>();
+        private static bool _idleHooked;
+
+        private static void MarkDirty(ObjectId blockId)
+        {
+            if (blockId.IsNull) return;
+            _dirty.Add(blockId);
+            if (_idleHooked) return;
+            Application.Idle += OnIdle;
+            _idleHooked = true;
+        }
+
+        private static void OnIdle(object sender, EventArgs e)
+        {
+            Application.Idle -= OnIdle;
+            _idleHooked = false;
+            if (_dirty.Count == 0) return;
+
+            var ids = new List<ObjectId>(_dirty);
+            _dirty.Clear();
+            foreach (var id in ids)
+            {
+                try
+                {
+                    if (!_transientsByBlock.ContainsKey(id)) continue; // już odznaczony
+                    RefreshOutlineFor(id);
+                }
+                catch (System.Exception ex) { Log.Error($"BarBlockHighlightManager.Refresh {id}", ex); }
+            }
+        }
+
+        private static void OnCommandEnded(object sender, CommandEventArgs e)
+        {
+            // Po UNDO/REDO odśwież wszystkie widoczne obrysy — notyfikacje z undo
+            // nie zawsze dotyczą samego blockref.
+            if (!DocumentWatch.IsUndoCommand(e.GlobalCommandName)) return;
+            foreach (var id in new List<ObjectId>(_transientsByBlock.Keys))
+                MarkDirty(id);
+        }
+
         private static void OnObjectModified(object sender, ObjectEventArgs e)
         {
             try
             {
                 if (e.DBObject == null) return;
                 var id = e.DBObject.ObjectId;
-                var ownerId = e.DBObject is Entity entOM ? entOM.OwnerId : ObjectId.Null;
 
                 if (_transientsByBlock.ContainsKey(id))
                 {
-                    RefreshOutlineFor(id);
+                    MarkDirty(id);
                     return;
                 }
                 // Entity inside a BTR of a selected block was modified — refresh the parent block outline.
+                var ownerId = e.DBObject is Entity entOM ? entOM.OwnerId : ObjectId.Null;
                 if (!ownerId.IsNull && _btrToBlock.TryGetValue(ownerId.Handle.Value, out var blockId))
-                    RefreshOutlineFor(blockId);
+                    MarkDirty(blockId);
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("BarBlockHighlightManager.OnObjectModified", ex); }
         }
 
         private static void OnObjectAppended(object sender, ObjectEventArgs e)
@@ -131,9 +185,9 @@ namespace BricsCadRc.Core
                 var ownerId = e.DBObject is Entity entOA ? entOA.OwnerId : ObjectId.Null;
 
                 if (!ownerId.IsNull && _btrToBlock.TryGetValue(ownerId.Handle.Value, out var blockId))
-                    RefreshOutlineFor(blockId);
+                    MarkDirty(blockId);
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("BarBlockHighlightManager.OnObjectAppended", ex); }
         }
 
         public static void ShowOutlineFor(ObjectId blockId)
@@ -233,15 +287,8 @@ namespace BricsCadRc.Core
             if (bar == null) return null;
             if (bar.Count <= 0 || bar.LengthA <= 0) return null;
 
-            // Jeśli trwa drag gripa, DB XData ma stary SkewEnd — użyj świeżego z cache.
-            // Klucz = BTR Handle (stabilne dla klona i DB BR, bo BTR jest unikalne per rozkład).
-            long btrHandle = br.BlockTableRecord.Handle.Value;
-            var cached = BarBlockEngine.TryGetCachedSkew(btrHandle);
-            if (cached.HasValue)
-            {
-                bar.SkewStart = cached.Value.skewStart;
-                bar.SkewEnd   = cached.Value.skewEnd;
-            }
+            // XData bloku jest jedynym źródłem prawdy (dawny _skewCache z czasów zapisu
+            // w trakcie dragu zostawał nieaktualny po UNDO).
 
             double lastBar  = (bar.Count - 1) * bar.Spacing;
             double barsSpan = Math.Max(0, bar.BarsSpan);
