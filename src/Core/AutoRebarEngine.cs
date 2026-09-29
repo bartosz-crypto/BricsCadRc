@@ -587,7 +587,7 @@ namespace BricsCadRc.Core
             }
 
             ed.WriteMessage(
-                $"\n[AutoRebar UB] Wygenerowano {generated} z {validSegments.Count} rozkładów UB B1 " +
+                $"\n[AutoRebar UB] Wygenerowano {generated} z {validSegments.Count} rozkładów UB {layerCode} " +
                 $"(grubość {slabThickness}mm).\n");
             return generated;
         }
