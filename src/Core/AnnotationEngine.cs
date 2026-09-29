@@ -1587,7 +1587,9 @@ namespace BricsCadRc.Core
 
         /// <summary>Enkoduje listę punktów do stringa "x1,y1;x2,y2;..."</summary>
         public static string EncodeLeaderPoints(IEnumerable<Point3d> pts)
-            => string.Join(";", pts.Select(p => $"{p.X:F4},{p.Y:F4}"));
+            => string.Join(";", pts.Select(p =>
+                p.X.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + "," +
+                p.Y.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)));
 
         /// <summary>Dekoduje string "x1,y1;x2,y2;..." do listy Point3d (Z=0).</summary>
         public static List<Point3d> DecodeLeaderPoints(string s)
@@ -1597,6 +1599,10 @@ namespace BricsCadRc.Core
             foreach (var seg in s.Split(';'))
             {
                 var parts = seg.Split(',');
+                // Zgodność wstecz: stare rysunki zapisane na polskim locale mają
+                // "1234,5000,678,0000" (przecinek dziesiętny) — 4 części zamiast 2.
+                if (parts.Length == 4)
+                    parts = new[] { parts[0] + "." + parts[1], parts[2] + "." + parts[3] };
                 if (parts.Length >= 2
                     && double.TryParse(parts[0], System.Globalization.NumberStyles.Float,
                                        System.Globalization.CultureInfo.InvariantCulture, out double x)

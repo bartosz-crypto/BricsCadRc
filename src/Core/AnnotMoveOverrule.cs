@@ -725,7 +725,7 @@ namespace BricsCadRc.Core
                 // Zawsze zarejestruj source bar do aktualizacji etykiety — niezależnie od stanu annotacji.
                 var barXd = BarBlockEngine.ReadXData(br);
                 if (barXd != null && !string.IsNullOrEmpty(barXd.SourceBarHandle))
-                    PendingLabelUpdates.Add(barXd.SourceBarHandle);
+                    PendingLabelUpdates.Add(db, barXd.SourceBarHandle);
 
                 BarBlockEngine.ClearSkewCache(br.BlockTableRecord.Handle.Value);
 
@@ -906,7 +906,7 @@ namespace BricsCadRc.Core
                 {
                     var barXd = BarBlockEngine.ReadXData(sourceBlock);
                     if (barXd != null && !string.IsNullOrEmpty(barXd.SourceBarHandle))
-                        PendingLabelUpdates.Add(barXd.SourceBarHandle);
+                        PendingLabelUpdates.Add(db, barXd.SourceBarHandle);
                 }
                 tr.Commit();
             }
@@ -924,19 +924,31 @@ namespace BricsCadRc.Core
     // ----------------------------------------------------------------
     internal static class PendingLabelUpdates
     {
-        static readonly HashSet<string> _pendingHandles = new();
+        // Kolejka per rysunek — handle jest unikalny tylko w obrębie jednej bazy.
+        static readonly Dictionary<Database, HashSet<string>> _pending = new();
 
-        public static void Add(string sourceBarHandle)
+        public static void Add(Database db, string sourceBarHandle)
         {
-            if (!string.IsNullOrEmpty(sourceBarHandle))
-                _pendingHandles.Add(sourceBarHandle);
+            if (db == null || string.IsNullOrEmpty(sourceBarHandle)) return;
+            if (!_pending.TryGetValue(db, out var set))
+                _pending[db] = set = new HashSet<string>();
+            set.Add(sourceBarHandle);
         }
 
         public static void FlushAll(Database db)
         {
-            foreach (var h in _pendingHandles)
-                AnnotationEngine.UpdateBarLabelCount(db, h);
-            _pendingHandles.Clear();
+            if (db == null || !_pending.TryGetValue(db, out var set)) return;
+            _pending.Remove(db);
+            foreach (var h in set)
+            {
+                try { AnnotationEngine.UpdateBarLabelCount(db, h); }
+                catch (System.Exception ex) { Log.Error($"PendingLabelUpdates.Flush {h}", ex); }
+            }
+        }
+
+        public static void Discard(Database db)
+        {
+            if (db != null) _pending.Remove(db);
         }
     }
 

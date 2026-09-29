@@ -35,12 +35,10 @@ namespace BricsCadRc.App
 
             BarBlockHighlightManager.Register();
 
-            // Opóźniona aktualizacja etykiet prętów po ERASE
-            if (doc != null)
-            {
-                doc.CommandEnded      += OnCommandEnded;
-                doc.CommandCancelled  += OnCommandCancelled;
-            }
+            // Opóźniona aktualizacja etykiet prętów po ERASE — w każdym otwartym rysunku
+            DocumentWatch.Subscribe("PluginApp",
+                d => { d.CommandEnded += OnCommandEnded;  d.CommandCancelled += OnCommandCancelled; },
+                d => { d.CommandEnded -= OnCommandEnded;  d.CommandCancelled -= OnCommandCancelled; });
 
             RibbonBuilder.Build();
         }
@@ -48,12 +46,7 @@ namespace BricsCadRc.App
         public void Terminate()
         {
             BarBlockHighlightManager.Unregister();
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc != null)
-            {
-                doc.CommandEnded     -= OnCommandEnded;
-                doc.CommandCancelled -= OnCommandCancelled;
-            }
+            DocumentWatch.Unsubscribe("PluginApp");
 
             // SingleBarGripOverrule.Unregister();
             RcMLeaderOverrule.Unregister();
@@ -64,18 +57,32 @@ namespace BricsCadRc.App
 
         static void OnCommandEnded(object sender, CommandEventArgs e)
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc?.Database != null)
-                PendingLabelUpdates.FlushAll(doc.Database);
+            var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
+            if (doc?.Database == null) return;
+
+            // Po U/UNDO/REDO niczego nie poprawiamy — każda modyfikacja kasuje stos REDO.
+            if (DocumentWatch.IsUndoCommand(e.GlobalCommandName))
+            {
+                PendingLabelUpdates.Discard(doc.Database);
+                return;
+            }
+
+            try { PendingLabelUpdates.FlushAll(doc.Database); }
+            catch (System.Exception ex) { Log.Error("PluginApp.OnCommandEnded", ex); }
         }
 
         static void OnCommandCancelled(object sender, CommandEventArgs e)
         {
+            var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
+            if (doc?.Database == null) return;
+
+            // Anulowana komenda też mogła zakolejkować aktualizacje etykiet (np. ERASE w trakcie)
+            try { PendingLabelUpdates.FlushAll(doc.Database); }
+            catch (System.Exception ex) { Log.Error("PluginApp.OnCommandCancelled", ex); }
+
             if (e.GlobalCommandName != "GRIP_STRETCH") return;
             if (AnnotGripOverrule.PendingAnnotRestore.Count == 0) return;
 
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc?.Database == null) return;
             var db = doc.Database;
 
             using (var tr = db.TransactionManager.StartTransaction())
@@ -88,7 +95,7 @@ namespace BricsCadRc.App
                         if (annotBr != null)
                             annotBr.Position = kvp.Value;
                     }
-                    catch { }
+                    catch (System.Exception ex) { Log.Error("PluginApp.RestoreAnnot", ex); }
                 }
                 tr.Commit();
             }

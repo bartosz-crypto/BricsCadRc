@@ -63,9 +63,12 @@ namespace BricsCadRc.Core
 
                     string handle = ent.Handle.Value.ToString("X8");
 
-                    double cutLen = CalcCuttingLength(
-                        bar.ShapeCode, bar.Diameter,
-                        bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE);
+                    // Ręcznie nadpisana długość (dialog RC_BAR) ma pierwszeństwo nad formułą.
+                    double cutLen = bar.LengthOverridden && bar.TotalLength > 0
+                        ? bar.TotalLength
+                        : CalcCuttingLength(
+                            bar.ShapeCode, bar.Diameter,
+                            bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE);
 
                     string posNr = ExtractPosNrStr(bar.Mark);
 

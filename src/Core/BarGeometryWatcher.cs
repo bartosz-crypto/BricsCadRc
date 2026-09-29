@@ -22,45 +22,80 @@ namespace BricsCadRc.Core
         private static bool _active;
         private static readonly HashSet<ObjectId> _pending = new HashSet<ObjectId>();
 
-        // Reentrancy guard — true gdy watcher sam modyfikuje polyline (RebuildCompanions).
-        // OnObjectModified sprawdza tę flagę żeby nie zakolejkować własnych zmian.
-        private static volatile bool _isRebuilding = false;
+        // Reentrancy guard (licznik, bo wywołania się zagnieżdżają) — > 0 gdy watcher sam
+        // modyfikuje obiekty (RebuildCompanions, TranslateLeader, zapis XData).
+        private static int _rebuildDepth;
 
-        // Ostatnia znana pozycja axis_start każdego bara (klucz = ObjectId).
-        // Używana do detekcji translacji (move entire entity) → leader follow.
-        // In-memory tylko; zerowana przy Unregister (NETUNLOAD).
-        private static readonly Dictionary<ObjectId, Point3d> _lastAxisStart =
+        // Pozycja axis_start pręta ZANIM komenda zaczęła go modyfikować (ObjectOpenedForModify).
+        // Wcześniej trzymana była "ostatnia znana pozycja" w pamięci na całą sesję:
+        //   - pierwszy MOVE pręta w sesji nie przesuwał leadera (brak wpisu),
+        //   - po UNDO wpis był nieaktualny i kolejny stretch przesuwał leader o fałszywą deltę.
+        // Teraz baseline jest brany na początku każdej komendy i czyszczony na jej końcu.
+        private static readonly Dictionary<ObjectId, Point3d> _preAxisStart =
             new Dictionary<ObjectId, Point3d>();
+
+        // MLeadery zmodyfikowane w bieżącej komendzie przez użytkownika (np. MOVE pręt + etykieta
+        // razem) — takich nie przesuwamy drugi raz.
+        private static readonly HashSet<ObjectId> _modifiedLeaders = new HashSet<ObjectId>();
 
         public static void Register()
         {
             if (_active) return;
-            try
-            {
-                var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc?.Database == null) return;
-                doc.Database.ObjectModified += OnObjectModified;
-                doc.CommandEnded            += OnCommandEnded;
-                _active = true;
-            }
-            catch { }
+            DocumentWatch.Subscribe("BarGeometryWatcher",
+                d =>
+                {
+                    d.Database.ObjectOpenedForModify += OnObjectOpenedForModify;
+                    d.Database.ObjectModified        += OnObjectModified;
+                    d.CommandEnded                   += OnCommandEnded;
+                    d.CommandCancelled               += OnCommandCancelled;
+                },
+                d =>
+                {
+                    try
+                    {
+                        d.Database.ObjectOpenedForModify -= OnObjectOpenedForModify;
+                        d.Database.ObjectModified        -= OnObjectModified;
+                    }
+                    catch { }
+                    d.CommandEnded     -= OnCommandEnded;
+                    d.CommandCancelled -= OnCommandCancelled;
+                });
+            _active = true;
         }
 
         public static void Unregister()
         {
             if (!_active) return;
+            DocumentWatch.Unsubscribe("BarGeometryWatcher");
+            _active = false;
+            ResetCommandState();
+        }
+
+        private static void ResetCommandState()
+        {
+            _pending.Clear();
+            _preAxisStart.Clear();
+            _modifiedLeaders.Clear();
+        }
+
+        // ----------------------------------------------------------------
+        // ObjectOpenedForModify — zapamiętaj pozycję pręta PRZED modyfikacją
+        // ----------------------------------------------------------------
+        private static void OnObjectOpenedForModify(object sender, ObjectEventArgs e)
+        {
+            if (_rebuildDepth > 0) return;
             try
             {
-                var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc?.Database != null)
-                    doc.Database.ObjectModified -= OnObjectModified;
-                if (doc != null)
-                    doc.CommandEnded -= OnCommandEnded;
+                if (!(e.DBObject is Polyline pl)) return;
+                if (pl.IsUndoing || _preAxisStart.ContainsKey(pl.ObjectId)) return;
+                if (pl.GetXDataForApplication(SingleBarEngine.XAppName) == null) return;
+
+                var bar = SingleBarEngine.ReadBarXData(pl);
+                if (bar == null) return;
+                _preAxisStart[pl.ObjectId] =
+                    SingleBarEngine.GetAxisFirstPointFromOutline(pl, bar.ShapeCode ?? "00");
             }
-            catch { }
-            _active = false;
-            _pending.Clear();
-            _lastAxisStart.Clear();
+            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.OnObjectOpenedForModify", ex); }
         }
 
         // ----------------------------------------------------------------
@@ -69,17 +104,28 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static void OnObjectModified(object sender, ObjectEventArgs e)
         {
-            if (_isRebuilding) return; // nie kolejkuj własnych modyfikacji z RebuildCompanions
+            if (_rebuildDepth > 0) return; // nie kolejkuj własnych modyfikacji
             try
             {
+                if (e.DBObject == null || e.DBObject.IsUndoing) return; // UNDO sam przywraca stan
+
+                if (e.DBObject is MLeader)
+                {
+                    _modifiedLeaders.Add(e.DBObject.ObjectId);
+                    return;
+                }
+
                 if (!(e.DBObject is Polyline)) return;
                 // Szybkie sprawdzenie XData bez otwierania nowej transakcji
                 var xd = e.DBObject.GetXDataForApplication(SingleBarEngine.XAppName);
                 if (xd != null)
                     _pending.Add(e.DBObject.ObjectId);
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.OnObjectModified", ex); }
         }
+
+        private static void OnCommandCancelled(object sender, CommandEventArgs e)
+            => ResetCommandState();
 
         // ----------------------------------------------------------------
         // Walidacja struktury outline dla shape 00/99
@@ -150,6 +196,7 @@ namespace BricsCadRc.Core
             try { leaderId = db.GetObjectId(false, new Handle(h), 0); }
             catch { return; }
             if (leaderId.IsNull || leaderId.IsErased) return;
+            if (_modifiedLeaders.Contains(leaderId)) return; // user przesunął etykietę razem z prętem
 
             var ml = tr.GetObject(leaderId, OpenMode.ForWrite) as Entity;
             if (ml == null) return;
@@ -162,14 +209,37 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         private static void OnCommandEnded(object sender, CommandEventArgs e)
         {
-            if (_pending.Count == 0) return;
-            var toProcess = new List<ObjectId>(_pending);
-            _pending.Clear();
-
             var doc = sender as Document;
-            if (doc?.Database == null) return;
+            if (doc?.Database == null || _pending.Count == 0 || DocumentWatch.IsUndoCommand(e.GlobalCommandName))
+            {
+                ResetCommandState();
+                return;
+            }
             var db = doc.Database;
 
+            var toProcess = new List<ObjectId>();
+            foreach (var id in _pending)
+                if (id.Database == db) toProcess.Add(id);
+            var preAxisStart = new Dictionary<ObjectId, Point3d>(_preAxisStart);
+            _pending.Clear();
+            _preAxisStart.Clear();
+
+            _rebuildDepth++;
+            try
+            {
+                ProcessPending(doc, db, toProcess, preAxisStart);
+            }
+            finally
+            {
+                _rebuildDepth--;
+                _modifiedLeaders.Clear();
+                _preAxisStart.Clear();
+            }
+        }
+
+        private static void ProcessPending(Document doc, Database db, List<ObjectId> toProcess,
+                                           Dictionary<ObjectId, Point3d> preAxisStart)
+        {
             foreach (var oid in toProcess)
             {
                 try
@@ -190,29 +260,28 @@ namespace BricsCadRc.Core
                         mark      = bar.Mark;
 
                         // Detekcja translacji bar-a (move entire entity).
-                        // Porównuje current axis_start z ostatnią zapamiętaną pozycją (_lastAxisStart).
+                        // Porównuje current axis_start z pozycją sprzed komendy (preAxisStart).
                         // Jeśli delta > 10mm → bar został przesunięty → translatuj leader.
                         // Threshold 10mm: rozróżnia prawdziwy move (>> 10mm) od drobnego drgania
                         // przy niewalidnym grip na shape 11+ (zazwyczaj < 10mm).
                         var currentAxisStart = SingleBarEngine.GetAxisFirstPointFromOutline(pline, shapeCode);
-                        if (_lastAxisStart.TryGetValue(oid, out Point3d oldAxisStart))
+                        if (preAxisStart.TryGetValue(oid, out Point3d oldAxisStart))
                         {
                             var moveDelta = currentAxisStart - oldAxisStart;
                             if (moveDelta.Length > 10.0)
                             {
                                 try
                                 {
-                                    _isRebuilding = true;
+                                    _rebuildDepth++;
                                     TranslateLeader(db, tr, bar.LabelHandle, moveDelta);
                                 }
-                                catch { /* defensive */ }
+                                catch (System.Exception ex) { Log.Error("BarGeometryWatcher.TranslateLeader", ex); }
                                 finally
                                 {
-                                    _isRebuilding = false;
+                                    _rebuildDepth--;
                                 }
                             }
                         }
-                        _lastAxisStart[oid] = currentAxisStart;
 
                         // Tylko shape 00/99 (prosta) — dla innych pline.Length ≠ parametr A
                         if (shapeCode != "00" && shapeCode != "99")
@@ -225,13 +294,13 @@ namespace BricsCadRc.Core
 
                             try
                             {
-                                _isRebuilding = true;
+                                _rebuildDepth++;
                                 SingleBarEngine.RebuildCompanions(db, oid, bar);
                             }
-                            catch { /* defensive — nie crash watchera na błędzie rebuild */ }
+                            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions", ex); }
                             finally
                             {
-                                _isRebuilding = false;
+                                _rebuildDepth--;
                             }
                             continue;
                         }
@@ -244,13 +313,13 @@ namespace BricsCadRc.Core
                             tr.Commit();
                             try
                             {
-                                _isRebuilding = true;
+                                _rebuildDepth++;
                                 SingleBarEngine.RebuildCompanions(db, oid, bar);
                             }
-                            catch { }
+                            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions(invalid outline)", ex); }
                             finally
                             {
-                                _isRebuilding = false;
+                                _rebuildDepth--;
                             }
                             continue;
                         }
@@ -287,7 +356,7 @@ namespace BricsCadRc.Core
                     doc.Editor?.WriteMessage(
                         $"\n[RC AUTO] Bar {mark} updated: {newLength:F0} mm  ({distIds.Count} distribution(s))\n");
                 }
-                catch { }
+                catch (System.Exception ex) { Log.Error($"BarGeometryWatcher.ProcessPending {oid}", ex); }
             }
         }
     }

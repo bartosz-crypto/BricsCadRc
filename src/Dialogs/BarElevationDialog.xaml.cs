@@ -169,8 +169,7 @@ namespace BricsCadRc.Dialogs
             for (int i = 0; i < paramCount; i++)
             {
                 string txt = _paramBoxes[i].Text ?? "";
-                if (!double.TryParse(txt, NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out double v) || v <= 0)
+                if (!NumberParser.TryParseDouble(txt, out double v) || v <= 0)
                 {
                     TotalLengthBox.Text = "";
                     return;
@@ -244,8 +243,7 @@ namespace BricsCadRc.Dialogs
 
             for (int i = 0; i < paramCount; i++)
             {
-                if (!double.TryParse(_paramBoxes[i].Text, NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out double v) || v <= 0)
+                if (!NumberParser.TryParseDouble(_paramBoxes[i].Text, out double v) || v <= 0)
                 {
                     MessageBox.Show($"Invalid value for {_selectedShape.Parameters[i]}.", "RC BAR",
                         MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -254,8 +252,7 @@ namespace BricsCadRc.Dialogs
                 paramVals[i] = v;
             }
 
-            if (!double.TryParse(TotalLengthBox.Text, NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out double totalLen) || totalLen <= 0)
+            if (!NumberParser.TryParseDouble(TotalLengthBox.Text, out double totalLen) || totalLen <= 0)
             {
                 MessageBox.Show("Total length could not be calculated. Fill in all parameters.", "RC BAR",
                     MessageBoxButton.OK, MessageBoxImage.Warning);

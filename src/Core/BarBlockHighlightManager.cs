@@ -23,25 +23,41 @@ namespace BricsCadRc.Core
         public static void Register()
         {
             if (_registered) return;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-            doc.ImpliedSelectionChanged    += OnSelectionChanged;
-            doc.Database.ObjectModified    += OnObjectModified;
-            doc.Database.ObjectAppended    += OnObjectAppended;
+            DocumentWatch.Subscribe("BarBlockHighlightManager",
+                d =>
+                {
+                    d.ImpliedSelectionChanged += OnSelectionChanged;
+                    d.Database.ObjectModified += OnObjectModified;
+                    d.Database.ObjectAppended += OnObjectAppended;
+                },
+                d =>
+                {
+                    d.ImpliedSelectionChanged -= OnSelectionChanged;
+                    try
+                    {
+                        d.Database.ObjectModified -= OnObjectModified;
+                        d.Database.ObjectAppended -= OnObjectAppended;
+                    }
+                    catch { }
+                });
+            // Transienty należą do aktywnego widoku — przy przełączeniu rysunku usuń je,
+            // inaczej zostają "duchy" obrysu.
+            Application.DocumentManager.DocumentToBeDeactivated += OnDocumentToBeDeactivated;
             _registered = true;
         }
 
         public static void Unregister()
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc != null)
-            {
-                try { doc.ImpliedSelectionChanged -= OnSelectionChanged;  } catch { }
-                try { doc.Database.ObjectModified -= OnObjectModified;    } catch { }
-                try { doc.Database.ObjectAppended -= OnObjectAppended;    } catch { }
-            }
+            DocumentWatch.Unsubscribe("BarBlockHighlightManager");
+            try { Application.DocumentManager.DocumentToBeDeactivated -= OnDocumentToBeDeactivated; } catch { }
             ClearTransients();
             _registered = false;
+        }
+
+        private static void OnDocumentToBeDeactivated(object sender, DocumentCollectionEventArgs e)
+        {
+            try { ClearTransients(); }
+            catch (System.Exception ex) { Log.Error("BarBlockHighlightManager.Deactivate", ex); }
         }
 
         private static void OnSelectionChanged(object sender, EventArgs e)
@@ -49,7 +65,7 @@ namespace BricsCadRc.Core
             try
             {
                 ClearTransients();
-                var doc = Application.DocumentManager.MdiActiveDocument;
+                var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
                 if (doc == null) return;
 
                 var sel = doc.Editor.SelectImplied();

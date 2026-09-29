@@ -2,3 +2,10 @@ bin/
 obj/
 *.user
 .vs/
+
+# Testowe/lokalne buildy
+bin_*/
+*.pdb
+
+# Ustawienia lokalne Claude Code (per użytkownik)
+.claude/settings.local.json

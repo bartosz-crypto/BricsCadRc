@@ -16,23 +16,25 @@ namespace BricsCadRc.Core
         public static void Register()
         {
             if (_registered) return;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-            doc.Database.ObjectAppended += OnObjectAppended;
-            doc.CommandEnded            += OnCommandEnded;
-            doc.CommandCancelled        += OnCommandCancelled;
+            DocumentWatch.Subscribe("BarCopyWatcher",
+                d =>
+                {
+                    d.Database.ObjectAppended += OnObjectAppended;
+                    d.CommandEnded            += OnCommandEnded;
+                    d.CommandCancelled        += OnCommandCancelled;
+                },
+                d =>
+                {
+                    try { d.Database.ObjectAppended -= OnObjectAppended; } catch { }
+                    d.CommandEnded     -= OnCommandEnded;
+                    d.CommandCancelled -= OnCommandCancelled;
+                });
             _registered = true;
         }
 
         public static void Unregister()
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc != null)
-            {
-                try { doc.Database.ObjectAppended -= OnObjectAppended;  } catch { }
-                try { doc.CommandEnded            -= OnCommandEnded;    } catch { }
-                try { doc.CommandCancelled        -= OnCommandCancelled; } catch { }
-            }
+            DocumentWatch.Unsubscribe("BarCopyWatcher");
             _newBlocks.Clear();
             _newAnnots.Clear();
             _registered = false;
@@ -54,16 +56,16 @@ namespace BricsCadRc.Core
                     _newAnnots.Add(br.ObjectId);
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.OnObjectAppended", ex); }
         }
 
         private static void OnCommandEnded(object sender, CommandEventArgs e)
-            => HandleCommandFinish(e.GlobalCommandName, "Ended");
+            => HandleCommandFinish(sender as Document, e.GlobalCommandName);
 
         private static void OnCommandCancelled(object sender, CommandEventArgs e)
-            => HandleCommandFinish(e.GlobalCommandName, "Cancelled");
+            => HandleCommandFinish(sender as Document, e.GlobalCommandName);
 
-        private static void HandleCommandFinish(string cmdRaw, string eventType)
+        private static void HandleCommandFinish(Document doc, string cmdRaw)
         {
             try
             {
@@ -73,35 +75,27 @@ namespace BricsCadRc.Core
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
                     || cmd == "MIRROR" || cmd.StartsWith("ARRAY");
 
-                if (isCopyLike && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
+                if (isCopyLike && doc?.Database != null && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
                 {
-                    RemapCopiedPairs();
+                    RemapCopiedPairs(doc.Database);
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error($"BarCopyWatcher.HandleCommandFinish {cmdRaw}", ex); }
             finally
             {
-                string cmd = (cmdRaw ?? "").ToUpperInvariant();
-                bool shouldClear =
-                       cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
-                    || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
-                    || cmd == "MIRROR" || cmd.StartsWith("ARRAY")
-                    || cmd == "RC_DISTRIBUTION" || cmd == "RC_BAR_BLOCK" || cmd == "RC_BAR"
-                    || cmd.StartsWith("RC_GENERUJ");
-
-                if (shouldClear)
-                {
-                    _newBlocks.Clear();
-                    _newAnnots.Clear();
-                }
+                // Czyść ZAWSZE po każdej komendzie. Wcześniej tylko po białej liście komend —
+                // zalegające ID (np. po INSERT, RC_EDIT_*) powodowały, że IsCopyPending()
+                // zwracało true i MOVE nie przebudowywał linii rozkładu.
+                _newBlocks.Clear();
+                _newAnnots.Clear();
             }
         }
 
-        private static void RemapCopiedPairs()
+        private static void RemapCopiedPairs(Database db)
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-            var db = doc.Database;
+            // Tylko obiekty z rysunku, w którym zakończyła się komenda
+            _newBlocks.RemoveWhere(id => id.Database != db);
+            _newAnnots.RemoveWhere(id => id.Database != db);
 
             // p298+p303: relink'owane pary do normalize + rebuild po commit
             var rebuildPairs = new List<(ObjectId annotId, ObjectId blockId)>();
@@ -140,7 +134,7 @@ namespace BricsCadRc.Core
 
                     // Bug B fix: każda kopia rozkładu zwiększa count source bara
                     if (!string.IsNullOrEmpty(newBlockData.SourceBarHandle))
-                        PendingLabelUpdates.Add(newBlockData.SourceBarHandle);
+                        PendingLabelUpdates.Add(db, newBlockData.SourceBarHandle);
 
                     string oldAnnotHandleStr = newBlockData.AnnotHandle;
                     if (string.IsNullOrEmpty(oldAnnotHandleStr)) continue;

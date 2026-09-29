@@ -203,7 +203,7 @@ namespace BricsCadRc.Dialogs
                     continue;
                 }
 
-                if (!double.TryParse(txt, NumberStyles.Float, CultureInfo.InvariantCulture, out double v)
+                if (!NumberParser.TryParseDouble(txt, out double v)
                     || v < 0 || (!optional && v <= 0))
                 {
                     TotalLengthLabel.Text = "Total length: –";
@@ -229,7 +229,7 @@ namespace BricsCadRc.Dialogs
         private double GetDiameter()
         {
             if (DiameterCombo.SelectedItem is ComboBoxItem item
-                && double.TryParse((string)item.Tag, out double d))
+                && NumberParser.TryParseDouble((string)item.Tag, out double d))
                 return d;
             return 12.0;
         }
@@ -253,7 +253,7 @@ namespace BricsCadRc.Dialogs
                     continue;
                 }
 
-                if (!double.TryParse(txt, NumberStyles.Float, CultureInfo.InvariantCulture, out double v)
+                if (!NumberParser.TryParseDouble(txt, out double v)
                     || v < 0 || (!optional && v <= 0))
                     return;
 

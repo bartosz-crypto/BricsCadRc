@@ -72,18 +72,22 @@ namespace BricsCadRc.Dialogs
             SuffixBox.TextChanged  += (s, e) => UpdatePreview();
         }
 
+        // Numer pozycji jako tekst "01"; niestandardowy (np. "P3") zostaje bez zmian
+        // zamiast wywalać dialog wyjątkiem z int.Parse.
+        string PosNrText => int.TryParse(_posNr, out int n) ? n.ToString("D2") : (_posNr ?? "");
+
         void UpdateBaseMark()
         {
             bool show = ShowSpacingCheck?.IsChecked == true;
-            if (show && double.TryParse(SpacingBox.Text, out double parsedSp) && parsedSp > 0)
+            if (show && NumberParser.TryParseDouble(SpacingBox.Text, out double parsedSp) && parsedSp > 0)
             {
                 // ShowSpacing ON + valid spacing → inline (omija guard count≤1 w FormatMark)
-                BaseMarkLabel.Text = $"H{_diameter}-{int.Parse(_posNr):D2}-{(int)parsedSp}";
+                BaseMarkLabel.Text = $"H{_diameter}-{PosNrText}-{(int)parsedSp}";
             }
             else
             {
                 // ShowSpacing OFF lub brak spacing → prefix bez spacing
-                BaseMarkLabel.Text = BarData.FormatMark(_diameter, int.Parse(_posNr), 0, _count);
+                BaseMarkLabel.Text = $"H{_diameter}-{PosNrText}";
             }
         }
 
@@ -108,7 +112,7 @@ namespace BricsCadRc.Dialogs
         {
             if (!int.TryParse(CountBox.Text, out int c) || c < 1)
             { MessageBox.Show("Nieprawidłowa liczba prętów."); return; }
-            if (!double.TryParse(SpacingBox.Text, out double sp) || sp <= 0)
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out double sp) || sp <= 0)
             { MessageBox.Show("Nieprawidłowy rozstaw."); return; }
 
             string suffix   = SuffixBox.Text.Trim();

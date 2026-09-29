@@ -58,7 +58,7 @@ namespace BricsCadRc.Dialogs
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (!double.TryParse(SpacingBox.Text, out double spacing) || spacing <= 0)
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out double spacing) || spacing <= 0)
             {
                 MessageBox.Show("Invalid spacing value.", "RC SLAB",
                     MessageBoxButton.OK, MessageBoxImage.Warning);

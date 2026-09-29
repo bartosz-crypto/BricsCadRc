@@ -11,10 +11,11 @@ namespace BricsCadRc.Tests
         [TestCase(8,  16.0)]    // 2d, d<=16
         [TestCase(12, 24.0)]    // 2d, d<=16
         [TestCase(16, 32.0)]    // 2d, d=16 (granica)
-        [TestCase(20, 70.0)]    // 3.5d, d<=25
-        [TestCase(25, 87.5)]    // 3.5d, d=25 (granica)
-        [TestCase(26, 104.0)]   // 4d, d>25
-        [TestCase(32, 128.0)]   // 4d, d>25
+        [TestCase(20, 70.0)]    // 3.5d, d>16
+        [TestCase(25, 87.5)]    // 3.5d
+        [TestCase(32, 112.0)]   // 3.5d (BS 8666 Table 2)
+        [TestCase(40, 140.0)]   // 3.5d
+        [TestCase(50, 175.0)]   // 3.5d
         public void MinBendRadius_ReturnsCorrectValue(double d, double expected)
         {
             Assert.That(BarShape.MinBendRadius(d), Is.EqualTo(expected).Within(1e-9));

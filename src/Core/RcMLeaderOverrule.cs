@@ -38,32 +38,27 @@ namespace BricsCadRc.Core
             ObjectOverrule.AddOverrule(RXObject.GetClass(typeof(MLeader)), _instance, true);
             ObjectOverrule.Overruling = true;
 
-            try
-            {
-                var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc?.Database != null)
+            var inst = _instance;
+            DocumentWatch.Subscribe("RcMLeaderOverrule",
+                d =>
                 {
-                    doc.Database.ObjectModified += _instance.OnObjectModified;
-                    doc.CommandEnded            += _instance.OnCommandEnded;
-                }
-            }
-            catch { }
+                    d.Database.ObjectModified += inst.OnObjectModified;
+                    d.CommandEnded            += inst.OnCommandEnded;
+                    d.CommandCancelled        += inst.OnCommandCancelled;
+                },
+                d =>
+                {
+                    try { d.Database.ObjectModified -= inst.OnObjectModified; } catch { }
+                    d.CommandEnded     -= inst.OnCommandEnded;
+                    d.CommandCancelled -= inst.OnCommandCancelled;
+                });
         }
 
         public static void Unregister()
         {
             if (_instance == null) return;
             ObjectOverrule.RemoveOverrule(RXObject.GetClass(typeof(MLeader)), _instance);
-
-            try
-            {
-                var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc?.Database != null)
-                    doc.Database.ObjectModified -= _instance.OnObjectModified;
-                if (doc != null)
-                    doc.CommandEnded -= _instance.OnCommandEnded;
-            }
-            catch { }
+            DocumentWatch.Unsubscribe("RcMLeaderOverrule");
 
             _instance._pending.Clear();
             _instance = null;
@@ -91,26 +86,33 @@ namespace BricsCadRc.Core
             try
             {
                 if (_inSnap) return;
-                if (!(e.DBObject is MLeader ml) || ml.IsErased) return;
+                if (!(e.DBObject is MLeader ml) || ml.IsErased || ml.IsUndoing) return;
                 if (ml.GetXDataForApplication(SingleBarEngine.XLabelAppName) != null)
                     _pending.Add(ml.ObjectId);
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.OnObjectModified", ex); }
         }
 
         // ----------------------------------------------------------------
         // CommandEnded — przetwarza kolejkę bezpiecznie po zamknięciu transakcji komendy
         // ----------------------------------------------------------------
 
+        private void OnCommandCancelled(object sender, CommandEventArgs e) => _pending.Clear();
+
         private void OnCommandEnded(object sender, CommandEventArgs e)
         {
             if (_pending.Count == 0) return;
-            var toProcess = new List<ObjectId>(_pending);
-            _pending.Clear();
-
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
-            if (doc?.Database == null) return;
+            if (doc?.Database == null || DocumentWatch.IsUndoCommand(e.GlobalCommandName))
+            {
+                _pending.Clear();
+                return;
+            }
             var db = doc.Database;
+            var toProcess = new List<ObjectId>();
+            foreach (var id in _pending)
+                if (id.Database == db) toProcess.Add(id);
+            _pending.Clear();
 
             _inSnap = true;
             try
@@ -119,11 +121,14 @@ namespace BricsCadRc.Core
                 foreach (var mlId in toProcess)
                 {
                     if (mlId.IsErased) continue;
-                    SnapArrowToBar(tr, db, mlId);
+                    // Jeden problematyczny MLeader (np. na zablokowanej warstwie)
+                    // nie może zablokować snapowania pozostałych.
+                    try { SnapArrowToBar(tr, db, mlId); }
+                    catch (System.Exception ex) { Log.Error($"RcMLeaderOverrule.Snap {mlId}", ex); }
                 }
                 tr.Commit();
             }
-            catch { /* nie crashuj w event handlerze */ }
+            catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.OnCommandEnded", ex); }
             finally
             {
                 _inSnap = false;

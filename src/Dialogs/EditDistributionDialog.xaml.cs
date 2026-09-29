@@ -76,13 +76,13 @@ namespace BricsCadRc.Dialogs
             if (!int.TryParse(CountBox.Text, out int newCount) || newCount < 1)
             { RestartPreviewTimer(); return; }
 
-            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0)
             { _prevCount = newCount; RestartPreviewTimer(); return; }
 
             if (newCount > _prevCount)
             {
                 double needed = (newCount - 1) * spacing;
-                if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var currSpan))
+                if (!NumberParser.TryParseDouble(SpanBox.Text, out var currSpan))
                     currSpan = 0;
                 if (needed > currSpan)
                 {
@@ -100,7 +100,7 @@ namespace BricsCadRc.Dialogs
         private void OnSpacingChanged(object sender, RoutedEventArgs e)
         {
             if (_suppressRecalc) return;
-            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var newSpacing) || newSpacing <= 0)
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out var newSpacing) || newSpacing <= 0)
             { RestartPreviewTimer(); return; }
 
             if (!int.TryParse(CountBox.Text, out int count))
@@ -109,7 +109,7 @@ namespace BricsCadRc.Dialogs
             if (newSpacing > _prevSpacing)
             {
                 double needed = (count - 1) * newSpacing;
-                if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var currSpan))
+                if (!NumberParser.TryParseDouble(SpanBox.Text, out var currSpan))
                     currSpan = 0;
                 if (needed > currSpan)
                 {
@@ -127,14 +127,14 @@ namespace BricsCadRc.Dialogs
         private void OnSpanChanged(object sender, RoutedEventArgs e)
         {
             if (_suppressRecalc) return;
-            if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var newSpan) || newSpan < 0)
+            if (!NumberParser.TryParseDouble(SpanBox.Text, out var newSpan) || newSpan < 0)
             { RestartPreviewTimer(); return; }
 
             if (newSpan < _prevBarsSpan)
             {
                 if (!int.TryParse(CountBox.Text, out int count))
                 { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
-                if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+                if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0)
                 { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
 
                 int newCount = Math.Max(1, (int)(newSpan / spacing) + 1);
@@ -167,9 +167,9 @@ namespace BricsCadRc.Dialogs
         {
             _previewTimer.Stop();
             if (!int.TryParse(CountBox.Text, out int count) || count < 1) return;
-            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0) return;
-            if (!double.TryParse(CoverBox.Text,   NumberStyles.Float, CultureInfo.InvariantCulture, out var cover))   return;
-            if (!double.TryParse(SpanBox.Text,    NumberStyles.Float, CultureInfo.InvariantCulture, out var span))    return;
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0) return;
+            if (!NumberParser.TryParseDouble(CoverBox.Text, out var cover))   return;
+            if (!NumberParser.TryParseDouble(SpanBox.Text, out var span))    return;
             PreviewApplied = true;
             _onPreview?.Invoke(count, spacing, cover, span);
         }
@@ -178,11 +178,11 @@ namespace BricsCadRc.Dialogs
         {
             if (!int.TryParse(CountBox.Text, out int count) || count < 1)
             { MessageBox.Show("Liczba prętów musi być ≥ 1", "Edycja rozkładu"); return; }
-            if (!double.TryParse(SpacingBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var spacing) || spacing <= 0)
+            if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0)
             { MessageBox.Show("Rozstaw musi być > 0", "Edycja rozkładu"); return; }
-            if (!double.TryParse(CoverBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cover) || cover < 0)
+            if (!NumberParser.TryParseDouble(CoverBox.Text, out var cover) || cover < 0)
             { MessageBox.Show("Otulina ≥ 0", "Edycja rozkładu"); return; }
-            if (!double.TryParse(SpanBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var span) || span < 0)
+            if (!NumberParser.TryParseDouble(SpanBox.Text, out var span) || span < 0)
             { MessageBox.Show("Rozpiętość ≥ 0", "Edycja rozkładu"); return; }
 
             if ((count - 1) * spacing > span)

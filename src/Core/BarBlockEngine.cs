@@ -96,9 +96,8 @@ namespace BricsCadRc.Core
             bar.BarsSpan = rawSpan;
             bar.Cover    = cover;
 
-            // Cover przesuwa blok w kierunku startu — długość prętów bez zmian
-            if (horizontal) x0 += cover;
-            else             y0 += cover;
+            // Uwaga: x0/y0 już zawierają otulinę (minX + cover). Wcześniej był tu dodatkowy
+            // "x0 += cover" — pręty zaczynały się na 2×cover, a kończyły na krawędzi (0 otuliny).
 
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
