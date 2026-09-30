@@ -27,6 +27,11 @@ namespace BricsCadRc.Core
         public const double DefaultSpacing       = 200.0;
         public const double DefaultCover         = 40.0;
         public const double TemplateMinLen       = 1250.0;
+        /// <summary>
+        /// Minimalna długość pręta w siatce podstawowej, gdy geometria nie wymusza krótszego
+        /// (krótsze tylko gdy pas jest węższy albo bez nich nie da się ułożyć planu).
+        /// </summary>
+        public const double TemplatePreferredMinLen = 2500.0;
         public const double TemplateMaxLen       = 6000.0;
         public const double TemplateGridStep     = 250.0;
         public const double TemplateOffsetX      = 200.0;
@@ -40,6 +45,10 @@ namespace BricsCadRc.Core
         public const double TemplateZoneGap    = 2000.0;  // odstęp od prawej krawędzi płyty
         public const double TemplateZoneWidth  = 8000.0;  // proste od lewej (≤6000+200), UB od prawej
         public const double TemplateZoneHeight = 4000.0;  // startowa wysokość (auto-rośnie)
+
+        /// <summary>Maks. wysokość paska przy skośnej krawędzi (obrys rysowany) — długości prętów idą za skosem.</summary>
+        public const double SkewBandHeight     = 1000.0;
+
         /// <summary>
         /// Distance from last distribution bar to leader text endpoint (pre-set LeaderPoints).
         /// Text lands at (anchorX, BarsSpan + LeaderArmExtension) in local block coords.
@@ -145,8 +154,8 @@ namespace BricsCadRc.Core
             // horizontal=true (X-bars/B1) → DecomposeIntoYStrips (Y-axis scan).
             // horizontal=false (Y-bars/B2) → DecomposeIntoXStrips (X-axis scan).
             List<StripBounds> strips = horizontal
-                ? DecomposeIntoYStrips(plan.SlabVertices, plan.SlabBbox).Select(s => ToStripBounds(s)).ToList()
-                : DecomposeIntoXStrips(plan.SlabVertices, plan.SlabBbox).Select(s => ToStripBounds(s)).ToList();
+                ? DecomposeStrips(plan.SlabVertices, scanIsY: true)
+                : DecomposeStrips(plan.SlabVertices, scanIsY: false);
             int validStrips   = strips.Count(s => s.Valid);
             int skippedStrips = strips.Count - validStrips;
 
@@ -167,6 +176,7 @@ namespace BricsCadRc.Core
             {
                 // Phase 2a: cleanup old distributions on this slab
                 EraseOldDistributions(db, plan.OldDistributionsToErase);
+                InitLabelOccupancy(db);
 
                 foreach (var strip in strips.Where(s => s.Valid))
                 {
@@ -424,7 +434,7 @@ namespace BricsCadRc.Core
 
                 slabBbox     = GeometryHelper.PolylineBbox(slabPl);
                 slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
-                var slabCentroid = GeometryHelper.Centroid(slabBbox);
+                _currentSlabHandle = CurrentSlabTagFor(slabPl);
 
                 (rebarRectId, rebarBbox) = FindOrCreateTemplateZone(db, tr, sourceLayer, slabBbox, ed);
 
@@ -443,7 +453,7 @@ namespace BricsCadRc.Core
                     }
                 }
 
-                oldUBs = ScanOldUBDistributions(db, tr, slabBbox, layerCode, filterDirection);
+                oldUBs = ScanOldUBDistributions(db, tr, slabVertices, layerCode, filterDirection);
                 tr.Commit();
             }
 
@@ -533,6 +543,7 @@ namespace BricsCadRc.Core
             using (doc.LockDocument())
             {
                 EraseOldDistributions(db, oldUBs);
+                InitLabelOccupancy(db);
 
                 ObjectId templateBarId;
                 BarData  templateBar;
@@ -559,48 +570,107 @@ namespace BricsCadRc.Core
                 double slabAcrossMin = isUBB1 ? slabBbox.MinPoint.Y : slabBbox.MinPoint.X;
                 double slabAcrossMax = isUBB1 ? slabBbox.MaxPoint.Y : slabBbox.MaxPoint.X;
 
+                // Pasy prętów głównych prostopadłych do krawędzi (UB B1 ↔ pasy B1, UB B2 ↔ pasy B2).
+                // UB na krawędzi dzielimy dokładnie jak te pasy — z tymi samymi odsunięciami
+                // i trybem rozstawu — żeby LICZBA I POŁOŻENIE UB = pręty dochodzące do krawędzi.
+                // (Wcześniej jeden UB na całą krawędź z równym rozstawem: np. 92 UB przy 27+39+27=93 prętach.)
+                var mainStrips = DecomposeStrips(slabVertices, scanIsY: isUBB1)
+                    .Where(st => st.Valid).ToList();
+
                 foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
-                    // Per-endpoint external detection (Q19=b, analog B1 strip semantics)
-                    bool lowerIsExternal = Math.Abs(segLow  - slabAcrossMin) < 1e-3;
-                    bool upperIsExternal = Math.Abs(segHigh - slabAcrossMax) < 1e-3;
+                    var parts = new List<(double lo, double hi, double lowOff, double highOff, SpacingMode mode, bool lowExt, bool highExt)>();
 
-                    double lowerOffset = lowerIsExternal ? cover : spacing / 2.0;
-                    double upperOffset = upperIsExternal ? cover : spacing / 2.0;
+                    foreach (var st in mainStrips)
+                    {
+                        bool touchesEdge = Math.Abs(st.PerpLow - edgeCoord) < 1.0 || Math.Abs(st.PerpHigh - edgeCoord) < 1.0;
+                        double lo = Math.Max(st.ScanLow, segLow), hi = Math.Min(st.ScanHigh, segHigh);
+                        if (!touchesEdge || hi - lo < 1.0) continue;
+                        if (st.ScanHigh - st.ScanLow < 50.0) continue;                           // B też pomija
+                        if ((st.PerpHigh - st.PerpLow) - 2.0 * cover < TemplateMinLen) continue;  // B nie ma tu prętów
 
-                    // Q20=b: SpacingMode per upper endpoint (analog B1 GenerateLayer)
-                    SpacingMode spacingMode = upperIsExternal
-                        ? SpacingMode.AdjustedExternal
-                        : SpacingMode.ContinuousInternal;
+                        double lowOff  = st.LowerIsExternal ? cover : spacing / 2.0;
+                        double highOff = st.UpperIsExternal ? cover : spacing / 2.0;
+                        SpacingMode mode = st.UpperIsExternal ? SpacingMode.AdjustedExternal : SpacingMode.ContinuousInternal;
 
-                    ed.WriteMessage($"\n[AutoRebar UB] Segment edge={edgeCoord:F0} seg=[{segLow:F0}..{segHigh:F0}] " +
-                        $"length {segHigh - segLow:F0}mm SymbolSide={symbolSide} " +
-                        $"endpoints(L={(lowerIsExternal ? "ext" : "int")},U={(upperIsExternal ? "ext" : "int")}) " +
-                        $"mode={spacingMode}\n");
+                        // Jak w GenerateLayer: wąski pas → 1 pręt w osi
+                        double h = hi - lo;
+                        if (h < spacing || h - lowOff - highOff <= 0)
+                        {
+                            lowOff = highOff = h / 2.0;
+                            mode = SpacingMode.Nominal;
+                        }
+                        parts.Add((lo, hi, lowOff, highOff, mode, st.LowerIsExternal, st.UpperIsExternal));
+                    }
 
-                    // Strategy D: per-segment try/catch — gdyby 1 segment crashował,
-                    // pozostałe nadal się generują. Bez tego cała komenda abortuje.
+                    if (parts.Count == 0)
+                    {
+                        // Fallback: cała krawędź jako jeden rozkład, końce wg narożnika (wypukły → otulina).
+                        double inward = symbolSide == "Left" ? 50.0 : -50.0;
+                        Teigha.Geometry.Point2d pLowOut = isUBB1
+                            ? new Teigha.Geometry.Point2d(edgeCoord + inward, segLow - 0.5)
+                            : new Teigha.Geometry.Point2d(segLow - 0.5, edgeCoord + inward);
+                        Teigha.Geometry.Point2d pHighOut = isUBB1
+                            ? new Teigha.Geometry.Point2d(edgeCoord + inward, segHigh + 0.5)
+                            : new Teigha.Geometry.Point2d(segHigh + 0.5, edgeCoord + inward);
+                        bool lowExt  = !GeometryHelper.IsPointInsidePolygon(slabVertices, pLowOut);
+                        bool highExt = !GeometryHelper.IsPointInsidePolygon(slabVertices, pHighOut);
+                        parts.Add((segLow, segHigh,
+                                   lowExt ? cover : spacing / 2.0, highExt ? cover : spacing / 2.0,
+                                   highExt ? SpacingMode.AdjustedExternal : SpacingMode.ContinuousInternal,
+                                   lowExt, highExt));
+                    }
+
+                    // JEDEN rozkład UB na krawędź (jedna pozycja, jeden opis), ale liczba UB =
+                    // suma prętów głównych dochodzących do krawędzi. Liczba prętów w każdej części
+                    // liczona tym samym algorytmem co w GenerateLayer; UB rozłożone równo
+                    // od pierwszego do ostatniego pręta głównego.
+                    parts.Sort((a, b) => a.lo.CompareTo(b.lo));
+                    int totalCount = 0;
+                    foreach (var part in parts)
+                    {
+                        if (part.mode == SpacingMode.Nominal) { totalCount += 1; continue; }
+                        double avail = (part.hi - part.highOff) - (part.lo + part.lowOff);
+                        double eff = spacing;
+                        if (part.mode == SpacingMode.AdjustedExternal)
+                            eff = ComputeAdjustedSpacing(avail, spacing, part.lowOff, part.hi - part.lo).Item1;
+                        else if (part.mode == SpacingMode.ContinuousInternal)
+                            eff = ComputeContinuousSpacing(avail, spacing).Item1;
+                        totalCount += eff > 0 ? (int)(avail / eff + 1e-9) + 1 : 1;
+                    }
+
+                    double distLow  = parts[0].lo + parts[0].lowOff;
+                    double distHigh = parts[parts.Count - 1].hi - parts[parts.Count - 1].highOff;
+                    double uSpacing = totalCount > 1 && distHigh > distLow
+                        ? (distHigh - distLow) / (totalCount - 1)
+                        : spacing;
+                    if (totalCount <= 1) distHigh = distLow;
+
+                    ed.WriteMessage($"\n[AutoRebar UB] Edge={edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] " +
+                        $"{parts.Count} pas(y) prętów głównych → {totalCount} UB, rozstaw {uSpacing:F1}mm\n");
+
                     try
                     {
                         bool ok = GenerateUBDistribution(
-                            db, edgeCoord, segLow, segHigh, lowerOffset, upperOffset,
+                            db, edgeCoord, distLow, distHigh, 0.0, 0.0,
                             templateBarId, templateBar,
                             ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
-                            spacingMode,
+                            SpacingMode.Nominal,
                             slabAcrossMin, slabAcrossMax,
-                            ubPosNr, ubShapeCode, filterDirection);
+                            ubPosNr, ubShapeCode, filterDirection,
+                            forcedSpacing: uSpacing);
                         if (ok) generated++;
                     }
                     catch (System.Exception ex)
                     {
-                        ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] Segment edge={edgeCoord:F0} " +
-                            $"seg=[{segLow:F0}..{segHigh:F0}] failed: {ex.Message}\n");
+                        Log.Error($"AutoRebar UB edge={edgeCoord:F0}", ex);
+                        ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] Edge={edgeCoord:F0} failed: {ex.Message}\n");
                     }
                 }
             }
 
             ed.WriteMessage(
-                $"\n[AutoRebar UB] Wygenerowano {generated} z {validSegments.Count} rozkładów UB {layerCode} " +
+                $"\n[AutoRebar UB] Wygenerowano {generated} rozkładów UB {layerCode} na {validSegments.Count} krawędziach " +
                 $"(grubość {slabThickness}mm).\n");
             return generated;
         }
@@ -739,7 +809,8 @@ namespace BricsCadRc.Core
             }
 
             // 6. Scan old distributions on this slab to erase
-            var oldDists = ScanOldDistributions(db, tr, slabBbox, layerCode);
+            _currentSlabHandle = CurrentSlabTagFor(slabPl);
+            var oldDists = ScanOldDistributions(db, tr, slabVertices, layerCode);
 
             return new Phase1Result
             {
@@ -910,6 +981,136 @@ namespace BricsCadRc.Core
             return strips;
         }
 
+        /// <summary>
+        /// Podział płyty na pasy po PRAWDZIWYM obrysie (zastępuje DecomposeIntoY/XStrips).
+        ///
+        /// Pracuje w "przestrzeni skanu": scan = oś prostopadła do prętów (B1: Y, B2: X),
+        /// perp = oś wzdłuż prętów. Dla B2 współrzędne wierzchołków są zamieniane (x↔y).
+        ///
+        /// Zmiany względem starej wersji:
+        ///   • Wiele odcinków w jednym pasie (płyty U/C/T) — każdy odcinek to osobny pas
+        ///     (wcześniej cały pas był pomijany: "Multi-span ... future").
+        ///   • Krawędź zewnętrzna = tuż za końcem pasa NIE ma płyty na choćby części szerokości
+        ///     (test punktów po obrysie). Wcześniej: tylko gdy koniec leżał na bboxie płyty,
+        ///     więc uskoki płyt L/T były traktowane jak cięcie wewnętrzne (pręt 100 mm od krawędzi).
+        ///     Zasada "choćby części" jest bezpieczna: na styku z sąsiednim pasem daje gęściej, nie rzadziej.
+        ///   • Skośne krawędzie (obrys rysowany): długość pręta = część wspólna szerokości na dole,
+        ///     w środku i na górze pasa → pręty nigdy nie wychodzą poza płytę.
+        /// </summary>
+        private static List<StripBounds> DecomposeStrips(List<Point2d> vertices, bool scanIsY)
+        {
+            var result = new List<StripBounds>();
+            if (vertices == null || vertices.Count < 3) return result;
+
+            // Przestrzeń skanu: X = perp (wzdłuż prętów), Y = scan
+            var pts = scanIsY ? vertices : vertices.Select(v => new Point2d(v.Y, v.X)).ToList();
+
+            // Unikalne współrzędne scan (eps 1e-3)
+            var raw = pts.Select(v => v.Y).OrderBy(y => y).ToList();
+            var coords = new List<double>();
+            foreach (double y in raw)
+                if (coords.Count == 0 || Math.Abs(y - coords[coords.Count - 1]) >= 1e-3)
+                    coords.Add(y);
+            if (coords.Count < 2) return result;
+
+            // Odrzuć wierzchołki "fantomowe" (np. współliniowe) — ten sam układ przecięć pod i nad
+            var cuts = new List<double> { coords[0] };
+            for (int i = 1; i < coords.Count - 1; i++)
+            {
+                var below = GeometryHelper.FindIntersectionsH(pts, coords[i] - 0.5);
+                var above = GeometryHelper.FindIntersectionsH(pts, coords[i] + 0.5);
+                if (!XIntersectionsEqual(below, above)) cuts.Add(coords[i]);
+            }
+            cuts.Add(coords[coords.Count - 1]);
+
+            // Pasy między cięciami; pasy ze skośną krawędzią dzielimy na paski ≤ SkewBandHeight,
+            // żeby długości prętów podążały za skosem (każdy pasek = osobny rozkład).
+            var bands = new List<(double lo, double hi)>();
+            for (int i = 0; i < cuts.Count - 1; i++)
+            {
+                double lo = cuts[i], hi = cuts[i + 1];
+                double pr = Math.Min(0.5, (hi - lo) * 0.25);
+                var a = GeometryHelper.FindIntersectionsH(pts, lo + pr);
+                var b = GeometryHelper.FindIntersectionsH(pts, hi - pr);
+                bool skewed = a.Count == b.Count && a.Zip(b, (u, w) => Math.Abs(u - w)).Any(d => d > 1.0);
+                int nSub = skewed ? Math.Max(1, (int)Math.Ceiling((hi - lo) / SkewBandHeight)) : 1;
+                for (int k = 0; k < nSub; k++)
+                    bands.Add((lo + (hi - lo) * k / nSub, lo + (hi - lo) * (k + 1) / nSub));
+            }
+
+            foreach (var (lo, hi) in bands)
+            {
+                double h     = hi - lo;
+                double probe = Math.Min(0.5, h * 0.25);
+
+                var xsMid = GeometryHelper.FindIntersectionsH(pts, (lo + hi) * 0.5 + 0.1);
+                var xsLo  = GeometryHelper.FindIntersectionsH(pts, lo + probe);
+                var xsHi  = GeometryHelper.FindIntersectionsH(pts, hi - probe);
+
+                if (xsMid.Count < 2 || xsMid.Count % 2 != 0)
+                {
+                    result.Add(new StripBounds
+                    {
+                        ScanLow = lo, ScanHigh = hi, Valid = false,
+                        SkipReason = $"Degenerate strip ({xsMid.Count} intersections)",
+                    });
+                    continue;
+                }
+
+                bool sameTopology = xsLo.Count == xsMid.Count && xsHi.Count == xsMid.Count;
+
+                for (int k = 0; k + 1 < xsMid.Count; k += 2)
+                {
+                    double pLo = xsMid[k], pHi = xsMid[k + 1];
+                    if (sameTopology)
+                    {
+                        // Skos: część wspólna dołu/środka/góry paska (pręty nie wyjdą poza płytę)
+                        pLo = Math.Max(pLo, Math.Max(xsLo[k],     xsHi[k]));
+                        pHi = Math.Min(pHi, Math.Min(xsLo[k + 1], xsHi[k + 1]));
+                    }
+                    if (pHi - pLo < 1.0)
+                    {
+                        result.Add(new StripBounds
+                        {
+                            ScanLow = lo, ScanHigh = hi, Valid = false,
+                            SkipReason = "Strip too narrow after skew clipping",
+                        });
+                        continue;
+                    }
+
+                    result.Add(new StripBounds
+                    {
+                        ScanLow         = lo,
+                        ScanHigh        = hi,
+                        PerpLow         = pLo,
+                        PerpHigh        = pHi,
+                        LowerIsExternal = IsBoundaryExternal(pts, pLo, pHi, lo - 0.5),
+                        UpperIsExternal = IsBoundaryExternal(pts, pLo, pHi, hi + 0.5),
+                        Valid           = true,
+                    });
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Czy za końcem pasa (linia scan = <paramref name="scanProbe"/>) choć na części zakresu
+        /// [pLo, pHi] nie ma płyty → koniec pasa to krawędź płyty (otulina, reguła 70 mm).
+        /// </summary>
+        private static bool IsBoundaryExternal(List<Point2d> pts, double pLo, double pHi, double scanProbe)
+        {
+            double width = pHi - pLo;
+            int    n     = Math.Max(4, Math.Min(400, (int)Math.Ceiling(width / 50.0)));
+            for (int j = 0; j <= n; j++)
+            {
+                // próbki od pLo+1 do pHi-1 (bez samych narożników)
+                double x = pLo + 1.0 + (width - 2.0) * j / n;
+                if (!GeometryHelper.IsPointInsidePolygon(pts, new Point2d(x, scanProbe)))
+                    return true;
+            }
+            return false;
+        }
+
         private static StripBounds ToStripBounds(YStrip s)
         {
             // YStrip: scan axis = Y, perp axis = X (X-bars rozciągają się X→X)
@@ -1075,8 +1276,67 @@ namespace BricsCadRc.Core
             return result;
         }
 
+        // ── Przynależność rozkładu do płyty ─────────────────────────────────
+        // Każdy rozkład AutoRebar dostaje XData RC_AUTOREBAR_SLAB z handle obrysu płyty.
+        // Przy ponownym uruchomieniu kasujemy tylko rozkłady tej płyty (także przesunięte),
+        // a nie wszystko, co ma punkt wstawienia w bboxie (sąsiednie płyty we wcięciu L/U).
+        // Rozkłady bez znacznika (stare / z obrysu rysowanego): test punktu w obrysie.
+        private const string XSlabApp = "RC_AUTOREBAR_SLAB";
+        private static string _currentSlabHandle;   // null = obrys rysowany (tymczasowy)
+
+        private static string CurrentSlabTagFor(Polyline slabPl)
+            => slabPl.Layer == "RC-TEMP-OUTLINE" ? null : slabPl.Handle.ToString();
+
+        private static string ReadSlabTag(Entity ent)
+        {
+            var rb = ent.GetXDataForApplication(XSlabApp);
+            if (rb == null) return null;
+            foreach (var tv in rb.AsArray())
+                if (tv.TypeCode == (int)DxfCode.ExtendedDataAsciiString)
+                    return tv.Value as string;
+            return null;
+        }
+
+        private static bool SameHandle(string a, string b)
+            => long.TryParse(a, System.Globalization.NumberStyles.HexNumber, null, out long x)
+            && long.TryParse(b, System.Globalization.NumberStyles.HexNumber, null, out long y)
+            && x == y;
+
+        private static bool BelongsToCurrentSlab(BlockReference br, List<Point2d> slabVertices)
+        {
+            string tag = ReadSlabTag(br);
+            if (tag != null && _currentSlabHandle != null)
+                return SameHandle(tag, _currentSlabHandle);
+            return GeometryHelper.IsPointInsidePolygon(
+                slabVertices, new Point2d(br.Position.X, br.Position.Y));
+        }
+
+        private static void TagWithSlab(Database db, ObjectId blockRefId)
+        {
+            if (_currentSlabHandle == null || blockRefId.IsNull) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has(XSlabApp))
+                {
+                    rat.UpgradeOpen();
+                    var rec = new RegAppTableRecord { Name = XSlabApp };
+                    rat.Add(rec);
+                    tr.AddNewlyCreatedDBObject(rec, true);
+                }
+                var ent = tr.GetObject(blockRefId, OpenMode.ForWrite) as Entity;
+                if (ent != null)
+                    ent.XData = new ResultBuffer(
+                        new TypedValue((int)DxfCode.ExtendedDataRegAppName, XSlabApp),
+                        new TypedValue((int)DxfCode.ExtendedDataAsciiString, _currentSlabHandle));
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.TagWithSlab", ex); }
+        }
+
         private static List<(ObjectId distId, ObjectId annotId)> ScanOldDistributions(
-            Database db, Transaction tr, Extents3d slabBbox, string layerCode)
+            Database db, Transaction tr, List<Point2d> slabVertices, string layerCode)
         {
             var result = new List<(ObjectId, ObjectId)>();
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -1092,7 +1352,7 @@ namespace BricsCadRc.Core
                 // UB Marks end with " UB", B1 Marks end with " B1" — symmetric with ScanOldUBDistributions.
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {layerCode}")) continue;
-                if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
+                if (!BelongsToCurrentSlab(br, slabVertices)) continue;
 
                 // Resolve annotation via AnnotHandle
                 ObjectId annotId = ObjectId.Null;
@@ -1161,7 +1421,7 @@ namespace BricsCadRc.Core
 
         /// <summary>Scan old UB distributions on slab (identified by Mark suffix " UB").</summary>
         private static List<(ObjectId, ObjectId)> ScanOldUBDistributions(
-            Database db, Transaction tr, Extents3d slabBbox, string layerCode, string filterDirection)
+            Database db, Transaction tr, List<Point2d> slabVertices, string layerCode, string filterDirection)
         {
             var result = new List<(ObjectId, ObjectId)>();
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -1175,7 +1435,7 @@ namespace BricsCadRc.Core
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
                 if (bar.Direction != filterDirection) continue;
-                if (!GeometryHelper.IsInsideBbox(br.Position, slabBbox)) continue;
+                if (!BelongsToCurrentSlab(br, slabVertices)) continue;
 
                 ObjectId annotId = ObjectId.Null;
                 if (!string.IsNullOrEmpty(bar.AnnotHandle))
@@ -1420,6 +1680,7 @@ namespace BricsCadRc.Core
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1, y1, distBar, horizontal, posNr);
             if (!barResult.IsValid) return false;
+            TagWithSlab(db, barResult.BlockRefId);
 
             // Step 3.5: pre-set leader points using arm-from-slab-edge math.
             // Direction (up/down) chosen per Q8 (bar positions vs slab edges),
@@ -1473,7 +1734,9 @@ namespace BricsCadRc.Core
                     0);
             }
 
-            // Step 4: annotation
+            // Step 4: annotation (z odsunięciem opisu, jeśli koliduje z istniejącymi)
+            distBar.LeaderPoints = AvoidLabelCollision(
+                distBar.LeaderPoints, annotInsertPt, $"{distBar.EffectiveCount} {distBar.Mark}", distBar.AnnotScale);
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
                 leaderHorizontal: false, posNr: posNr,
@@ -1505,7 +1768,8 @@ namespace BricsCadRc.Core
             double spacing, string layerCode, string symbolSide,
             SpacingMode spacingMode,
             double slabMinAcross, double slabMaxAcross,
-            int posNr, string shapeCode, string filterDirection)
+            int posNr, string shapeCode, string filterDirection,
+            double? forcedSpacing = null)
         {
             bool isXBars = filterDirection == "X";
 
@@ -1526,6 +1790,11 @@ namespace BricsCadRc.Core
             switch (spacingMode)
             {
                 case SpacingMode.Nominal:
+                    if (forcedSpacing.HasValue && forcedSpacing.Value > 0)
+                    {
+                        effSpacing = forcedSpacing.Value;   // opis nadal nominalny (-200)
+                        if (Math.Abs(effSpacing - spacing) > 0.5) adjStatus = 1;
+                    }
                     break;
                 case SpacingMode.AdjustedExternal:
                     (effSpacing, adjStatus) = ComputeAdjustedSpacing(
@@ -1539,7 +1808,7 @@ namespace BricsCadRc.Core
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc?.Editor;
-            if (adjStatus != 0 && ed != null)
+            if (adjStatus != 0 && ed != null && spacingMode != SpacingMode.Nominal)
             {
                 string side = symbolSide;
                 string msg;
@@ -1600,6 +1869,7 @@ namespace BricsCadRc.Core
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1, y1, distBar, horizontal: isXBars, posNr);
             if (!barResult.IsValid) return false;
+            TagWithSlab(db, barResult.BlockRefId);
 
             // Step 2: leader points — dispatch per direction.
             bool   leaderUp    = false;
@@ -1632,7 +1902,9 @@ namespace BricsCadRc.Core
                 ? new Point3d(x0 + lengthA / 2.0, y0, 0)
                 : new Point3d(x0, y0 + lengthA / 2.0, 0);
 
-            // Step 4: annotation
+            // Step 4: annotation (z odsunięciem opisu, jeśli koliduje z istniejącymi)
+            distBar.LeaderPoints = AvoidLabelCollision(
+                distBar.LeaderPoints, annotInsertPt, $"{distBar.EffectiveCount} {distBar.Mark}", distBar.AnnotScale);
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
                 leaderHorizontal: !isXBars, posNr: posNr,
@@ -1649,6 +1921,92 @@ namespace BricsCadRc.Core
 
             PositionCounter.CommitUsed(db, posNr);
             return true;
+        }
+
+        // ── Kolizje opisów ───────────────────────────────────────────────────
+        // Prostokąty zajęte przez teksty opisów (WCS). Inicjalizowane z istniejących annotacji
+        // w rysunku, uzupełniane o każdy nowy opis. Gdy nowy opis nachodzi na zajęty prostokąt,
+        // ramię leadera jest wydłużane "po drabince" (o długość tekstu + odstęp), aż będzie wolne.
+        private static readonly List<(double x0, double y0, double x1, double y1)> _labelRects =
+            new List<(double, double, double, double)>();
+        private const double LabelGap = 150.0;
+
+        private static void InitLabelOccupancy(Database db)
+        {
+            _labelRects.Clear();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(
+                    SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased) continue;
+                    if (!(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    if (!AnnotationEngine.IsAnnotation(br)) continue;
+                    var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                    foreach (ObjectId eid in btr)
+                    {
+                        if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is DBText t)) continue;
+                        Extents3d ext;
+                        try { ext = t.GeometricExtents; } catch { continue; }
+                        var a = ext.MinPoint.TransformBy(br.BlockTransform);
+                        var b = ext.MaxPoint.TransformBy(br.BlockTransform);
+                        _labelRects.Add((Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),
+                                         Math.Max(a.X, b.X), Math.Max(a.Y, b.Y)));
+                    }
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.InitLabelOccupancy", ex); }
+        }
+
+        private static bool LabelOverlaps((double x0, double y0, double x1, double y1) r)
+        {
+            foreach (var o in _labelRects)
+                if (r.x0 < o.x1 + LabelGap && r.x1 > o.x0 - LabelGap &&
+                    r.y0 < o.y1 + LabelGap && r.y1 > o.y0 - LabelGap)
+                    return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Wydłuża ostatni segment leadera, aż prostokąt tekstu nie koliduje z innymi opisami.
+        /// Punkty leadera są lokalne względem annotInsertPt (bloki annotacji nieobrócone).
+        /// </summary>
+        private static string AvoidLabelCollision(string encoded, Point3d annotInsertPt, string text, double annotScale)
+        {
+            var pts = AnnotationEngine.DecodeLeaderPoints(encoded);
+            if (pts.Count < 2) return encoded;
+
+            double sc      = annotScale > 0 ? annotScale : 1.0;
+            double h       = AnnotationEngine.DefaultTextHeight * sc;
+            double off     = AnnotationEngine.TextArmOffset * sc;
+            double textLen = (text?.Length ?? 10) * AnnotationEngine.TextCharWidth * sc + off;
+
+            var dir = pts[pts.Count - 1] - pts[pts.Count - 2];
+            if (dir.Length < 1e-6) return encoded;
+            dir = dir.GetNormal();
+            var perp = new Vector3d(-dir.Y, dir.X, 0);
+            double cross = off + h;
+
+            (double, double, double, double) RectFor(Point3d endLocal)
+            {
+                var e = new Point3d(annotInsertPt.X + endLocal.X, annotInsertPt.Y + endLocal.Y, 0);
+                var s0 = e - dir * textLen;
+                var c = new[] { e + perp * cross, e - perp * cross, s0 + perp * cross, s0 - perp * cross };
+                return (c.Min(p => p.X), c.Min(p => p.Y), c.Max(p => p.X), c.Max(p => p.Y));
+            }
+
+            var last = pts[pts.Count - 1];
+            var rect = RectFor(last);
+            for (int k = 0; k < 12 && LabelOverlaps(rect); k++)
+            {
+                last = last + dir * (textLen + LabelGap);
+                rect = RectFor(last);
+            }
+            _labelRects.Add(rect);
+            pts[pts.Count - 1] = last;
+            return AnnotationEngine.EncodeLeaderPoints(pts);
         }
 
         private static BarData BuildBarData(int diameter, int posNr, double lengthA, string layerCode)
@@ -1744,6 +2102,46 @@ namespace BricsCadRc.Core
             return (leaderRight, encoded);
         }
 
+        /// <summary>Plan o minimalnej liczbie zakładów z prętami ≥ minLen (null gdy brak rozwiązania).</summary>
+        private static List<(double xOffset, double length)> TryPlanWithMinLength(
+            double available, int N_min, int N_max, double minLen)
+        {
+            for (int N = N_min; N <= N_max; N++)
+            {
+                bool   found  = false;
+                double bestL1 = 0, bestL2 = 0, bestO = 0;
+                (int outBand, int distinct, double dO, double negL1) bestKey = (int.MaxValue, int.MaxValue, double.MaxValue, 0);
+
+                for (double L1 = TemplateMaxLen; L1 >= minLen - 1e-6; L1 -= TemplateGridStep)
+                {
+                    for (double L2 = minLen; L2 <= L1 + 1e-6; L2 += TemplateGridStep)
+                    {
+                        double O = ((N - 1) * L1 + L2 - available) / (N - 1);
+                        if (O < OverlapMin - 1e-6 || O > OverlapMax + 1e-6) continue;
+
+                        int outBand = (O >= OverlapPreferredMin - 1e-6 && O <= OverlapPreferredMax + 1e-6) ? 0 : 1;
+                        var key = (outBand, Math.Abs(L1 - L2) < 1e-6 ? 0 : 1, Math.Abs(O - OverlapTarget), -L1);
+                        if (!found || key.CompareTo(bestKey) < 0)
+                        {
+                            found = true; bestKey = key;
+                            bestL1 = L1; bestL2 = L2; bestO = O;
+                        }
+                    }
+                }
+
+                if (found)
+                {
+                    var result = new List<(double, double)>();
+                    for (int i = 0; i < N - 1; i++)
+                        result.Add((i * (bestL1 - bestO), bestL1));
+                    result.Add(((N - 1) * (bestL1 - bestO), bestL2));
+                    return result;
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>
         /// Compute spacing for ContinuousInternal mode — force last bar at y1
         /// (= yHigh - spacing/2) so gap to next strip's first bar equals nominalSpacing.
@@ -1818,36 +2216,12 @@ namespace BricsCadRc.Core
             //   2) wszystkie pręty równe (mniej pozycji w BBS),
             //   3) zakład najbliższy 500, 4) dłuższe pręty.
             // Pierwsze N z rozwiązaniem wygrywa (minimalna liczba zakładów).
-            for (int N = N_min; N <= N_max; N++)
+            // Najpierw pręty ≥ 2500 (siatka podstawowa bez krótkich prętów), dopiero gdy się nie da —
+            // dopuszczamy 1250 (wymusza to geometria).
+            foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
             {
-                bool   found  = false;
-                double bestL1 = 0, bestL2 = 0, bestO = 0;
-                (int outBand, int distinct, double dO, double negL1) bestKey = (int.MaxValue, int.MaxValue, double.MaxValue, 0);
-
-                for (double L1 = TemplateMaxLen; L1 >= TemplateMinLen - 1e-6; L1 -= TemplateGridStep)
-                {
-                    for (double L2 = TemplateMinLen; L2 <= L1 + 1e-6; L2 += TemplateGridStep)
-                    {
-                        double O = ((N - 1) * L1 + L2 - available) / (N - 1);
-                        if (O < OverlapMin - 1e-6 || O > OverlapMax + 1e-6) continue;
-
-                        int outBand = (O >= OverlapPreferredMin - 1e-6 && O <= OverlapPreferredMax + 1e-6) ? 0 : 1;
-                        var key = (outBand, Math.Abs(L1 - L2) < 1e-6 ? 0 : 1, Math.Abs(O - OverlapTarget), -L1);
-                        if (!found || key.CompareTo(bestKey) < 0)
-                        {
-                            found = true; bestKey = key;
-                            bestL1 = L1; bestL2 = L2; bestO = O;
-                        }
-                    }
-                }
-
-                if (found)
-                {
-                    for (int i = 0; i < N - 1; i++)
-                        result.Add((i * (bestL1 - bestO), bestL1));
-                    result.Add(((N - 1) * (bestL1 - bestO), bestL2));
-                    return result;
-                }
+                var plan = TryPlanWithMinLength(available, N_min, N_max, minLen);
+                if (plan != null) return plan;
             }
 
             // Best-effort fallback (extreme edge case)
