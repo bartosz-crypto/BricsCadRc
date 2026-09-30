@@ -32,7 +32,9 @@ namespace BricsCadRc.Commands
 
             // Krok 1 — oblicz sugerowany wolny numer pozycji
             var usedNrs   = PositionCounter.GetUsedPositionNumbers(db);
-            int suggested = usedNrs.Count == 0 ? 1 : usedNrs.Max() + 1;
+            int suggested = usedNrs.Count == 0
+                ? PositionCounter.FirstAutoNumber
+                : Math.Max(PositionCounter.FirstAutoNumber, usedNrs.Max() + 1);   // 01/02 = UB
 
             // Krok 2 — dialog z kształtem, średnicą, wymiarami i numerem pozycji
             var elevDlg = new BarElevationDialog(suggested);

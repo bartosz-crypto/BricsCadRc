@@ -361,7 +361,9 @@ namespace BricsCadRc.Core
             int      posNr)
         {
             var empty = new BarBlockResult();
-            if (x0 >= x1 || y0 >= y1) return empty;
+            // Zerowy zakres w kierunku rozkładu = 1 pręt (AutoRebar: wąski pas, "1 bar centered").
+            // Wcześniej y0>=y1 odrzucało taki przypadek i pas znikał bez śladu.
+            if (x0 > x1 || y0 > y1) return empty;
 
             EnsureAppIdRegistered(db);
             LayerManager.EnsureLayersExist(db);

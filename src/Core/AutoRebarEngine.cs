@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Bricscad.ApplicationServices;
+using Bricscad.EditorInput;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 
@@ -32,6 +33,13 @@ namespace BricsCadRc.Core
         public const double TemplateOffsetY      = 500.0;
         public const double TemplateSpacingY     = 700.0;
         public const double TemplateLabelOffsetY = 200.0;
+
+        // Automatyczna "podkładka" (strefa szablonów), gdy w rysunku nie ma prostokąta
+        // na warstwie rebar_bottom: prostokąt na prawo od płyty, rośnie w dół w miarę
+        // dodawania nowych prętów.
+        public const double TemplateZoneGap    = 2000.0;  // odstęp od prawej krawędzi płyty
+        public const double TemplateZoneWidth  = 8000.0;  // proste od lewej (≤6000+200), UB od prawej
+        public const double TemplateZoneHeight = 4000.0;  // startowa wysokość (auto-rośnie)
         /// <summary>
         /// Distance from last distribution bar to leader text endpoint (pre-set LeaderPoints).
         /// Text lands at (anchorX, BarsSpan + LeaderArmExtension) in local block coords.
@@ -46,6 +54,10 @@ namespace BricsCadRc.Core
 
         /// <summary>Maximum overlap (hard).</summary>
         public const double OverlapMax    = 650.0;
+
+        /// <summary>Preferowane pasmo zakładu dołu (wybierane przed wszystkim innym przy tej samej liczbie prętów).</summary>
+        public const double OverlapPreferredMin = 450.0;
+        public const double OverlapPreferredMax = 550.0;
 
         /// <summary>
         /// UB template params per slab thickness.
@@ -207,7 +219,10 @@ namespace BricsCadRc.Core
                     ed.WriteMessage($"\n[AutoRebar] Strip scan={strip.ScanLow:F0}..{strip.ScanHigh:F0} " +
                         $"(h={stripHeight:F0}mm, external: lower={strip.LowerIsExternal}, " +
                         $"upper={strip.UpperIsExternal}): {distPlan.Count} dist, " +
-                        $"lengths: " + string.Join(",", distPlan.Select(d => $"{d.length:F0}")) + "\n");
+                        $"lengths: " + string.Join(",", distPlan.Select(d => $"{d.length:F0}")) +
+                        (distPlan.Count > 1
+                            ? $", zakład {distPlan[0].xOffset + distPlan[0].length - distPlan[1].xOffset:F0}mm"
+                            : "") + "\n");
 
                     foreach (var (xOffset, length) in distPlan)
                     {
@@ -244,6 +259,9 @@ namespace BricsCadRc.Core
                             }
                             (templateBarId, templateBar) = CreateNewTemplate(
                                 db, plan.RebarBbox, existingCount, diameter, length, layerCode);
+                            // Strefa szablonów rośnie w dół, żeby kolejne pręty były w środku
+                            // (wcześniej szablony poniżej prostokąta nie były znajdowane → duplikaty).
+                            plan.RebarBbox = GrowZoneToFit(db, plan.RebarRectId, templateBarId, plan.RebarBbox);
                             ed.WriteMessage($"\n[AutoRebar] Utworzono template {templateBar.Mark} " +
                                             $"L={length:F0}mm\n");
                         }
@@ -377,6 +395,7 @@ namespace BricsCadRc.Core
             // Phase 1 (read-only tx): validate, scan, plan
             Extents3d slabBbox;
             Extents3d rebarBbox;
+            ObjectId  rebarRectId = ObjectId.Null;
             List<(ObjectId distId, ObjectId annotId)> oldUBs;
             (ObjectId, BarData)? matchedTemplate;
             int existingUBTemplateCount;
@@ -407,14 +426,7 @@ namespace BricsCadRc.Core
                 slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
                 var slabCentroid = GeometryHelper.Centroid(slabBbox);
 
-                var rects = ScanLayerRectangles(db, tr, sourceLayer);
-                if (rects.Count == 0)
-                {
-                    ed.WriteMessage($"\nBrak prostokątów na warstwie '{sourceLayer}'.\n");
-                    tr.Commit();
-                    return -1;
-                }
-                (_, rebarBbox) = FindNearestRect(rects, slabCentroid);
+                (rebarRectId, rebarBbox) = FindOrCreateTemplateZone(db, tr, sourceLayer, slabBbox, ed);
 
                 var ubTemplates = ScanUBTemplates(db, tr, rebarBbox, UBDiameter);
                 existingUBTemplateCount = ubTemplates.Count;
@@ -537,7 +549,8 @@ namespace BricsCadRc.Core
                         db, rebarBbox, existingUBTemplateCount,
                         UBDiameter, ubLengthA, ubLengthB, ubLengthC, layerCode,
                         ubPosNr, ubShapeCode);
-                    ed.WriteMessage($"\n[AutoRebar UB] Created UB template H{UBDiameter}-01 " +
+                    rebarBbox = GrowZoneToFit(db, rebarRectId, templateBarId, rebarBbox);
+                    ed.WriteMessage($"\n[AutoRebar UB] Created UB template H{UBDiameter}-{ubPosNr:D2} " +
                         $"(A={ubLengthA}, B={ubLengthB}, C={ubLengthC})\n");
                 }
 
@@ -653,6 +666,7 @@ namespace BricsCadRc.Core
         {
             public Extents3d                             SlabBbox;
             public Extents3d                             RebarBbox;
+            public ObjectId                              RebarRectId;
             public double                                SnappedLen;
             public int                                   ExistingTemplateCount;
             public (ObjectId id, BarData bar)?           MatchedTemplate;   // null if no length match
@@ -707,14 +721,8 @@ namespace BricsCadRc.Core
                 return null;
             }
 
-            // 3. Find nearest rebar_X rect
-            var rects = ScanLayerRectangles(db, tr, sourceLayer);
-            if (rects.Count == 0)
-            {
-                ed.WriteMessage($"\n[AutoRebar] Brak polilinii na warstwie '{sourceLayer}'.\n");
-                return null;
-            }
-            var (_, rebarBbox) = FindNearestRect(rects, slabCentroid);
+            // 3. Find nearest rebar_X rect — albo utwórz automatyczną strefę szablonów
+            var (rebarRectId, rebarBbox) = FindOrCreateTemplateZone(db, tr, sourceLayer, slabBbox, ed);
 
             // 4. Scan existing templates in rebar box (Direction inferred + Diameter match)
             var templates = ScanTemplates(db, tr, rebarBbox, diameter);
@@ -737,6 +745,7 @@ namespace BricsCadRc.Core
             {
                 SlabBbox                 = slabBbox,
                 RebarBbox                = rebarBbox,
+                RebarRectId              = rebarRectId,
                 SnappedLen               = snappedLen,
                 ExistingTemplateCount    = templates.Count,
                 MatchedTemplate          = match,
@@ -937,6 +946,80 @@ namespace BricsCadRc.Core
         // Scanning helpers (Phase 1, inside transaction)
         // ----------------------------------------------------------------
 
+        /// <summary>
+        /// Najbliższy prostokąt szablonów na warstwie <paramref name="layer"/>; gdy nie ma żadnego —
+        /// tworzy automatyczną strefę szablonów na prawo od płyty (użytkownik nie musi
+        /// przygotowywać "podkładki" z prętami).
+        /// </summary>
+        private static (ObjectId id, Extents3d bbox) FindOrCreateTemplateZone(
+            Database db, Transaction tr, string layer, Extents3d slabBbox, Editor ed)
+        {
+            var rects = ScanLayerRectangles(db, tr, layer);
+            if (rects.Count > 0)
+                return FindNearestRect(rects, GeometryHelper.Centroid(slabBbox));
+
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (!lt.Has(layer))
+            {
+                lt.UpgradeOpen();
+                var ltr = new LayerTableRecord { Name = layer };
+                lt.Add(ltr);
+                tr.AddNewlyCreatedDBObject(ltr, true);
+            }
+
+            double x0   = slabBbox.MaxPoint.X + TemplateZoneGap;
+            double yTop = slabBbox.MaxPoint.Y;
+            var pl = new Polyline(4);
+            pl.AddVertexAt(0, new Point2d(x0,                     yTop),                      0, 0, 0);
+            pl.AddVertexAt(1, new Point2d(x0 + TemplateZoneWidth, yTop),                      0, 0, 0);
+            pl.AddVertexAt(2, new Point2d(x0 + TemplateZoneWidth, yTop - TemplateZoneHeight), 0, 0, 0);
+            pl.AddVertexAt(3, new Point2d(x0,                     yTop - TemplateZoneHeight), 0, 0, 0);
+            pl.Closed = true;
+            pl.Layer  = layer;
+
+            var ms = (BlockTableRecord)tr.GetObject(
+                SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+            var id = ms.AppendEntity(pl);
+            tr.AddNewlyCreatedDBObject(pl, true);
+
+            ed?.WriteMessage($"\n[AutoRebar] Brak prostokąta '{layer}' — utworzono strefę szablonów " +
+                             $"na prawo od płyty (X={x0:F0}).\n");
+            return (id, GeometryHelper.PolylineBbox(pl));
+        }
+
+        /// <summary>
+        /// Powiększa prostokąt strefy szablonów w dół, jeśli nowy pręt (z zapasem na kolejny rząd)
+        /// wychodzi poza jego dolną krawędź. Zwraca aktualny bbox strefy.
+        /// </summary>
+        private static Extents3d GrowZoneToFit(Database db, ObjectId rectId, ObjectId barId, Extents3d zone)
+        {
+            if (rectId.IsNull || barId.IsNull || rectId.IsErased) return zone;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var bar = tr.GetObject(barId, OpenMode.ForRead) as Entity;
+                if (bar != null)
+                {
+                    double needMinY = bar.GeometricExtents.MinPoint.Y - TemplateSpacingY;
+                    if (needMinY < zone.MinPoint.Y
+                        && tr.GetObject(rectId, OpenMode.ForWrite) is Polyline pl)
+                    {
+                        double oldMin = zone.MinPoint.Y;
+                        for (int i = 0; i < pl.NumberOfVertices; i++)
+                        {
+                            var p = pl.GetPoint2dAt(i);
+                            if (Math.Abs(p.Y - oldMin) < 1e-3)
+                                pl.SetPointAt(i, new Point2d(p.X, needMinY));
+                        }
+                        zone = GeometryHelper.PolylineBbox(pl);
+                    }
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.GrowZoneToFit", ex); }
+            return zone;
+        }
+
         private static List<(ObjectId, Extents3d)> ScanLayerRectangles(
             Database db, Transaction tr, string layerName)
         {
@@ -981,6 +1064,8 @@ namespace BricsCadRc.Core
                 var bar = SingleBarEngine.ReadBarXData(pl);
                 if (bar == null) continue;
                 if (bar.Diameter != diameter) continue;
+                // Tylko pręty proste — gięty pręt o tej samej długości A nie może być szablonem B1/B2
+                if ((bar.ShapeCode ?? "00") != "00") continue;
                 var insPt = pl.GetPoint3dAt(0);
                 if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
                 // Etap 1E: usunięto filter InferDirectionFromPolyline — B1/B2 share template pool.
@@ -1149,7 +1234,7 @@ namespace BricsCadRc.Core
         {
             // Allocate posNr (conflict-free)
             var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
-            int posNr   = PositionCounter.GetNextFreeFrom(usedNrs, 1);
+            int posNr   = PositionCounter.NextAutoFree(usedNrs);   // 01/02 zarezerwowane dla UB
 
             // Compute insert point — top-down stack inside rebar_X rect
             double insertX = rebarBbox.MinPoint.X + TemplateOffsetX;
@@ -1310,7 +1395,7 @@ namespace BricsCadRc.Core
                     msg = adjustStatus == 1
                         ? $"[AutoRebar] ContInt spacing {effectiveSpacing:F1}mm " +
                           $"(deviation {Math.Abs(effectiveSpacing - spacing) / spacing * 100:F1}%). Label nominal {spacing:F0}mm."
-                        : $"*** WARNING *** [AutoRebar] ContInt deviation > 15%, fallback nominal {spacing:F0}mm — gap to next strip may differ from spacing.";
+                        : $"*** WARNING *** [AutoRebar] ContInt spacing {effectiveSpacing:F1}mm — zagęszczenie > 15% (wąski pas). Label nominal {spacing:F0}mm.";
                 }
                 else
                 {
@@ -1682,18 +1767,15 @@ namespace BricsCadRc.Core
             if (Math.Abs(nominalLastBarRel - availableSpan) < 0.5)
                 return (nominalSpacing, 0);
 
-            // Try count = nominalCount and nominalCount+1
-            double effSpacing1 = availableSpan / (nominalCount - 1);  // sparser
-            double effSpacing2 = availableSpan / nominalCount;         // denser
+            // Tylko ZAGĘSZCZANIE: rozstaw nigdy nie może być większy niż projektowy
+            // (wcześniej przy remisie wybierany był rzadszy, do +15%, np. 230 mm przy opisie -200).
+            int    intervals = (int)Math.Ceiling(availableSpan / nominalSpacing - 1e-9);
+            if (intervals < 1) intervals = 1;
+            double denser    = availableSpan / intervals;          // ≤ nominalSpacing
+            double deviation = (nominalSpacing - denser) / nominalSpacing;
 
-            double delta1 = Math.Abs(effSpacing1 - nominalSpacing);
-            double delta2 = Math.Abs(effSpacing2 - nominalSpacing);
-
-            double chosen    = (delta1 <= delta2) ? effSpacing1 : effSpacing2;
-            double deviation = Math.Abs(chosen - nominalSpacing) / nominalSpacing;
-
-            if (deviation > 0.15) return (nominalSpacing, 2);  // fallback + warn
-            return (chosen, 1);                                  // continuous applied
+            // status 2 = mocne zagęszczenie (> 15%) — dopuszczamy, ale z ostrzeżeniem
+            return (denser, deviation > 0.15 ? 2 : 1);
         }
 
         /// Returns list of (xOffset, length) per distribution. xOffset = position from
@@ -1718,59 +1800,54 @@ namespace BricsCadRc.Core
             }
 
             // Multi-dist: compute N_min
-            // available = N*L - (N-1)*O, max L = 6000, max O = 650
-            //   → N >= (available - 650) / (6000 - 650)
-            int N_min = (int)Math.Ceiling((available - OverlapMax) / (TemplateMaxLen - OverlapMax));
+            // available = N*L - (N-1)*O. Największe pokrycie przy L=6000 i NAJMNIEJSZYM zakładzie:
+            //   N*6000 - (N-1)*400 >= available  →  N >= (available - 400) / (6000 - 400)
+            // (wcześniej użyty był OverlapMax=650 → np. 11500 mm dawało 3-4 pręty zamiast 2×6000)
+            int N_min = (int)Math.Ceiling((available - OverlapMin) / (TemplateMaxLen - OverlapMin));
             if (N_min < 2) N_min = 2;
 
             // Hard upper bound (prevent runaway)
             int N_max = (int)Math.Ceiling((available - OverlapMin) / (TemplateMinLen - OverlapMin)) + 1;
 
-            // Try equal-length solution for each N
+            // Minimalna liczba zakładów (decyzja: mniej zakładów > równe długości).
+            // Dla każdego N od najmniejszego szukamy pary długości na siatce 250:
+            //   N-1 prętów o długości L1 + ostatni L2 (L2 ≤ L1), zakład O w [400, 650]:
+            //   available = (N-1)·L1 + L2 - (N-1)·O
+            // Kolejność preferencji przy tym samym N:
+            //   1) zakład w preferowanym paśmie 450–550 (twarde granice nadal 400–650),
+            //   2) wszystkie pręty równe (mniej pozycji w BBS),
+            //   3) zakład najbliższy 500, 4) dłuższe pręty.
+            // Pierwsze N z rozwiązaniem wygrywa (minimalna liczba zakładów).
             for (int N = N_min; N <= N_max; N++)
             {
-                double L_raw     = (available + (N - 1) * OverlapTarget) / N;
-                double L_snapped = Math.Round(L_raw / TemplateGridStep) * TemplateGridStep;
+                bool   found  = false;
+                double bestL1 = 0, bestL2 = 0, bestO = 0;
+                (int outBand, int distinct, double dO, double negL1) bestKey = (int.MaxValue, int.MaxValue, double.MaxValue, 0);
 
-                if (L_snapped < TemplateMinLen || L_snapped > TemplateMaxLen) continue;
-
-                double O_actual = (N * L_snapped - available) / (N - 1);
-                if (O_actual >= OverlapMin && O_actual <= OverlapMax)
+                for (double L1 = TemplateMaxLen; L1 >= TemplateMinLen - 1e-6; L1 -= TemplateGridStep)
                 {
-                    for (int i = 0; i < N; i++)
-                        result.Add((i * (L_snapped - O_actual), L_snapped));
-                    return result;
-                }
-
-                // Try L_snapped ± gridStep
-                foreach (int delta in new[] { -1, 1 })
-                {
-                    double L_try = L_snapped + delta * TemplateGridStep;
-                    if (L_try < TemplateMinLen || L_try > TemplateMaxLen) continue;
-                    double O_try = (N * L_try - available) / (N - 1);
-                    if (O_try >= OverlapMin && O_try <= OverlapMax)
+                    for (double L2 = TemplateMinLen; L2 <= L1 + 1e-6; L2 += TemplateGridStep)
                     {
-                        for (int i = 0; i < N; i++)
-                            result.Add((i * (L_try - O_try), L_try));
-                        return result;
+                        double O = ((N - 1) * L1 + L2 - available) / (N - 1);
+                        if (O < OverlapMin - 1e-6 || O > OverlapMax + 1e-6) continue;
+
+                        int outBand = (O >= OverlapPreferredMin - 1e-6 && O <= OverlapPreferredMax + 1e-6) ? 0 : 1;
+                        var key = (outBand, Math.Abs(L1 - L2) < 1e-6 ? 0 : 1, Math.Abs(O - OverlapTarget), -L1);
+                        if (!found || key.CompareTo(bestKey) < 0)
+                        {
+                            found = true; bestKey = key;
+                            bestL1 = L1; bestL2 = L2; bestO = O;
+                        }
                     }
                 }
-            }
 
-            // Mixed fallback: first (N-1) dists at 6000mm, last dist shorter.
-            // O between adjacent = OverlapTarget (by construction).
-            for (int N = 2; N <= N_max; N++)
-            {
-                double L_last_raw = available - (N - 1) * (TemplateMaxLen - OverlapTarget);
-                if (L_last_raw < TemplateMinLen || L_last_raw > TemplateMaxLen) continue;
-
-                double L_last = Math.Round(L_last_raw / TemplateGridStep) * TemplateGridStep;
-                if (L_last < TemplateMinLen || L_last > TemplateMaxLen) continue;
-
-                for (int i = 0; i < N - 1; i++)
-                    result.Add((i * (TemplateMaxLen - OverlapTarget), TemplateMaxLen));
-                result.Add(((N - 1) * (TemplateMaxLen - OverlapTarget), L_last));
-                return result;
+                if (found)
+                {
+                    for (int i = 0; i < N - 1; i++)
+                        result.Add((i * (bestL1 - bestO), bestL1));
+                    result.Add(((N - 1) * (bestL1 - bestO), bestL2));
+                    return result;
+                }
             }
 
             // Best-effort fallback (extreme edge case)

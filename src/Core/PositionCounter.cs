@@ -14,6 +14,16 @@ namespace BricsCadRc.Core
         private const string DictKey = "RC_SLAB_POS_COUNTER";
 
         /// <summary>
+        /// Pozycje 01 i 02 są zarezerwowane dla UB (UB B1 = 01, UB B2 = 02).
+        /// Automatyczna numeracja (AutoRebar, RC_BAR, RC_DISTRIBUTION) zaczyna od 03,
+        /// żeby UB mogły zawsze dostać swoje numery niezależnie od kolejności komend.
+        /// </summary>
+        public const int FirstAutoNumber = 3;
+
+        /// <summary>Pierwszy wolny numer do automatycznego przydziału (≥ 03, z pominięciem zajętych).</summary>
+        public static int NextAutoFree(HashSet<int> used) => GetNextFreeFrom(used, FirstAutoNumber);
+
+        /// <summary>
         /// Zwraca nastepny numer pozycji i zapisuje go w rysunku (automatyczny increment).
         /// </summary>
         [Obsolete("Use Peek + CommitUsed instead. Atomic reserve causes counter leak on dialog Cancel.")]
@@ -61,9 +71,9 @@ namespace BricsCadRc.Core
                 var xrec = (Xrecord)tr.GetObject(nod.GetAt(DictKey), OpenMode.ForRead);
                 var vals = xrec.Data?.AsArray();
                 if (vals != null && vals.Length > 0)
-                    return (short)vals[0].Value + 1;
+                    return Math.Max(FirstAutoNumber, (short)vals[0].Value + 1);
             }
-            return 1;
+            return FirstAutoNumber;
         }
 
         /// <summary>
