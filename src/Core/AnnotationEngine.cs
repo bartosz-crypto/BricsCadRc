@@ -431,6 +431,43 @@ namespace BricsCadRc.Core
         // BuildDistLineAndDots — p258 ETAP 2: buduje dist line + doty/strzałki/ticki
         // Wspólna logika dla BuildHorizontal, BuildVertical i RebuildDistLineInBtr.
         // ----------------------------------------------------------------
+        /// <summary>
+        /// Czy linia w BTR annotacji to linia rozkładu (dist line), a nie segment leadera.
+        /// Gdy w rysunku nie ma typu linii _DOT/CENTER, dist line dostaje "Continuous" —
+        /// tak samo jak leader — i UpdateLeaderInBlock kasował ją razem z leaderem
+        /// (po przesunięciu labela linia rozkładu rysowała się tylko od połowy).
+        /// Rozpoznajemy ją geometrycznie: kierunek osi rozkładu + długość jak w BuildDistLineAndDots.
+        /// </summary>
+        private static bool IsDistributionLine(Line ln, BarData bar)
+        {
+            if (ln == null || bar == null) return false;
+            bool horizontal   = bar.Direction == "X";
+            double lineExt    = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
+            double lastBarPos = (bar.Count - 1) * bar.Spacing;
+
+            Point3d baseStart = horizontal
+                ? new Point3d(bar.SkewStart, -lineExt, 0)
+                : new Point3d(-lineExt, bar.SkewStart, 0);
+            Point3d baseEnd = horizontal
+                ? new Point3d(bar.SkewEnd, lastBarPos + lineExt, 0)
+                : new Point3d(lastBarPos + lineExt, bar.SkewEnd, 0);
+
+            Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
+            bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            Vector3d axisDir = hasSkew && (baseEnd - baseStart).Length > 1e-9
+                ? (baseEnd - baseStart).GetNormal() : fallback;
+            Point3d finalEnd = hasSkew ? baseEnd + axisDir * Scaled(DistEndExtension, bar) : baseEnd;
+            double expectedLen = (finalEnd - baseStart).Length;
+
+            var v = ln.EndPoint - ln.StartPoint;
+            double len = v.Length;
+            if (len < 1e-6 || expectedLen < 1e-6) return false;
+            if (Math.Abs(len - expectedLen) > 0.5) return false;
+            // równoległa do osi rozkładu (w obie strony)
+            double cross = Math.Abs(v.X * axisDir.Y - v.Y * axisDir.X) / len;
+            return cross < 1e-3;
+        }
+
         private static void BuildDistLineAndDots(
             Transaction tr, BlockTableRecord btr,
             BarData bar, string ltName, Vector3d offset = default)
@@ -604,7 +641,7 @@ namespace BricsCadRc.Core
             foreach (ObjectId eid in btr)
             {
                 var ent = tr.GetObject(eid, OpenMode.ForRead);
-                if (ent is Line ln && ln.Linetype == "Continuous")
+                if (ent is Line ln && ln.Linetype == "Continuous" && !IsDistributionLine(ln, bar))
                     idsToErase.Add(eid);
                 if (ent is DBText)
                     idsToErase.Add(eid);
@@ -690,7 +727,7 @@ namespace BricsCadRc.Core
                 bool willErase = false;
                 if (ent is Line ln)
                 {
-                    willErase = ln.Linetype == "Continuous";
+                    willErase = ln.Linetype == "Continuous" && !IsDistributionLine(ln, bar);
                     if (willErase) idsToErase.Add(eid);
                 }
                 else if (ent is DBText tx)

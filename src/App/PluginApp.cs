@@ -12,7 +12,9 @@ namespace BricsCadRc.App
         public void Initialize()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
-            doc?.Editor.WriteMessage("\n[RC SLAB] Plugin zaladowany. Wersja 0.1\n");
+            string built = "?";
+            try { built = System.IO.File.GetLastWriteTime(typeof(PluginApp).Assembly.Location).ToString("yyyy-MM-dd HH:mm"); } catch { }
+            doc?.Editor.WriteMessage($"\n[RC SLAB] Plugin zaladowany. Build: {built}\n");
 
             // PICKSTYLE=1 — zaznaczanie calych grup przy kliknieciu na czlon grupy.
             // Bez tego klik na linie/kropke zaznacza tylko ten element, nie cala grupe ANNOT.
