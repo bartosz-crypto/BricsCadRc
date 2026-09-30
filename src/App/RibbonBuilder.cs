@@ -55,6 +55,8 @@ namespace BricsCadRc.App
             src.Items.Add(MakeButton("Generuj UB B2",   "RC_GENERUJ_UB_B2",   "Auto-generuje UB B2 (Y-bars, horizontal edges) na krawędziach płyty (H12-02-200 UB, prompt grubość 225/300)"));
             src.Items.Add(MakeButton("Generuj B1",      "RC_GENERUJ_B1",      "Auto-generuje dolna warstwe B1 (H10-XX, rozstaw 200) z biblioteki rebar_bottom"));
             src.Items.Add(MakeButton("Generuj B2",      "RC_GENERUJ_B2",      "Auto-generuje dolna warstwe B2 (Y-bars) z biblioteki rebar_bottom"));
+            src.Items.Add(MakeButton("Generuj T1",      "RC_GENERUJ_T1",      "Auto-generuje gorna warstwe T1 (H12, rozstaw 200), zaklady przesuniete wzgledem B1"));
+            src.Items.Add(MakeButton("Generuj T2",      "RC_GENERUJ_T2",      "Auto-generuje gorna warstwe T2 (H12, Y-bars), zaklady przesuniete wzgledem B2"));
 
             return new RibbonPanel { Source = src };
         }

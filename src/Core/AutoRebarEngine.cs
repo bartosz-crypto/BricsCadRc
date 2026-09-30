@@ -69,6 +69,19 @@ namespace BricsCadRc.Core
         public const double OverlapPreferredMax = 550.0;
 
         /// <summary>
+        /// Minimalny odstęp w świetle między strefą zakładu góry (T) a strefą zakładu dołu (B)
+        /// w tym samym kierunku. Zakłady góra/dół nie mogą być w tym samym miejscu.
+        /// </summary>
+        public const double LapStaggerMinGap = 750.0;
+
+        // Zakład GÓRY (Ø12 — większa średnica): twardo 500–700, preferowane 550–650, cel 600.
+        public const double TopOverlapMin          = 500.0;
+        public const double TopOverlapMax          = 700.0;
+        public const double TopOverlapPreferredMin = 550.0;
+        public const double TopOverlapPreferredMax = 650.0;
+        public const double TopOverlapTarget       = 600.0;
+
+        /// <summary>
         /// UB template params per slab thickness.
         /// Shape "21" U-bar: A (left leg), B (bottom width), C (right leg).
         /// Plan-view bar length = LengthA (longest leg).
@@ -218,7 +231,10 @@ namespace BricsCadRc.Core
 
                     // X multi-dist plan for this strip
                     double xAvailable = (strip.PerpHigh - strip.PerpLow) - 2.0 * cover;
-                    var distPlan = ComputeDistributionPlan(xAvailable, spacing);
+                    // Góra (T1/T2): zakłady przesunięte względem dołu (B1/B2) tego samego kierunku
+                    // Plan wspólny dół+góra: TA SAMA liczba prętów w pasie, zakłady góry mijają dół
+                    var joint    = ComputeJointPlan(xAvailable, spacing, ed);
+                    var distPlan = layerCode.StartsWith("T") ? joint.top : joint.bottom;
                     if (distPlan.Count == 0)
                     {
                         ed.WriteMessage($"\n[AutoRebar] Strip scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
@@ -1168,7 +1184,9 @@ namespace BricsCadRc.Core
                 tr.AddNewlyCreatedDBObject(ltr, true);
             }
 
-            double x0   = slabBbox.MaxPoint.X + TemplateZoneGap;
+            // Strefa góry (rebar_top) w drugiej kolumnie, obok strefy dołu
+            int    col  = layer == "rebar_top" ? 1 : 0;
+            double x0   = slabBbox.MaxPoint.X + TemplateZoneGap + col * (TemplateZoneWidth + TemplateZoneGap);
             double yTop = slabBbox.MaxPoint.Y;
             var pl = new Polyline(4);
             pl.AddVertexAt(0, new Point2d(x0,                     yTop),                      0, 0, 0);
@@ -2100,6 +2118,116 @@ namespace BricsCadRc.Core
             });
 
             return (leaderRight, encoded);
+        }
+
+        // ── Plan góry (T1/T2): zakłady przesunięte względem dołu ─────────────
+        private static List<(double lo, double hi)> LapZones(List<(double xOffset, double length)> plan)
+        {
+            var sorted = plan.OrderBy(p => p.xOffset).ToList();
+            var z = new List<(double, double)>();
+            for (int i = 0; i + 1 < sorted.Count; i++)
+                z.Add((sorted[i + 1].xOffset, sorted[i].xOffset + sorted[i].length));
+            return z;
+        }
+
+        /// <summary>
+        /// Wspólny plan dołu i góry dla pasa o danej szerokości (deterministyczny — B1 i T1
+        /// liczone osobno, na osobnych rzutach, dostają spójne plany):
+        ///   • ta sama liczba prętów w pasie dołem i górą,
+        ///   • zakład dołu 400–650 (pref. 450–550), góry 500–700 (pref. 550–650),
+        ///   • strefy zakładów góry ≥ LapStaggerMinGap w świetle od stref dołu,
+        ///   • najpierw minimalna liczba prętów, pręty ≥ 2500 (1250 tylko gdy konieczne).
+        /// Każdy pręt może mieć inną długość na siatce 250 (wzór: pierwszy, środkowe równe, ostatni).
+        /// </summary>
+        private static (List<(double xOffset, double length)> bottom, List<(double xOffset, double length)> top)
+            ComputeJointPlan(double available, double spacing, Editor ed)
+        {
+            if (available <= TemplateMaxLen + 0.5)
+            {
+                var single = ComputeDistributionPlan(available, spacing);
+                return (single, single);
+            }
+
+            int n0 = Math.Max(2, Math.Max(
+                (int)Math.Ceiling((available - OverlapMin)    / (TemplateMaxLen - OverlapMin)),
+                (int)Math.Ceiling((available - TopOverlapMin) / (TemplateMaxLen - TopOverlapMin))));
+
+            for (int N = n0; N <= n0 + 5; N++)
+                foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+                {
+                    var B = PlanCandidates(available, N, minLen, OverlapMin, OverlapMax,
+                                           OverlapPreferredMin, OverlapPreferredMax, OverlapTarget);
+                    if (B.Count == 0) continue;
+                    var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
+                                           TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
+                    if (T.Count == 0) continue;
+
+                    bool found = false;
+                    (int, int, double) bestKey = default;
+                    List<(double, double)> bestB = null, bestT = null;
+
+                    foreach (var b in B)
+                    {
+                        var bz = LapZones(b.plan);
+                        foreach (var t in T)   // T posortowane — pierwszy pasujący jest najlepszy dla tego b
+                        {
+                            if (!LapsStaggered(LapZones(t.plan), bz)) continue;
+                            var key = (b.key.outBand + t.key.outBand,
+                                       b.key.distinct + t.key.distinct,
+                                       b.key.dO + t.key.dO);
+                            if (!found || key.CompareTo(bestKey) < 0)
+                            { found = true; bestKey = key; bestB = b.plan; bestT = t.plan; }
+                            break;
+                        }
+                    }
+                    if (found) return (bestB, bestT);
+                }
+
+            ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: nie znaleziono wspólnego planu " +
+                             "dół/góra — góra jak dół (zakłady w tym samym miejscu!).\n");
+            var fallback = ComputeDistributionPlan(available, spacing);
+            return (fallback, fallback);
+        }
+
+        private static bool LapsStaggered(List<(double lo, double hi)> top, List<(double lo, double hi)> bottom)
+        {
+            foreach (var t in top)
+                foreach (var b in bottom)
+                    if (Math.Max(t.lo - b.hi, b.lo - t.hi) < LapStaggerMinGap - 1e-6) return false;
+            return true;
+        }
+
+        /// <summary>Wszystkie plany N prętów (pierwszy, środkowe równe, ostatni) z zakładem w [oMin, oMax], posortowane wg jakości.</summary>
+        private static List<((int outBand, int distinct, double dO) key, List<(double xOffset, double length)> plan)>
+            PlanCandidates(double available, int N, double minLen,
+                           double oMin, double oMax, double pMin, double pMax, double target)
+        {
+            var result = new List<((int, int, double), List<(double, double)>)>();
+            if (N < 2) return result;
+            var grid = new List<double>();
+            for (double L = minLen; L <= TemplateMaxLen + 1e-6; L += TemplateGridStep) grid.Add(L);
+            var middle = N >= 3 ? grid : new List<double> { 0 };
+
+            foreach (double L0 in grid)
+            foreach (double L1 in middle)
+            foreach (double L2 in grid)
+            {
+                var lens = new List<double> { L0 };
+                for (int i = 0; i < N - 2; i++) lens.Add(L1);
+                lens.Add(L2);
+
+                double O = (lens.Sum() - available) / (N - 1);
+                if (O < oMin - 1e-6 || O > oMax + 1e-6) continue;
+
+                var plan = new List<(double, double)>();
+                double x = 0;
+                foreach (double L in lens) { plan.Add((x, L)); x += L - O; }
+
+                int outBand = (O >= pMin - 1e-6 && O <= pMax + 1e-6) ? 0 : 1;
+                result.Add(((outBand, lens.Distinct().Count() - 1, Math.Abs(O - target)), plan));
+            }
+            result.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+            return result;
         }
 
         /// <summary>Plan o minimalnej liczbie zakładów z prętami ≥ minLen (null gdy brak rozwiązania).</summary>

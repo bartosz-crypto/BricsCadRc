@@ -16,29 +16,24 @@ namespace BricsCadRc.Commands
         private const string SlabLayer = "SD-PILED-RAFT";
 
         [CommandMethod("RC_GENERUJ_B1", CommandFlags.Modal)]
-        public void GenerateB1()
-        {
-            GenerateForLayer(
-                sourceLayer:     "rebar_bottom",
-                filterDirection: "X",
-                layerCode:       "B1");
-        }
+        public void GenerateB1() => GenerateForLayer("rebar_bottom", "X", "B1", diameter: 10);
 
-        // Etap 1B Faza 2: B2 active (Y-bars). T1/T2 wymaga rebar_top layer
-        // support — uncomment when ready (Etap 2+).
         [CommandMethod("RC_GENERUJ_B2", CommandFlags.Modal)]
-        public void GenerateB2() => GenerateForLayer("rebar_bottom", "Y", "B2");
+        public void GenerateB2() => GenerateForLayer("rebar_bottom", "Y", "B2", diameter: 10);
 
-        // [CommandMethod("RC_GENERUJ_T1", CommandFlags.Modal)]
-        // public void GenerateT1() => GenerateForLayer("rebar_top", "X", "T1");
-        //
-        // [CommandMethod("RC_GENERUJ_T2", CommandFlags.Modal)]
-        // public void GenerateT2() => GenerateForLayer("rebar_top", "Y", "T2");
+        // Góra: te same parametry co dół (s=200, c=40), tylko Ø12.
+        // Zakłady przesunięte względem B1/B2 tego samego kierunku (≥ 750 mm w świetle).
+        [CommandMethod("RC_GENERUJ_T1", CommandFlags.Modal)]
+        public void GenerateT1() => GenerateForLayer("rebar_top", "X", "T1", diameter: 12);
+
+        [CommandMethod("RC_GENERUJ_T2", CommandFlags.Modal)]
+        public void GenerateT2() => GenerateForLayer("rebar_top", "Y", "T2", diameter: 12);
 
         private void GenerateForLayer(
             string sourceLayer,
             string filterDirection,
-            string layerCode)
+            string layerCode,
+            int    diameter)
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -50,7 +45,7 @@ namespace BricsCadRc.Commands
 
             try
             {
-                AutoRebarEngine.GenerateLayer(doc, slabId, sourceLayer, filterDirection, layerCode);
+                AutoRebarEngine.GenerateLayer(doc, slabId, sourceLayer, filterDirection, layerCode, diameter);
             }
             catch (System.Exception ex)
             {
