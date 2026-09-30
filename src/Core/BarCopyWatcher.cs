@@ -11,6 +11,9 @@ namespace BricsCadRc.Core
     {
         private static readonly HashSet<ObjectId> _newBlocks = new HashSet<ObjectId>();
         private static readonly HashSet<ObjectId> _newAnnots = new HashSet<ObjectId>();
+        // Pojedyncze pręty (Polyline RC_SINGLE_BAR) i ich etykiety (MLeader RC_BAR_LABEL)
+        private static readonly HashSet<ObjectId> _newBars   = new HashSet<ObjectId>();
+        private static readonly HashSet<ObjectId> _newLabels = new HashSet<ObjectId>();
         private static bool _registered;
 
         public static void Register()
@@ -37,6 +40,8 @@ namespace BricsCadRc.Core
             DocumentWatch.Unsubscribe("BarCopyWatcher");
             _newBlocks.Clear();
             _newAnnots.Clear();
+            _newBars.Clear();
+            _newLabels.Clear();
             _registered = false;
         }
 
@@ -44,6 +49,17 @@ namespace BricsCadRc.Core
         {
             try
             {
+                if (e.DBObject is Polyline pl)
+                {
+                    if (pl.GetXDataForApplication(SingleBarEngine.XAppName) != null) _newBars.Add(pl.ObjectId);
+                    return;
+                }
+                if (e.DBObject is MLeader ml)
+                {
+                    if (ml.GetXDataForApplication(SingleBarEngine.XLabelAppName) != null) _newLabels.Add(ml.ObjectId);
+                    return;
+                }
+
                 var br = e.DBObject as BlockReference;
                 if (br == null) return;
 
@@ -73,11 +89,15 @@ namespace BricsCadRc.Core
                 bool isCopyLike =
                        cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
-                    || cmd == "MIRROR" || cmd.StartsWith("ARRAY");
+                    || cmd == "PASTEORIG" || cmd == "MIRROR" || cmd.StartsWith("ARRAY");
 
                 if (isCopyLike && doc?.Database != null && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
                 {
                     RemapCopiedPairs(doc.Database);
+                }
+                if (isCopyLike && doc?.Database != null && _newBars.Count > 0)
+                {
+                    RemapCopiedBarLabels(doc.Database);
                 }
             }
             catch (System.Exception ex) { Log.Error($"BarCopyWatcher.HandleCommandFinish {cmdRaw}", ex); }
@@ -88,7 +108,99 @@ namespace BricsCadRc.Core
                 // zwracało true i MOVE nie przebudowywał linii rozkładu.
                 _newBlocks.Clear();
                 _newAnnots.Clear();
+                _newBars.Clear();
+                _newLabels.Clear();
             }
+        }
+
+        /// <summary>
+        /// Naprawia powiązanie pręt ↔ etykieta po COPY / PASTE / MIRROR / ARRAY.
+        /// Handle 1005 BricsCAD przemapowuje sam, ale pręty i etykiety zapisane starszą wersją
+        /// (tekst 1000) po skopiowaniu nadal wskazują na ORYGINAŁ — wtedy kopia pręta nie zmienia
+        /// swojej etykiety (np. nowy numer pozycji po zmianie długości).
+        /// Parowanie: grot etykiety leży na pręcie. Kopia pręta bez etykiety → powiązanie czyszczone.
+        /// </summary>
+        private static void RemapCopiedBarLabels(Database db)
+        {
+            _newBars.RemoveWhere(id => id.Database != db || id.IsErased);
+            _newLabels.RemoveWhere(id => id.Database != db || id.IsErased);
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Etykiety z nowych obiektów: id → grot
+                var labelTips = new Dictionary<ObjectId, Point3d>();
+                foreach (var lid in _newLabels)
+                {
+                    var ml = tr.GetObject(lid, OpenMode.ForRead) as MLeader;
+                    if (ml == null) continue;
+                    if (TryGetArrowTip(ml, out var tip)) labelTips[lid] = tip;
+                }
+                var usedLabels = new HashSet<ObjectId>();
+
+                foreach (var bid in _newBars)
+                {
+                    var pl  = tr.GetObject(bid, OpenMode.ForRead) as Polyline;
+                    var bar = pl != null ? SingleBarEngine.ReadBarXData(pl) : null;
+                    if (bar == null) continue;
+                    string myHex = bid.Handle.Value.ToString("X8");
+
+                    // Czy obecne powiązanie jest poprawne (etykieta wskazuje z powrotem na ten pręt)?
+                    if (TryGetObjectId(db, bar.LabelHandle, out var curLbl) && !curLbl.IsErased
+                        && tr.GetObject(curLbl, OpenMode.ForRead) is MLeader curMl
+                        && XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(curMl), myHex))
+                    {
+                        usedLabels.Add(curLbl);
+                        continue;
+                    }
+
+                    // Szukaj nowej etykiety, której grot leży na tym pręcie
+                    ObjectId best = ObjectId.Null;
+                    double bestD = 50.0;   // mm
+                    foreach (var kv in labelTips)
+                    {
+                        if (usedLabels.Contains(kv.Key)) continue;
+                        double d;
+                        try { d = pl.GetClosestPointTo(kv.Value, false).DistanceTo(kv.Value); }
+                        catch { continue; }
+                        if (d < bestD) { bestD = d; best = kv.Key; }
+                    }
+
+                    pl.UpgradeOpen();
+                    if (!best.IsNull)
+                    {
+                        usedLabels.Add(best);
+                        bar.LabelHandle = best.Handle.Value.ToString("X8");
+                        SingleBarEngine.WriteXData(pl, bar);
+
+                        var ml = (MLeader)tr.GetObject(best, OpenMode.ForWrite);
+                        ml.XData = new ResultBuffer(
+                            new TypedValue((int)DxfCode.ExtendedDataRegAppName, SingleBarEngine.XLabelAppName),
+                            XLink.Write(myHex));
+                    }
+                    else if (!string.IsNullOrEmpty(bar.LabelHandle))
+                    {
+                        // Pręt skopiowany bez etykiety — nie może wskazywać na etykietę oryginału
+                        bar.LabelHandle = "";
+                        SingleBarEngine.WriteXData(pl, bar);
+                    }
+                }
+                tr.Commit();
+            }
+        }
+
+        private static bool TryGetArrowTip(MLeader ml, out Point3d tip)
+        {
+            tip = Point3d.Origin;
+            try
+            {
+                var li = ml.GetLeaderIndexes();
+                if (li == null || li.Count == 0) return false;
+                var lni = ml.GetLeaderLineIndexes((int)li[0]);
+                if (lni == null || lni.Count == 0) return false;
+                tip = ml.GetFirstVertex((int)lni[0]);
+                return true;
+            }
+            catch { return false; }
         }
 
         private static void RemapCopiedPairs(Database db)

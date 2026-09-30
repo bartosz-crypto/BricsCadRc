@@ -208,7 +208,7 @@ namespace BricsCadRc.Core
             {
                 ml.XData = new ResultBuffer(
                     new TypedValue((int)DxfCode.ExtendedDataRegAppName,  XLabelAppName),
-                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, barId.Handle.ToString()));
+                    XLink.Write(barId.Handle.ToString()));   // handle 1005 — kopia pręta+etykiety przemapuje się sama
             }
 
             tr.Commit();
@@ -225,7 +225,7 @@ namespace BricsCadRc.Core
             var xdata = ml.GetXDataForApplication(XLabelAppName);
             if (xdata == null) return null;
             var v = xdata.AsArray();
-            return v.Length >= 2 ? (string)v[1].Value : null;
+            return v.Length >= 2 ? XLink.Read(v[1]) : null;
         }
 
         // ----------------------------------------------------------------
@@ -426,7 +426,7 @@ namespace BricsCadRc.Core
         {
             entity.XData = new ResultBuffer(
                 new TypedValue((int)DxfCode.ExtendedDataRegAppName,  XLinkAppName),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, primaryHandle));
+                XLink.Write(primaryHandle));
         }
 
         // ----------------------------------------------------------------
@@ -448,7 +448,7 @@ namespace BricsCadRc.Core
                 var xdata = ent.GetXDataForApplication(XLinkAppName);
                 if (xdata == null) continue;
                 var v = xdata.AsArray();
-                if (v.Length >= 2 && (string)v[1].Value == primaryHandle)
+                if (v.Length >= 2 && XLink.Same(XLink.Read(v[1]), primaryHandle))
                     toErase.Add(ent);
             }
             foreach (var ent in toErase)
@@ -517,7 +517,7 @@ namespace BricsCadRc.Core
             if (xdata == null) return ObjectId.Null;
             var v = xdata.AsArray();
             if (v.Length < 2) return ObjectId.Null;
-            string handleStr = (string)v[1].Value;
+            string handleStr = XLink.Read(v[1]);
             try
             {
                 long hVal  = Convert.ToInt64(handleStr, 16);
@@ -579,7 +579,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthE),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.TotalLength),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LengthOverridden ? 1 : 0)),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelHandle ?? "")
+                XLink.Write(bar.LabelHandle)                                  // [13] handle 1005
             );
         }
 
@@ -604,7 +604,7 @@ namespace BricsCadRc.Core
                 LengthE          = v.Length >= 11 ? (double)v[10].Value : 0,
                 TotalLength      = v.Length >= 12 ? (double)v[11].Value : 0,
                 LengthOverridden = v.Length >= 13 && (short)v[12].Value != 0,
-                LabelHandle      = v.Length >= 14 ? (string)v[13].Value : ""
+                LabelHandle      = v.Length >= 14 ? XLink.Read(v[13]) : ""
             };
             bd.Direction = (bd.LayerCode == "B1" || bd.LayerCode == "T1") ? "X" :
                            (bd.LayerCode == "B2" || bd.LayerCode == "T2") ? "Y" : "X";

@@ -782,18 +782,10 @@ namespace BricsCadRc.Core
 
         private static string ReadAnnotHandle(BlockReference br)
         {
-            var rxd = br.GetXDataForApplication("RC_BAR_BLOCK");
-            if (rxd == null) return null;
-
-            foreach (TypedValue tv in rxd)
-            {
-                if (tv.TypeCode != (int)DxfCode.ExtendedDataAsciiString) continue;
-                var s = tv.Value?.ToString() ?? "";
-                if (s.Length == 8 && s.All(c =>
-                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
-                    return s;
-            }
-            return null;
+            // Wcześniej: "pierwszy 8-znakowy hex string w XData" (zgadywanie; psuło się gdy
+            // AnnotHandle pusty albo zapisany jako handle 1005). Teraz: właściwe pole [11].
+            string h = BarBlockEngine.ReadXData(br)?.AnnotHandle;
+            return string.IsNullOrEmpty(h) ? null : h;
         }
     }
 
@@ -853,17 +845,10 @@ namespace BricsCadRc.Core
 
         private static string ReadAnnotHandle(BlockReference br)
         {
-            var rxd = br.GetXDataForApplication("RC_BAR_BLOCK");
-            if (rxd == null) return null;
-            foreach (TypedValue tv in rxd)
-            {
-                if (tv.TypeCode != (int)DxfCode.ExtendedDataAsciiString) continue;
-                var s = tv.Value?.ToString() ?? "";
-                if (s.Length == 8 && s.All(c =>
-                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
-                    return s;
-            }
-            return null;
+            // Wcześniej: "pierwszy 8-znakowy hex string w XData" (zgadywanie; psuło się gdy
+            // AnnotHandle pusty albo zapisany jako handle 1005). Teraz: właściwe pole [11].
+            string h = BarBlockEngine.ReadXData(br)?.AnnotHandle;
+            return string.IsNullOrEmpty(h) ? null : h;
         }
     }
 
@@ -918,8 +903,16 @@ namespace BricsCadRc.Core
                 // Cascade do distributions wykonuje się zawsze.
                 if (!lblId.IsNull)
                 {
-                    var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                    ml?.Erase(true);
+                    // Kasuj etykietę tylko jeśli naprawdę należy do TEGO pręta (back-link w XData
+                    // MLeadera). Kopia pręta skopiowana bez etykiety wskazuje na etykietę oryginału —
+                    // wcześniej jej usunięcie kasowało etykietę oryginału.
+                    var ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader;
+                    if (ml != null && XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml),
+                                                 pline.Handle.Value.ToString("X8")))
+                    {
+                        ml.UpgradeOpen();
+                        ml.Erase(true);
+                    }
                 }
 
                 // Usuń też wszystkie rozkłady (RC_BAR_BLOCK) powiązane z tym prętem
@@ -935,8 +928,7 @@ namespace BricsCadRc.Core
                     var barBlock = BarBlockEngine.ReadXData(ent);
                     if (barBlock == null) continue;
                     // Sprawdź czy SourceBarHandle wskazuje na ten pręt
-                    if (string.Equals(barBlock.SourceBarHandle, plineHandle,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (XLink.Same(barBlock.SourceBarHandle, plineHandle))
                     {
                         // Usuń też powiązaną annotację (RC_BAR_ANNOT)
                         if (!string.IsNullOrEmpty(barBlock.AnnotHandle)

@@ -711,16 +711,16 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.LengthA),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.BarsSpan),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Cover),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.AnnotHandle     ?? ""),
+                XLink.Write(bar.AnnotHandle),                                                  // [11] handle 1005
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.ShapeCode       ?? "00"),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolSide        ?? "Right"),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolDirection   ?? "Up"),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.ViewingDirection  ?? "Auto"),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.ViewSegmentIndex),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SymbolType        ?? "Auto"), // [17]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.SourceBarHandle   ?? ""),    // [18]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelPolyHandle   ?? ""),    // [19]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LabelTextHandle   ?? ""),    // [20]
+                XLink.Write(bar.SourceBarHandle),                                              // [18] handle 1005
+                XLink.Write(bar.LabelPolyHandle),                                              // [19] handle 1005
+                XLink.Write(bar.LabelTextHandle),                                              // [20] handle 1005
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)bar.VisibilityMode),      // [21]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.VisibleIndices    ?? ""),    // [22]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.Angle),                     // [23]
@@ -753,16 +753,16 @@ namespace BricsCadRc.Core
             };
             if (v.Length >= 10) bd.BarsSpan    = (double)v[9].Value;
             if (v.Length >= 11) bd.Cover       = (double)v[10].Value;
-            if (v.Length >= 12) bd.AnnotHandle = (string)v[11].Value;
+            if (v.Length >= 12) bd.AnnotHandle = XLink.Read(v[11]);
             if (v.Length >= 13) bd.ShapeCode        = (string)v[12].Value;
             if (v.Length >= 14) bd.SymbolSide       = (string)v[13].Value;
             if (v.Length >= 15) bd.SymbolDirection  = (string)v[14].Value;
             if (v.Length >= 16) bd.ViewingDirection = (string)v[15].Value;
             if (v.Length >= 17) bd.ViewSegmentIndex = (short)v[16].Value;
             if (v.Length >= 18) bd.SymbolType       = (string)v[17].Value;
-            if (v.Length >= 19) bd.SourceBarHandle  = (string)v[18].Value;
-            if (v.Length >= 20) bd.LabelPolyHandle  = (string)v[19].Value;
-            if (v.Length >= 21) bd.LabelTextHandle  = (string)v[20].Value;
+            if (v.Length >= 19) bd.SourceBarHandle  = XLink.Read(v[18]);
+            if (v.Length >= 20) bd.LabelPolyHandle  = XLink.Read(v[19]);
+            if (v.Length >= 21) bd.LabelTextHandle  = XLink.Read(v[20]);
             if (v.Length >= 22) bd.VisibilityMode   = (BarVisibilityMode)(short)v[21].Value;
             if (v.Length >= 23) bd.VisibleIndices   = (string)v[22].Value ?? "";
             if (v.Length >= 24) bd.Angle            = (double)v[23].Value;

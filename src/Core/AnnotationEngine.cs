@@ -1429,7 +1429,7 @@ namespace BricsCadRc.Core
                 {
                     var ev = existing.AsArray();
                     if (ev.Length >= 17)
-                        sourceHandle = ev[16].Value?.ToString() ?? "";
+                        sourceHandle = XLink.Read(ev[16]);
                 }
             }
 
@@ -1450,7 +1450,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderRight ? 1 : 0)),
                 new TypedValue((int)DxfCode.ExtendedDataReal,        !double.IsNaN(bar.ArmMidY) ? bar.ArmMidY : bar.BarsSpan / 2.0),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.LeaderUp ? 1 : 0)),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, sourceHandle),      // [16]
+                XLink.Write(sourceHandle),                                          // [16] handle 1005
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.LeaderPoints ?? ""), // [17] — punkty leadera "x1,y1;x2,y2;..."
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),            // [18]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),          // [19]
@@ -1486,7 +1486,7 @@ namespace BricsCadRc.Core
             if (v.Length >= 14) bd.LeaderRight       = (short)v[13].Value == 1;
             if (v.Length >= 15) bd.ArmMidY   = (double)v[14].Value;
             if (v.Length >= 16) bd.LeaderUp           = (short)v[15].Value == 1;
-            if (v.Length >= 17) bd.SourceBlockHandle  = v[16].Value?.ToString() ?? "";
+            if (v.Length >= 17) bd.SourceBlockHandle  = XLink.Read(v[16]);
             if (v.Length >= 18) bd.LeaderPoints       = (string)v[17].Value ?? "";
             if (v.Length >= 19) { try { bd.SkewEnd   = Convert.ToDouble(v[18].Value); } catch { bd.SkewEnd   = 0.0; } }
             if (v.Length >= 20) { try { bd.SkewStart = Convert.ToDouble(v[19].Value); } catch { bd.SkewStart = 0.0; } }
@@ -1555,8 +1555,7 @@ namespace BricsCadRc.Core
                     if (br2 == null) continue;
                     var barBlock = BarBlockEngine.ReadXData(br2);
                     if (barBlock == null) continue;
-                    if (string.Equals(barBlock.SourceBarHandle, sourceBarHandle,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (XLink.Same(barBlock.SourceBarHandle, sourceBarHandle))
                     {
                         if (!BarBlockEngine.IsAnnotAlive(db, barBlock.AnnotHandle)) continue;
                         totalCount += barBlock.EffectiveCount;
@@ -1572,8 +1571,13 @@ namespace BricsCadRc.Core
                 if (!db.TryGetObjectId(lblHandle, out ObjectId lblId) || lblId.IsErased)
                 { tr.Commit(); return; }
 
-                var ml = tr.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                if (ml?.ContentType == ContentType.MTextContent)
+                var ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader;
+                // Etykieta musi należeć do tego pręta (back-link) — kopia pręta bez etykiety
+                // nie może nadpisywać liczby na etykiecie oryginału.
+                if (ml == null || !XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml), srcId.Handle.Value.ToString("X8")))
+                { tr.Commit(); return; }
+                ml.UpgradeOpen();
+                if (ml.ContentType == ContentType.MTextContent)
                 {
                     var mt = ml.MText?.Clone() as MText;
                     if (mt != null)

@@ -183,7 +183,7 @@ namespace BricsCadRc.Core
         /// Translatuje leader entity (dowolny typ: MLeader, Line+MText itp.) o podany delta.
         /// Używa TransformBy(Matrix3d.Displacement) — działa dla każdego Entity.
         /// </summary>
-        private static void TranslateLeader(Database db, Transaction tr, string labelHandle, Vector3d delta)
+        private static void TranslateLeader(Database db, Transaction tr, ObjectId barId, string labelHandle, Vector3d delta)
         {
             if (string.IsNullOrEmpty(labelHandle)) return;
             if (delta.Length < 1e-6) return;
@@ -198,8 +198,12 @@ namespace BricsCadRc.Core
             if (leaderId.IsNull || leaderId.IsErased) return;
             if (_modifiedLeaders.Contains(leaderId)) return; // user przesunął etykietę razem z prętem
 
-            var ml = tr.GetObject(leaderId, OpenMode.ForWrite) as Entity;
+            var ml = tr.GetObject(leaderId, OpenMode.ForRead) as MLeader;
             if (ml == null) return;
+            // Przesuwaj tylko etykietę, która naprawdę należy do tego pręta (back-link).
+            // Kopia pręta bez etykiety wskazuje na etykietę oryginału — nie wolno jej ruszać.
+            if (!XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml), barId.Handle.Value.ToString("X8"))) return;
+            ml.UpgradeOpen();
 
             ml.TransformBy(Matrix3d.Displacement(delta));
         }
@@ -273,7 +277,7 @@ namespace BricsCadRc.Core
                                 try
                                 {
                                     _rebuildDepth++;
-                                    TranslateLeader(db, tr, bar.LabelHandle, moveDelta);
+                                    TranslateLeader(db, tr, oid, bar.LabelHandle, moveDelta);
                                 }
                                 catch (System.Exception ex) { Log.Error("BarGeometryWatcher.TranslateLeader", ex); }
                                 finally
@@ -347,14 +351,30 @@ namespace BricsCadRc.Core
                         tr.Commit();
                     }
 
-                    // 3. Znajdź powiązane rozkłady i przebuduj linie prętów
-                    int posNr   = SingleBarEngine.ExtractPosNr(mark);
-                    var distIds = BarBlockEngine.FindDistributionsByPosNr(db, posNr);
-                    foreach (var distId in distIds)
-                        BarBlockEngine.UpdateBarLength(db, distId, newLength);
+                    // 3. Numer pozycji: jeśli ten sam numer ma inny pręt o innych wymiarach
+                    //    (np. kopia, której zmieniono długość) → ten pręt dostaje inny numer.
+                    int    oldPosNr = SingleBarEngine.ExtractPosNr(mark);
+                    string newMark  = PositionReconciler.ReconcileAfterGeometryChange(db, oid);
+                    bool   renumbered = newMark != null;
 
-                    doc.Editor?.WriteMessage(
-                        $"\n[RC AUTO] Bar {mark} updated: {newLength:F0} mm  ({distIds.Count} distribution(s))\n");
+                    // 4. Rozkłady TEGO pręta (po SourceBarHandle). Stare rozkłady bez powiązania
+                    //    bierzemy po numerze tylko gdy pręt był jedyny w swojej pozycji.
+                    BarData cur;
+                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        var pline = tr.GetObject(oid, OpenMode.ForRead) as Polyline;
+                        cur = pline != null ? SingleBarEngine.ReadBarXData(pline) : null;
+                    }
+                    if (cur == null) continue;
+                    int nDist = PositionReconciler.PropagateToDistributions(
+                        db, oid, cur, legacyPosNr: renumbered ? 0 : oldPosNr);
+
+                    // 5. Etykieta pręta (nowy numer / liczba sztuk)
+                    AnnotationEngine.UpdateBarLabelCount(db, oid.Handle.Value.ToString("X8"), markOverride: cur.Mark);
+
+                    doc.Editor?.WriteMessage(renumbered
+                        ? $"\n[RC AUTO] Pręt {mark} zmieniony na {newLength:F0} mm → nowa pozycja {cur.Mark}  ({nDist} rozkład(y))\n"
+                        : $"\n[RC AUTO] Pręt {mark}: {newLength:F0} mm  ({nDist} rozkład(y))\n");
                 }
                 catch (System.Exception ex) { Log.Error($"BarGeometryWatcher.ProcessPending {oid}", ex); }
             }

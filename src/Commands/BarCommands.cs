@@ -32,9 +32,7 @@ namespace BricsCadRc.Commands
 
             // Krok 1 — oblicz sugerowany wolny numer pozycji
             var usedNrs   = PositionCounter.GetUsedPositionNumbers(db);
-            int suggested = usedNrs.Count == 0
-                ? PositionCounter.FirstAutoNumber
-                : Math.Max(PositionCounter.FirstAutoNumber, usedNrs.Max() + 1);   // 01/02 = UB
+            int suggested = PositionCounter.NextAuto(db, usedNrs);   // wspólny przydział (01/02 = UB)
 
             // Krok 2 — dialog z kształtem, średnicą, wymiarami i numerem pozycji
             var elevDlg = new BarElevationDialog(suggested);
@@ -1186,17 +1184,22 @@ namespace BricsCadRc.Commands
             // Przebuduj towarzyszące encje (poly2 + łuki końcowe)
             SingleBarEngine.RebuildCompanions(db, primaryId, bar);
 
-            // Znajdź i przerysuj powiązane rozkłady
-            int posNr   = SingleBarEngine.ExtractPosNr(bar.Mark);
-            var distIds = BarBlockEngine.FindDistributionsByPosNr(db, posNr);
-            ed.WriteMessage($"[RC_UPDATE_BAR] Found {distIds.Count} distribution(s) for pos {posNr}.\n");
+            // Numer pozycji: ten sam numer z innymi wymiarami na innym pręcie → nowy numer
+            int    oldPosNr   = SingleBarEngine.ExtractPosNr(bar.Mark);
+            string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, primaryId);
+            if (renumbered != null)
+            {
+                ed.WriteMessage($"[RC_UPDATE_BAR] Pozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.\n");
+                bar.Mark = renumbered;
+            }
 
-            int updated = 0;
-            foreach (var id in distIds)
-                if (BarBlockEngine.UpdateBarLength(db, id, newLength)) updated++;
+            // Rozkłady tego pręta (po SourceBarHandle; stare bez powiązania — po numerze)
+            int updated = PositionReconciler.PropagateToDistributions(
+                db, primaryId, bar, legacyPosNr: renumbered != null ? 0 : oldPosNr);
+            AnnotationEngine.UpdateBarLabelCount(db, primaryId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
 
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
-            ed.WriteMessage($"[RC_UPDATE_BAR] Done: {updated}/{distIds.Count} distributions updated. LengthA: {oldLength:F0} → {newLength:F0} mm\n");
+            ed.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {oldLength:F0} → {newLength:F0} mm\n");
         }
 
         // ================================================================
@@ -1270,6 +1273,19 @@ namespace BricsCadRc.Commands
                 tr2.Commit();
             }
 
+            // Krok 3a — numer pozycji zostawiony bez zmian, ale wymiary zmienione, a ten sam numer
+            // ma inny pręt (np. kopia) → ten pręt dostaje numer pasującej pozycji albo nowy.
+            if (int.Parse(posNrStr) == SingleBarEngine.ExtractPosNr(bar.Mark)
+                && !PositionReconciler.SameShape(bar, updated))
+            {
+                string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, editId);
+                if (renumbered != null)
+                {
+                    ed.WriteMessage($"\nPozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.");
+                    updated.Mark = renumbered;
+                }
+            }
+
             SingleBarEngine.RebuildCompanions(db, editId, updated);
 
             // Krok 3b — napraw grot strzałki etykiety pręta (geometria się zmieniła)
@@ -1320,51 +1336,7 @@ namespace BricsCadRc.Commands
             // Krok 4 — propaguj zmiany (Mark, Diameter, LengthA) do powiązanych rozkładów.
             // Szukamy po SourceBarHandle (nie po posNr) — handle pręta nie zmienia się gdy user
             // zmienia posNr lub diameter, więc zawsze znajdziemy właściwe rozkłady.
-            {
-                string myHandle  = editId.Handle.Value.ToString("X8");
-                int    newPosNr  = SingleBarEngine.ExtractPosNr(updated.Mark);
-                var    toRebuild = new System.Collections.Generic.List<(ObjectId id, BarData bar)>();
-
-                using (var trDist = db.TransactionManager.StartTransaction())
-                {
-                    var ms = (BlockTableRecord)trDist.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
-                    foreach (ObjectId oid in ms)
-                    {
-                        if (oid.IsErased) continue;
-                        var brDist  = trDist.GetObject(oid, OpenMode.ForRead) as BlockReference;
-                        if (brDist == null) continue;
-                        var barDist = BarBlockEngine.ReadXData(brDist);
-                        if (barDist == null) continue;
-                        if (!string.Equals(barDist.SourceBarHandle, myHandle,
-                                StringComparison.OrdinalIgnoreCase)) continue;
-
-                        // Odbuduj Mark: zachowaj spacing i suffix, podmień prefix H{dia}-{posNr}
-                        var    mp     = barDist.Mark.Split(' ');
-                        var    cp     = mp[0].Split('-');
-                        string sfx    = mp.Length > 1
-                            ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
-                        int    distSp = cp.Length >= 3
-                            && int.TryParse(cp[2], out int spParsed)
-                            ? spParsed : (int)barDist.Spacing;
-                        string newMark = BarData.FormatMark(
-                            updated.Diameter, newPosNr, distSp, barDist.Count) + sfx;
-
-                        brDist.UpgradeOpen();
-                        barDist.Mark     = newMark;
-                        barDist.Diameter = updated.Diameter;
-                        barDist.LengthA  = updated.LengthA;
-                        BarBlockEngine.WriteXData(brDist, barDist);
-                        toRebuild.Add((oid, barDist));
-                    }
-                    trDist.Commit();
-                }
-
-                foreach (var (id, bd) in toRebuild)
-                {
-                    BarBlockEngine.UpdateBarLength(db, id, updated.LengthA);
-                    AnnotationEngine.SyncAnnotation(db, bd);
-                }
-            }
+            PositionReconciler.PropagateToDistributions(db, editId, updated);
 
             ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }

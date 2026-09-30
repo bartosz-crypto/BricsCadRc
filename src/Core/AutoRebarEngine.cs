@@ -1310,8 +1310,11 @@ namespace BricsCadRc.Core
             var rb = ent.GetXDataForApplication(XSlabApp);
             if (rb == null) return null;
             foreach (var tv in rb.AsArray())
-                if (tv.TypeCode == (int)DxfCode.ExtendedDataAsciiString)
-                    return tv.Value as string;
+                if (tv.TypeCode == (int)DxfCode.ExtendedDataAsciiString || tv.TypeCode == (int)DxfCode.ExtendedDataHandle)
+                {
+                    string h = XLink.Read(tv);
+                    return string.IsNullOrEmpty(h) ? null : h;
+                }
             return null;
         }
 
@@ -1347,7 +1350,7 @@ namespace BricsCadRc.Core
                 if (ent != null)
                     ent.XData = new ResultBuffer(
                         new TypedValue((int)DxfCode.ExtendedDataRegAppName, XSlabApp),
-                        new TypedValue((int)DxfCode.ExtendedDataAsciiString, _currentSlabHandle));
+                        XLink.Write(_currentSlabHandle));   // 1005: COPY płyty z rozkładami przemapuje znacznik
                 tr.Commit();
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.TagWithSlab", ex); }

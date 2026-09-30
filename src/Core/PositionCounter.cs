@@ -1,3 +1,4 @@
+using Bricscad.ApplicationServices;
 using System;
 using System.Collections.Generic;
 using Teigha.DatabaseServices;
@@ -20,8 +21,44 @@ namespace BricsCadRc.Core
         /// </summary>
         public const int FirstAutoNumber = 3;
 
-        /// <summary>Pierwszy wolny numer do automatycznego przydziału (≥ 03, z pominięciem zajętych).</summary>
-        public static int NextAutoFree(HashSet<int> used) => GetNextFreeFrom(used, FirstAutoNumber);
+        /// <summary>Numery ≥ 500 to osobna seria (RC_PUNCHING_SUMMARY_BARS: 501, 502…) — nie wpływają na licznik.</summary>
+        public const int SeparateSeriesStart = 500;
+
+        /// <summary>
+        /// JEDEN przydział numerów dla wszystkich komend (RC_BAR, RC_DISTRIBUTION, RC_GENERATE_SLAB,
+        /// AutoRebar): max(zapisany licznik, najwyższy numer użyty w rysunku) + 1, minimum 03.
+        /// Wcześniej RC_BAR brał max z rysunku, a rozkłady tylko licznik — mogły dostać ten sam numer.
+        /// </summary>
+        public static int NextAuto(Database db, HashSet<int> used = null)
+        {
+            used ??= GetUsedPositionNumbers(db);
+            int maxUsed = 0;
+            foreach (int n in used)
+                if (n < SeparateSeriesStart && n > maxUsed) maxUsed = n;
+            int next = Math.Max(ReadStored(db), maxUsed) + 1;
+            next = Math.Max(FirstAutoNumber, next);
+            while (used.Contains(next)) next++;
+            return next;
+        }
+
+        /// <summary>Zgodność wstecz — to samo co <see cref="NextAuto"/>.</summary>
+        public static int NextAutoFree(HashSet<int> used)
+        {
+            var db = Application.DocumentManager.MdiActiveDocument?.Database;
+            return db != null ? NextAuto(db, used) : GetNextFreeFrom(used, FirstAutoNumber);
+        }
+
+        private static int ReadStored(Database db)
+        {
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (!nod.Contains(DictKey)) return 0;
+            var xrec = (Xrecord)tr.GetObject(nod.GetAt(DictKey), OpenMode.ForRead);
+            var vals = xrec.Data?.AsArray();
+            int stored = vals != null && vals.Length > 0 ? (short)vals[0].Value : 0;
+            // Stare rysunki: licznik mógł zostać podbity przez serię 501+ — ignorujemy to
+            return stored >= SeparateSeriesStart ? 0 : stored;
+        }
 
         /// <summary>
         /// Zwraca nastepny numer pozycji i zapisuje go w rysunku (automatyczny increment).
@@ -62,19 +99,7 @@ namespace BricsCadRc.Core
         /// Zwraca następny numer pozycji BEZ zapisu do dokumentu. Bezpieczne przed dialogiem —
         /// counter nie rośnie gdy user kliknie Cancel.
         /// </summary>
-        public static int Peek(Database db)
-        {
-            using var tr = db.TransactionManager.StartOpenCloseTransaction();
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod.Contains(DictKey))
-            {
-                var xrec = (Xrecord)tr.GetObject(nod.GetAt(DictKey), OpenMode.ForRead);
-                var vals = xrec.Data?.AsArray();
-                if (vals != null && vals.Length > 0)
-                    return Math.Max(FirstAutoNumber, (short)vals[0].Value + 1);
-            }
-            return FirstAutoNumber;
-        }
+        public static int Peek(Database db) => NextAuto(db);
 
         /// <summary>
         /// Zapisuje użyty numer pozycji: max(stored, usedPosNr). Wywoływać tylko po pomyślnym
@@ -119,7 +144,7 @@ namespace BricsCadRc.Core
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception ex) { Log.Error("PositionCounter.GetUsedPositionNumbers", ex); }
             }
             return used;
         }
@@ -138,6 +163,7 @@ namespace BricsCadRc.Core
         /// </summary>
         public static void Increment(Database db, int posNr)
         {
+            if (posNr >= SeparateSeriesStart) return;   // osobna seria nie podbija licznika
             using var tr = db.TransactionManager.StartTransaction();
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
@@ -148,7 +174,7 @@ namespace BricsCadRc.Core
                 var vals = xrec.Data?.AsArray();
                 if (vals != null && vals.Length > 0)
                     current = (short)vals[0].Value;
-                if (posNr > current)
+                if (posNr > current || current >= SeparateSeriesStart)   // stary licznik podbity serią 501+
                     xrec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int16, (short)posNr));
             }
             else
