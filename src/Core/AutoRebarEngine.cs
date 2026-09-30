@@ -184,6 +184,24 @@ namespace BricsCadRc.Core
                 return -1;
             }
 
+            // Góra (T1/T2): czytaj RZECZYWISTE dolne zbrojenie (B1/B2) z rzutu dolnego tej płyty,
+            // żeby zakłady góry mijały zakłady, które naprawdę są na rysunku (także po ręcznej edycji).
+            BottomView bottomView = null;
+            if (layerCode.StartsWith("T"))
+            {
+                string bottomCode = "B" + layerCode.Substring(1);
+                using (var trB = db.TransactionManager.StartOpenCloseTransaction())
+                    bottomView = FindBottomView(db, trB, slabPolyId, plan.SlabVertices, bottomCode, horizontal);
+                if (bottomView != null)
+                    ed.WriteMessage($"\n[AutoRebar] Rzut dolny {bottomCode}: {bottomView.Dists.Count} rozkład(y)" +
+                        (bottomView.Delta.Length < 1.0 ? " na tym samym obrysie" :
+                            $", przesunięcie ({bottomView.Delta.X:F0}, {bottomView.Delta.Y:F0})") +
+                        " — zakłady góry liczone względem rzeczywistego dołu.\n");
+                else
+                    ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Nie znaleziono rzutu dolnego z rozkładami {bottomCode} " +
+                        "(obrys o tym samym kształcie) — góra liczona z planu teoretycznego dołu.\n");
+            }
+
             int generated = 0;
             using (doc.LockDocument())
             {
@@ -235,6 +253,11 @@ namespace BricsCadRc.Core
                     // Plan wspólny dół+góra: TA SAMA liczba prętów w pasie, zakłady góry mijają dół
                     var joint    = ComputeJointPlan(xAvailable, spacing, ed);
                     var distPlan = layerCode.StartsWith("T") ? joint.top : joint.bottom;
+                    if (bottomView != null)
+                    {
+                        var fromBottom = PlanTopAgainstBottom(bottomView, strip, cover, xAvailable, spacing, horizontal, ed);
+                        if (fromBottom != null) distPlan = fromBottom;
+                    }
                     if (distPlan.Count == 0)
                     {
                         ed.WriteMessage($"\n[AutoRebar] Strip scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
@@ -2124,6 +2147,175 @@ namespace BricsCadRc.Core
         }
 
         // ── Plan góry (T1/T2): zakłady przesunięte względem dołu ─────────────
+        // ----------------------------------------------------------------
+        // Rzut dolny — rzeczywiste rozkłady B1/B2 dla planu góry
+        // ----------------------------------------------------------------
+
+        private class BottomDist
+        {
+            public double ScanLo, ScanHi;   // oś rozkładu (prostopadła do prętów), układ rzutu GÓRNEGO
+            public double PerpLo, PerpHi;   // oś pręta (od początku do końca pręta), układ rzutu GÓRNEGO
+        }
+
+        private class BottomView
+        {
+            public Vector2d         Delta;  // przesunięcie rzut dolny → rzut górny
+            public List<BottomDist> Dists = new List<BottomDist>();
+        }
+
+        /// <summary>
+        /// Szuka rzutu dolnego tej samej płyty: zamknięta polilinia o tym samym kształcie
+        /// (przesunięta, bez obrotu) z rozkładami <paramref name="bottomCode"/>.
+        /// Najpierw sprawdza wskazany obrys (góra i dół na jednym rzucie), potem pozostałe.
+        /// Przy kilku kandydatach bierze najbliższy. Null gdy brak.
+        /// </summary>
+        private static BottomView FindBottomView(Database db, Transaction tr, ObjectId topSlabId,
+            List<Point2d> topVerts, string bottomCode, bool horizontal)
+        {
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+
+            // Rozkłady dołu w całym rysunku (raz)
+            var allDists = new List<(BlockReference br, BarData bar)>();
+            var outlines = new List<Polyline>();
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                var obj = tr.GetObject(oid, OpenMode.ForRead);
+                if (obj is BlockReference br)
+                {
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || bar.LayerCode != bottomCode) continue;
+                    if (string.IsNullOrEmpty(bar.Mark) || !bar.Mark.EndsWith($" {bottomCode}")) continue;
+                    if (Math.Abs(br.Rotation) > 1e-6) continue;
+                    allDists.Add((br, bar));
+                }
+                else if (obj is Polyline pl && oid != topSlabId && GeometryHelper.IsEffectivelyClosed(pl))
+                    outlines.Add(pl);
+            }
+            if (allDists.Count == 0) return null;
+
+            BottomView best = null;
+            double bestDist = double.MaxValue;
+
+            // Kandydat 0: ten sam obrys
+            {
+                var v = CollectBottom(allDists, topVerts, new Vector2d(0, 0), topSlabId.Handle.ToString(), horizontal);
+                if (v != null) return v;
+            }
+
+            var topMin = MinPoint(topVerts);
+            foreach (var pl in outlines)
+            {
+                var verts = GeometryHelper.GetPolylineVertices(pl);
+                if (verts.Count != topVerts.Count) continue;
+                var delta = topMin - MinPoint(verts);          // dolny + delta = górny
+                if (!Congruent(topVerts, verts, delta)) continue;
+                var v = CollectBottom(allDists, verts, delta, pl.Handle.ToString(), horizontal);
+                if (v == null) continue;
+                if (delta.Length < bestDist) { bestDist = delta.Length; best = v; }
+            }
+            return best;
+        }
+
+        private static BottomView CollectBottom(List<(BlockReference br, BarData bar)> allDists,
+            List<Point2d> outline, Vector2d delta, string outlineHandle, bool horizontal)
+        {
+            var view = new BottomView { Delta = delta };
+            foreach (var (br, bar) in allDists)
+            {
+                string tag = ReadSlabTag(br);
+                bool inside = tag != null
+                    ? SameHandle(tag, outlineHandle)
+                    : GeometryHelper.IsPointInsidePolygon(outline, new Point2d(br.Position.X, br.Position.Y));
+                if (!inside) continue;
+
+                double skewMin = Math.Min(0, Math.Min(bar.SkewStart, bar.SkewEnd));
+                double skewMax = Math.Max(0, Math.Max(bar.SkewStart, bar.SkewEnd));
+                double px = br.Position.X + delta.X, py = br.Position.Y + delta.Y;
+                view.Dists.Add(horizontal
+                    ? new BottomDist { ScanLo = py, ScanHi = py + bar.BarsSpan,
+                                       PerpLo = px + skewMin, PerpHi = px + bar.LengthA + skewMax }
+                    : new BottomDist { ScanLo = px, ScanHi = px + bar.BarsSpan,
+                                       PerpLo = py + skewMin, PerpHi = py + bar.LengthA + skewMax });
+            }
+            return view.Dists.Count > 0 ? view : null;
+        }
+
+        private static Point2d MinPoint(List<Point2d> pts)
+            => new Point2d(pts.Min(p => p.X), pts.Min(p => p.Y));
+
+        private static bool Congruent(List<Point2d> a, List<Point2d> b, Vector2d delta, double tol = 1.0)
+        {
+            foreach (var pb in b)
+            {
+                var q = pb + delta;
+                if (!a.Any(pa => pa.GetDistanceTo(q) < tol)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Plan góry dla pasa wg rzeczywistego dołu: ta sama liczba prętów co dół w tym pasie,
+        /// zakłady góry ≥ LapStaggerMinGap w świetle od RZECZYWISTYCH zakładów dołu.
+        /// Null → użyj planu wspólnego (brak dołu w pasie / brak rozwiązania).
+        /// </summary>
+        private static List<(double xOffset, double length)> PlanTopAgainstBottom(
+            BottomView view, StripBounds strip, double cover, double available, double spacing,
+            bool horizontal, Editor ed)
+        {
+            double h = strip.ScanHigh - strip.ScanLow;
+            double origin = strip.PerpLow + cover;
+
+            // Rozkłady dołu, które leżą w tym pasie (≥ 50% wspólnej szerokości) i w jego zakresie wzdłuż prętów
+            var inStrip = view.Dists.Where(d =>
+            {
+                double ov = Math.Min(d.ScanHi, strip.ScanHigh) - Math.Max(d.ScanLo, strip.ScanLow);
+                double need = 0.5 * Math.Max(1.0, Math.Min(h, Math.Max(d.ScanHi - d.ScanLo, 1.0)));
+                bool scanOk = ov >= need
+                    || (d.ScanHi - d.ScanLo < 1.0 && d.ScanLo >= strip.ScanLow - 1 && d.ScanLo <= strip.ScanHigh + 1);
+                return scanOk && d.PerpHi > strip.PerpLow && d.PerpLo < strip.PerpHigh;
+            })
+            .Select(d => (lo: d.PerpLo - origin, hi: d.PerpHi - origin))
+            .OrderBy(d => d.lo)
+            .ToList();
+
+            if (inStrip.Count == 0)
+            {
+                ed?.WriteMessage($"\n[AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: brak dołu na rzucie dolnym " +
+                                 "— plan teoretyczny.\n");
+                return null;
+            }
+
+            // Kilka rzędów dołu w jednym pasie (inny podział) — bierz te, które się nie pokrywają wzdłuż
+            var chain = new List<(double lo, double hi)>();
+            foreach (var d in inStrip)
+                if (chain.Count == 0 || d.lo > chain[chain.Count - 1].lo + 1.0) chain.Add(d);
+
+            int N = chain.Count;
+            if (N == 1)
+            {
+                if (available <= TemplateMaxLen + 0.5) return ComputeDistributionPlan(available, spacing);
+                return null;
+            }
+
+            var bz = new List<(double lo, double hi)>();
+            for (int i = 0; i + 1 < chain.Count; i++)
+                if (chain[i].hi > chain[i + 1].lo) bz.Add((chain[i + 1].lo, chain[i].hi));
+
+            foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+            {
+                var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
+                                       TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
+                foreach (var t in T)
+                    if (LapsStaggered(LapZones(t.plan), bz)) return t.plan;
+            }
+
+            ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
+                $"przy {N} prętach nie da się ominąć zakładów dołu o ≥{LapStaggerMinGap:F0} mm " +
+                "— plan teoretyczny (sprawdź zakłady ręcznie).\n");
+            return null;
+        }
+
         private static List<(double lo, double hi)> LapZones(List<(double xOffset, double length)> plan)
         {
             var sorted = plan.OrderBy(p => p.xOffset).ToList();
