@@ -146,7 +146,8 @@ namespace BricsCadRc.Core
             string   layerCode,
             int      diameter = 10,
             double   spacing  = DefaultSpacing,
-            double   cover    = DefaultCover)
+            double   cover    = DefaultCover,
+            bool     representativeOnly = false)
         {
             var ed = doc.Editor;
             var db = doc.Database;
@@ -202,6 +203,16 @@ namespace BricsCadRc.Core
                         "(obrys o tym samym kształcie) — góra liczona z planu teoretycznego dołu.\n");
             }
 
+            // Góra: pale — zakłady ≥ PileLapClearance od lica pala (chyba że geometria wymusza)
+            List<(Point2d c, double r)> piles = null;
+            if (layerCode.StartsWith("T"))
+            {
+                piles = FindPiles(db, plan.SlabVertices);
+                if (piles.Count > 0)
+                    ed.WriteMessage($"\n[AutoRebar] Pale na płycie: {piles.Count} — zakłady {layerCode} " +
+                                    $"≥ {PileLapClearance:F0} mm od lica pala.\n");
+            }
+
             int generated = 0;
             using (doc.LockDocument())
             {
@@ -251,11 +262,15 @@ namespace BricsCadRc.Core
                     double xAvailable = (strip.PerpHigh - strip.PerpLow) - 2.0 * cover;
                     // Góra (T1/T2): zakłady przesunięte względem dołu (B1/B2) tego samego kierunku
                     // Plan wspólny dół+góra: TA SAMA liczba prętów w pasie, zakłady góry mijają dół
-                    var joint    = ComputeJointPlan(xAvailable, spacing, ed);
+                    var pileForbidden = piles != null && piles.Count > 0
+                        ? PileForbiddenForStrip(piles, strip, strip.PerpLow + cover, horizontal) : null;
+                    var joint    = ComputeJointPlan(xAvailable, spacing, ed,
+                                                    layerCode.StartsWith("T") ? pileForbidden : null);
                     var distPlan = layerCode.StartsWith("T") ? joint.top : joint.bottom;
                     if (bottomView != null)
                     {
-                        var fromBottom = PlanTopAgainstBottom(bottomView, strip, cover, xAvailable, spacing, horizontal, ed);
+                        var fromBottom = PlanTopAgainstBottom(bottomView, strip, cover, xAvailable, spacing,
+                                                              horizontal, ed, pileForbidden);
                         if (fromBottom != null) distPlan = fromBottom;
                     }
                     if (distPlan.Count == 0)
@@ -273,8 +288,9 @@ namespace BricsCadRc.Core
                             ? $", zakład {distPlan[0].xOffset + distPlan[0].length - distPlan[1].xOffset:F0}mm"
                             : "") + "\n");
 
-                    foreach (var (xOffset, length) in distPlan)
+                    for (int segIdx = 0; segIdx < distPlan.Count; segIdx++)
                     {
+                        var (xOffset, length) = distPlan[segIdx];
                         ObjectId templateBarId = ObjectId.Null;
                         BarData  templateBar   = null;
                         bool     templateReused = false;
@@ -285,7 +301,13 @@ namespace BricsCadRc.Core
                                                                diameter);
                             foreach (var (tid, tb) in freshTemplates)
                             {
-                                if (Math.Abs(tb.LengthA - length) < 1.0)
+                                // Szablon musi być z serii warstwy: góra 101+, dół < 101
+                                // (stare szablony góry z numerami < 101 nie są używane ponownie)
+                                int tNr = SingleBarEngine.ExtractPosNr(tb.Mark);
+                                bool seriesOk = layerCode.StartsWith("T")
+                                    ? tNr >= PositionCounter.TopSeriesStart && tNr < PositionCounter.SeparateSeriesStart
+                                    : tNr < PositionCounter.TopSeriesStart;
+                                if (seriesOk && Math.Abs(tb.LengthA - length) < 1.0)
                                 {
                                     templateBarId  = tid;
                                     templateBar    = tb;
@@ -338,7 +360,8 @@ namespace BricsCadRc.Core
                             templateBarId, templateBar,
                             diameter, length, spacing, layerCode, filterDirection,
                             lowerOffset, stripHeight, spacingMode,
-                            slabMin, slabMax);
+                            slabMin, slabMax,
+                            representativeOnly ? segIdx : -1);
 
                         if (ok) generated++;
                     }
@@ -371,7 +394,8 @@ namespace BricsCadRc.Core
             int      slabThickness,  // 225 or 300
             string   filterDirection,
             double   spacing = DefaultSpacing,
-            double   cover   = DefaultCover)
+            double   cover   = DefaultCover,
+            bool     representativeOnly = false)
         {
             var ed = doc.Editor;
             var db = doc.Database;
@@ -697,7 +721,8 @@ namespace BricsCadRc.Core
                             SpacingMode.Nominal,
                             slabAcrossMin, slabAcrossMax,
                             ubPosNr, ubShapeCode, filterDirection,
-                            forcedSpacing: uSpacing);
+                            forcedSpacing: uSpacing,
+                            representativeOnly: representativeOnly);
                         if (ok) generated++;
                     }
                     catch (System.Exception ex)
@@ -1538,7 +1563,10 @@ namespace BricsCadRc.Core
         {
             // Allocate posNr (conflict-free)
             var usedNrs = PositionCounter.GetUsedPositionNumbers(db);
-            int posNr   = PositionCounter.NextAutoFree(usedNrs);   // 01/02 zarezerwowane dla UB
+            // Dół: 03+ (01/02 zarezerwowane dla UB), góra (T1/T2): seria 101+
+            int posNr   = (layerCode ?? "").StartsWith("T")
+                ? PositionCounter.NextAutoTop(db, usedNrs)
+                : PositionCounter.NextAutoFree(usedNrs);
 
             // Compute insert point — top-down stack inside rebar_X rect
             double insertX = rebarBbox.MinPoint.X + TemplateOffsetX;
@@ -1656,7 +1684,8 @@ namespace BricsCadRc.Core
             double slabSpanForAdjusted,
             SpacingMode spacingMode,
             double slabMinY,     // B1: slab Y bounds; B2: slab X bounds (dispatch from GenerateLayer)
-            double slabMaxY)     // (param names kept for B1 backward compat; semantics differ for B2)
+            double slabMaxY,     // (param names kept for B1 backward compat; semantics differ for B2)
+            int    representativeSegment = -1)   // ≥0: widoczny tylko pręt reprezentatywny tego odcinka
         {
             bool horizontal = filterDirection == "X";
 
@@ -1791,11 +1820,158 @@ namespace BricsCadRc.Core
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
+            // Step 5.5: wygaszanie — widoczny tylko pręt reprezentatywny (po utworzeniu opisu,
+            // bo opis liczy położenie z obrysu wszystkich prętów)
+            if (representativeSegment >= 0)
+                ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, representativeSegment);
+
             // Step 6: show outline
             BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
 
             PositionCounter.CommitUsed(db, posNr);
             return true;
+        }
+
+        /// <summary>
+        /// Pręt reprezentatywny rozkładu: środkowy, a kolejne odcinki w pasie przesunięte
+        /// o jeden rozstaw — zakłady są czytelne, pręty kolejnych odcinków nie zlewają się
+        /// w jedną linię. Pozostałe pręty ukryte (RC_SHOW_ALL_BARS pokazuje wszystkie).
+        /// </summary>
+        private static void ShowRepresentativeOnly(Database db, ObjectId distId, int count, int segmentIndex)
+        {
+            if (distId.IsNull || count <= 1) return;
+            ApplyVisibleIndex(db, distId, (count / 2 + segmentIndex) % count);
+        }
+
+        /// <summary>Widoczny tylko pręt o indeksie idx + odświeżenie opisu (jedna kropka na linii rozkładu).</summary>
+        private static void ApplyVisibleIndex(Database db, ObjectId distId, int idx)
+        {
+            try
+            {
+                BarBlockEngine.RebuildVisibility(db, distId, BarVisibilityMode.Manual,
+                    idx.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+                // Opis rozkładu (kropki na linii rozkładu) — jak przy wygaszaniu w RC_EDIT_LABEL:
+                // po zmianie widoczności kropka tylko przy pręcie widocznym
+                BarData distData;
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var br = tr.GetObject(distId, OpenMode.ForRead) as BlockReference;
+                    distData = br != null ? BarBlockEngine.ReadXData(br) : null;
+                }
+                if (distData != null && !string.IsNullOrEmpty(distData.AnnotHandle))
+                    AnnotationEngine.SyncAnnotation(db, distData);
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.ApplyVisibleIndex", ex); }
+        }
+
+        private static bool TryGetObjectId(Database db, string hex, out ObjectId id)
+        {
+            id = ObjectId.Null;
+            if (!XLink.TryParse(hex, out long v) || v == 0) return false;
+            try { return db.TryGetObjectId(new Handle(v), out id) && !id.IsNull && !id.IsErased; }
+            catch { return false; }
+        }
+
+        /// <summary>Minimalny odstęp widocznego pręta od równoległej linii rozkładu / innego widocznego pręta.</summary>
+        public const double RepresentativeClearance = 250.0;
+
+        private struct ParallelSeg
+        {
+            public bool   Horizontal;   // linia pozioma (stałe Y) albo pionowa (stałe X)
+            public double C;            // współrzędna stała (Y dla poziomej, X dla pionowej)
+            public double Lo, Hi;       // zakres wzdłuż linii
+        }
+
+        /// <summary>
+        /// Czytelność siatki po wygaszeniu: widoczny pręt każdego rozkładu na obrysie płyty jest
+        /// przesuwany (inny indeks pręta) tak, żeby był ≥ <paramref name="clearance"/> od równoległych
+        /// linii rozkładów i od widocznych prętów innych rozkładów. Gdy się nie da — zostaje, jak był.
+        /// Zwraca liczbę przesuniętych prętów.
+        /// </summary>
+        public static int ResolveRepresentativeCollisions(Document doc, ObjectId slabId,
+                                                          double clearance = RepresentativeClearance)
+        {
+            var db = doc.Database;
+            var dists = new List<(ObjectId id, BarData bar, Point3d pos)>();
+            var fixedLines = new List<ParallelSeg>();
+
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline slabPl)) return 0;
+                var verts = GeometryHelper.GetPolylineVertices(slabPl);
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased) continue;
+                    if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || Math.Abs(br.Rotation) > 1e-6) continue;
+                    if (!GeometryHelper.IsPointInsidePolygon(verts, new Point2d(br.Position.X, br.Position.Y))) continue;
+                    dists.Add((oid, bar, br.Position));
+
+                    // Linia rozkładu: prostopadła do prętów, przez punkt wstawienia opisu
+                    if (!TryGetObjectId(db, bar.AnnotHandle, out var annId)) continue;
+                    if (!(tr.GetObject(annId, OpenMode.ForRead) is BlockReference ann)) continue;
+                    bool barsX = bar.Direction == "X";
+                    fixedLines.Add(barsX
+                        ? new ParallelSeg { Horizontal = false, C = ann.Position.X,
+                                            Lo = br.Position.Y, Hi = br.Position.Y + bar.BarsSpan }
+                        : new ParallelSeg { Horizontal = true, C = ann.Position.Y,
+                                            Lo = br.Position.X, Hi = br.Position.X + bar.BarsSpan });
+                }
+            }
+
+            var reps = new List<ParallelSeg>();
+            int moved = 0;
+            foreach (var (id, bar, pos) in dists.OrderBy(d => d.bar.Direction).ThenBy(d => d.pos.X).ThenBy(d => d.pos.Y))
+            {
+                if (bar.VisibilityMode != BarVisibilityMode.Manual || bar.Count <= 1) continue;
+                if (!int.TryParse((bar.VisibleIndices ?? "").Split(',')[0].Trim(), out int pref)) continue;
+                if (pref < 0 || pref >= bar.Count) pref = bar.Count / 2;
+
+                bool barsX = bar.Direction == "X";
+                ParallelSeg RepSeg(int i)
+                {
+                    double skewMin = Math.Min(0, Math.Min(bar.SkewStart, bar.SkewEnd));
+                    double skewMax = Math.Max(0, Math.Max(bar.SkewStart, bar.SkewEnd));
+                    return barsX
+                        ? new ParallelSeg { Horizontal = true,  C = pos.Y + i * bar.Spacing,
+                                            Lo = pos.X + skewMin, Hi = pos.X + bar.LengthA + skewMax }
+                        : new ParallelSeg { Horizontal = false, C = pos.X + i * bar.Spacing,
+                                            Lo = pos.Y + skewMin, Hi = pos.Y + bar.LengthA + skewMax };
+                }
+                bool Collides(ParallelSeg seg)
+                {
+                    foreach (var o in fixedLines.Concat(reps))
+                        if (o.Horizontal == seg.Horizontal
+                            && Math.Min(o.Hi, seg.Hi) - Math.Max(o.Lo, seg.Lo) > 1.0
+                            && Math.Abs(o.C - seg.C) < clearance - 1e-6)
+                            return true;
+                    return false;
+                }
+
+                int chosen = pref;
+                if (Collides(RepSeg(pref)))
+                {
+                    for (int k = 1; k < bar.Count; k++)
+                    {
+                        int up = pref + k, dn = pref - k;
+                        if (up < bar.Count && !Collides(RepSeg(up))) { chosen = up; break; }
+                        if (dn >= 0       && !Collides(RepSeg(dn))) { chosen = dn; break; }
+                    }
+                }
+                if (chosen != pref)
+                {
+                    ApplyVisibleIndex(db, id, chosen);
+                    moved++;
+                }
+                reps.Add(RepSeg(chosen));
+            }
+
+            doc.Editor.WriteMessage($"\n[AutoRebar] Czytelność: przesunięto {moved} widocznych prętów " +
+                                    $"(odstęp ≥ {clearance:F0} mm od linii rozkładów).\n");
+            return moved;
         }
 
         /// <summary>
@@ -1813,7 +1989,8 @@ namespace BricsCadRc.Core
             SpacingMode spacingMode,
             double slabMinAcross, double slabMaxAcross,
             int posNr, string shapeCode, string filterDirection,
-            double? forcedSpacing = null)
+            double? forcedSpacing = null,
+            bool representativeOnly = false)
         {
             bool isXBars = filterDirection == "X";
 
@@ -1960,6 +2137,9 @@ namespace BricsCadRc.Core
             // Step 5: bidirectional link + outline
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
+
+            if (representativeOnly)
+                ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, 0);
 
             BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
 
@@ -2261,7 +2441,7 @@ namespace BricsCadRc.Core
         /// </summary>
         private static List<(double xOffset, double length)> PlanTopAgainstBottom(
             BottomView view, StripBounds strip, double cover, double available, double spacing,
-            bool horizontal, Editor ed)
+            bool horizontal, Editor ed, List<(double lo, double hi)> pileForbidden = null)
         {
             double h = strip.ScanHigh - strip.ScanLow;
             double origin = strip.PerpLow + cover;
@@ -2302,12 +2482,24 @@ namespace BricsCadRc.Core
             for (int i = 0; i + 1 < chain.Count; i++)
                 if (chain[i].hi > chain[i + 1].lo) bz.Add((chain[i + 1].lo, chain[i].hi));
 
-            foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+            // Najpierw z odsunięciem zakładów od pali, potem (gdy geometria wymusza) bez
+            foreach (bool usePiles in new[] { true, false })
             {
-                var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
-                                       TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
-                foreach (var t in T)
-                    if (LapsStaggered(LapZones(t.plan), bz)) return t.plan;
+                if (!usePiles && (pileForbidden == null || pileForbidden.Count == 0)) break;
+                foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+                {
+                    var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
+                                           TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
+                    foreach (var t in T)
+                        if (LapsStaggered(LapZones(t.plan), bz)
+                            && (!usePiles || LapsClearOfPiles(t.plan, pileForbidden)))
+                        {
+                            if (!usePiles)
+                                ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
+                                    $"zakład góry bliżej niż {PileLapClearance:F0} mm od pala — geometria nie pozwala inaczej.\n");
+                            return t.plan;
+                        }
+                }
             }
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
@@ -2335,7 +2527,8 @@ namespace BricsCadRc.Core
         /// Każdy pręt może mieć inną długość na siatce 250 (wzór: pierwszy, środkowe równe, ostatni).
         /// </summary>
         private static (List<(double xOffset, double length)> bottom, List<(double xOffset, double length)> top)
-            ComputeJointPlan(double available, double spacing, Editor ed)
+            ComputeJointPlan(double available, double spacing, Editor ed,
+                             List<(double lo, double hi)> topPileForbidden = null)
         {
             if (available <= TemplateMaxLen + 0.5)
             {
@@ -2367,6 +2560,7 @@ namespace BricsCadRc.Core
                         foreach (var t in T)   // T posortowane — pierwszy pasujący jest najlepszy dla tego b
                         {
                             if (!LapsStaggered(LapZones(t.plan), bz)) continue;
+                            if (!LapsClearOfPiles(t.plan, topPileForbidden)) continue;
                             var key = (b.key.outBand + t.key.outBand,
                                        b.key.distinct + t.key.distinct,
                                        b.key.dO + t.key.dO);
@@ -2378,10 +2572,72 @@ namespace BricsCadRc.Core
                     if (found) return (bestB, bestT);
                 }
 
+            if (topPileForbidden != null && topPileForbidden.Count > 0)
+            {
+                ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: zakład góry bliżej niż " +
+                                 $"{PileLapClearance:F0} mm od pala — geometria nie pozwala inaczej.\n");
+                return ComputeJointPlan(available, spacing, ed, null);
+            }
+
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: nie znaleziono wspólnego planu " +
                              "dół/góra — góra jak dół (zakłady w tym samym miejscu!).\n");
             var fallback = ComputeDistributionPlan(available, spacing);
             return (fallback, fallback);
+        }
+
+        /// <summary>Odległość zakładu góry (T1/T2) od lica pala w świetle [mm].</summary>
+        public const double PileLapClearance = 500.0;
+        /// <summary>Warstwa pali wg wzorca rysunku (okręgi na warstwie SD-Pile).</summary>
+        public const string PileLayer = "SD-Pile";
+
+        /// <summary>Strefy zakładów planu nie wchodzą w zakazane przedziały (pale ± odstęp).</summary>
+        private static bool LapsClearOfPiles(List<(double xOffset, double length)> plan,
+                                             List<(double lo, double hi)> forbidden)
+        {
+            if (forbidden == null || forbidden.Count == 0) return true;
+            foreach (var z in LapZones(plan))
+                foreach (var f in forbidden)
+                    if (Math.Min(z.hi, f.hi) - Math.Max(z.lo, f.lo) > -1e-6) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Pale płyty: okręgi (Circle) na warstwie SD-Pile ze środkiem wewnątrz obrysu
+        /// (warstwa SD-Pile-SECTION i inne okręgi są pomijane).
+        /// </summary>
+        private static List<(Point2d c, double r)> FindPiles(Database db, List<Point2d> slabVertices)
+        {
+            var piles = new List<(Point2d, double)>();
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                if (!(tr.GetObject(oid, OpenMode.ForRead) is Circle c)) continue;
+                if (!string.Equals(c.Layer, PileLayer, StringComparison.OrdinalIgnoreCase) || c.Radius <= 0) continue;
+                var p = new Point2d(c.Center.X, c.Center.Y);
+                if (GeometryHelper.IsPointInsidePolygon(slabVertices, p)) piles.Add((p, c.Radius));
+            }
+            return piles;
+        }
+
+        /// <summary>
+        /// Zakazane przedziały zakładów w pasie (oś pręta, względem początku prętów): pal, którego
+        /// rzut przecina pas, ± promień ± <see cref="PileLapClearance"/>.
+        /// </summary>
+        private static List<(double lo, double hi)> PileForbiddenForStrip(
+            List<(Point2d c, double r)> piles, StripBounds strip, double origin, bool horizontal)
+        {
+            var result = new List<(double lo, double hi)>();
+            if (piles == null) return result;
+            foreach (var (c, r) in piles)
+            {
+                double scan = horizontal ? c.Y : c.X;
+                double perp = horizontal ? c.X : c.Y;
+                if (scan + r < strip.ScanLow || scan - r > strip.ScanHigh) continue;
+                result.Add((perp - r - PileLapClearance - origin, perp + r + PileLapClearance - origin));
+            }
+            return result;
         }
 
         private static bool LapsStaggered(List<(double lo, double hi)> top, List<(double lo, double hi)> bottom)

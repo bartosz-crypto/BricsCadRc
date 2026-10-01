@@ -24,6 +24,9 @@ namespace BricsCadRc.Core
         /// <summary>Numery ≥ 500 to osobna seria (RC_PUNCHING_SUMMARY_BARS: 501, 502…) — nie wpływają na licznik.</summary>
         public const int SeparateSeriesStart = 500;
 
+        /// <summary>Seria siatki górnej (T1/T2): 101, 102… — nie podbija licznika dołu.</summary>
+        public const int TopSeriesStart = 101;
+
         /// <summary>
         /// JEDEN przydział numerów dla wszystkich komend (RC_BAR, RC_DISTRIBUTION, RC_GENERATE_SLAB,
         /// AutoRebar): max(zapisany licznik, najwyższy numer użyty w rysunku) + 1, minimum 03.
@@ -34,9 +37,23 @@ namespace BricsCadRc.Core
             used ??= GetUsedPositionNumbers(db);
             int maxUsed = 0;
             foreach (int n in used)
-                if (n < SeparateSeriesStart && n > maxUsed) maxUsed = n;
+                if (n < TopSeriesStart && n > maxUsed) maxUsed = n;
             int next = Math.Max(ReadStored(db), maxUsed) + 1;
             next = Math.Max(FirstAutoNumber, next);
+            while (used.Contains(next)) next++;
+            return next;
+        }
+
+        /// <summary>
+        /// Następny numer serii górnej (T1/T2): max użyty w [101, 500) + 1, minimum 101, pomija zajęte.
+        /// </summary>
+        public static int NextAutoTop(Database db, HashSet<int> used = null)
+        {
+            used ??= GetUsedPositionNumbers(db);
+            int maxUsed = TopSeriesStart - 1;
+            foreach (int n in used)
+                if (n >= TopSeriesStart && n < SeparateSeriesStart && n > maxUsed) maxUsed = n;
+            int next = maxUsed + 1;
             while (used.Contains(next)) next++;
             return next;
         }
@@ -57,7 +74,7 @@ namespace BricsCadRc.Core
             var vals = xrec.Data?.AsArray();
             int stored = vals != null && vals.Length > 0 ? (short)vals[0].Value : 0;
             // Stare rysunki: licznik mógł zostać podbity przez serię 501+ — ignorujemy to
-            return stored >= SeparateSeriesStart ? 0 : stored;
+            return stored >= TopSeriesStart ? 0 : stored;   // seria 101+ / 501+ nie liczy się do dołu
         }
 
         /// <summary>
@@ -163,7 +180,7 @@ namespace BricsCadRc.Core
         /// </summary>
         public static void Increment(Database db, int posNr)
         {
-            if (posNr >= SeparateSeriesStart) return;   // osobna seria nie podbija licznika
+            if (posNr >= TopSeriesStart) return;   // seria góry 101+ i 501+ nie podbijają licznika
             using var tr = db.TransactionManager.StartTransaction();
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
@@ -174,7 +191,7 @@ namespace BricsCadRc.Core
                 var vals = xrec.Data?.AsArray();
                 if (vals != null && vals.Length > 0)
                     current = (short)vals[0].Value;
-                if (posNr > current || current >= SeparateSeriesStart)   // stary licznik podbity serią 501+
+                if (posNr > current || current >= TopSeriesStart)   // stary licznik podbity serią 101+ / 501+
                     xrec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int16, (short)posNr));
             }
             else

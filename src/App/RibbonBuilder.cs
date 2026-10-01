@@ -51,6 +51,7 @@ namespace BricsCadRc.App
 
             // User-requested order: UB B1 → UB B2 → B1 → B2.
             // RC_GENERATE_SLAB removed from ribbon (command still accessible via command line).
+            src.Items.Add(MakeButton("Generuj siatkę",  "RC_GENERUJ_SIATKA",  "Cała siatka jednym poleceniem: obrys dołu (B1, B2, UB B1, UB B2), potem obrys góry (T1, T2); widoczny pręt reprezentatywny"));
             src.Items.Add(MakeButton("Generuj UB B1",   "RC_GENERUJ_UB_B1",   "Auto-generuje UB (shape 21) na krawędziach płyty (H12-01-200 UB, prompt grubość 225/300)"));
             src.Items.Add(MakeButton("Generuj UB B2",   "RC_GENERUJ_UB_B2",   "Auto-generuje UB B2 (Y-bars, horizontal edges) na krawędziach płyty (H12-02-200 UB, prompt grubość 225/300)"));
             src.Items.Add(MakeButton("Generuj B1",      "RC_GENERUJ_B1",      "Auto-generuje dolna warstwe B1 (H10-XX, rozstaw 200) z biblioteki rebar_bottom"));

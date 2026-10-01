@@ -68,6 +68,10 @@ namespace BricsCadRc.Core
             }
 
             int oldNr = SingleBarEngine.ExtractPosNr(me.Mark);
+            // Seria: dół 03–100, góra 101–499 — nowy numer zawsze z tej samej serii
+            bool top = oldNr >= PositionCounter.TopSeriesStart;
+            int seriesLo = top ? PositionCounter.TopSeriesStart : PositionCounter.FirstAutoNumber;
+            int seriesHi = top ? PositionCounter.SeparateSeriesStart : PositionCounter.TopSeriesStart;
 
             // 1) istniejąca pozycja o identycznych wymiarach (wszystkie jej pręty zgodne)
             int newNr = 0;
@@ -75,8 +79,7 @@ namespace BricsCadRc.Core
             keys.Sort();
             foreach (int nr in keys)
             {
-                if (nr == oldNr || nr < PositionCounter.FirstAutoNumber
-                    || nr >= PositionCounter.SeparateSeriesStart) continue;
+                if (nr == oldNr || nr < seriesLo || nr >= seriesHi) continue;
                 bool allSame = true;
                 foreach (var ob in byNr[nr])
                     if (!SameShape(me, ob)) { allSame = false; break; }
@@ -86,8 +89,8 @@ namespace BricsCadRc.Core
             // 2) nowy numer
             if (newNr == 0)
             {
-                newNr = PositionCounter.NextAuto(db);
-                PositionCounter.Increment(db, newNr);
+                newNr = top ? PositionCounter.NextAutoTop(db) : PositionCounter.NextAuto(db);
+                PositionCounter.Increment(db, newNr);   // seria 101+ nie podbija licznika (ignorowane)
             }
 
             string newMark = RebuildMark(me.Mark, me.Diameter, newNr);
