@@ -55,6 +55,39 @@ namespace BricsCadRc.Core
         /// </summary>
         public const double LeaderArmExtension  = 2400.0;
 
+        // Detal (RC_DETAL_OTWORU): skala opisu 1:25 i krótsze ramię opisu (tekst tuż za ramką)
+        private static double _annotScaleOverride = 1.0;
+        private static double _leaderArmOverride  = double.NaN;
+        private static double LeaderArm => double.IsNaN(_leaderArmOverride) ? LeaderArmExtension : _leaderArmOverride;
+        // Położenie linii rozkładu wzdłuż prętów (świat); NaN = połowa długości pręta
+        private static double _annotAlongOverride = double.NaN;
+        // Detal: opisy rozmieszczone z góry — AvoidLabelCollision ich nie odsuwa
+        private static bool _labelsPlanned;
+        private static double AnnotAlong(double barStart, double length)
+            => double.IsNaN(_annotAlongOverride) || _annotAlongOverride <= barStart || _annotAlongOverride >= barStart + length
+                ? barStart + length / 2.0
+                : _annotAlongOverride;
+
+        /// <summary>
+        /// Rozkład z JEDNYM prętem: opis bez rozstawu ("H12-01-200 UB" → "H12-01 UB").
+        /// </summary>
+        private static void ApplySingleBarMark(Database db, ObjectId distId, BarData distBar)
+        {
+            if (distBar == null || distBar.Count > 1 || string.IsNullOrEmpty(distBar.Mark)) return;
+            var parts = distBar.Mark.Split(' ');
+            var seg = parts[0].Split('-');
+            if (seg.Length < 3) return;
+            distBar.Mark = $"{seg[0]}-{seg[1]}" + (parts.Length > 1 ? " " + string.Join(" ", parts, 1, parts.Length - 1) : "");
+            distBar.ShowSpacing = false;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                if (tr.GetObject(distId, OpenMode.ForWrite) is BlockReference br) BarBlockEngine.WriteXData(br, distBar);
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.ApplySingleBarMark", ex); }
+        }
+
         /// <summary>Minimum overlap between adjacent distributions (hard).</summary>
         public const double OverlapMin    = 400.0;
 
@@ -184,6 +217,14 @@ namespace BricsCadRc.Core
                 ed.WriteMessage($"\n[AutoRebar] No valid strips — abort.\n");
                 return -1;
             }
+
+            // Otwory w płycie: pręty przechodzące przez otwór są ucinane („REBARS CUT TO SUIT”)
+            _currentHoles = FindHoles(db, slabPolyId, plan.SlabVertices);
+            _holesCut.Clear();
+            _holeArrows.Clear();
+            if (_currentHoles.Count > 0)
+                ed.WriteMessage($"\n[AutoRebar] Otwory w płycie: {_currentHoles.Count} — pręty przez otwór ucięte " +
+                                $"z otuliną {DefaultCover:F0} mm (REBARS CUT TO SUIT).\n");
 
             // Góra (T1/T2): czytaj RZECZYWISTE dolne zbrojenie (B1/B2) z rzutu dolnego tej płyty,
             // żeby zakłady góry mijały zakłady, które naprawdę są na rysunku (także po ręcznej edycji).
@@ -367,6 +408,14 @@ namespace BricsCadRc.Core
                     }
                 }
             }
+
+            // Opisy „REBARS CUT TO SUIT”: strzałki tej warstwy zastępowane nowymi (także gdy
+            // otworów już nie ma — wtedy stare strzałki tej warstwy znikają)
+            using (doc.LockDocument())
+                UpdateCutToSuitNotes(db, layerCode, plan.SlabVertices);
+            _currentHoles = new List<HoleBox>();
+            _holesCut.Clear();
+            _holeArrows.Clear();
 
             ed.WriteMessage(
                 $"\n[AutoRebar] Wygenerowano {generated} rozkładów {layerCode}.\n");
@@ -1748,11 +1797,14 @@ namespace BricsCadRc.Core
             distBar.Count           = 0;
             distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");
             if (adjustStatus != 0) distBar.IsLabelManual = true;
+            distBar.CutZones = ComputeCutZones(x0, y0, x1, y1, horizontal, effectiveSpacing, diameter);
 
             // Step 3: generate distribution block (sets distBar.BarsSpan via reference)
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1, y1, distBar, horizontal, posNr);
             if (!barResult.IsValid) return false;
+            _lastDistId = barResult.BlockRefId;
+            ApplySingleBarMark(db, barResult.BlockRefId, distBar);
             TagWithSlab(db, barResult.BlockRefId);
 
             // Step 3.5: pre-set leader points using arm-from-slab-edge math.
@@ -1760,9 +1812,10 @@ namespace BricsCadRc.Core
             // Q9 tie-break: up. armEndY_local relative to annotInsertY_world.
             double firstBarY    = barResult.MinPoint.Y;
             double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
+            double alongMid = AnnotAlong(horizontal ? barResult.MinPoint.X : barResult.MinPoint.Y, length);
             double annotInsertY = horizontal
                 ? barResult.MinPoint.Y                   // per current annotInsertPt definition
-                : barResult.MinPoint.Y + length / 2.0;  // (vertical case for B2 future)
+                : alongMid;                              // (vertical case for B2 future)
 
             // Etap 1C: proximity dispatch — B1 Y-axis via ComputeAnnotLeaderForHorizontalBars,
             // B2 X-axis via ComputeAnnotLeaderForVerticalBars.
@@ -1795,7 +1848,7 @@ namespace BricsCadRc.Core
             if (horizontal)
             {
                 annotInsertPt = new Point3d(
-                    barResult.MinPoint.X + length / 2.0,
+                    alongMid,
                     barResult.MinPoint.Y,
                     0);
             }
@@ -1803,7 +1856,7 @@ namespace BricsCadRc.Core
             {
                 annotInsertPt = new Point3d(
                     barResult.MinPoint.X,
-                    barResult.MinPoint.Y + length / 2.0,
+                    alongMid,
                     0);
             }
 
@@ -1822,8 +1875,22 @@ namespace BricsCadRc.Core
 
             // Step 5.5: wygaszanie — widoczny tylko pręt reprezentatywny (po utworzeniu opisu,
             // bo opis liczy położenie z obrysu wszystkich prętów)
+            // Rozkład przecięty otworem: strzałka opisu „REBARS CUT TO SUIT” na pręcie uciętym;
+            // przy wygaszaniu widoczny pręt ucięty + najbliższy pręt cały (jak na wzorcu)
+            int cutIdx = CutBandIndex(distBar);
+            var zoneHoles = _lastZoneHoles;
+            if (cutIdx >= 0 && zoneHoles.Count > 0)
+                AddCutArrow(zoneHoles[0], x0, y0, x1, y1, horizontal, cutIdx * distBar.Spacing);
             if (representativeSegment >= 0)
-                ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, representativeSegment);
+            {
+                if (cutIdx >= 0)
+                {
+                    int fullIdx = NearestUncutIndex(distBar, cutIdx);
+                    ApplyVisibleIndices(db, barResult.BlockRefId,
+                        fullIdx >= 0 ? $"{cutIdx},{fullIdx}" : cutIdx.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, representativeSegment);
+            }
 
             // Step 6: show outline
             BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
@@ -1845,11 +1912,13 @@ namespace BricsCadRc.Core
 
         /// <summary>Widoczny tylko pręt o indeksie idx + odświeżenie opisu (jedna kropka na linii rozkładu).</summary>
         private static void ApplyVisibleIndex(Database db, ObjectId distId, int idx)
+            => ApplyVisibleIndices(db, distId, idx.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        private static void ApplyVisibleIndices(Database db, ObjectId distId, string indices)
         {
             try
             {
-                BarBlockEngine.RebuildVisibility(db, distId, BarVisibilityMode.Manual,
-                    idx.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                BarBlockEngine.RebuildVisibility(db, distId, BarVisibilityMode.Manual, indices);
 
                 // Opis rozkładu (kropki na linii rozkładu) — jak przy wygaszaniu w RC_EDIT_LABEL:
                 // po zmianie widoczności kropka tylko przy pręcie widocznym
@@ -1873,6 +1942,844 @@ namespace BricsCadRc.Core
             catch { return false; }
         }
 
+        // ----------------------------------------------------------------
+        // Detal otworu (RC_DETAL_OTWORU)
+        // ----------------------------------------------------------------
+
+        private static ObjectId _lastDistId = ObjectId.Null;
+
+        /// <summary>Średnica prętów dodatkowych przy otworze.</summary>
+        public const int    HoleTrimmerDiameter  = 16;
+        /// <summary>Minimalne wysunięcie pręta dodatkowego poza krawędź otworu [mm].</summary>
+        public const double HoleTrimmerExtension = 650.0;
+        /// <summary>Odległość pierwszego pręta dodatkowego od krawędzi otworu i rozstaw (2 pręty).</summary>
+        public const double HoleTrimmerOffset    = 75.0, HoleTrimmerSpacing = 100.0;
+        /// <summary>Obramówka detalu na planie: odsunięcie od otworu [mm].</summary>
+        public const double HoleDetailFrameOffset = 500.0;
+        /// <summary>Skala detalu (1:25) i ramię opisu za ramką detalu [mm].</summary>
+        public const int    DetailScale = 25;
+        public const double DetailLeaderArm = 150.0;
+        /// <summary>Odstęp strefy szablonów od ramki detalu (po prawej, za opisami) [mm].</summary>
+        public const double DetailTemplateGap = 3000.0;
+
+        /// <summary>
+        /// Sprawdza, czy polilinia jest otworem wg wzorca (zamknięta, z krzyżykiem po przekątnych).
+        /// </summary>
+        public static bool TryGetHole(Database db, ObjectId polyId, out double minX, out double minY,
+                                      out double maxX, out double maxY, out string layer)
+        {
+            minX = minY = maxX = maxY = 0; layer = "0";
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            if (!(tr.GetObject(polyId, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl))
+                return false;
+            var verts = GeometryHelper.GetPolylineVertices(pl);
+            minX = verts.Min(v => v.X); minY = verts.Min(v => v.Y);
+            maxX = verts.Max(v => v.X); maxY = verts.Max(v => v.Y);
+            layer = pl.Layer;
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            var p00 = new Point3d(minX, minY, 0); var p11 = new Point3d(maxX, maxY, 0);
+            var p01 = new Point3d(minX, maxY, 0); var p10 = new Point3d(maxX, minY, 0);
+            bool d1 = false, d2 = false;
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Line ln)) continue;
+                bool Is(Point3d a, Point3d b) =>
+                    (ln.StartPoint.DistanceTo(a) < 5 && ln.EndPoint.DistanceTo(b) < 5) ||
+                    (ln.StartPoint.DistanceTo(b) < 5 && ln.EndPoint.DistanceTo(a) < 5);
+                if (Is(p00, p11)) d1 = true;
+                if (Is(p01, p10)) d2 = true;
+            }
+            return d1 && d2;
+        }
+
+        /// <summary>
+        /// Detal otworu: obramówka na planie (kolor 10, DASHED, skala 25) + opis DETAIL 'n',
+        /// a w punkcie <paramref name="center"/> rysunek detalu: otwór, pręty dodatkowe H16
+        /// (2 dołem + 2 górą przy każdej krawędzi, wysunięte ≥ 650 mm poza otwór, długość co 250)
+        /// oraz U-bary przy krawędziach otworu (rozmiar wg grubości płyty, pozycje 01/02).
+        /// Pręty są prawdziwymi rozkładami RC — liczą się w BBS. Zwraca numer detalu (0 = błąd).
+        /// </summary>
+        public static int GenerateHoleDetail(Document doc, ObjectId holeId, Point3d center, int slabThickness)
+        {
+            var db = doc.Database;
+            var ed = doc.Editor;
+            if (!TryGetHole(db, holeId, out double hx0, out double hy0, out double hx1, out double hy1, out string holeLayer))
+            {
+                ed.WriteMessage("\n[RC DETAL] To nie jest otwór (zamknięta polilinia z krzyżykiem po przekątnych).\n");
+                return 0;
+            }
+            var planHole = new HoleBox { MinX = hx0, MinY = hy0, MaxX = hx1, MaxY = hy1 };
+
+            // Liczba prętów uciętych przez otwór (z rozkładów planu) → liczba U-barów przy krawędziach
+            // Położenia prętów siatki uciętych przez otwór (oś poprzeczna) — tyle U-barów, w tych miejscach
+            var cutPosX = CutBarPositionsAtHole(db, planHole, "X");   // Y prętów X (U-bary przy krawędzi lewej/prawej)
+            var cutPosY = CutBarPositionsAtHole(db, planHole, "Y");   // X prętów Y (U-bary przy krawędzi dolnej/górnej)
+            int cutX = cutPosX.Count, cutY = cutPosY.Count;
+            double w = hx1 - hx0, h = hy1 - hy0;
+
+            int nr = NextDetailNumber(db);
+            var saveHoles = _currentHoles; var saveSlab = _currentSlabHandle;
+            _currentHoles = new List<HoleBox>();   // pręty detalu nie są cięte otworami planu
+            _currentSlabHandle = null;             // detal nie należy do żadnej płyty
+            _annotScaleOverride = DetailScale / 50.0;   // skala opisu 1:25 (jak RC_SCALE_ANNOT)
+            _leaderArmOverride  = DetailLeaderArm;      // nadpisywane per opis (DetailArmFor)
+            _labelsPlanned      = true;
+
+            try
+            {
+                using (doc.LockDocument())
+                {
+                    InitLabelOccupancy(db);
+
+                    // 1. Plan: obramówka + DETAIL 'n'
+                    var frameLtId = EnsureDashedLinetype(db);
+                    DrawRect(db, hx0 - HoleDetailFrameOffset, hy0 - HoleDetailFrameOffset,
+                             hx1 + HoleDetailFrameOffset, hy1 + HoleDetailFrameOffset, holeLayer, 10, frameLtId, 25.0);
+                    SingleBarEngine.PlaceNoteLeader(db,
+                        new[] { new Point3d(hx1 + HoleDetailFrameOffset, (hy0 + hy1) / 2, 0) },
+                        new Point3d(hx1 + HoleDetailFrameOffset + 500, hy1 + HoleDetailFrameOffset, 0),
+                        $"DETAIL '{nr}'", 140.0, 2, NoteTextStyle, NoteLayer);
+
+                    // 2. Detal: otwór (z krzyżykiem) i obramówka w punkcie wskazanym
+                    double dx = center.X - (hx0 + hx1) / 2, dy = center.Y - (hy0 + hy1) / 2;
+                    double x0 = hx0 + dx, y0 = hy0 + dy, x1 = hx1 + dx, y1 = hy1 + dy;
+                    double cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+                    DrawRect(db, x0, y0, x1, y1, holeLayer, 256, ObjectId.Null, 1.0);
+                    DrawLine(db, new Point3d(x0, y0, 0), new Point3d(x1, y1, 0), holeLayer);
+                    DrawLine(db, new Point3d(x0, y1, 0), new Point3d(x1, y0, 0), holeLayer);
+
+                    double lenX = SnapUp(w + 2 * HoleTrimmerExtension), lenY = SnapUp(h + 2 * HoleTrimmerExtension);
+                    double ext = Math.Max(lenX, lenY) / 2 + 600;     // zasięg detalu (opisy wychodzą poza)
+                    double fx0 = cx - ext, fx1 = cx + ext, fy0 = cy - ext, fy1 = cy + ext;
+                    var detailFrameId = DrawRect(db, fx0, fy0, fx1, fy1, holeLayer, 10, frameLtId, 25.0);
+                    double maxArmY = 0;   // najdłuższe ramię opisów pionowych (w dół) — pod nimi tytuł
+
+                    // Strefa szablonów detalu: po prawej stronie, za opisami prawej krawędzi
+                    double zx0 = fx1 + DetailTemplateGap;
+                    var zone = new Extents3d(new Point3d(zx0, fy0, 0),
+                                             new Point3d(zx0 + TemplateZoneWidth, fy1, 0));
+                    int tplCount = 0;
+
+                    // 3. Pręty dodatkowe H16 (2 dołem + 2 górą = CountDisplay 4)
+                    var tX = FindOrCreateStraightTemplate(db, zone, ref tplCount, HoleTrimmerDiameter, lenX, "B1");
+                    var tY = lenY == lenX ? tX : FindOrCreateStraightTemplate(db, zone, ref tplCount, HoleTrimmerDiameter, lenY, "B1");
+                    double o1 = HoleTrimmerOffset, o2 = HoleTrimmerOffset + HoleTrimmerSpacing;
+
+                    // U-bary: wymiary i położenia (przeniesione z planu do detalu)
+                    var ubX = UbDims(slabThickness, true);
+                    var ubY = UbDims(slabThickness, false);
+                    var posX = cutPosX.Count > 0 ? cutPosX.Select(v => v + dy).ToList() : GridPositions(y0, y1);
+                    var posY = cutPosY.Count > 0 ? cutPosY.Select(v => v + dx).ToList() : GridPositions(x0, x1);
+                    cutX = posX.Count; cutY = posY.Count;
+                    double c = DefaultCover;
+
+                    // Linie rozkładów (położenie wzdłuż prętów) rozsunięte co ≥ DetailLabelSep,
+                    // żeby opisy z tej samej grupy (poziome / pionowe) nie leżały na sobie.
+                    // Opisy poziome: rozkłady prętów Y (H16 lewa/prawa, U-bary dolna/górna) — współrzędna Y
+                    var hz = ArrangeAlong(new[]
+                    {
+                        (cy - lenY / 2, cy + lenY / 2, y1 + (cy + lenY / 2 - y1) / 2),     // H16 lewa
+                        (cy - lenY / 2, cy + lenY / 2, y0 - (y0 - (cy - lenY / 2)) / 2),   // H16 prawa
+                        (y0 - c - ubY.A, y0 - c, y0 - c - ubY.A / 2),                       // U dolna
+                        (y1 + c, y1 + c + ubY.A, y1 + c + ubY.A / 2),                       // U górna
+                    });
+                    // Opisy pionowe: rozkłady prętów X (H16 dolna/górna, U-bary lewa/prawa) — współrzędna X
+                    var vt = ArrangeAlong(new[]
+                    {
+                        (cx - lenX / 2, cx + lenX / 2, x1 + (cx + lenX / 2 - x1) / 2),     // H16 dolna
+                        (cx - lenX / 2, cx + lenX / 2, x0 - (x0 - (cx - lenX / 2)) / 2),   // H16 górna
+                        (x0 - c - ubX.A, x0 - c, x0 - c - ubX.A / 2),                       // U lewa
+                        (x1 + c, x1 + c + ubX.A, x1 + c + ubX.A / 2),                       // U prawa
+                    });
+
+                    // Ramię opisu = odstęp + długość tekstu: tekst w całości za ramką detalu
+                    _leaderArmOverride = DetailArmFor(TrimmerLabel(tX.bar));
+                    maxArmY = Math.Max(maxArmY, _leaderArmOverride);
+                    _annotAlongOverride = vt[0];
+                    AddTrimmer(db, tX, cx - lenX / 2, y0 - o2, cx + lenX / 2, y0 - o1, "X", lenX, fy0, fy1);
+                    _annotAlongOverride = vt[1];
+                    AddTrimmer(db, tX, cx - lenX / 2, y1 + o1, cx + lenX / 2, y1 + o2, "X", lenX, fy0, fy1);
+
+                    _leaderArmOverride = DetailArmFor(TrimmerLabel(tY.bar));
+                    _annotAlongOverride = hz[0];
+                    AddTrimmer(db, tY, x0 - o2, cy - lenY / 2, x0 - o1, cy + lenY / 2, "Y", lenY, fx0, fx1);
+                    _annotAlongOverride = hz[1];
+                    AddTrimmer(db, tY, x1 + o1, cy - lenY / 2, x1 + o2, cy + lenY / 2, "Y", lenY, fx0, fx1);
+
+                    // 4. U-bary przy krawędziach otworu — w miejscach uciętych prętów siatki
+                    _leaderArmOverride = DetailArmFor(UbLabel(cutX, UBPosNrB1));
+                    maxArmY = Math.Max(maxArmY, _leaderArmOverride);
+                    AddHoleUBars(db, zone, ref tplCount, ubX, "X", x0, x1, posX, fy0, fy1, vt[2], vt[3]);
+                    _leaderArmOverride = DetailArmFor(UbLabel(cutY, UBPosNrB2));
+                    AddHoleUBars(db, zone, ref tplCount, ubY, "Y", y0, y1, posY, fx0, fx1, hz[2], hz[3]);
+                    _annotAlongOverride = double.NaN;
+
+                    // Czytelność: widoczne pręty z dala od równoległych linii rozkładów
+                    ResolveRepresentativeCollisions(doc, detailFrameId);
+
+                    // 5. Tytuł detalu (tekst i styl wg wzorca) — w prawej części pod ramką,
+                    //    gdzie nie ma opisów rozkładów (te wychodzą przy otworze)
+                    PlaceText(db, new Point3d(cx, fy0 - maxArmY - 200, 0),
+                        "{\\H3.125x;\\L\\C4;DETAIL '" + nr + "'\\P\\H0.8x;\\l\\C256;SCALE 1:" + DetailScale + " }",
+                        DetailScale * 1.6);
+                }
+            }
+            finally
+            {
+                _currentHoles = saveHoles; _currentSlabHandle = saveSlab;
+                _annotScaleOverride = 1.0; _leaderArmOverride = double.NaN; _annotAlongOverride = double.NaN;
+                _labelsPlanned = false;
+            }
+            ed.WriteMessage($"\n[RC DETAL] Utworzono DETAIL '{nr}': pręty H{HoleTrimmerDiameter} " +
+                            $"{SnapUp(w + 2 * HoleTrimmerExtension):F0}/{SnapUp(h + 2 * HoleTrimmerExtension):F0} mm, " +
+                            $"U-bary: {cutX} przy krawędziach pionowych, {cutY} przy poziomych.\n");
+            return nr;
+        }
+
+        /// <summary>Ramię opisu w detalu: odstęp od ramki + długość tekstu w skali detalu.</summary>
+        private static double DetailArmFor(string labelText)
+        {
+            double sc = DetailScale / 50.0;
+            // odstęp od ramki + długość tekstu z zapasem 15% + odsunięcie tekstu od ramienia
+            return DetailLeaderArm
+                 + 1.15 * (labelText?.Length ?? 0) * AnnotationEngine.TextCharWidth * sc
+                 + AnnotationEngine.TextArmOffset * sc;
+        }
+
+        private static string TrimmerLabel(BarData tpl)
+            => "4 " + BarData.FormatMark(HoleTrimmerDiameter, SingleBarEngine.ExtractPosNr(tpl?.Mark),
+                                         HoleTrimmerSpacing, 2) + " B+T ADD";
+
+        private static double SnapUp(double len)
+            => Math.Ceiling((len - 1e-6) / TemplateGridStep) * TemplateGridStep;
+
+        private static (ObjectId id, BarData bar) FindOrCreateStraightTemplate(
+            Database db, Extents3d zone, ref int tplCount, int diameter, double length, string layerCode)
+        {
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                    var b = SingleBarEngine.ReadBarXData(pl);
+                    if (b == null || b.Diameter != diameter || (b.ShapeCode ?? "00") != "00") continue;
+                    int nr = SingleBarEngine.ExtractPosNr(b.Mark);
+                    if (nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
+                    if (Math.Abs(b.LengthA - length) < 1.0) return (oid, b);
+                }
+            }
+            return CreateNewTemplate(db, zone, tplCount++, diameter, length, layerCode);
+        }
+
+        /// <summary>Rozkład 2 prętów dodatkowych; opis „4 H16-nn-100 B+T ADD” (2 dołem + 2 górą).</summary>
+        private static void AddTrimmer(Database db, (ObjectId id, BarData bar) tpl,
+                                       double x0, double y0, double x1, double y1,
+                                       string dir, double length, double acrossMin, double acrossMax)
+        {
+            _lastDistId = ObjectId.Null;
+            bool ok = GenerateDistributionWithLeaderAtOffset(
+                db, x0, y0, x1, y1, tpl.id, tpl.bar, HoleTrimmerDiameter, length, HoleTrimmerSpacing,
+                "B1", dir, DefaultCover, HoleTrimmerSpacing, SpacingMode.Nominal, acrossMin, acrossMax,
+                representativeSegment: 0);   // wygaszanie jak w RC_GENERUJ_SIATKA
+            if (!ok || _lastDistId.IsNull) return;
+            RelabelDistribution(db, _lastDistId, mark =>
+                BarData.FormatMark(HoleTrimmerDiameter, SingleBarEngine.ExtractPosNr(tpl.bar.Mark),
+                                   HoleTrimmerSpacing, 2) + " B+T ADD", countDisplay: 4);
+        }
+
+        private struct UbSpec { public double A, B, C; public string Shape; public int PosNr; public bool IsX; }
+
+        private static UbSpec UbDims(int thickness, bool isX)
+        {
+            if (isX)
+                return thickness == 225
+                    ? new UbSpec { A = UB_225_LengthA, B = UB_225_LengthB, C = UB_225_LengthC, Shape = "21", PosNr = UBPosNrB1, IsX = true }
+                    : new UbSpec { A = UB_300_LengthA, B = UB_300_LengthB, C = UB_300_LengthC, Shape = "21", PosNr = UBPosNrB1, IsX = true };
+            return thickness == 225
+                ? new UbSpec { A = UBB2_225_LengthA, B = UBB2_225_LengthB, C = UBB2_225_LengthC, Shape = UBB2_225_ShapeCode, PosNr = UBPosNrB2 }
+                : new UbSpec { A = UBB2_300_LengthA, B = UBB2_300_LengthB, C = UBB2_300_LengthC, Shape = UBB2_300_ShapeCode, PosNr = UBPosNrB2 };
+        }
+
+        private static string UbLabel(int n, int posNr)
+            => n > 1 ? $"{n} H{UBDiameter}-{posNr:D2}-200 UB" : $"1 H{UBDiameter}-{posNr:D2} UB";
+
+        /// <summary>Gdy brak siatki na planie: U-bary co 200 mm, wyśrodkowane na krawędzi.</summary>
+        private static List<double> GridPositions(double lo, double hi)
+        {
+            double avail = hi - lo - 2 * DefaultCover;
+            int n = Math.Max(1, (int)Math.Floor(avail / DefaultSpacing + 1e-9) + 1);
+            double start = (lo + hi) / 2 - (n - 1) * DefaultSpacing / 2;
+            return Enumerable.Range(0, n).Select(i => start + i * DefaultSpacing).ToList();
+        }
+
+        /// <summary>Minimalny odstęp równoległych linii opisów w detalu [mm].</summary>
+        public const double DetailLabelSep = 250.0;
+
+        /// <summary>
+        /// Rozsuwa położenia linii rozkładów (każda w swoim zakresie lo..hi, preferowane pref) tak,
+        /// żeby kolejne były ≥ DetailLabelSep od siebie. Zwraca położenia w kolejności wejścia.
+        /// </summary>
+        private static double[] ArrangeAlong((double lo, double hi, double pref)[] items)
+        {
+            const double margin = 50.0;
+            int n = items.Length;
+            var order = Enumerable.Range(0, n).OrderBy(i => items[i].pref).ToArray();
+            var pos = new double[n];
+            double prev = double.NegativeInfinity;
+            foreach (int i in order)                       // w górę
+            {
+                double v = Math.Max(items[i].pref, prev + DetailLabelSep);
+                v = Math.Min(Math.Max(v, items[i].lo + margin), items[i].hi - margin);
+                pos[i] = v; prev = v;
+            }
+            double next = double.PositiveInfinity;
+            foreach (int i in order.Reverse())             // w dół, gdy zakres nie pozwolił
+            {
+                double v = Math.Min(pos[i], next - DetailLabelSep);
+                v = Math.Min(Math.Max(v, items[i].lo + margin), items[i].hi - margin);
+                pos[i] = v; next = v;
+            }
+            return pos;
+        }
+
+        /// <summary>
+        /// U-bary przy dwóch równoległych krawędziach otworu (X: lewa/prawa, Y: dolna/górna),
+        /// w położeniach uciętych prętów siatki (rozstaw jak siatka, ≈ 200 mm).
+        /// edgeLo/edgeHi — współrzędne krawędzi otworu prostopadłe do U-barów;
+        /// alongLo/alongHi — położenie linii rozkładu przy krawędzi lo/hi.
+        /// </summary>
+        private static void AddHoleUBars(Database db, Extents3d zone, ref int tplCount, UbSpec ub, string dir,
+                                         double edgeLo, double edgeHi, List<double> positions,
+                                         double acrossMin, double acrossMax, double alongLo, double alongHi)
+        {
+            bool isX = dir == "X";
+            if (positions == null || positions.Count == 0) return;
+            positions = positions.OrderBy(v => v).ToList();
+
+            // Szablon U-bara: istniejąca pozycja 01/02 o tych wymiarach albo nowy
+            (ObjectId id, BarData bar) tpl = (ObjectId.Null, null);
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                    var b = SingleBarEngine.ReadBarXData(pl);
+                    if (b == null || SingleBarEngine.ExtractPosNr(b.Mark) != ub.PosNr || b.ShapeCode != ub.Shape) continue;
+                    if (Math.Abs(b.LengthA - ub.A) < 1 && Math.Abs(b.LengthB - ub.B) < 1) { tpl = (oid, b); break; }
+                }
+            }
+            if (tpl.id.IsNull)
+                tpl = CreateUBTemplate(db, zone, tplCount++, UBDiameter, ub.A, ub.B, ub.C, isX ? "B1" : "B2", ub.PosNr, ub.Shape);
+
+            double low = positions[0], high = positions[positions.Count - 1];
+            double? forced = positions.Count > 1 ? (high - low) / (positions.Count - 1) : (double?)null;
+
+            // Krawędź „dolna” otworu (lewa/dolna): płyta po stronie ujemnej → Right; „górna” → Left
+            foreach (var (edge, side, along) in new[] { (edgeLo, "Right", alongLo), (edgeHi, "Left", alongHi) })
+            {
+                try
+                {
+                    _annotAlongOverride = along;
+                    GenerateUBDistribution(db, edge, low, high, 0.0, 0.0, tpl.id, tpl.bar, ub.A, ub.B, ub.C,
+                        DefaultSpacing, isX ? "B1" : "B2", side, SpacingMode.Nominal, acrossMin, acrossMax,
+                        ub.PosNr, ub.Shape, dir, forcedSpacing: forced, representativeOnly: true);
+                }
+                catch (System.Exception ex) { Log.Error("AutoRebar.AddHoleUBars", ex); }
+            }
+        }
+
+        /// <summary>Zmiana opisu rozkładu (Mark/CountDisplay) z odświeżeniem opisu.</summary>
+        private static void RelabelDistribution(Database db, ObjectId distId, Func<string, string> markFn, int? countDisplay)
+        {
+            BarData bar;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(distId, OpenMode.ForWrite) as BlockReference;
+                bar = br != null ? BarBlockEngine.ReadXData(br) : null;
+                if (bar == null) { tr.Commit(); return; }
+                bar.Mark = markFn(bar.Mark);
+                bar.CountDisplay = countDisplay;
+                bar.IsLabelManual = true;
+                BarBlockEngine.WriteXData(br, bar);
+                tr.Commit();
+            }
+            if (!string.IsNullOrEmpty(bar.AnnotHandle)) AnnotationEngine.SyncAnnotation(db, bar);
+        }
+
+        /// <summary>
+        /// Położenia (oś poprzeczna, świat) prętów uciętych przez otwór w rozkładach planu o danym
+        /// kierunku — z warstwy dolnej (B…), a gdy brak, z górnej.
+        /// </summary>
+        private static List<double> CutBarPositionsAtHole(Database db, HoleBox h, string dir)
+        {
+            var perLayer = new Dictionary<string, List<double>>();
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || bar.Direction != dir || string.IsNullOrEmpty(bar.CutZones)) continue;
+                    var cuts = BarBlockEngine.ParseCutZones(bar.CutZones);
+                    bool isX = dir == "X";
+                    double sOrig = isX ? br.Position.Y : br.Position.X;
+                    double aOrig = isX ? br.Position.X : br.Position.Y;
+                    double hS = isX ? h.CY : h.CX, hA = isX ? h.CX : h.CY;
+                    var mine = cuts.Where(z => hS >= z.s0 + sOrig - 1 && hS <= z.s1 + sOrig + 1
+                                            && hA >= z.a0 + aOrig - 1 && hA <= z.a1 + aOrig + 1).ToList();
+                    if (mine.Count == 0) continue;
+                    string code = bar.LayerCode ?? "";
+                    if (!perLayer.TryGetValue(code, out var list)) perLayer[code] = list = new List<double>();
+                    for (int i = 0; i < bar.Count; i++)
+                        if (BarBlockEngine.IsBarCut(mine, i * bar.Spacing)) list.Add(sOrig + i * bar.Spacing);
+                }
+            }
+            var pick = perLayer.Where(kv => kv.Key.StartsWith("B")).OrderByDescending(kv => kv.Value.Count)
+                               .Select(kv => kv.Value).FirstOrDefault()
+                    ?? perLayer.Values.OrderByDescending(v => v.Count).FirstOrDefault()
+                    ?? new List<double>();
+            // bez duplikatów (dwa rozkłady na styku pasów)
+            var result = new List<double>();
+            foreach (var v in pick.OrderBy(v => v))
+                if (result.Count == 0 || v - result[result.Count - 1] > 1.0) result.Add(v);
+            return result;
+        }
+
+        private static int NextDetailNumber(Database db)
+        {
+            int max = 0;
+            var rx = new System.Text.RegularExpressions.Regex(@"DETAIL\s*'(\d+)'", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                string txt = null;
+                var obj = tr.GetObject(oid, OpenMode.ForRead);
+                try
+                {
+                    if (obj is MText mt) txt = mt.Contents;
+                    else if (obj is DBText dt) txt = dt.TextString;
+                    else if (obj is MLeader ml && ml.ContentType == ContentType.MTextContent) txt = ml.MText?.Contents;
+                }
+                catch { }
+                if (string.IsNullOrEmpty(txt)) continue;
+                foreach (System.Text.RegularExpressions.Match m in rx.Matches(txt))
+                    if (int.TryParse(m.Groups[1].Value, out int n) && n > max) max = n;
+            }
+            return max + 1;
+        }
+
+        private static ObjectId EnsureDashedLinetype(Database db)
+        {
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var lt = (LinetypeTable)tr.GetObject(db.LinetypeTableId, OpenMode.ForRead);
+                    if (lt.Has("DASHED")) return lt["DASHED"];
+                }
+                foreach (var file in new[] { "default.lin", "acad.lin", "iso.lin" })
+                {
+                    try { db.LoadLineTypeFile("DASHED", file); break; } catch { }
+                }
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var lt = (LinetypeTable)tr.GetObject(db.LinetypeTableId, OpenMode.ForRead);
+                    if (lt.Has("DASHED")) return lt["DASHED"];
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.EnsureDashedLinetype", ex); }
+            return ObjectId.Null;
+        }
+
+        private static ObjectId DrawRect(Database db, double x0, double y0, double x1, double y1,
+                                         string layer, short color, ObjectId linetypeId, double ltScale)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var pl = new Polyline();
+            pl.SetDatabaseDefaults(db);
+            pl.AddVertexAt(0, new Point2d(x0, y0), 0, 0, 0);
+            pl.AddVertexAt(1, new Point2d(x1, y0), 0, 0, 0);
+            pl.AddVertexAt(2, new Point2d(x1, y1), 0, 0, 0);
+            pl.AddVertexAt(3, new Point2d(x0, y1), 0, 0, 0);
+            pl.Closed = true;
+            pl.Layer = layer;
+            pl.ColorIndex = color;
+            if (!linetypeId.IsNull) { pl.LinetypeId = linetypeId; pl.LinetypeScale = ltScale; }
+            space.AppendEntity(pl);
+            tr.AddNewlyCreatedDBObject(pl, true);
+            tr.Commit();
+            return pl.ObjectId;
+        }
+
+        private static void DrawLine(Database db, Point3d a, Point3d b, string layer)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var ln = new Line(a, b) { Layer = layer, ColorIndex = 1 };   // krzyżyk otworu: czerwony
+            space.AppendEntity(ln);
+            tr.AddNewlyCreatedDBObject(ln, true);
+            tr.Commit();
+        }
+
+        private static void PlaceText(Database db, Point3d pt, string contents, double height)
+        {
+            SingleBarEngine.EnsureTextStyle(db, TitleTextStyle);
+            SingleBarEngine.EnsureLayer(db, TitleLayer, 7);
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var mt = new MText();
+            mt.SetDatabaseDefaults(db);
+            mt.Contents = contents;
+            mt.TextHeight = height;
+            mt.Location = pt;
+            mt.Attachment = AttachmentPoint.TopCenter;   // środek tytułu = środek otworu
+            mt.Layer = TitleLayer;
+            mt.ColorIndex = 256;   // kolory w treści: \C4 (tytuł), \C256 (skala)
+            var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            if (st.Has(TitleTextStyle)) mt.TextStyleId = st[TitleTextStyle];
+            space.AppendEntity(mt);
+            tr.AddNewlyCreatedDBObject(mt, true);
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
+        // Otwory w płycie
+        // ----------------------------------------------------------------
+
+        private struct HoleBox
+        {
+            public double MinX, MinY, MaxX, MaxY;
+            public double CX => (MinX + MaxX) / 2.0;
+            public double CY => (MinY + MaxY) / 2.0;
+        }
+
+        private static List<HoleBox> _currentHoles = new List<HoleBox>();
+        private static readonly HashSet<int> _holesCut = new HashSet<int>();
+        // otwór → strzałki opisu „REBARS CUT TO SUIT” (na widocznych prętach uciętych)
+        private static readonly Dictionary<int, List<Point3d>> _holeArrows = new Dictionary<int, List<Point3d>>();
+        // otwór dla każdej strefy cięcia ostatnio policzonego rozkładu (indeks jak w CutZones)
+        private static List<int> _lastZoneHoles = new List<int>();
+
+        /// <summary>
+        /// Otwór wg wzorca rysunku: zamknięta polilinia wewnątrz obrysu płyty z narysowanymi
+        /// przekątnymi (krzyżyk z dwóch linii). Zamknięte polilinie bez krzyżyka (np. ramka
+        /// detalu) nie są otworami.
+        /// </summary>
+        /// <summary>Otwory płyty jako prostokąty (minX, minY, maxX, maxY) — dla modelu 3D.</summary>
+        public static List<(double minX, double minY, double maxX, double maxY)> FindHoleBoxes(Database db, ObjectId slabId)
+        {
+            List<Point2d> verts;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline pl)) return new List<(double, double, double, double)>();
+                verts = GeometryHelper.GetPolylineVertices(pl);
+            }
+            return FindHoles(db, slabId, verts).Select(h => (h.MinX, h.MinY, h.MaxX, h.MaxY)).ToList();
+        }
+
+        /// <summary>Pale płyty (środek, promień) — dla modelu 3D.</summary>
+        public static List<(Point2d c, double r)> FindPilesFor(Database db, ObjectId slabId)
+        {
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline pl)) return new List<(Point2d, double)>();
+            var verts = GeometryHelper.GetPolylineVertices(pl);
+            tr.Commit();
+            return FindPiles(db, verts);
+        }
+
+        private static List<HoleBox> FindHoles(Database db, ObjectId slabId, List<Point2d> slabVertices)
+        {
+            var holes = new List<HoleBox>();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                var candidates = new List<HoleBox>();
+                var lines = new List<(Point3d a, Point3d b)>();
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased || oid == slabId) continue;
+                    var obj = tr.GetObject(oid, OpenMode.ForRead);
+                    if (obj is Line ln) { lines.Add((ln.StartPoint, ln.EndPoint)); continue; }
+                    if (!(obj is Polyline pl) || pl.NumberOfVertices < 3) continue;
+                    if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                    var verts = GeometryHelper.GetPolylineVertices(pl);
+                    if (!verts.All(v => GeometryHelper.IsPointInsidePolygon(slabVertices, v))) continue;
+                    candidates.Add(new HoleBox { MinX = verts.Min(v => v.X), MinY = verts.Min(v => v.Y),
+                                                 MaxX = verts.Max(v => v.X), MaxY = verts.Max(v => v.Y) });
+                }
+                const double tol = 5.0;
+                bool Has(Point3d p, Point3d q) => lines.Any(l =>
+                    (l.a.DistanceTo(p) < tol && l.b.DistanceTo(q) < tol) ||
+                    (l.a.DistanceTo(q) < tol && l.b.DistanceTo(p) < tol));
+                foreach (var h in candidates)
+                {
+                    var p00 = new Point3d(h.MinX, h.MinY, 0); var p11 = new Point3d(h.MaxX, h.MaxY, 0);
+                    var p01 = new Point3d(h.MinX, h.MaxY, 0); var p10 = new Point3d(h.MaxX, h.MinY, 0);
+                    if (Has(p00, p11) && Has(p01, p10)) holes.Add(h);
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.FindHoles", ex); }
+            return holes;
+        }
+
+        /// <summary>
+        /// Strefy cięcia rozkładu (układ lokalny bloku) dla otworów płyty: pręty, których oś
+        /// (± d/2) przecina otwór, mają usuniętą część otwór ± otulina.
+        /// x0..x1 / y0..y1 jak w GenerateFromBounds (dla prętów X: x = wzdłuż pręta, y = poprzecznie).
+        /// </summary>
+        private static string ComputeCutZones(double x0, double y0, double x1, double y1,
+                                              bool horizontal, double spacing, int diameter)
+        {
+            _lastZoneHoles = new List<int>();
+            if (_currentHoles == null || _currentHoles.Count == 0) return "";
+            double along0 = horizontal ? x0 : y0, along1 = horizontal ? x1 : y1;
+            double scan0  = horizontal ? y0 : x0, scan1  = horizontal ? y1 : x1;
+            double span = scan1 - scan0;
+            int count = spacing > 0 ? (int)(span / spacing + 1e-9) + 1 : 1;
+            var zones = new List<(double, double, double, double)>();
+            for (int k = 0; k < _currentHoles.Count; k++)
+            {
+                var h = _currentHoles[k];
+                double hAlong0 = horizontal ? h.MinX : h.MinY, hAlong1 = horizontal ? h.MaxX : h.MaxY;
+                double hScan0  = horizontal ? h.MinY : h.MinX, hScan1  = horizontal ? h.MaxY : h.MaxX;
+                if (hAlong1 + DefaultCover <= along0 || hAlong0 - DefaultCover >= along1) continue;
+                double s0 = hScan0 - diameter / 2.0 - scan0, s1 = hScan1 + diameter / 2.0 - scan0;
+                bool anyBar = false;
+                for (int i = 0; i < count && !anyBar; i++)
+                {
+                    double s = i * spacing;
+                    if (s >= s0 && s <= s1) anyBar = true;
+                }
+                if (!anyBar) continue;
+                zones.Add((s0, s1, hAlong0 - DefaultCover - along0, hAlong1 + DefaultCover - along0));
+                _lastZoneHoles.Add(k);
+                _holesCut.Add(k);
+            }
+            return zones.Count == 0 ? "" : BarBlockEngine.FormatCutZones(zones);
+        }
+
+        /// <summary>Indeks pręta uciętego najbliższego środka pierwszej strefy cięcia (-1 = brak).</summary>
+        private static int CutBandIndex(BarData bar)
+        {
+            var cuts = BarBlockEngine.ParseCutZones(bar.CutZones);
+            if (cuts.Count == 0 || bar.Count <= 0 || bar.Spacing <= 0) return -1;
+            double mid = (cuts[0].s0 + cuts[0].s1) / 2.0;
+            int best = -1; double bestD = double.MaxValue;
+            for (int i = 0; i < bar.Count; i++)
+            {
+                double s = i * bar.Spacing;
+                if (!BarBlockEngine.IsBarCut(cuts, s)) continue;
+                double d = Math.Abs(s - mid);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Najbliższy pręt NIEucięty (cały) obok pasma uciętego — -1 gdy brak.</summary>
+        /// <summary>Minimalny odstęp widocznego pręta całego od widocznego pręta uciętego [mm].</summary>
+        public const double CutFullBarGap = 600.0;
+
+        private static int NearestUncutIndex(BarData bar, int cutIdx)
+        {
+            var cuts = BarBlockEngine.ParseCutZones(bar.CutZones);
+            int fallback = -1;
+            for (int k = 1; k < bar.Count; k++)
+            {
+                foreach (int i in new[] { cutIdx - k, cutIdx + k })
+                {
+                    if (i < 0 || i >= bar.Count || BarBlockEngine.IsBarCut(cuts, i * bar.Spacing)) continue;
+                    if (Math.Abs(i - cutIdx) * bar.Spacing >= CutFullBarGap - 1e-6) return i;
+                    if (fallback < 0) fallback = i;   // za blisko, ale lepszy niż nic
+                }
+            }
+            return fallback;
+        }
+
+        /// <summary>
+        /// Strzałka opisu „REBARS CUT TO SUIT”: na pręcie uciętym (położenie poprzeczne sLocal),
+        /// 100 mm od końca pręta przy otworze — po stronie, gdzie pręt istnieje.
+        /// </summary>
+        private static void AddCutArrow(int holeIdx, double x0, double y0, double x1, double y1,
+                                        bool horizontal, double sLocal)
+        {
+            if (holeIdx < 0 || holeIdx >= _currentHoles.Count) return;
+            var h = _currentHoles[holeIdx];
+            double along0 = horizontal ? x0 : y0, along1 = horizontal ? x1 : y1;
+            double hLo = horizontal ? h.MinX : h.MinY, hHi = horizontal ? h.MaxX : h.MaxY;
+            double before = hLo - DefaultCover - 100.0, after = hHi + DefaultCover + 100.0;
+            double a = before > along0 + 1.0 ? before : after;
+            if (a >= along1) a = (along0 + along1) / 2.0;
+            var tip = horizontal ? new Point3d(a, y0 + sLocal, 0) : new Point3d(x0 + sLocal, a, 0);
+            if (!_holeArrows.TryGetValue(holeIdx, out var list)) _holeArrows[holeIdx] = list = new List<Point3d>();
+            list.Add(tip);
+        }
+
+        // ── Opisy „REBARS CUT TO SUIT” ──────────────────────────────────────
+        // MLeader z XData RC_CUT_NOTE: [1] "B1=x,y;x,y|B2=x,y" — strzałki wg warstwy.
+        // Ponowne generowanie warstwy zastępuje TYLKO jej strzałki; opis jest odtwarzany
+        // (zachowuje położenie tekstu), a bez strzałek — usuwany.
+
+        private const string XCutNoteApp = "RC_CUT_NOTE";
+
+        private sealed class CutNote
+        {
+            public ObjectId Id;
+            public Point3d  TextPt;
+            public Dictionary<string, List<Point3d>> Arrows = new Dictionary<string, List<Point3d>>();
+            public bool Dirty;
+        }
+
+        private static void UpdateCutToSuitNotes(Database db, string layerCode, List<Point2d> slabVertices)
+        {
+            try
+            {
+                var notes = ReadCutNotes(db, slabVertices);
+
+                // 1. Stare strzałki tej warstwy na tej płycie — precz
+                foreach (var n in notes)
+                    if (n.Arrows.Remove(layerCode)) n.Dirty = true;
+
+                // 2. Nowe strzałki: do opisu przy otworze albo nowy opis
+                foreach (var kv in _holeArrows)
+                {
+                    int k = kv.Key;
+                    if (k < 0 || k >= _currentHoles.Count || kv.Value.Count == 0) continue;
+                    var h = _currentHoles[k];
+                    var center = new Point3d(h.CX, h.CY, 0);
+                    var note = notes.OrderBy(n => n.TextPt.DistanceTo(center))
+                                    .FirstOrDefault(n => n.TextPt.DistanceTo(center) <= 3000.0);
+                    if (note == null)
+                    {
+                        note = new CutNote { Id = ObjectId.Null,
+                                             TextPt = new Point3d(h.MaxX + 600.0, h.MinY - 600.0, 0) };
+                        notes.Add(note);
+                    }
+                    note.Arrows[layerCode] = new List<Point3d>(kv.Value);
+                    note.Dirty = true;
+                }
+
+                // 3. Odtworzenie zmienionych opisów
+                foreach (var n in notes.Where(n => n.Dirty))
+                {
+                    if (!n.Id.IsNull)
+                    {
+                        using var tr = db.TransactionManager.StartTransaction();
+                        if (tr.GetObject(n.Id, OpenMode.ForWrite) is Entity e && !e.IsErased) e.Erase();
+                        tr.Commit();
+                    }
+                    var all = n.Arrows.Values.SelectMany(v => v).ToList();
+                    if (all.Count == 0) continue;
+                    var id = SingleBarEngine.PlaceNoteLeader(db, all, n.TextPt, CutToSuitText,
+                                                             125.0, 2, NoteTextStyle, NoteLayer);
+                    WriteCutNoteXData(db, id, n.Arrows);
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.UpdateCutToSuitNotes", ex); }
+        }
+
+        /// <summary>
+        /// Opisy CUT TO SUIT tej płyty: ze znacznikiem — gdy któraś strzałka leży w obrysie;
+        /// stare bez znacznika (poprzednia wersja) — gdy tekst jest w obrysie lub przy otworze
+        /// (traktowane jako do odtworzenia od zera).
+        /// </summary>
+        private static List<CutNote> ReadCutNotes(Database db, List<Point2d> slabVertices)
+        {
+            var result = new List<CutNote>();
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId oid in ms)
+            {
+                if (oid.IsErased) continue;
+                if (!(tr.GetObject(oid, OpenMode.ForRead) is MLeader ml)) continue;
+                if (ml.ContentType != ContentType.MTextContent) continue;
+                string txt;
+                try { txt = ml.MText?.Contents ?? ""; } catch { continue; }
+                if (txt.IndexOf("CUT TO", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                Point3d loc;
+                try { loc = ml.TextLocation; } catch { continue; }
+
+                var note = new CutNote { Id = oid, TextPt = loc };
+                var rb = ml.GetXDataForApplication(XCutNoteApp);
+                if (rb != null)
+                {
+                    var v = rb.AsArray();
+                    if (v.Length >= 2) note.Arrows = ParseNoteArrows(v[1].Value as string);
+                    bool mine = note.Arrows.Values.SelectMany(a => a)
+                        .Any(p => GeometryHelper.IsPointInsidePolygon(slabVertices, new Point2d(p.X, p.Y)));
+                    if (!mine) continue;
+                }
+                else
+                {
+                    bool near = GeometryHelper.IsPointInsidePolygon(slabVertices, new Point2d(loc.X, loc.Y))
+                        || _currentHoles.Any(h => loc.DistanceTo(new Point3d(h.CX, h.CY, 0)) <= 3000.0);
+                    if (!near) continue;
+                    note.Dirty = true;   // stary opis bez znacznika — odtworzymy (bez jego starych strzałek)
+                }
+                result.Add(note);
+            }
+            return result;
+        }
+
+        private static Dictionary<string, List<Point3d>> ParseNoteArrows(string s)
+        {
+            var d = new Dictionary<string, List<Point3d>>();
+            if (string.IsNullOrWhiteSpace(s)) return d;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var part in s.Split('|'))
+            {
+                int eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                var list = new List<Point3d>();
+                foreach (var pt in part.Substring(eq + 1).Split(';'))
+                {
+                    var xy = pt.Split(',');
+                    if (xy.Length == 2
+                        && double.TryParse(xy[0], System.Globalization.NumberStyles.Float, ci, out double x)
+                        && double.TryParse(xy[1], System.Globalization.NumberStyles.Float, ci, out double y))
+                        list.Add(new Point3d(x, y, 0));
+                }
+                if (list.Count > 0) d[part.Substring(0, eq)] = list;
+            }
+            return d;
+        }
+
+        private static void WriteCutNoteXData(Database db, ObjectId id, Dictionary<string, List<Point3d>> arrows)
+        {
+            if (id.IsNull) return;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            string data = string.Join("|", arrows.Where(kv => kv.Value.Count > 0).Select(kv =>
+                kv.Key + "=" + string.Join(";", kv.Value.Select(p => p.X.ToString("0.###", ci) + "," + p.Y.ToString("0.###", ci)))));
+            using var tr = db.TransactionManager.StartTransaction();
+            var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+            if (!rat.Has(XCutNoteApp))
+            {
+                rat.UpgradeOpen();
+                var rec = new RegAppTableRecord { Name = XCutNoteApp };
+                rat.Add(rec);
+                tr.AddNewlyCreatedDBObject(rec, true);
+            }
+            if (tr.GetObject(id, OpenMode.ForWrite) is Entity e)
+                e.XData = new ResultBuffer(
+                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, XCutNoteApp),
+                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, data));
+            tr.Commit();
+        }
+
+        // Teksty i style wg wzorca rysunku (otwor.dxf)
+        public const string CutToSuitText  = "REBARS \\PCUT TO \\PSUIT";
+        public const string NoteTextStyle  = "ROMANS NARROW";   // romans.shx, szer. 0.75
+        public const string NoteLayer      = "SD-Text";         // kolor 2
+        public const string TitleTextStyle = "ROMANS";
+        public const string TitleLayer     = "AP-TEXT";         // kolor 7
+
+
         /// <summary>Minimalny odstęp widocznego pręta od równoległej linii rozkładu / innego widocznego pręta.</summary>
         public const double RepresentativeClearance = 250.0;
 
@@ -1881,6 +2788,18 @@ namespace BricsCadRc.Core
             public bool   Horizontal;   // linia pozioma (stałe Y) albo pionowa (stałe X)
             public double C;            // współrzędna stała (Y dla poziomej, X dla pionowej)
             public double Lo, Hi;       // zakres wzdłuż linii
+        }
+
+        private static ParallelSeg RepSegFor(BarData bar, Point3d pos, int i)
+        {
+            bool barsX = bar.Direction == "X";
+            double skewMin = Math.Min(0, Math.Min(bar.SkewStart, bar.SkewEnd));
+            double skewMax = Math.Max(0, Math.Max(bar.SkewStart, bar.SkewEnd));
+            return barsX
+                ? new ParallelSeg { Horizontal = true,  C = pos.Y + i * bar.Spacing,
+                                    Lo = pos.X + skewMin, Hi = pos.X + bar.LengthA + skewMax }
+                : new ParallelSeg { Horizontal = false, C = pos.X + i * bar.Spacing,
+                                    Lo = pos.Y + skewMin, Hi = pos.Y + bar.LengthA + skewMax };
         }
 
         /// <summary>
@@ -1928,19 +2847,18 @@ namespace BricsCadRc.Core
             {
                 if (bar.VisibilityMode != BarVisibilityMode.Manual || bar.Count <= 1) continue;
                 if (!int.TryParse((bar.VisibleIndices ?? "").Split(',')[0].Trim(), out int pref)) continue;
+                if (!string.IsNullOrEmpty(bar.CutZones))
+                {
+                    // Rozkład z otworem: widoczne pręty (ucięty + cały) i strzałki opisu zostają,
+                    // ale są przeszkodą dla innych rozkładów
+                    foreach (var part in (bar.VisibleIndices ?? "").Split(','))
+                        if (int.TryParse(part.Trim(), out int vi) && vi >= 0 && vi < bar.Count)
+                            reps.Add(RepSegFor(bar, pos, vi));
+                    continue;
+                }
                 if (pref < 0 || pref >= bar.Count) pref = bar.Count / 2;
 
-                bool barsX = bar.Direction == "X";
-                ParallelSeg RepSeg(int i)
-                {
-                    double skewMin = Math.Min(0, Math.Min(bar.SkewStart, bar.SkewEnd));
-                    double skewMax = Math.Max(0, Math.Max(bar.SkewStart, bar.SkewEnd));
-                    return barsX
-                        ? new ParallelSeg { Horizontal = true,  C = pos.Y + i * bar.Spacing,
-                                            Lo = pos.X + skewMin, Hi = pos.X + bar.LengthA + skewMax }
-                        : new ParallelSeg { Horizontal = false, C = pos.X + i * bar.Spacing,
-                                            Lo = pos.Y + skewMin, Hi = pos.Y + bar.LengthA + skewMax };
-                }
+                ParallelSeg RepSeg(int i) => RepSegFor(bar, pos, i);
                 bool Collides(ParallelSeg seg)
                 {
                     foreach (var o in fixedLines.Concat(reps))
@@ -1951,14 +2869,18 @@ namespace BricsCadRc.Core
                     return false;
                 }
 
+                // Rozkład z otworem: widoczny pręt musi zostać jednym z prętów uciętych
+                var cuts = BarBlockEngine.ParseCutZones(bar.CutZones);
+                bool Allowed(int i) => cuts.Count == 0 || BarBlockEngine.IsBarCut(cuts, i * bar.Spacing);
+
                 int chosen = pref;
                 if (Collides(RepSeg(pref)))
                 {
                     for (int k = 1; k < bar.Count; k++)
                     {
                         int up = pref + k, dn = pref - k;
-                        if (up < bar.Count && !Collides(RepSeg(up))) { chosen = up; break; }
-                        if (dn >= 0       && !Collides(RepSeg(dn))) { chosen = dn; break; }
+                        if (up < bar.Count && Allowed(up) && !Collides(RepSeg(up))) { chosen = up; break; }
+                        if (dn >= 0       && Allowed(dn) && !Collides(RepSeg(dn))) { chosen = dn; break; }
                     }
                 }
                 if (chosen != pref)
@@ -2090,6 +3012,8 @@ namespace BricsCadRc.Core
             var barResult = BarBlockEngine.GenerateFromBounds(
                 db, x0, y0, x1, y1, distBar, horizontal: isXBars, posNr);
             if (!barResult.IsValid) return false;
+            _lastDistId = barResult.BlockRefId;
+            ApplySingleBarMark(db, barResult.BlockRefId, distBar);
             TagWithSlab(db, barResult.BlockRefId);
 
             // Step 2: leader points — dispatch per direction.
@@ -2120,8 +3044,8 @@ namespace BricsCadRc.Core
             // (Use explicit bounds, NOT barResult.MinPoint — circle markers via SymbolSide
             // pollute GeometricExtents by ±35mm, causing dist line misalignment.)
             var annotInsertPt = isXBars
-                ? new Point3d(x0 + lengthA / 2.0, y0, 0)
-                : new Point3d(x0, y0 + lengthA / 2.0, 0);
+                ? new Point3d(AnnotAlong(x0, lengthA), y0, 0)
+                : new Point3d(x0, AnnotAlong(y0, lengthA), 0);
 
             // Step 4: annotation (z odsunięciem opisu, jeśli koliduje z istniejącymi)
             distBar.LeaderPoints = AvoidLabelCollision(
@@ -2223,7 +3147,8 @@ namespace BricsCadRc.Core
 
             var last = pts[pts.Count - 1];
             var rect = RectFor(last);
-            for (int k = 0; k < 12 && LabelOverlaps(rect); k++)
+            // Detal: położenia opisów są zaplanowane (ArrangeAlong) — bez przesuwania w dal
+            for (int k = 0; k < 12 && !_labelsPlanned && LabelOverlaps(rect); k++)
             {
                 last = last + dir * (textLen + LabelGap);
                 rect = RectFor(last);
@@ -2243,7 +3168,7 @@ namespace BricsCadRc.Core
                 Position   = layerCode.StartsWith("B") ? "BOT" : "TOP",
                 LayerCode  = layerCode,
                 Direction  = "X",       // overridden in distribution path
-                AnnotScale = 1.0,
+                AnnotScale = _annotScaleOverride,
                 Cover      = DefaultCover,
                 Count      = 1,
             };
@@ -2277,8 +3202,8 @@ namespace BricsCadRc.Core
             bool leaderUp = distLastBarToSlabMax <= distFirstBarToSlabMin;
 
             double armEndY_world = leaderUp
-                ? slabMaxY + LeaderArmExtension
-                : slabMinY - LeaderArmExtension;
+                ? slabMaxY + LeaderArm
+                : slabMinY - LeaderArm;
 
             double armEndY_local = armEndY_world - annotInsertY_world;
 
@@ -2312,8 +3237,8 @@ namespace BricsCadRc.Core
             bool leaderRight = distLastBarToSlabMax <= distFirstBarToSlabMin;
 
             double armEndX_world = leaderRight
-                ? slabMaxX + LeaderArmExtension
-                : slabMinX - LeaderArmExtension;
+                ? slabMaxX + LeaderArm
+                : slabMinX - LeaderArm;
 
             double armEndX_local = armEndX_world - annotInsertX_world;
 

@@ -216,6 +216,107 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // PlaceNoteLeader — opis tekstowy (np. „REBARS CUT TO SUIT”) z kilkoma strzałkami,
+        // w stylu opisów rozkładów (wysokość 125, kolor żółty, styl opisów).
+        // AddNoteArrows — dopisuje strzałki do istniejącego opisu.
+        // ----------------------------------------------------------------
+
+        public static ObjectId PlaceNoteLeader(Database db, IList<Point3d> arrowTips, Point3d textPt,
+                                               string text, double textHeight = 125.0, short colorIndex = 2,
+                                               string textStyle = null, string layer = null)
+        {
+            if (arrowTips == null || arrowTips.Count == 0) return ObjectId.Null;
+            LayerManager.EnsureLayersExist(db);
+            if (textStyle != null) EnsureTextStyle(db, textStyle);
+            if (layer != null) EnsureLayer(db, layer, colorIndex);
+
+            using var tr  = db.TransactionManager.StartTransaction();
+            var space     = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var styleId   = EnsureMLeaderStyle(db, tr);
+
+            var mt = new MText();
+            mt.SetDatabaseDefaults(db);
+            mt.Contents   = text;
+            mt.TextHeight = textHeight;
+            mt.ColorIndex = colorIndex;
+            var stTable   = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            string styleName = textStyle ?? LayerManager.AnnotTextStyle;
+            if (stTable.Has(styleName))
+                mt.TextStyleId = stTable[styleName];
+            mt.Location = textPt;
+
+            var ml = new MLeader();
+            ml.SetDatabaseDefaults(db);
+            ml.MLeaderStyle = styleId;
+            ml.ContentType  = ContentType.MTextContent;
+            ml.MText        = mt;
+            ml.TextLocation = textPt;
+            ml.Layer        = layer ?? LayerManager.AnnotLayer;
+            ml.ColorIndex   = 256;
+
+            int li = ml.AddLeader();
+            foreach (var tip in arrowTips)
+            {
+                int lni = ml.AddLeaderLine(li);
+                ml.AddFirstVertex(lni, tip);
+                ml.AddLastVertex(lni, textPt);
+            }
+
+            space.AppendEntity(ml);
+            tr.AddNewlyCreatedDBObject(ml, true);
+            tr.Commit();
+            return ml.ObjectId;
+        }
+
+        /// <summary>Style tekstu wg wzorca rysunku: ROMANS NARROW (romans.shx, 0.75), ROMANS (romans.shx, 1.0).</summary>
+        public static ObjectId EnsureTextStyle(Database db, string name)
+        {
+            double xs = name.IndexOf("NARROW", StringComparison.OrdinalIgnoreCase) >= 0 ? 0.75 : 1.0;
+            using var tr = db.TransactionManager.StartTransaction();
+            var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            if (st.Has(name)) { var id0 = st[name]; tr.Commit(); return id0; }
+            st.UpgradeOpen();
+            var rec = new TextStyleTableRecord { Name = name, FileName = "romans.shx", XScale = xs, TextSize = 0 };
+            var id = st.Add(rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+            tr.Commit();
+            return id;
+        }
+
+        public static void EnsureLayer(Database db, string name, short color)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (!lt.Has(name))
+            {
+                lt.UpgradeOpen();
+                var rec = new LayerTableRecord { Name = name };
+                if (color > 0 && color < 256)
+                    rec.Color = Teigha.Colors.Color.FromColorIndex(Teigha.Colors.ColorMethod.ByAci, color);
+                lt.Add(rec);
+                tr.AddNewlyCreatedDBObject(rec, true);
+            }
+            tr.Commit();
+        }
+
+        public static void AddNoteArrows(Database db, ObjectId mleaderId, IList<Point3d> arrowTips)
+        {
+            if (mleaderId.IsNull || arrowTips == null || arrowTips.Count == 0) return;
+            using var tr = db.TransactionManager.StartTransaction();
+            if (!(tr.GetObject(mleaderId, OpenMode.ForWrite) is MLeader ml)) { tr.Commit(); return; }
+            var idxs = ml.GetLeaderIndexes();
+            int li = idxs != null && idxs.Count > 0 ? (int)idxs[0] : ml.AddLeader();
+            var textPt = ml.TextLocation;
+            foreach (var tip in arrowTips)
+            {
+                int lni = ml.AddLeaderLine(li);
+                ml.AddFirstVertex(lni, tip);
+                ml.AddLastVertex(lni, textPt);
+            }
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // ReadBarHandleFromLabel — odczytuje handle preta z XData MLeadera.
         // Zwraca null jeśli brak.
         // ----------------------------------------------------------------

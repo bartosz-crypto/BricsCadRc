@@ -151,6 +151,7 @@ namespace BricsCadRc.Core
             var    lw        = DiameterToLineWeight(bar.Diameter);
             var    cat       = ResolveSymbolCat(bar);
             var    visibleSet = GetVisibleIndices(bar.VisibilityMode, bar.VisibleIndices, count);
+            var    cuts       = ParseCutZones(bar.CutZones);
 
             for (int i = 0; i < count; i++)
             {
@@ -160,9 +161,13 @@ namespace BricsCadRc.Core
                 double xShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(xShift,            y, 0);
                 var    ptE = new Point3d(barWidth + xShift, y, 0);
-                var line = new Line(ptS, ptE) { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
-                btr.AppendEntity(line);
-                tr.AddNewlyCreatedDBObject(line, true);
+                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, y, xShift, barWidth + xShift))
+                {
+                    var line = new Line(new Point3d(a0, y, 0), new Point3d(a1, y, 0))
+                        { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
+                    btr.AppendEntity(line);
+                    tr.AddNewlyCreatedDBObject(line, true);
+                }
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
@@ -180,6 +185,7 @@ namespace BricsCadRc.Core
             var    lw         = DiameterToLineWeight(bar.Diameter);
             var    cat        = ResolveSymbolCat(bar);
             var    visibleSet = GetVisibleIndices(bar.VisibilityMode, bar.VisibleIndices, count);
+            var    cuts       = ParseCutZones(bar.CutZones);
 
             for (int i = 0; i < count; i++)
             {
@@ -189,9 +195,13 @@ namespace BricsCadRc.Core
                 double yShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(x, yShift,             0);
                 var    ptE = new Point3d(x, barHeight + yShift, 0);
-                var    line = new Line(ptS, ptE) { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
-                btr.AppendEntity(line);
-                tr.AddNewlyCreatedDBObject(line, true);
+                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, x, yShift, barHeight + yShift))
+                {
+                    var line = new Line(new Point3d(x, a0, 0), new Point3d(x, a1, 0))
+                        { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
+                    btr.AppendEntity(line);
+                    tr.AddNewlyCreatedDBObject(line, true);
+                }
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
@@ -266,6 +276,60 @@ namespace BricsCadRc.Core
         ///   LBar     → linia 45° dl.100mm; symbolSide: Left/Right; symbolDir: Up/Down
         ///   Straight → brak symbolu
         /// </summary>
+        /// <summary>"s0,s1,a0,a1;..." → lista stref cięcia (układ lokalny bloku).</summary>
+        public static List<(double s0, double s1, double a0, double a1)> ParseCutZones(string zones)
+        {
+            var list = new List<(double, double, double, double)>();
+            if (string.IsNullOrWhiteSpace(zones)) return list;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var part in zones.Split(';'))
+            {
+                var f = part.Split(',');
+                if (f.Length != 4) continue;
+                if (double.TryParse(f[0], System.Globalization.NumberStyles.Float, ci, out double s0)
+                    && double.TryParse(f[1], System.Globalization.NumberStyles.Float, ci, out double s1)
+                    && double.TryParse(f[2], System.Globalization.NumberStyles.Float, ci, out double a0)
+                    && double.TryParse(f[3], System.Globalization.NumberStyles.Float, ci, out double a1))
+                    list.Add((s0, s1, a0, a1));
+            }
+            return list;
+        }
+
+        public static string FormatCutZones(IEnumerable<(double s0, double s1, double a0, double a1)> zones)
+        {
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            return string.Join(";", zones.Select(z =>
+                string.Join(",", z.s0.ToString("0.###", ci), z.s1.ToString("0.###", ci),
+                                 z.a0.ToString("0.###", ci), z.a1.ToString("0.###", ci))));
+        }
+
+        /// <summary>Czy pręt o położeniu poprzecznym s jest przecięty którąś strefą.</summary>
+        public static bool IsBarCut(List<(double s0, double s1, double a0, double a1)> cuts, double s)
+        {
+            foreach (var z in cuts) if (s >= z.s0 - 1e-6 && s <= z.s1 + 1e-6) return true;
+            return false;
+        }
+
+        /// <summary>Odcinki pręta [lo, hi] po odjęciu stref cięcia, które go dotyczą.</summary>
+        public static List<(double, double)> BarPiecesAfterCuts(
+            List<(double s0, double s1, double a0, double a1)> cuts, double s, double lo, double hi)
+        {
+            var pieces = new List<(double, double)> { (lo, hi) };
+            foreach (var z in cuts)
+            {
+                if (s < z.s0 - 1e-6 || s > z.s1 + 1e-6) continue;
+                var next = new List<(double, double)>();
+                foreach (var (p0, p1) in pieces)
+                {
+                    if (z.a1 <= p0 || z.a0 >= p1) { next.Add((p0, p1)); continue; }
+                    if (z.a0 - p0 > 1.0) next.Add((p0, z.a0));
+                    if (p1 - z.a1 > 1.0) next.Add((z.a1, p1));
+                }
+                pieces = next;
+            }
+            return pieces;
+        }
+
         private static void AddBarSymbols(
             Transaction tr, BlockTableRecord btr, string layer,
             BarSymbolCategory cat, Point3d startPt, Point3d endPt,
@@ -730,7 +794,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [27] CountDisplay (-1 = null)
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.Flipped ? 1 : 0)),    // [28] Flipped
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.ShowSpacing    ? 1 : 0)), // [29] ShowSpacing
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0))  // [30] IsLabelManual
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)),  // [30] IsLabelManual
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? "")                   // [31] CutZones (otwory)
             );
         }
 
@@ -821,6 +886,12 @@ namespace BricsCadRc.Core
                 catch { bd.IsLabelManual = false; }
             }
             else bd.IsLabelManual = false;
+
+            if (v.Length >= 32)
+            {
+                try { bd.CutZones = v[31].Value as string ?? ""; }
+                catch { bd.CutZones = ""; }
+            }
 
             return bd;
         }

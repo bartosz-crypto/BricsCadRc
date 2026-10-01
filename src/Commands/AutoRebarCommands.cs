@@ -108,6 +108,51 @@ namespace BricsCadRc.Commands
                             "Widoczny pręt reprezentatywny — wszystkie: RC_SHOW_ALL_BARS.\n");
         }
 
+        /// <summary>
+        /// RC_DETAL_OTWORU — detal otworu: obramówka na planie (kolor 10, DASHED, skala 25) z opisem
+        /// DETAIL 'n' oraz w wskazanym miejscu rysunek detalu: pręty dodatkowe H16 (2 dołem + 2 górą
+        /// przy każdej krawędzi, ≥ 650 mm poza otwór, długość co 250) i U-bary przy krawędziach
+        /// otworu (rozmiar wg grubości płyty). Pręty liczą się w BBS.
+        /// </summary>
+        [CommandMethod("RC_DETAL_OTWORU", CommandFlags.Modal)]
+        public void HoleDetail()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+
+            var thickOpts = new PromptKeywordOptions("\nGrubość płyty [225/300] <300>: ") { AllowNone = true };
+            thickOpts.Keywords.Add("225");
+            thickOpts.Keywords.Add("300");
+            thickOpts.Keywords.Default = "300";
+            var thickRes = ed.GetKeywords(thickOpts);
+            if (thickRes.Status == PromptStatus.Cancel) return;
+            int thickness = 300;
+            if (thickRes.Status == PromptStatus.OK && !int.TryParse(thickRes.StringResult, out thickness))
+                thickness = 300;
+
+            var selOpts = new PromptEntityOptions("\nWskaż otwór (prostokąt z krzyżykiem): ");
+            selOpts.SetRejectMessage("\nTo nie jest polilinia.");
+            selOpts.AddAllowedClass(typeof(Polyline), true);
+            var selRes = ed.GetEntity(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+            if (!AutoRebarEngine.TryGetHole(doc.Database, selRes.ObjectId, out _, out _, out _, out _, out _))
+            {
+                ed.WriteMessage("\n[RC DETAL] Wskazana polilinia nie jest otworem (brak krzyżyka po przekątnych).\n");
+                return;
+            }
+
+            var ptRes = ed.GetPoint("\nWskaż miejsce detalu (środek) w wolnej części rysunku: ");
+            if (ptRes.Status != PromptStatus.OK) return;
+
+            try { AutoRebarEngine.GenerateHoleDetail(doc, selRes.ObjectId, ptRes.Value, thickness); }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_DETAL_OTWORU", ex);
+                ed.WriteMessage($"\n*** ERROR *** [RC DETAL] {ex.Message}\n");
+            }
+        }
+
         private static int Pos(int n) => n < 0 ? 0 : n;
 
         /// <summary>Jedna warstwa siatki — błąd jednej warstwy nie przerywa pozostałych.</summary>

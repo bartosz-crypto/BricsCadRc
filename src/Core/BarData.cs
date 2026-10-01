@@ -189,6 +189,13 @@ namespace BricsCadRc.Core
         /// </summary>
         public double AnnotScale { get; set; } = 1.0;
 
+        /// <summary>
+        /// Strefy przecięcia prętów otworem (pręty „cut to suit”), w układzie lokalnym bloku rozkładu:
+        /// "s0,s1,a0,a1;..." — pręty o położeniu poprzecznym s ∈ [s0, s1] mają usuniętą część
+        /// wzdłuż pręta a ∈ [a0, a1] (otwór + otulina). Puste = bez otworów.
+        /// </summary>
+        public string CutZones { get; set; } = "";
+
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 

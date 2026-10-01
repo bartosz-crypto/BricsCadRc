@@ -110,6 +110,7 @@ Ogólne:
 - Pręt min. **2500 mm**, chyba że geometria płyty wymusza krótszy (wtedy min. 1250). Max 6000.
 - **Mniej zakładów zdecydowanie lepiej.** Brak mijania zakładów w obrębie jednej warstwy.
 - Opisy rozkładów nie mogą na siebie nachodzić (`AvoidLabelCollision`, odstęp 150 mm).
+- **Rozkład z jednym prętem: opis bez rozstawu** (np. `1 H12-01 UB`, nie `1 H12-01-200 UB`) — `ApplySingleBarMark`.
 
 Dół (B1/B2, Ø10):
 - Zakład 400–650 mm, preferowany **450–550**.
