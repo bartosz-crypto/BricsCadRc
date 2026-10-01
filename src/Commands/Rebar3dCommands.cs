@@ -27,7 +27,7 @@ namespace BricsCadRc.Commands
     {
         private const string SlabLayer = "SD-PILED-RAFT";
         private const string App3d     = "RC_3D";
-        private const double ModelGapRight = 20000.0;   // za strefą szablonów
+        private const double ModelGapRight = 60000.0;   // od prawej krawędzi siatki górnej (albo dolnej)
         private const double PileDepth     = 1000.0;    // pokazany fragment pala pod płytą
 
         private sealed class Dist3d
@@ -37,6 +37,16 @@ namespace BricsCadRc.Commands
             public Point3d  Pos;
             public Vector3d Shift;       // góra → położenie płyty dolnej
             public double   LapOffset;   // przesunięcie poprzeczne (zakład)
+            public string   Code;        // warstwa w modelu (B1/B2/T1/T2) — dla prętów B+T z detalu osobno dół i góra
+            public bool     Detail;      // rozkład z rysunku detalu (przeniesiony na plan)
+        }
+
+        /// <summary>Detal wskazany przez użytkownika: obszar rysunku detalu i przesunięcie na plan.</summary>
+        private sealed class Detail3d
+        {
+            public int      Nr;
+            public Extents3d Frame;
+            public Vector3d ToPlan;      // punkt planu = punkt detalu + ToPlan
         }
 
         [CommandMethod("RC_SIATKA_3D", CommandFlags.Modal)]
@@ -47,7 +57,7 @@ namespace BricsCadRc.Commands
             var ed = doc.Editor;
             var db = doc.Database;
 
-            var thickOpts = new PromptKeywordOptions("\nGrubość płyty [225/300] <300>: ") { AllowNone = true };
+            var thickOpts = new PromptKeywordOptions("\nGrubość płyty") { AllowNone = true };
             thickOpts.Keywords.Add("225");
             thickOpts.Keywords.Add("300");
             thickOpts.Keywords.Default = "300";
@@ -59,25 +69,37 @@ namespace BricsCadRc.Commands
             var bottomId = PickOutline(ed, "\n[RC 3D] Wskaż obrys siatki DOLNEJ (B1, B2, U-bary): ", false);
             if (bottomId.IsNull) return;
             var topId = PickOutline(ed, "\n[RC 3D] Wskaż obrys siatki GÓRNEJ (T1, T2) <Enter = bez góry>: ", true);
+            var detailSel = PickDetails(ed);
 
             var sw = Stopwatch.StartNew();
             try
             {
                 using (doc.LockDocument())
+                {
+                // Otwory i pale PRZED główną transakcją — te funkcje używają własnej transakcji
+                // open/close, która zamykała obiekty (model space) otwarte do zapisu w głównej
+                // → eNotOpenForWrite.
+                var holes = AutoRebarEngine.FindHoleBoxes(db, bottomId);
+                var piles = AutoRebarEngine.FindPilesFor(db, bottomId);
+                var details = ResolveDetails(db, ed, detailSel, holes);
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     var bottomPl = (Polyline)tr.GetObject(bottomId, OpenMode.ForRead);
                     var bVerts = GeometryHelper.GetPolylineVertices(bottomPl);
                     var bBox = GeometryHelper.PolylineBbox(bottomPl);
 
-                    var dists = ReadDistributions(tr, db, bVerts, new Vector3d(), bottomOnly: true);
+                    var dists = ReadDistributions(tr, db, bVerts, new Vector3d(), bottomOnly: true, details);
+                    double rightEdge = bBox.MaxPoint.X;   // model: ModelGapRight od prawej krawędzi siatki górnej
                     if (!topId.IsNull && topId != bottomId)
                     {
                         var topPl = (Polyline)tr.GetObject(topId, OpenMode.ForRead);
                         var tBox = GeometryHelper.PolylineBbox(topPl);
+                        rightEdge = tBox.MaxPoint.X;
                         var shift = new Vector3d(bBox.MinPoint.X - tBox.MinPoint.X, bBox.MinPoint.Y - tBox.MinPoint.Y, 0);
-                        dists.AddRange(ReadDistributions(tr, db, GeometryHelper.GetPolylineVertices(topPl), shift, bottomOnly: false));
+                        dists.AddRange(ReadDistributions(tr, db, GeometryHelper.GetPolylineVertices(topPl), shift, bottomOnly: false, details));
                     }
+                    int planCount = dists.Count;
+                    dists.AddRange(ReadDetailDistributions(tr, db, details, dists));
                     if (dists.Count == 0)
                     {
                         ed.WriteMessage("\n[RC 3D] Brak rozkładów na wskazanych obrysach — najpierw RC_GENERUJ_SIATKA.\n");
@@ -85,7 +107,7 @@ namespace BricsCadRc.Commands
                     }
 
                     // Średnice i poziomy osi warstw
-                    int D(string code, int def) => dists.Where(d => d.Bar.LayerCode == code && IsStraight(d.Bar))
+                    int D(string code, int def) => dists.Where(d => !d.Detail && d.Bar.LayerCode == code && IsStraight(d.Bar))
                                                         .Select(d => d.Bar.Diameter).DefaultIfEmpty(def).First();
                     double cover = AutoRebarEngine.DefaultCover;
                     int dB1 = D("B1", 10), dB2 = D("B2", 10), dT1 = D("T1", 12), dT2 = D("T2", 12);
@@ -99,7 +121,7 @@ namespace BricsCadRc.Commands
 
                     AssignLapOffsets(dists);
 
-                    var place = new Vector3d(bBox.MaxPoint.X + ModelGapRight - bBox.MinPoint.X, 0, 0);
+                    var place = new Vector3d(rightEdge + ModelGapRight - bBox.MinPoint.X, 0, 0);
                     EnsureLayers(tr, db);
                     EnsureApp(tr, db);
                     string prefix = "RC_3D_" + bottomId.Handle.Value.ToString("X") + "_";
@@ -127,11 +149,9 @@ namespace BricsCadRc.Commands
                     }
 
                     // Beton z otworami
-                    var holes = AutoRebarEngine.FindHoleBoxes(db, bottomId);
                     Group("BETON", "RC-3D-BETON", "", new[] { SlabSolid(bVerts, holes, h) });
 
                     // Pale (fragment pod płytą)
-                    var piles = AutoRebarEngine.FindPilesFor(db, bottomId);
                     if (piles.Count > 0)
                         Group("PALE", "RC-3D-PALE", "", piles.Select(p =>
                             (Entity)Cylinder(new Point3d(p.c.X, p.c.Y, -PileDepth), new Point3d(p.c.X, p.c.Y, 0), p.r, "RC-3D-PALE")));
@@ -140,8 +160,8 @@ namespace BricsCadRc.Commands
                     foreach (var d in dists.Where(d => IsStraight(d.Bar)))
                     {
                         var bar = d.Bar;
-                        if (!z.TryGetValue(bar.LayerCode ?? "", out double zz)) continue;
-                        string layer = "RC-3D-" + bar.LayerCode;
+                        if (!z.TryGetValue(d.Code ?? "", out double zz)) continue;
+                        string layer = "RC-3D-" + d.Code;
                         double r = bar.Diameter / 2.0;
                         var cuts = BarBlockEngine.ParseCutZones(bar.CutZones);
                         bool barsX = bar.Direction == "X";
@@ -160,7 +180,8 @@ namespace BricsCadRc.Commands
                             }
                             bars++;
                         }
-                        Group(bar.Mark, layer, d.Id.Handle.Value.ToString("X"), ents);
+                        Group((d.Detail ? "D_" : "") + bar.Mark + (d.Code != bar.LayerCode ? "_" + d.Code : ""),
+                              layer, d.Id.Handle.Value.ToString("X"), ents);
                     }
 
                     // U-bary
@@ -187,14 +208,18 @@ namespace BricsCadRc.Commands
                             ents.Add(UBarSolid(leg + d.Shift, inward, bar.LengthA, zb, zt, du, 2.0 * du));
                             bars++;
                         }
-                        Group(bar.Mark, "RC-3D-UB", d.Id.Handle.Value.ToString("X"), ents);
+                        Group((d.Detail ? "D_" : "") + bar.Mark, "RC-3D-UB", d.Id.Handle.Value.ToString("X"), ents);
                     }
 
                     tr.Commit();
                     sw.Stop();
+                    if (details.Count > 0)
+                        ed.WriteMessage($"\n[RC 3D] Detale: {string.Join(", ", details.Select(x => "'" + x.Nr + "'"))} — " +
+                                        $"{dists.Count - planCount} rozkładów przeniesionych na plan.");
                     ed.WriteMessage($"\n[RC 3D] Model: {bars} prętów w {groups} grupach (1 grupa = 1 rozkład 2D), " +
                                     $"{solids} brył, płyta {h:F0} mm, {sw.ElapsedMilliseconds} ms. " +
                                     $"Model {ModelGapRight:F0} mm na prawo od płyty. Widok: _-VIEW _SWISO, _SHADEMODE _R.\n");
+                }
                 }
             }
             catch (System.Exception ex)
@@ -223,7 +248,7 @@ namespace BricsCadRc.Commands
 
         /// <summary>Rozkłady RC wewnątrz obrysu (dół: B1/B2 i U-bary; góra: T1/T2).</summary>
         private static List<Dist3d> ReadDistributions(Transaction tr, Database db, List<Point2d> verts,
-                                                      Vector3d shift, bool bottomOnly)
+                                                      Vector3d shift, bool bottomOnly, List<Detail3d> details)
         {
             var list = new List<Dist3d>();
             var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
@@ -237,7 +262,167 @@ namespace BricsCadRc.Commands
                 bool isTop    = code == "T1" || code == "T2";
                 if (bottomOnly ? !isBottom : !isTop) continue;
                 if (!GeometryHelper.IsPointInsidePolygon(verts, new Point2d(br.Position.X, br.Position.Y))) continue;
-                list.Add(new Dist3d { Id = id, Bar = bar, Pos = br.Position, Shift = shift });
+                if (details.Any(dt => Inside(dt.Frame, br.Position))) continue;   // rysunek detalu na płycie
+                list.Add(new Dist3d { Id = id, Bar = bar, Pos = br.Position, Shift = shift, Code = bar.LayerCode });
+            }
+            return list;
+        }
+
+
+        private static bool Inside(Extents3d e, Point3d p)
+            => p.X >= e.MinPoint.X - 1 && p.X <= e.MaxPoint.X + 1 && p.Y >= e.MinPoint.Y - 1 && p.Y <= e.MaxPoint.Y + 1;
+
+        /// <summary>Wybór ramek detali (Enter = bez detali). Wystarczy kliknąć ramkę albo zaznaczyć cały detal oknem.</summary>
+        private static List<ObjectId> PickDetails(Editor ed)
+        {
+            var opts = new PromptSelectionOptions
+            {
+                MessageForAdding = "\n[RC 3D] Zaznacz detale (ramki DETAIL, można oknem) <Enter = bez detali>: ",
+                AllowDuplicates = false,
+            };
+            var filter = new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "LWPOLYLINE") });
+            var res = ed.GetSelection(opts, filter);
+            return res.Status == PromptStatus.OK ? res.Value.GetObjectIds().ToList() : new List<ObjectId>();
+        }
+
+        /// <summary>
+        /// Ramki detali → przesunięcie detal → plan. Można wskazać ramkę rysunku detalu ALBO obramówkę
+        /// otworu na planie (wtedy rysunek detalu jest szukany po otworze o tych samych wymiarach).
+        /// Ramka rysunku z XData RC_DETAIL ma przesunięcie zapisane; starsze — dopasowanie po wymiarach otworu.
+        /// Wywoływać POZA główną transakcją (TryGetHole używa własnej transakcji).
+        /// </summary>
+        private sealed class FrameInfo
+        {
+            public ObjectId Id; public Extents3d Ext; public bool Tagged; public int Nr; public Vector3d ToPlan;
+            public (double x0, double y0, double x1, double y1)? Hole;   // otwór narysowany w ramce
+            public bool IsPlan;                                          // obramówka otworu płyty
+        }
+
+        private static List<Detail3d> ResolveDetails(Database db, Editor ed, List<ObjectId> sel,
+                                                     List<(double minX, double minY, double maxX, double maxY)> planHoles)
+        {
+            var result = new List<Detail3d>();
+            if (sel.Count == 0) return result;
+
+            // 1. Wszystkie ramki (kolor 10 albo z RC_DETAIL) i kandydaci na otwory w ramkach
+            var frames = new List<FrameInfo>();
+            var cand = new List<(ObjectId id, Extents3d ext)>();
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)
+                        || !GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                    if (SingleBarEngine.ReadBarXData(pl) != null) continue;
+                    var ext = GeometryHelper.PolylineBbox(pl);
+                    if (AutoRebarEngine.TryReadDetailFrame(pl, out int nr, out double dx, out double dy))
+                        frames.Add(new FrameInfo { Id = id, Ext = ext, Tagged = true, Nr = nr, ToPlan = new Vector3d(-dx, -dy, 0) });
+                    else if (pl.ColorIndex == 10)
+                        frames.Add(new FrameInfo { Id = id, Ext = ext });
+                    else if (pl.NumberOfVertices <= 5)
+                        cand.Add((id, ext));
+                }
+                tr.Commit();
+            }
+            foreach (var f in frames)
+            {
+                // największy otwór w ramce (w ramce rysunku detalu jest jeden)
+                foreach (var c in cand.Where(c => Inside(f.Ext, c.ext.MinPoint) && Inside(f.Ext, c.ext.MaxPoint))
+                                      .OrderByDescending(c => (c.ext.MaxPoint - c.ext.MinPoint).Length))
+                {
+                    if (!AutoRebarEngine.TryGetHole(db, c.id, out double x0, out double y0, out double x1, out double y1, out _)) continue;
+                    f.Hole = (x0, y0, x1, y1);
+                    f.IsPlan = planHoles.Any(p => Math.Abs(p.minX - x0) < 1 && Math.Abs(p.minY - y0) < 1
+                                               && Math.Abs(p.maxX - x1) < 1 && Math.Abs(p.maxY - y1) < 1);
+                    break;
+                }
+            }
+            bool SameSize((double x0, double y0, double x1, double y1) a, double bx0, double by0, double bx1, double by1)
+                => Math.Abs((a.x1 - a.x0) - (bx1 - bx0)) < 5 && Math.Abs((a.y1 - a.y0) - (by1 - by0)) < 5;
+            var drawings = frames.Where(f => f.Hole != null && !f.IsPlan).ToList();
+
+            void AddDetail(FrameInfo f, Vector3d toPlan)
+            {
+                if (result.Any(r => r.Frame.MinPoint.DistanceTo(f.Ext.MinPoint) < 1)) return;
+                result.Add(new Detail3d { Nr = f.Nr, Frame = f.Ext, ToPlan = toPlan });
+            }
+
+            int skipped = 0;
+            foreach (var id in sel)
+            {
+                var f = frames.FirstOrDefault(x => x.Id == id);
+                if (f == null || f.Hole == null) continue;
+                var h = f.Hole.Value;
+                if (f.IsPlan)
+                {
+                    // Obramówka na planie → rysunek detalu tego otworu
+                    var hit = drawings.Where(d => d.Tagged && Math.Abs(d.Hole.Value.x0 + d.ToPlan.X - h.x0) < 1
+                                                           && Math.Abs(d.Hole.Value.y0 + d.ToPlan.Y - h.y0) < 1).ToList();
+                    if (hit.Count == 0)
+                        hit = drawings.Where(d => !d.Tagged && SameSize(d.Hole.Value, h.x0, h.y0, h.x1, h.y1)).ToList();
+                    if (hit.Count == 1)
+                        AddDetail(hit[0], hit[0].Tagged ? hit[0].ToPlan
+                                                        : new Vector3d(h.x0 - hit[0].Hole.Value.x0, h.y0 - hit[0].Hole.Value.y0, 0));
+                    else
+                    {
+                        skipped++;
+                        ed.WriteMessage($"\n[RC 3D] Otwór {h.x1 - h.x0:F0}×{h.y1 - h.y0:F0}: " +
+                                        (hit.Count == 0 ? "nie znaleziono rysunku detalu." : "kilka pasujących detali — wskaż ramkę rysunku detalu."));
+                    }
+                }
+                else if (f.Tagged) AddDetail(f, f.ToPlan);
+                else
+                {
+                    // Ramka rysunku detalu bez znacznika → otwór płyty o tych samych wymiarach
+                    var match = planHoles.Where(p => SameSize(h, p.minX, p.minY, p.maxX, p.maxY)).ToList();
+                    if (match.Count == 1) AddDetail(f, new Vector3d(match[0].minX - h.x0, match[0].minY - h.y0, 0));
+                    else
+                    {
+                        skipped++;
+                        ed.WriteMessage($"\n[RC 3D] Detal {h.x1 - h.x0:F0}×{h.y1 - h.y0:F0}: " +
+                                        (match.Count == 0 ? "brak takiego otworu na płycie." : "kilka takich otworów — kliknij obramówkę otworu na planie.") +
+                                        " (Albo wygeneruj detal ponownie RC_DETAL_OTWORU.)");
+                    }
+                }
+            }
+            if (result.Count == 0 && skipped == 0)
+                ed.WriteMessage("\n[RC 3D] W zaznaczeniu nie ma ramki detalu (obramówka kolor 10 z otworem w środku).");
+            return result;
+        }
+
+        /// <summary>
+        /// Rozkłady z rysunków detali, przeniesione na plan. Pręty „B+T ADD” (opis 2 dołem + 2 górą) → dwie kopie:
+        /// w warstwie dolnej i górnej o tym samym kierunku co siatka. U-bary jak na krawędziach płyty.
+        /// </summary>
+        private static List<Dist3d> ReadDetailDistributions(Transaction tr, Database db, List<Detail3d> details, List<Dist3d> plan)
+        {
+            var list = new List<Dist3d>();
+            if (details.Count == 0) return list;
+            string CodeFor(string dir, bool top)
+            {
+                var hit = plan.FirstOrDefault(d => IsStraight(d.Bar) && d.Bar.Direction == dir
+                                                   && (d.Bar.LayerCode ?? "").StartsWith(top ? "T" : "B"));
+                if (hit != null) return hit.Bar.LayerCode;
+                return top ? (dir == "X" ? "T1" : "T2") : (dir == "X" ? "B1" : "B2");
+            }
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                var bar = BarBlockEngine.ReadXData(br);
+                if (bar == null || Math.Abs(br.Rotation) > 1e-6) continue;
+                var dt = details.FirstOrDefault(x => Inside(x.Frame, br.Position));
+                if (dt == null) continue;
+                Dist3d Make(string code) => new Dist3d { Id = id, Bar = bar, Pos = br.Position, Shift = dt.ToPlan, Code = code, Detail = true };
+                if (!IsStraight(bar)) { list.Add(Make(bar.LayerCode)); continue; }
+                bool bt = (bar.Mark ?? "").IndexOf("B+T", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (bt)
+                {
+                    list.Add(Make(CodeFor(bar.Direction, false)));
+                    list.Add(Make(CodeFor(bar.Direction, true)));
+                }
+                else list.Add(Make(bar.LayerCode));
             }
             return list;
         }
@@ -248,7 +433,7 @@ namespace BricsCadRc.Commands
         /// </summary>
         private static void AssignLapOffsets(List<Dist3d> dists)
         {
-            foreach (var g in dists.Where(d => IsStraight(d.Bar))
+            foreach (var g in dists.Where(d => IsStraight(d.Bar) && !d.Detail)
                                    .GroupBy(d => (d.Bar.LayerCode, d.Bar.Direction,
                                                   Math.Round((d.Bar.Direction == "X" ? d.Pos.Y : d.Pos.X) / 10.0))))
             {

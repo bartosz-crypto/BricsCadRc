@@ -2052,6 +2052,7 @@ namespace BricsCadRc.Core
                     double ext = Math.Max(lenX, lenY) / 2 + 600;     // zasięg detalu (opisy wychodzą poza)
                     double fx0 = cx - ext, fx1 = cx + ext, fy0 = cy - ext, fy1 = cy + ext;
                     var detailFrameId = DrawRect(db, fx0, fy0, fx1, fy1, holeLayer, 10, frameLtId, 25.0);
+                    TagDetailFrame(db, detailFrameId, nr, dx, dy);
                     double maxArmY = 0;   // najdłuższe ramię opisów pionowych (w dół) — pod nimi tytuł
 
                     // Strefa szablonów detalu: po prawej stronie, za opisami prawej krawędzi
@@ -2134,6 +2135,53 @@ namespace BricsCadRc.Core
                             $"{SnapUp(w + 2 * HoleTrimmerExtension):F0}/{SnapUp(h + 2 * HoleTrimmerExtension):F0} mm, " +
                             $"U-bary: {cutX} przy krawędziach pionowych, {cutY} przy poziomych.\n");
             return nr;
+        }
+
+        /// <summary>XData ramki detalu: numer i przesunięcie detal → plan (dla modelu 3D).</summary>
+        public const string XDetailApp = "RC_DETAIL";
+
+        /// <summary>
+        /// Znacznik ramki detalu: [1] numer, [2] dx, [3] dy — przesunięcie rysunku detalu względem
+        /// miejsca na planie (punkt planu = punkt detalu − (dx, dy)). Ogólne: otwory, w przyszłości belki.
+        /// </summary>
+        private static void TagDetailFrame(Database db, ObjectId frameId, int nr, double dx, double dy)
+        {
+            if (frameId.IsNull) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has(XDetailApp))
+                {
+                    rat.UpgradeOpen();
+                    var rec = new RegAppTableRecord { Name = XDetailApp };
+                    rat.Add(rec);
+                    tr.AddNewlyCreatedDBObject(rec, true);
+                }
+                var ent = (Entity)tr.GetObject(frameId, OpenMode.ForWrite);
+                ent.XData = new ResultBuffer(
+                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, XDetailApp),
+                    new TypedValue((int)DxfCode.ExtendedDataInteger32, nr),
+                    new TypedValue((int)DxfCode.ExtendedDataReal, dx),
+                    new TypedValue((int)DxfCode.ExtendedDataReal, dy));
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.TagDetailFrame", ex); }
+        }
+
+        /// <summary>Odczyt znacznika ramki detalu (false = to nie jest oznaczona ramka detalu).</summary>
+        public static bool TryReadDetailFrame(Entity ent, out int nr, out double dx, out double dy)
+        {
+            nr = 0; dx = dy = 0;
+            var rb = ent?.GetXDataForApplication(XDetailApp);
+            if (rb == null) return false;
+            var v = rb.AsArray();
+            rb.Dispose();
+            if (v.Length < 4) return false;
+            nr = Convert.ToInt32(v[1].Value);
+            dx = Convert.ToDouble(v[2].Value);
+            dy = Convert.ToDouble(v[3].Value);
+            return true;
         }
 
         /// <summary>Ramię opisu w detalu: odstęp od ramki + długość tekstu w skali detalu.</summary>

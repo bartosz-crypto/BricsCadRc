@@ -133,6 +133,13 @@ Geometria:
 - Rozkłady znakowane obrysem płyty (`RC_AUTOREBAR_SLAB`) — ponowne generowanie usuwa tylko rozkłady
   tej płyty i tej warstwy.
 
+## 4a. Model 3D (RC_SIATKA_3D)
+- Model poglądowy budowany z rozkładów 2D (2D jest źródłem); ponowne wywołanie kasuje poprzedni model płyty.
+- Położenie: 60 000 mm na prawo od prawej krawędzi siatki górnej (bez góry — od dolnej).
+- Detale (otwory, w przyszłości belki): użytkownik zaznacza ramki detali; rozkłady z rysunku detalu
+  przenoszone są na plan. Ramka detalu ma XData `RC_DETAIL` [nr, dx, dy] (punkt planu = punkt detalu − (dx, dy)).
+  Pręty „B+T ADD” → kopia w warstwie dolnej i górnej o tym samym kierunku.
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD).
 2. Użytkownik akceptuje plan (przy większych zmianach).
