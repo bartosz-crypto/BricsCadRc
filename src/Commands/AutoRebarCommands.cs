@@ -75,7 +75,8 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            int nB1 = 0, nB2 = 0, nU1 = 0, nU2 = 0, nT1 = 0, nT2 = 0;
+            int nB1 = 0, nB2 = 0, nU1 = 0, nU2 = 0, nU3 = 0, nT1 = 0, nT2 = 0;
+            bool hasNib = NibDetector.Detect(db, bottomId) != null;
             try
             {
                 nB1 = Run(ed, "B1", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "X", "B1",
@@ -86,6 +87,10 @@ namespace BricsCadRc.Commands
                                                thickness, "X", representativeOnly: true));
                 nU2 = Run(ed, "UB B2", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B2",
                                                thickness, "Y", representativeOnly: true));
+                // Nib: UB 03 przy krawędzi zewnętrznej (UB 01/02 stoją wtedy na uskoku)
+                if (hasNib)
+                    nU3 = Run(ed, "UB NIB", () => AutoRebarEngine.GenerateNibUBLayer(doc, bottomId, "rebar_bottom",
+                                                   representativeOnly: true));
                 // Góra liczy zakłady względem właśnie wygenerowanego dołu (≥ 750 mm)
                 nT1 = Run(ed, "T1", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "X", "T1",
                                                diameter: 12, representativeOnly: true));
@@ -104,7 +109,8 @@ namespace BricsCadRc.Commands
             }
 
             ed.WriteMessage($"\n[RC SIATKA] Gotowe. Rozkłady: B1={Pos(nB1)}, B2={Pos(nB2)}, " +
-                            $"UB B1={Pos(nU1)}, UB B2={Pos(nU2)}, T1={Pos(nT1)}, T2={Pos(nT2)}. " +
+                            $"UB B1={Pos(nU1)}, UB B2={Pos(nU2)}" + (hasNib ? $", UB NIB={Pos(nU3)}" : "") +
+                            $", T1={Pos(nT1)}, T2={Pos(nT2)}" + (hasNib ? " (z T IN NIB)" : "") + ". " +
                             "Widoczny pręt reprezentatywny — wszystkie: RC_SHOW_ALL_BARS.\n");
         }
 

@@ -15,11 +15,11 @@ namespace BricsCadRc.Core
         private const string DictKey = "RC_SLAB_POS_COUNTER";
 
         /// <summary>
-        /// Pozycje 01 i 02 są zarezerwowane dla UB (UB B1 = 01, UB B2 = 02).
-        /// Automatyczna numeracja (AutoRebar, RC_BAR, RC_DISTRIBUTION) zaczyna od 03,
+        /// Pozycje 01, 02 i 03 są zarezerwowane dla UB (UB B1 = 01, UB B2 = 02, UB w nibie = 03).
+        /// Automatyczna numeracja (AutoRebar, RC_BAR, RC_DISTRIBUTION) zaczyna od 04 (jak ASD),
         /// żeby UB mogły zawsze dostać swoje numery niezależnie od kolejności komend.
         /// </summary>
-        public const int FirstAutoNumber = 3;
+        public const int FirstAutoNumber = 4;
 
         /// <summary>Numery ≥ 500 to osobna seria (RC_PUNCHING_SUMMARY_BARS: 501, 502…) — nie wpływają na licznik.</summary>
         public const int SeparateSeriesStart = 500;

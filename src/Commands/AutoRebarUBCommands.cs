@@ -101,5 +101,35 @@ namespace BricsCadRc.Commands
                 if (isDrawn) SlabPicker.Cleanup(db, slabId);
             }
         }
+
+        /// <summary>
+        /// RC_GENERUJ_UB_NIB — UB 03 (H10, shape 13, 610-70-610 @200) w nibie, przy krawędzi zewnętrznej,
+        /// na wszystkich krawędziach z nibem (obie osie). Nib = linia uskoku &lt; 255 mm od krawędzi.
+        /// </summary>
+        [CommandMethod("RC_GENERUJ_UB_NIB", CommandFlags.Modal)]
+        public void GenerateUBNib()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
+            if (slabId.IsNull) return;
+            try
+            {
+                int n = AutoRebarEngine.GenerateNibUBLayer(doc, slabId, "rebar_bottom");
+                ed.WriteMessage($"\n[AutoRebar UB NIB] Rozkłady UB 03: {n}.\n");
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[AutoRebar UB NIB] Blad: {ex.Message}\n");
+                Log.Error("AutoRebarUBCommands.GenerateUBNib", ex);
+            }
+            finally
+            {
+                if (isDrawn) SlabPicker.Cleanup(db, slabId);
+            }
+        }
     }
 }
