@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
@@ -33,6 +34,11 @@ namespace BricsCadRc.Core
         // Teraz baseline jest brany na początku każdej komendy i czyszczony na jej końcu.
         private static readonly Dictionary<ObjectId, Point3d> _preAxisStart =
             new Dictionary<ObjectId, Point3d>();
+
+        // Obrys pręta (wierzchołki) przed komendą — do rozpoznania gripa na KOŃCU pręta
+        // (przesunięty narożnik/bok końca → zmiana długości odcinka końcowego zamiast cofania).
+        private static readonly Dictionary<ObjectId, List<Point3d>> _preOutline =
+            new Dictionary<ObjectId, List<Point3d>>();
 
         // MLeadery zmodyfikowane w bieżącej komendzie przez użytkownika (np. MOVE pręt + etykieta
         // razem) — takich nie przesuwamy drugi raz.
@@ -75,6 +81,7 @@ namespace BricsCadRc.Core
         {
             _pending.Clear();
             _preAxisStart.Clear();
+            _preOutline.Clear();
             _modifiedLeaders.Clear();
         }
 
@@ -94,6 +101,9 @@ namespace BricsCadRc.Core
                 if (bar == null) return;
                 _preAxisStart[pl.ObjectId] =
                     SingleBarEngine.GetAxisFirstPointFromOutline(pl, bar.ShapeCode ?? "00");
+                var verts = new List<Point3d>(pl.NumberOfVertices);
+                for (int i = 0; i < pl.NumberOfVertices; i++) verts.Add(pl.GetPoint3dAt(i));
+                _preOutline[pl.ObjectId] = verts;
             }
             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.OnObjectOpenedForModify", ex); }
         }
@@ -126,6 +136,188 @@ namespace BricsCadRc.Core
 
         private static void OnCommandCancelled(object sender, CommandEventArgs e)
             => ResetCommandState();
+
+        // ----------------------------------------------------------------
+        // Grip na końcu pręta
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Rozpoznaje ruch tylko wierzchołków KOŃCA obrysu (start: 0 i ostatni; koniec: n−1 i n) i liczy
+        /// nową długość odcinka końcowego (rzut przesunięcia na oś pręta). Parametr kształtu wybierany
+        /// automatycznie: ten, którego zmiana wydłuża tylko ten koniec (dla 00 — A, dla 21 — A albo C itd.).
+        /// False → zwykła ścieżka (MOVE / STRETCH całości / cofnięcie złej edycji).
+        /// </summary>
+        private static bool TryEndStretch(Polyline pl, BarData bar, List<Point3d> pre,
+                                          out BarData result, out Point3d newAxisStart, out string why)
+        {
+            result = null; newAxisStart = Point3d.Origin; why = null;
+            string shapeCode = bar.ShapeCode ?? "00";
+            int total = pl.NumberOfVertices;
+            if (shapeCode == "44" || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
+            int n = total / 2;
+
+            var moved = new List<int>();
+            for (int i = 0; i < total; i++)
+                if (pl.GetPoint3dAt(i).DistanceTo(pre[i]) > 0.01) moved.Add(i);
+            if (moved.Count == 0 || moved.Count == total) return false;   // brak zmiany / MOVE
+
+            var startSet = new HashSet<int> { 0, total - 1 };
+            var endSet   = new HashSet<int> { n - 1, n };
+            bool atStart = moved.All(startSet.Contains);
+            bool atEnd   = moved.All(endSet.Contains);
+            if (!atStart && !atEnd) return false;   // ruch w środku pręta → cofnięcie jak dotąd
+
+            // Oś pręta sprzed edycji
+            var axis = new List<Point3d>(n);
+            for (int i = 0; i < n; i++)
+                axis.Add(new Point3d((pre[i].X + pre[total - 1 - i].X) / 2, (pre[i].Y + pre[total - 1 - i].Y) / 2, 0));
+            var outward = atStart ? axis[0] - axis[1] : axis[n - 1] - axis[n - 2];
+            if (outward.Length < 1e-6) return false;
+            outward = outward.GetNormal();
+
+            double delta = moved.Average(i => (pl.GetPoint3dAt(i) - pre[i]).DotProduct(outward));
+            if (Math.Abs(delta) < 0.5) return false;
+
+            var shape = ShapeCodeLibrary.Get(shapeCode) ?? ShapeCodeLibrary.Get("00");
+            int k = FindEndParam(shape, bar.ParamValues, bar.Diameter, atStart, delta);
+            if (k < 0)
+            {
+                why = $"Pręt {bar.Mark} (kształt {shapeCode}): tego końca nie da się zmienić gripem — użyj RC_EDIT_BAR.";
+                return false;
+            }
+            var pv = bar.ParamValues;
+            double newVal = pv[k] + delta;
+            if (newVal < Math.Max(2.0 * bar.Diameter, 50.0))
+            {
+                why = $"Pręt {bar.Mark}: za krótki odcinek ({newVal:F0} mm) — zmiana cofnięta.";
+                return false;
+            }
+
+            result = bar;   // świeży odczyt XData — można zmieniać
+            SetParam(result, k, newVal);
+            if (!result.LengthOverridden)
+            {
+                try
+                {
+                    var p = result.ParamValues.Take(shape.Parameters.Length).ToArray();
+                    result.TotalLength = shape.CalculateTotalLength(p, result.Diameter);
+                }
+                catch (System.Exception ex) { Log.Error("BarGeometryWatcher.TotalLength", ex); }
+            }
+            newAxisStart = atStart ? axis[0] + outward * delta : axis[0];
+            return true;
+        }
+
+        /// <summary>Parametr, którego zmiana o delta wydłuża tylko dany koniec (reszta kształtu bez zmian).</summary>
+        private static int FindEndParam(BarShape shape, double[] pv, double d, bool atStart, double delta)
+        {
+            var old = BarGeometryBuilder.GetLocalPoints(shape.Code, pv, d);
+            if (old == null || old.Count < 2) return -1;
+            int n = old.Count;
+            (double X, double Y) Sub((double X, double Y) a, (double X, double Y) b) => (a.X - b.X, a.Y - b.Y);
+            double Len((double X, double Y) v) => Math.Sqrt(v.X * v.X + v.Y * v.Y);
+            var dir = atStart ? Sub(old[0], old[1]) : Sub(old[n - 1], old[n - 2]);
+            double dl = Len(dir);
+            if (dl < 1e-9) return -1;
+            dir = (dir.X / dl, dir.Y / dl);
+
+            int count = Math.Min(pv.Length, shape.Parameters.Length);
+            for (int i = 0; i < count; i++)
+            {
+                var q = (double[])pv.Clone();
+                q[i] += delta;
+                List<(double X, double Y)> nw;
+                try { nw = BarGeometryBuilder.GetLocalPoints(shape.Code, q, d); }
+                catch (System.Exception ex) { Log.Error("BarGeometryWatcher.FindEndParam", ex); continue; }
+                if (nw == null || nw.Count != n) continue;
+
+                // przesunięcie wyrównujące stały koniec
+                var shift = atStart ? Sub(old[n - 1], nw[n - 1]) : Sub(old[0], nw[0]);
+                bool ok = true;
+                for (int j = 0; j < n && ok; j++)
+                {
+                    var pj = (nw[j].X + shift.X, nw[j].Y + shift.Y);
+                    bool free = atStart ? j == 0 : j == n - 1;
+                    var expect = free ? (old[j].X + dir.X * delta, old[j].Y + dir.Y * delta) : old[j];
+                    if (Len(Sub(pj, expect)) > 0.05) ok = false;
+                }
+                if (ok) return i;
+            }
+            return -1;
+        }
+
+        private static void SetParam(BarData b, int k, double v)
+        {
+            switch (k)
+            {
+                case 0: b.LengthA = v; break;
+                case 1: b.LengthB = v; break;
+                case 2: b.LengthC = v; break;
+                case 3: b.LengthD = v; break;
+                case 4: b.LengthE = v; break;
+            }
+        }
+
+        /// <summary>Zapis nowych wymiarów, odbudowa obrysu od nowego początku osi, numeracja, rozkłady, etykieta.</summary>
+        private static void ApplyEndStretch(Document doc, Database db, ObjectId oid, string oldMark,
+                                            BarData stretched, Point3d axisStart)
+        {
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (tr.GetObject(oid, OpenMode.ForWrite) is Polyline pl) SingleBarEngine.WriteXData(pl, stretched);
+                tr.Commit();
+            }
+            SingleBarEngine.RebuildCompanions(db, oid, stretched, axisStart);
+
+            int oldPosNr = SingleBarEngine.ExtractPosNr(oldMark);
+            string newMark = PositionReconciler.ReconcileAfterGeometryChange(db, oid);
+            bool renumbered = newMark != null;
+
+            BarData cur;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var pline = tr.GetObject(oid, OpenMode.ForRead) as Polyline;
+                cur = pline != null ? SingleBarEngine.ReadBarXData(pline) : null;
+            }
+            if (cur == null) return;
+            int nDist = PositionReconciler.PropagateToDistributions(db, oid, cur, legacyPosNr: renumbered ? 0 : oldPosNr);
+            FixLabelArrow(db, oid, cur.LabelHandle);
+            AnnotationEngine.UpdateBarLabelCount(db, oid.Handle.Value.ToString("X8"), markOverride: cur.Mark);
+
+            string dims = string.Join("/", new[] { cur.LengthA, cur.LengthB, cur.LengthC, cur.LengthD, cur.LengthE }
+                                            .Where(v => v > 0).Select(v => v.ToString("F0")));
+            doc.Editor?.WriteMessage(renumbered
+                ? $"\n[RC AUTO] Pręt {oldMark} zmieniony gripem ({dims} mm) → nowa pozycja {cur.Mark}  ({nDist} rozkład(y))\n"
+                : $"\n[RC AUTO] Pręt {oldMark}: {dims} mm (grip)  ({nDist} rozkład(y))\n");
+        }
+
+        /// <summary>Grot etykiety pręta na najbliższy punkt nowego obrysu (jak RC_EDIT_BAR).</summary>
+        private static void FixLabelArrow(Database db, ObjectId barId, string labelHandle)
+        {
+            if (string.IsNullOrEmpty(labelHandle)
+                || !long.TryParse(labelHandle, System.Globalization.NumberStyles.HexNumber, null, out long h)) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                if (db.TryGetObjectId(new Handle(h), out ObjectId lid) && !lid.IsErased
+                    && tr.GetObject(lid, OpenMode.ForWrite) is MLeader ml
+                    && tr.GetObject(barId, OpenMode.ForRead) is Polyline pl)
+                {
+                    var leaders = ml.GetLeaderIndexes();
+                    if (leaders != null && leaders.Count > 0)
+                    {
+                        var lines = ml.GetLeaderLineIndexes((int)leaders[0]);
+                        if (lines != null && lines.Count > 0)
+                        {
+                            int li = (int)lines[0];
+                            ml.SetFirstVertex(li, pl.GetClosestPointTo(ml.GetFirstVertex(li), false));
+                        }
+                    }
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.FixLabelArrow", ex); }
+        }
 
         // ----------------------------------------------------------------
         // Walidacja struktury outline dla shape 00/99
@@ -225,24 +417,28 @@ namespace BricsCadRc.Core
             foreach (var id in _pending)
                 if (id.Database == db) toProcess.Add(id);
             var preAxisStart = new Dictionary<ObjectId, Point3d>(_preAxisStart);
+            var preOutline   = new Dictionary<ObjectId, List<Point3d>>(_preOutline);
             _pending.Clear();
             _preAxisStart.Clear();
+            _preOutline.Clear();
 
             _rebuildDepth++;
             try
             {
-                ProcessPending(doc, db, toProcess, preAxisStart);
+                ProcessPending(doc, db, toProcess, preAxisStart, preOutline);
             }
             finally
             {
                 _rebuildDepth--;
                 _modifiedLeaders.Clear();
                 _preAxisStart.Clear();
+                _preOutline.Clear();
             }
         }
 
         private static void ProcessPending(Document doc, Database db, List<ObjectId> toProcess,
-                                           Dictionary<ObjectId, Point3d> preAxisStart)
+                                           Dictionary<ObjectId, Point3d> preAxisStart,
+                                           Dictionary<ObjectId, List<Point3d>> preOutline)
         {
             foreach (var oid in toProcess)
             {
@@ -262,6 +458,20 @@ namespace BricsCadRc.Core
                         if (bar == null) { tr.Commit(); continue; }
                         shapeCode = bar.ShapeCode ?? "00";
                         mark      = bar.Mark;
+
+                        // Grip na KOŃCU pręta (narożnik albo bok końca) → nowa długość odcinka końcowego.
+                        // Drugi koniec zostaje na miejscu; wymiar dokładny (bez zaokrąglania).
+                        string why = null;
+                        BarData stretched = null;
+                        Point3d newAxisStart = Point3d.Origin;
+                        if (preOutline.TryGetValue(oid, out var pre)
+                            && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why))
+                        {
+                            tr.Commit();
+                            ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart);
+                            continue;
+                        }
+                        if (why != null) doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
 
                         // Detekcja translacji bar-a (move entire entity).
                         // Porównuje current axis_start z pozycją sprzed komendy (preAxisStart).

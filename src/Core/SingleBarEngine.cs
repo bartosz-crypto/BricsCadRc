@@ -566,7 +566,8 @@ namespace BricsCadRc.Core
         // Zakłada kierunek poziomy (1,0,0) — FLOW 1 widok elewacji.
         // ----------------------------------------------------------------
 
-        public static void RebuildCompanions(Database db, ObjectId primaryPolyId, BarData bar)
+        public static void RebuildCompanions(Database db, ObjectId primaryPolyId, BarData bar,
+                                             Point3d? axisStartOverride = null)
         {
             EnsureAppIdRegistered(db);
 
@@ -586,7 +587,7 @@ namespace BricsCadRc.Core
             var lPts = BarGeometryBuilder.GetLocalPoints(shape.Code, bar.ParamValues, bar.Diameter);
             if (lPts == null || lPts.Count < 2) { tr.Commit(); return; }
 
-            var pt0        = GetAxisFirstPointFromOutline(pline, bar.ShapeCode);
+            var pt0        = axisStartOverride ?? GetAxisFirstPointFromOutline(pline, bar.ShapeCode);
             var startPoint = new Point3d(pt0.X - lPts[0].X, pt0.Y - lPts[0].Y, 0);
 
             var direction  = new Vector3d(1.0, 0.0, 0.0);

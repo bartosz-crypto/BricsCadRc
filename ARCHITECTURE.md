@@ -176,10 +176,9 @@ Geometria:
 6. Użytkownik testuje w BricsCAD → commit robi sam.
 
 ## 6. Otwarte tematy
-- Otwory w płycie (AutoRebar).
-- UB dla warstwy górnej.
 - Zestawienie: rozkłady bez opisu nie są liczone.
 - Rozkłady ze starych rysunków (1000) skopiowane razem z prętem wskazują na oryginalny pręt.
 - Kształt 44 (pierścień) — odtwarzanie osi z obrysu; kąt 30° w `BarGeometryBuilder` do weryfikacji z BS 8666;
   brak ostrzeżenia dla B/2 < min. promień gięcia.
-- „Plan C”: pręt jako BlockReference z własnymi gripami.
+- „Plan C”: pręt jako BlockReference z własnymi gripami (na razie wariant B: grip na końcu obrysu polilinii
+  zmienia odcinek końcowy — `BarGeometryWatcher.TryEndStretch`; ruch w środku pręta jest cofany).
