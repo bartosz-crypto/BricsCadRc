@@ -92,7 +92,8 @@ namespace BricsCadRc.App
 
             src.Items.Add(MakeButton("Zlicz prety",  "RC_COUNT_BBS",  "Zlicz prety i oblicz tonaz wg BS8666"));
             src.Items.Add(MakeButton("Zestawienie", "RC_SCHEDULE",   "Zestawienie pretow (BBS) wg BS 8666:2020 — dialog z eksportem CSV"));
-            src.Items.Add(MakeButton("Tag PH",       "RC_PUNCHING_TAG",           "Read punching analysis DXF/DWG and tag piles with PH1-9 zones"));
+            src.Items.Add(MakeButton("Mapy zbrojenia", "RC_IMPORT_MAP",            "Import map zbrojenia (reinf_maps.dxf): wybor plyty i wstawienie ramek T1/T2/B1/B2 we wskazanym miejscu"));
+            src.Items.Add(MakeButton("Auto PH",      "RC_PUNCHING_AUTO",          "Przebicie z raportu xlsx: tagi PH1-9 przy palach, opisy detali (APPLICABLE FOR), prety 501/502 do BBS"));
             src.Items.Add(MakeButton("Summary bars", "RC_PUNCHING_SUMMARY_BARS", "Generate summary bars (poz. 501/502) from PH zone counts"));
 
             return new RibbonPanel { Source = src };

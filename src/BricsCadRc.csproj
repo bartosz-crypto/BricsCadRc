@@ -21,6 +21,8 @@
       <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\BrxMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- System.IO.Compression: czytanie .xlsx (zip) bez zewnętrznych bibliotek -->
+    <Reference Include="System.IO.Compression" />
     <Reference Include="TD_Mgd">
       <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\TD_Mgd.dll</HintPath>
       <Private>false</Private>

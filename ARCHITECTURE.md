@@ -117,7 +117,10 @@ Dół (B1/B2, Ø10):
 
 Góra (T1/T2, Ø12, te same parametry co dół poza średnicą):
 - Zakład min. 500, preferowany **550–650**, górna granica 700 (przyjęta — do potwierdzenia).
-- **Ta sama liczba prętów w pasie co dół.**
+- **Ta sama liczba prętów na danej krawędzi co dół** (liczba prętów w rozkładzie / rozstaw). Liczba odcinków
+  wzdłuż pasa (rozkładów, zakładów) góry MOŻE być inna niż dołem — np. 4 pręty zamiast 3, żeby zakłady ominęły pale.
+- Zakłady góry ≥ 500 mm od lica pali (SD-Pile); gdy żadna liczba odcinków (min … min+4) nie pozwala —
+  zakład najdalej od pali + ostrzeżenie.
 - **Zakłady góry ≥ 750 mm w świetle od zakładów dołu.**
 - Góra i dół są na **osobnych rzutach** (dwa obrysy tej samej płyty). Góra liczona względem
   **rzeczywistych** rozkładów dołu: najpierw ten sam obrys, potem obrys przystający (przesunięty)
@@ -126,8 +129,12 @@ Góra (T1/T2, Ø12, te same parametry co dół poza średnicą):
 UB (Ø12, pozycje 01/02):
 - **Jeden rozkład na krawędź, jeden opis.** Liczba UB = liczba prętów głównych dochodzących do tej krawędzi.
 - Krawędź zewnętrzna wykrywana przez próbkowanie obrysu.
+- **Każda krawędź obrysu ma UB**, także krótkie uskoki (np. 60 mm) — bardzo krótka: 1 UB w środku krawędzi.
 
 Geometria:
+- Pas z jedną krawędzią zewnętrzną i jedną wewnętrzną (np. przy uskoku): pierwszy pręt na otulinie 40 od
+  krawędzi ZEWNĘTRZNEJ, rozstaw nominalny, resztka do środka płyty — o ile odstęp do pręta sąsiedniego pasa ≤ rozstaw
+  (inaczej dotychczasowe dopasowanie rozstawu).
 - Obrys → pasy (`DecomposeStrips`, scanline po rzeczywistym wielokącie; wiele przęseł; ukośne
   krawędzie w pasmach 1000 mm). Pierwszy pręt: otulina przy krawędzi zewnętrznej, s/2 przy wewnętrznej.
 - Rozkłady znakowane obrysem płyty (`RC_AUTOREBAR_SLAB`) — ponowne generowanie usuwa tylko rozkłady
@@ -139,6 +146,26 @@ Geometria:
 - Detale (otwory, w przyszłości belki): użytkownik zaznacza ramki detali; rozkłady z rysunku detalu
   przenoszone są na plan. Ramka detalu ma XData `RC_DETAIL` [nr, dx, dy] (punkt planu = punkt detalu − (dx, dy)).
   Pręty „B+T ADD” → kopia w warstwie dolnej i górnej o tym samym kierunku.
+
+## 4b. Przebicie z raportu (RC_PUNCHING_AUTO)
+- Źródło: report_punching.xlsx, arkusz „Punching EC2” (wartości, nie formuły); kolumny po nagłówkach.
+  Czytnik xlsx własny (`XlsxReader`, zip + XML) — bez zewnętrznych pakietów.
+- Płytę (PLOT) wybiera użytkownik z listy (podświetlona ta z największą liczbą trafień). Bez wskazywania obrysu:
+  pal = koło SD-Pile z podpisem obok (≤ max(8R, 1500)) w całym modelu; dokładne ID na dowolnej warstwie,
+  znormalizowane (617 ≡ P617) tylko na SD-Pile Text*. XData `RC_PH` [kod, pal, PLOT].
+- PH = 3·(H12@200 | H16@200 | H16@100) + (Internal | Edge | Corner) + 1.
+  MANUAL: Util > 100 %, Reentrant, FAIL / SHEAR RAILS, nieznane zbrojenie — tag MANUAL (czerwony) + notatka nad płytą.
+- Ponowne uruchomienie czyści poprzednie tagi/kreskowanie tej płyty i przekreślenia szablonów.
+- Szablony detali (MText AP-TEXT): „(nNo LOCATIONS)”, „APPLICABLE FOR PILES …” (tylko do końca akapitu).
+- Pręty do BBS: 501 = H12 L2250 × 14 na detal PH1–3; 502 = H16 L2500 × 14 (PH4–6) / × 28 (PH7–9).
+  Poprzednie 501/502 usuwane dopiero po wskazaniu punktów (Esc nic nie kasuje).
+
+## 4c. Import map zbrojenia (RC_IMPORT_MAP) — jak ASD-IMR
+- Plik …_punching_reinf_maps.dxf: kolumny płyt (PH-SLAB-HEADER „PLOT …”), ramki PH-FRAME, rodzaj mapy wg
+  obrysu PH-<T1|T2|B1|B2|PH>-SLAB w ramce. Płyta z listy (domyślnie ta, której nazwa jest na rysunku).
+- Wklejane ramki T1, T2, B1, B2 z całą zawartością (bez nagłówka płyty, bez mapy PH) w miejscu wskazanym
+  przez użytkownika; podgląd ramek w jigu; punkt = lewy górny róg ramki T1. NIE na obrys płyty.
+- XData RC_MAP [PLOT, mapa]; ponowny import tej samej płyty zastępuje poprzedni.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD).

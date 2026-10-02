@@ -1,7 +1,7 @@
 <Window x:Class="BricsCadRc.Dialogs.PunchingTagResultsDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="RC_PUNCHING_TAG — results"
+        Title="Przebicie — wyniki"
         Height="500" Width="640"
         MinHeight="300" MinWidth="450"
         WindowStartupLocation="CenterOwner"

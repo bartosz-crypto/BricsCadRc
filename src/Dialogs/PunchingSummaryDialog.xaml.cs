@@ -42,7 +42,7 @@ namespace BricsCadRc.Dialogs
             OkButton.IsEnabled = anyActive;
             if (!anyActive)
             {
-                SummaryBlock.Text     += "\n\nNo PH zones found — run RC_PUNCHING_TAG first.";
+                SummaryBlock.Text     += "\n\nNo PH zones found — run RC_PUNCHING_AUTO first.";
                 SummaryBlock.Foreground = System.Windows.Media.Brushes.Red;
             }
         }

@@ -137,7 +137,11 @@ namespace BricsCadRc.Core
 
         /// <summary>Min vertical edge length for UB B1 segment generation (Q17).
         /// Shorter edges skipped + warning.</summary>
-        public const double UBMinSegmentLength = 1000.0;
+        /// <summary>
+        /// KAŻDA krawędź obrysu dostaje UB (wymaganie użytkownika) — także krótkie uskoki (np. 60 mm).
+        /// Próg tylko odrzuca zdegenerowane odcinki (powtórzony wierzchołek).
+        /// </summary>
+        public const double UBMinSegmentLength = 1.0;
 
         // UB B2 constants (Y-bars, horizontal edges) — separate from UB B1
         private const double UBB2_225_LengthA   = 715.0;
@@ -298,6 +302,26 @@ namespace BricsCadRc.Core
                         spacingMode = SpacingMode.AdjustedExternal;
                     else
                         spacingMode = SpacingMode.ContinuousInternal;
+
+                    // Pas z jedną krawędzią zewnętrzną i jedną wewnętrzną (np. przy uskoku obrysu):
+                    // pierwszy pręt dokładnie na otulinie od krawędzi ZEWNĘTRZNEJ, rozstaw nominalny,
+                    // resztka idzie do środka płyty — o ile odstęp do pręta sąsiedniego pasa ≤ rozstaw.
+                    if (!singleBarMode && strip.LowerIsExternal != strip.UpperIsExternal)
+                    {
+                        double nbOff = NeighborOffsetAt(strips, strip, atLow: !strip.LowerIsExternal, cover, spacing);
+                        if (TryAnchorAtExternal(y1 - y0, spacing, nbOff, out double leftover))
+                        {
+                            if (strip.LowerIsExternal) y1 -= leftover; else y0 += leftover;
+                            spacingMode = SpacingMode.Nominal;
+                        }
+                    }
+
+                    // Wąski pas z krawędzią zewnętrzną na dole i wewnętrzną u góry: zamiast mocnego
+                    // zagęszczenia (np. 4 pręty co 141) — rozstaw nominalny od strony wewnętrznej,
+                    // jak pas lustrzany (3 co 200), o ile otulina od krawędzi zewnętrznej ≤ 70.
+                    if (!singleBarMode && spacingMode == SpacingMode.ContinuousInternal && strip.LowerIsExternal
+                        && TryAnchorAtInternal(y1 - y0, spacing, lowerOffset, out double anchorShift))
+                        y0 += anchorShift;
 
                     // X multi-dist plan for this strip
                     double xAvailable = (strip.PerpHigh - strip.PerpLow) - 2.0 * cover;
@@ -712,6 +736,20 @@ namespace BricsCadRc.Core
                             lowOff = highOff = h / 2.0;
                             mode = SpacingMode.Nominal;
                         }
+                        else if (st.LowerIsExternal != st.UpperIsExternal
+                                 && Math.Abs(lo - st.ScanLow) < 1.0 && Math.Abs(hi - st.ScanHigh) < 1.0
+                                 && TryAnchorAtExternal(h - lowOff - highOff, spacing,
+                                        NeighborOffsetAt(mainStrips, st, atLow: !st.LowerIsExternal, cover, spacing),
+                                        out double ubLeft))
+                        {
+                            // jak w GenerateLayer: od otuliny przy krawędzi zewnętrznej, rozstaw nominalny
+                            if (st.LowerIsExternal) highOff += ubLeft; else lowOff += ubLeft;
+                            mode = SpacingMode.ContinuousInternal;   // przy dokładnej wielokrotności = nominal
+                        }
+                        else if (mode == SpacingMode.ContinuousInternal && st.LowerIsExternal
+                                 && Math.Abs(lo - st.ScanLow) < 1.0 && Math.Abs(hi - st.ScanHigh) < 1.0
+                                 && TryAnchorAtInternal(h - lowOff - highOff, spacing, lowOff, out double ubShift))
+                            lowOff += ubShift;   // jak w GenerateLayer — ta sama liczba UB co prętów
                         parts.Add((lo, hi, lowOff, highOff, mode, st.LowerIsExternal, st.UpperIsExternal));
                     }
 
@@ -743,6 +781,7 @@ namespace BricsCadRc.Core
                     {
                         if (part.mode == SpacingMode.Nominal) { totalCount += 1; continue; }
                         double avail = (part.hi - part.highOff) - (part.lo + part.lowOff);
+                        if (avail <= 0) { totalCount += 1; continue; }   // krawędź krótsza niż odsunięcia → 1 UB
                         double eff = spacing;
                         if (part.mode == SpacingMode.AdjustedExternal)
                             eff = ComputeAdjustedSpacing(avail, spacing, part.lowOff, part.hi - part.lo).Item1;
@@ -753,6 +792,12 @@ namespace BricsCadRc.Core
 
                     double distLow  = parts[0].lo + parts[0].lowOff;
                     double distHigh = parts[parts.Count - 1].hi - parts[parts.Count - 1].highOff;
+                    if (distHigh < distLow)
+                    {
+                        // Bardzo krótka krawędź: jeden UB w środku krawędzi
+                        distLow = distHigh = (segLow + segHigh) / 2.0;
+                        totalCount = 1;
+                    }
                     double uSpacing = totalCount > 1 && distHigh > distLow
                         ? (distHigh - distLow) / (totalCount - 1)
                         : spacing;
@@ -1203,7 +1248,37 @@ namespace BricsCadRc.Core
                     });
                 }
             }
-            return result;
+            return MergeStackedStrips(result);
+        }
+
+        /// <summary>
+        /// Łączy pasy leżące jeden nad drugim o TYM SAMYM zakresie wzdłuż prętów (np. występ płyty przecięty
+        /// przez cięcie skanu wywołane wierzchołkiem gdzie indziej) — jeden rozkład zamiast dwóch
+        /// (wcześniej: 10 + 4 pręty tej samej pozycji, z dwoma opisami w jednym miejscu).
+        /// </summary>
+        private static List<StripBounds> MergeStackedStrips(List<StripBounds> strips)
+        {
+            var valid = strips.Where(s => s.Valid).OrderBy(s => s.PerpLow).ThenBy(s => s.ScanLow).ToList();
+            var merged = new List<StripBounds>();
+            foreach (var st in valid)
+            {
+                var prev = merged.LastOrDefault(m => Math.Abs(m.PerpLow - st.PerpLow) < 1.0
+                                                  && Math.Abs(m.PerpHigh - st.PerpHigh) < 1.0
+                                                  && Math.Abs(m.ScanHigh - st.ScanLow) < 1e-3);
+                if (prev != null)
+                {
+                    prev.ScanHigh = st.ScanHigh;
+                    prev.UpperIsExternal = st.UpperIsExternal;
+                    continue;
+                }
+                merged.Add(new StripBounds
+                {
+                    ScanLow = st.ScanLow, ScanHigh = st.ScanHigh, PerpLow = st.PerpLow, PerpHigh = st.PerpHigh,
+                    LowerIsExternal = st.LowerIsExternal, UpperIsExternal = st.UpperIsExternal, Valid = true,
+                });
+            }
+            return merged.OrderBy(s => s.ScanLow).ThenBy(s => s.PerpLow)
+                         .Concat(strips.Where(s => !s.Valid)).ToList();
         }
 
         /// <summary>
@@ -1869,6 +1944,8 @@ namespace BricsCadRc.Core
                 customInsertPt: annotInsertPt,
                 barsHorizontal: horizontal, leaderRight: leaderRight, leaderUp: leaderUp);
 
+            RefineLastLabelRect(db, annotResult.BlockRefId);
+
             // Step 5: bidirectional link dist ↔ annot
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
@@ -1893,7 +1970,7 @@ namespace BricsCadRc.Core
             }
 
             // Step 6: show outline
-            BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
+            // Bez podświetlania obrysu: przy generowaniu automatycznym zostawały zielone obrysy wszystkich rozkładów
 
             PositionCounter.CommitUsed(db, posNr);
             return true;
@@ -3106,6 +3183,8 @@ namespace BricsCadRc.Core
                 leaderRight: leaderRight,
                 leaderUp: leaderUp);
 
+            RefineLastLabelRect(db, annotResult.BlockRefId);
+
             // Step 5: bidirectional link + outline
             if (annotResult.BlockRefId != ObjectId.Null)
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
@@ -3113,7 +3192,7 @@ namespace BricsCadRc.Core
             if (representativeOnly)
                 ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, 0);
 
-            BarBlockHighlightManager.ShowOutlineFor(barResult.BlockRefId);
+            // Bez podświetlania obrysu: przy generowaniu automatycznym zostawały zielone obrysy wszystkich rozkładów
 
             PositionCounter.CommitUsed(db, posNr);
             return true;
@@ -3127,9 +3206,33 @@ namespace BricsCadRc.Core
             new List<(double, double, double, double)>();
         private const double LabelGap = 150.0;
 
+        // Rzeczywista szerokość znaku opisu / wysokość tekstu — kalibrowana z istniejących opisów
+        // (styl tekstu bywa szerszy niż zakładane TextCharWidth: np. 106 zamiast 65 mm przy h=125 → opisy nachodziły).
+        private static double _charPerHeight = AnnotationEngine.TextCharWidth / AnnotationEngine.DefaultTextHeight;
+        private static readonly List<double> _charSamples = new List<double>();
+        private static int _lastLabelRectIdx = -1;
+
+        private static void AddCharSample(DBText t, Extents3d ext)
+        {
+            int n = (t.TextString ?? "").Length;
+            if (n < 4 || t.Height <= 0) return;
+            double w = Math.Max(ext.MaxPoint.X - ext.MinPoint.X, ext.MaxPoint.Y - ext.MinPoint.Y);
+            double r = w / (n * t.Height);
+            if (r > 0.2 && r < 2.0) _charSamples.Add(r);
+            if (_charSamples.Count > 0)
+            {
+                var sorted = _charSamples.OrderBy(v => v).ToList();
+                _charPerHeight = Math.Max(AnnotationEngine.TextCharWidth / AnnotationEngine.DefaultTextHeight,
+                                          sorted[sorted.Count / 2]);
+            }
+        }
+
         private static void InitLabelOccupancy(Database db)
         {
             _labelRects.Clear();
+            _charSamples.Clear();
+            _charPerHeight = AnnotationEngine.TextCharWidth / AnnotationEngine.DefaultTextHeight;
+            _lastLabelRectIdx = -1;
             try
             {
                 using var tr = db.TransactionManager.StartOpenCloseTransaction();
@@ -3138,7 +3241,19 @@ namespace BricsCadRc.Core
                 foreach (ObjectId id in ms)
                 {
                     if (id.IsErased) continue;
-                    if (!(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var obj = tr.GetObject(id, OpenMode.ForRead);
+                    // Zwykłe teksty rysunku (tytuły rzutów, opisy płyt…) — opisy rozkładów też ich omijają
+                    if (obj is DBText || obj is MText)
+                    {
+                        try
+                        {
+                            var te = ((Entity)obj).GeometricExtents;
+                            _labelRects.Add((te.MinPoint.X, te.MinPoint.Y, te.MaxPoint.X, te.MaxPoint.Y));
+                        }
+                        catch (System.Exception ex) { Log.Error("AutoRebar.InitLabelOccupancy.Text", ex); }
+                        continue;
+                    }
+                    if (!(obj is BlockReference br)) continue;
                     if (!AnnotationEngine.IsAnnotation(br)) continue;
                     var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
                     foreach (ObjectId eid in btr)
@@ -3146,6 +3261,7 @@ namespace BricsCadRc.Core
                         if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is DBText t)) continue;
                         Extents3d ext;
                         try { ext = t.GeometricExtents; } catch { continue; }
+                        AddCharSample(t, ext);
                         var a = ext.MinPoint.TransformBy(br.BlockTransform);
                         var b = ext.MaxPoint.TransformBy(br.BlockTransform);
                         _labelRects.Add((Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),
@@ -3177,20 +3293,26 @@ namespace BricsCadRc.Core
             double sc      = annotScale > 0 ? annotScale : 1.0;
             double h       = AnnotationEngine.DefaultTextHeight * sc;
             double off     = AnnotationEngine.TextArmOffset * sc;
-            double textLen = (text?.Length ?? 10) * AnnotationEngine.TextCharWidth * sc + off;
+            // Długość tekstu wg skalibrowanej szerokości znaku (+10% zapasu)
+            double textLen = 1.1 * (text?.Length ?? 10) * _charPerHeight * h + off;
 
             var dir = pts[pts.Count - 1] - pts[pts.Count - 2];
             if (dir.Length < 1e-6) return encoded;
             dir = dir.GetNormal();
-            var perp = new Vector3d(-dir.Y, dir.X, 0);
             double cross = off + h;
 
+            // Tekst leży po JEDNEJ stronie ramienia (jak w AnnotationEngine): przy ramieniu pionowym — z lewej,
+            // przy poziomym — nad nim. Wcześniej prostokąt obejmował obie strony (2× szerszy) i opisy sąsiednich
+            // linii rozkładów (np. 280 mm obok) „kolidowały” mimo braku nakładania → opis odbijał daleko.
+            bool verticalArm = Math.Abs(dir.Y) > Math.Abs(dir.X);
+            const double lineSide = 20.0;
             (double, double, double, double) RectFor(Point3d endLocal)
             {
                 var e = new Point3d(annotInsertPt.X + endLocal.X, annotInsertPt.Y + endLocal.Y, 0);
                 var s0 = e - dir * textLen;
-                var c = new[] { e + perp * cross, e - perp * cross, s0 + perp * cross, s0 - perp * cross };
-                return (c.Min(p => p.X), c.Min(p => p.Y), c.Max(p => p.X), c.Max(p => p.Y));
+                if (verticalArm)
+                    return (e.X - cross, Math.Min(e.Y, s0.Y), e.X + lineSide, Math.Max(e.Y, s0.Y));
+                return (Math.Min(e.X, s0.X), e.Y - lineSide, Math.Max(e.X, s0.X), e.Y + cross);
             }
 
             var last = pts[pts.Count - 1];
@@ -3202,8 +3324,46 @@ namespace BricsCadRc.Core
                 rect = RectFor(last);
             }
             _labelRects.Add(rect);
+            _lastLabelRectIdx = _labelRects.Count - 1;
             pts[pts.Count - 1] = last;
             return AnnotationEngine.EncodeLeaderPoints(pts);
+        }
+
+        /// <summary>
+        /// Po utworzeniu opisu: szacunkowy prostokąt ostatniego opisu zastąpiony rzeczywistym zakresem tekstu
+        /// (kolejne opisy omijają prawdziwy tekst) + kalibracja szerokości znaku.
+        /// </summary>
+        private static void RefineLastLabelRect(Database db, ObjectId annotId)
+        {
+            if (annotId.IsNull || _lastLabelRectIdx < 0 || _lastLabelRectIdx >= _labelRects.Count) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(annotId, OpenMode.ForRead) is BlockReference br)) return;
+                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+                foreach (ObjectId eid in btr)
+                {
+                    if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is DBText t)) continue;
+                    Extents3d ext;
+                    try { ext = t.GeometricExtents; }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.RefineLastLabelRect", ex); continue; }
+                    AddCharSample(t, ext);
+                    var a = ext.MinPoint.TransformBy(br.BlockTransform);
+                    var b = ext.MaxPoint.TransformBy(br.BlockTransform);
+                    x0 = Math.Min(x0, Math.Min(a.X, b.X)); y0 = Math.Min(y0, Math.Min(a.Y, b.Y));
+                    x1 = Math.Max(x1, Math.Max(a.X, b.X)); y1 = Math.Max(y1, Math.Max(a.Y, b.Y));
+                }
+                if (x0 < x1 && y0 < y1)
+                {
+                    var est = _labelRects[_lastLabelRectIdx];
+                    // suma: szacunek (obejmuje też odsunięcie od ramienia) i rzeczywisty tekst
+                    _labelRects[_lastLabelRectIdx] = (Math.Min(est.x0, x0), Math.Min(est.y0, y0),
+                                                      Math.Max(est.x1, x1), Math.Max(est.y1, y1));
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.RefineLastLabelRect", ex); }
+            _lastLabelRectIdx = -1;
         }
 
         private static BarData BuildBarData(int diameter, int posNr, double lengthA, string layerCode)
@@ -3444,41 +3604,64 @@ namespace BricsCadRc.Core
             foreach (var d in inStrip)
                 if (chain.Count == 0 || d.lo > chain[chain.Count - 1].lo + 1.0) chain.Add(d);
 
-            int N = chain.Count;
-            if (N == 1)
-            {
-                if (available <= TemplateMaxLen + 0.5) return ComputeDistributionPlan(available, spacing);
-                return null;
-            }
-
+            // Zakłady rzeczywistego dołu w pasie
             var bz = new List<(double lo, double hi)>();
             for (int i = 0; i + 1 < chain.Count; i++)
                 if (chain[i].hi > chain[i + 1].lo) bz.Add((chain[i + 1].lo, chain[i].hi));
 
-            // Najpierw z odsunięciem zakładów od pali, potem (gdy geometria wymusza) bez
-            foreach (bool usePiles in new[] { true, false })
-            {
-                if (!usePiles && (pileForbidden == null || pileForbidden.Count == 0)) break;
-                foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
-                {
-                    var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
-                                           TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
-                    foreach (var t in T)
-                        if (LapsStaggered(LapZones(t.plan), bz)
-                            && (!usePiles || LapsClearOfPiles(t.plan, pileForbidden)))
-                        {
-                            if (!usePiles)
-                                ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
-                                    $"zakład góry bliżej niż {PileLapClearance:F0} mm od pala — geometria nie pozwala inaczej.\n");
-                            return t.plan;
-                        }
-                }
-            }
+            // Liczba prętów NA KRAWĘDZI (rozstaw) jest jak dół z definicji — ten sam pas.
+            // Liczba odcinków wzdłuż (zakładów) góry może być INNA niż dołem: najpierw najmniej zakładów,
+            // zakłady ≥ LapStaggerMinGap od dołu i ≥ PileLapClearance od pali.
+            var plan = PlanTopLine(available, spacing, bz, pileForbidden, ed,
+                                   $"Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}");
+            if (plan != null) return plan;
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
-                $"przy {N} prętach nie da się ominąć zakładów dołu o ≥{LapStaggerMinGap:F0} mm " +
+                $"nie da się ominąć zakładów dołu o ≥{LapStaggerMinGap:F0} mm " +
                 "— plan teoretyczny (sprawdź zakłady ręcznie).\n");
             return null;
+        }
+
+        /// <summary>
+        /// Plan ciągu prętów GÓRY dla zadanych zakładów dołu: kolejno N = minimum … minimum+4 odcinków
+        /// (najmniej zakładów), pierwszy z zakładami ≥ LapStaggerMinGap od dołu i ≥ PileLapClearance od pali.
+        /// Gdy pale nie pozwalają przy żadnym N — plan z zakładami najdalej od pali (ostrzeżenie).
+        /// </summary>
+        private static List<(double xOffset, double length)> PlanTopLine(
+            double available, double spacing, List<(double lo, double hi)> bz,
+            List<(double lo, double hi)> pileForbidden, Editor ed, string where)
+        {
+            if (available <= TemplateMaxLen + 0.5)
+                return ComputeDistributionPlan(available, spacing);   // jeden pręt — bez zakładów
+
+            int nMin = Math.Max(2, (int)Math.Ceiling((available - TopOverlapMin) / (TemplateMaxLen - TopOverlapMin)));
+            bool hasPiles = pileForbidden != null && pileForbidden.Count > 0;
+            List<(double, double)> best = null;
+            double bestClr = double.NegativeInfinity;
+
+            for (int N = nMin; N <= nMin + 4; N++)
+                foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+                    foreach (var t in PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
+                                                     TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget))
+                    {
+                        if (!LapsStaggered(LapZones(t.plan), bz)) continue;
+                        if (LapsClearOfPiles(t.plan, pileForbidden))
+                        {
+                            if (N > nMin)
+                                ed?.WriteMessage($"\n[AutoRebar] {where}: góra {N} prętów wzdłuż (min. {nMin}) — " +
+                                                 $"zakłady ≥ {PileLapClearance:F0} mm od pali.\n");
+                            return t.plan;
+                        }
+                        if (!hasPiles) continue;
+                        double clr = PileLapClearanceOf(t.plan, pileForbidden);
+                        if (clr > bestClr + 1.0) { bestClr = clr; best = t.plan; }
+                    }
+
+            if (best != null)
+                ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] {where}: zakład góry nie może mieć {PileLapClearance:F0} mm " +
+                    "od pala — " + (bestClr >= 0 ? $"najlepsze możliwe {bestClr:F0} mm od lica pala.\n"
+                                                   : "zakład nachodzi na pal (brak lepszego układu).\n"));
+            return best;
         }
 
         private static List<(double lo, double hi)> LapZones(List<(double xOffset, double length)> plan)
@@ -3493,7 +3676,7 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Wspólny plan dołu i góry dla pasa o danej szerokości (deterministyczny — B1 i T1
         /// liczone osobno, na osobnych rzutach, dostają spójne plany):
-        ///   • ta sama liczba prętów w pasie dołem i górą,
+        ///   • liczba prętów na krawędzi wspólna (ten sam pas); liczba odcinków wzdłuż góry może być inna,
         ///   • zakład dołu 400–650 (pref. 450–550), góry 500–700 (pref. 550–650),
         ///   • strefy zakładów góry ≥ LapStaggerMinGap w świetle od stref dołu,
         ///   • najpierw minimalna liczba prętów, pręty ≥ 2500 (1250 tylko gdy konieczne).
@@ -3509,53 +3692,36 @@ namespace BricsCadRc.Core
                 return (single, single);
             }
 
-            int n0 = Math.Max(2, Math.Max(
-                (int)Math.Ceiling((available - OverlapMin)    / (TemplateMaxLen - OverlapMin)),
-                (int)Math.Ceiling((available - TopOverlapMin) / (TemplateMaxLen - TopOverlapMin))));
-
-            for (int N = n0; N <= n0 + 5; N++)
+            // Dół: najmniej prętów wzdłuż; dla każdego kandydata dołu — góra przez PlanTopLine
+            // (liczba odcinków góry może być inna niż dołem; liczba prętów na krawędzi i tak jest wspólna).
+            int nB0 = Math.Max(2, (int)Math.Ceiling((available - OverlapMin) / (TemplateMaxLen - OverlapMin)));
+            for (int N = nB0; N <= nB0 + 5; N++)
                 foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
                 {
                     var B = PlanCandidates(available, N, minLen, OverlapMin, OverlapMax,
                                            OverlapPreferredMin, OverlapPreferredMax, OverlapTarget);
-                    if (B.Count == 0) continue;
-                    var T = PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
-                                           TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget);
-                    if (T.Count == 0) continue;
-
-                    bool found = false;
-                    (int, int, double) bestKey = default;
-                    List<(double, double)> bestB = null, bestT = null;
-
-                    foreach (var b in B)
+                    // Najpierw plan dołu, przy którym góra omija pale; inaczej pierwszy, przy którym góra w ogóle istnieje
+                    (List<(double, double)> b, List<(double, double)> t)? fallback = null;
+                    foreach (var b in B.Take(40))
                     {
                         var bz = LapZones(b.plan);
-                        foreach (var t in T)   // T posortowane — pierwszy pasujący jest najlepszy dla tego b
-                        {
-                            if (!LapsStaggered(LapZones(t.plan), bz)) continue;
-                            if (!LapsClearOfPiles(t.plan, topPileForbidden)) continue;
-                            var key = (b.key.outBand + t.key.outBand,
-                                       b.key.distinct + t.key.distinct,
-                                       b.key.dO + t.key.dO);
-                            if (!found || key.CompareTo(bestKey) < 0)
-                            { found = true; bestKey = key; bestB = b.plan; bestT = t.plan; }
-                            break;
-                        }
+                        var t = PlanTopLine(available, spacing, bz, topPileForbidden, null, "");
+                        if (t == null) continue;
+                        if (LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
+                        if (fallback == null) fallback = (b.plan, t);
                     }
-                    if (found) return (bestB, bestT);
+                    if (fallback.HasValue)
+                    {
+                        var t2 = PlanTopLine(available, spacing, LapZones(fallback.Value.b), topPileForbidden, ed,
+                                             $"Pas {available:F0}mm");   // ponownie — z komunikatem
+                        return (fallback.Value.b, t2 ?? fallback.Value.t);
+                    }
                 }
-
-            if (topPileForbidden != null && topPileForbidden.Count > 0)
-            {
-                ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: zakład góry bliżej niż " +
-                                 $"{PileLapClearance:F0} mm od pala — geometria nie pozwala inaczej.\n");
-                return ComputeJointPlan(available, spacing, ed, null);
-            }
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: nie znaleziono wspólnego planu " +
                              "dół/góra — góra jak dół (zakłady w tym samym miejscu!).\n");
-            var fallback = ComputeDistributionPlan(available, spacing);
-            return (fallback, fallback);
+            var fallbackPlan = ComputeDistributionPlan(available, spacing);
+            return (fallbackPlan, fallbackPlan);
         }
 
         /// <summary>Odległość zakładu góry (T1/T2) od lica pala w świetle [mm].</summary>
@@ -3572,6 +3738,25 @@ namespace BricsCadRc.Core
                 foreach (var f in forbidden)
                     if (Math.Min(z.hi, f.hi) - Math.Max(z.lo, f.lo) > -1e-6) return false;
             return true;
+        }
+
+        /// <summary>
+        /// Najmniejsza odległość (w świetle, wzdłuż prętów) strefy zakładu od lica pala; ujemna = zakład na palu.
+        /// Strefa zakazana = lico pala ± PileLapClearance, więc lico = f.lo + Clearance .. f.hi − Clearance.
+        /// </summary>
+        private static double PileLapClearanceOf(List<(double xOffset, double length)> plan,
+                                                 List<(double lo, double hi)> forbidden)
+        {
+            double min = double.PositiveInfinity;
+            if (forbidden == null) return min;
+            foreach (var z in LapZones(plan))
+                foreach (var f in forbidden)
+                {
+                    double pLo = f.lo + PileLapClearance, pHi = f.hi - PileLapClearance;
+                    double d = Math.Max(pLo - z.hi, z.lo - pHi);   // < 0 gdy nachodzi
+                    if (d < min) min = d;
+                }
+            return min;
         }
 
         /// <summary>
@@ -3692,6 +3877,53 @@ namespace BricsCadRc.Core
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Pas z jedną krawędzią zewnętrzną: pręty od otuliny przy krawędzi zewnętrznej co rozstaw nominalny,
+        /// resztka <paramref name="leftover"/> po stronie wewnętrznej. Warunek: odstęp do pierwszego pręta
+        /// sąsiedniego pasa (s/2 + resztka + odsunięcie sąsiada) ≤ rozstaw. False = brak resztki albo za duży odstęp.
+        /// </summary>
+        private static bool TryAnchorAtExternal(double availableSpan, double nominalSpacing, double neighborOffset,
+                                                out double leftover)
+        {
+            leftover = 0;
+            if (availableSpan <= 0) return false;
+            int n = (int)Math.Floor(availableSpan / nominalSpacing + 1e-9) + 1;
+            leftover = availableSpan - (n - 1) * nominalSpacing;
+            if (leftover < 0.5) { leftover = 0; return false; }
+            double gap = nominalSpacing / 2.0 + leftover + neighborOffset;
+            return gap <= nominalSpacing + 0.5;
+        }
+
+        /// <summary>Odsunięcie pierwszego pręta sąsiedniego pasa przy wspólnej granicy (otulina albo s/2).</summary>
+        private static double NeighborOffsetAt(List<StripBounds> strips, StripBounds st, bool atLow,
+                                               double cover, double spacing)
+        {
+            foreach (var o in strips)
+            {
+                if (ReferenceEquals(o, st) || !o.Valid) continue;
+                if (Math.Min(o.PerpHigh, st.PerpHigh) - Math.Max(o.PerpLow, st.PerpLow) < 1.0) continue;
+                if (atLow && Math.Abs(o.ScanHigh - st.ScanLow) < 1.0) return o.UpperIsExternal ? cover : spacing / 2.0;
+                if (!atLow && Math.Abs(o.ScanLow - st.ScanHigh) < 1.0) return o.LowerIsExternal ? cover : spacing / 2.0;
+            }
+            return spacing / 2.0;
+        }
+
+        /// <summary>
+        /// Wąski pas (zagęszczenie ContinuousInternal &gt; 15%): pręty co rozstaw nominalny od strony
+        /// wewnętrznej; przesunięcie pierwszego pręta od krawędzi zewnętrznej o <paramref name="shift"/>,
+        /// jeśli otulina + shift ≤ MaxLastBarDistanceFromEdge. Daje to ten sam wynik co pas lustrzany.
+        /// </summary>
+        private static bool TryAnchorAtInternal(double availableSpan, double nominalSpacing, double extOffset, out double shift)
+        {
+            shift = 0;
+            var (_, status) = ComputeContinuousSpacing(availableSpan, nominalSpacing);
+            if (status != 2) return false;
+            int n = (int)Math.Floor(availableSpan / nominalSpacing + 1e-9) + 1;
+            if (n < 2) return false;
+            shift = availableSpan - (n - 1) * nominalSpacing;
+            return extOffset + shift <= MaxLastBarDistanceFromEdge + 1e-6;
         }
 
         /// <summary>
