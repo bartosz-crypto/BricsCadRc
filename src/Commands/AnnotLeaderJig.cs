@@ -212,13 +212,18 @@ namespace BricsCadRc.Commands
         readonly Point3d    _rotCenter;
 
         Point3d             _snappedPt;
+        Point3d             _elbowPt;
         LabelDirection      _direction;
+        const double        ElbowExt = 250.0;   // = AnnotationEngine.DistEndExtension
+        const double        MinArm   = 1.0;     // podgląd sięga dokładnie do kursora (jak w zwykłym rozkładzie)
         Point3d             _lastCursor = Point3d.Origin;
         private Point3d     _prevLastCursor;
         readonly List<Line> _transients = new List<Line>();
 
         public LabelDirection Direction     => _direction;
         public Point3d        KinkPt        => _snappedPt;
+        /// <summary>Rozkład obrócony ukośnie: punkt załamania na końcu linii rozkładu (WCS).</summary>
+        public Point3d        ElbowPt       => _elbowPt;
         public Point3d        LastCursorPt  { get; private set; }
 
         public AnnotLabelDirectionJig(
@@ -271,7 +276,35 @@ namespace BricsCadRc.Commands
             LabelDirection newDir = _direction;  // default dla obróconych bloków
             Point3d        newSnap;
 
-            if (Math.Abs(_angle) > 1e-6)
+            if (BricsCadRc.Core.AnnotationEngine.IsOblique(_angle))
+            {
+                // Rozkład obrócony ukośnie (jak ASD): wzdłuż linii rozkładu do końca po stronie kursora
+                // + ramię poziome/pionowe do kursora. KinkPt = koniec ramienia (punkt tekstu).
+                var axis = _horizontal
+                    ? new Vector3d(-Math.Sin(_angle), Math.Cos(_angle), 0)
+                    : new Vector3d( Math.Cos(_angle), Math.Sin(_angle), 0);
+                var rel = cursor - _centerPt;
+                bool toEnd = rel.DotProduct(axis) >= 0;
+                var outward = toEnd ? axis : -axis;
+                var elbow = _centerPt + outward * (_barsSpan / 2.0 + ElbowExt);
+                var desired = cursor - elbow;
+                Vector3d best = outward; double bestScore = double.NegativeInfinity;
+                for (int k = 0; k < 4; k++)
+                {
+                    var d = new Vector3d(Math.Cos(k * Math.PI / 2.0), Math.Sin(k * Math.PI / 2.0), 0);
+                    if (d.DotProduct(outward) <= 1e-6) continue;
+                    double sc = desired.Length > 1e-6 ? d.DotProduct(desired) : d.DotProduct(outward);
+                    if (sc > bestScore) { bestScore = sc; best = d; }
+                }
+                double len = Math.Max(best.DotProduct(desired), MinArm);
+                _elbowPt = elbow;
+                newSnap = elbow + best * len;
+                if (newSnap.IsEqualTo(_snappedPt, Tolerance.Global)) return SamplerStatus.NoChange;
+                _snappedPt = newSnap;
+                RefreshTransients();
+                return SamplerStatus.OK;
+            }
+            else if (Math.Abs(_angle) > 1e-6)
             {
                 double sinA = Math.Sin(_angle);
                 double cosA = Math.Cos(_angle);
@@ -333,6 +366,15 @@ namespace BricsCadRc.Commands
             // Dist line (zamrożona)
             DrawDistLine(tm, vpIds);
 
+            if (BricsCadRc.Core.AnnotationEngine.IsOblique(_angle))
+            {
+                // Podgląd docelowego leadera: środek → koniec linii rozkładu → ramię do tekstu
+                AddLine(tm, vpIds, _centerPt, _elbowPt, 2);
+                AddLine(tm, vpIds, _elbowPt, _snappedPt, 2);
+                try { Application.UpdateScreen(); } catch { }
+                return;
+            }
+
             // Dla obróconych bloków — linia kierunku do kursora (nie do snappedPt na dist line)
             Point3d arrowEnd;
             if (Math.Abs(_angle) > 1e-6)
@@ -356,7 +398,7 @@ namespace BricsCadRc.Commands
                 var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
                 var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
                 AddLine(tm, vpIds, rp1, rp2, 7);
-                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                if (Math.Abs(_angle) > 1e-6 && !BricsCadRc.Core.AnnotationEngine.IsOblique(_angle) && _lastCursor != Point3d.Origin)
                 {
                     double sinA = Math.Sin(_angle);
                     double cosA = Math.Cos(_angle);
@@ -381,7 +423,7 @@ namespace BricsCadRc.Commands
                 var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
                 var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
                 AddLine(tm, vpIds, rp1, rp2, 7);
-                if (Math.Abs(_angle) > 1e-6 && _lastCursor != Point3d.Origin)
+                if (Math.Abs(_angle) > 1e-6 && !BricsCadRc.Core.AnnotationEngine.IsOblique(_angle) && _lastCursor != Point3d.Origin)
                 {
                     double sinA = Math.Sin(_angle);
                     double cosA = Math.Cos(_angle);

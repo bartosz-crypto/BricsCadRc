@@ -74,9 +74,18 @@ namespace BricsCadRc.App
             // Po U/UNDO/REDO niczego nie poprawiamy — każda modyfikacja kasuje stos REDO.
             if (DocumentWatch.IsUndoCommand(e.GlobalCommandName))
             {
+                BarBlockTransformOverrule.DiscardPendingRotations();
                 PendingLabelUpdates.Discard(doc.Database);
                 return;
             }
+
+            // ROTATE prętów: obróć i przebuduj powiązane opisy
+            try
+            {
+                using (doc.LockDocument())
+                    BarBlockTransformOverrule.ApplyPendingRotations(doc.Database);
+            }
+            catch (System.Exception ex) { Log.Error("PluginApp.ApplyPendingRotations", ex); }
 
             try { PendingLabelUpdates.FlushAll(doc.Database); }
             catch (System.Exception ex) { Log.Error("PluginApp.OnCommandEnded", ex); }
@@ -88,6 +97,7 @@ namespace BricsCadRc.App
             // zmieniło — wystarczy sprzątnąć transienty i stan dragu (dawny PendingAnnotRestore
             // nie jest już potrzebny).
             AnnotGripOverrule.ResetDragState();
+            BarBlockTransformOverrule.DiscardPendingRotations();
 
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
             if (doc?.Database == null) return;

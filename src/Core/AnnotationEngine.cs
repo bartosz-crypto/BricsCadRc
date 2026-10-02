@@ -191,7 +191,7 @@ namespace BricsCadRc.Core
             var baseEndH   = new Point3d(bar.SkewEnd + ox,   lastBarY + lineExt + oy, 0);
             bool hasSkewH  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
             Point3d finalEndH;
-            if (hasSkewH)
+            if (NeedsElbow(bar))
             {
                 var axDir = (baseEndH - baseStartH).Length > 1e-9
                     ? (baseEndH - baseStartH).GetNormal() : Vector3d.YAxis;
@@ -251,13 +251,9 @@ namespace BricsCadRc.Core
                 leaderPtsH[0] = new Point3d(leaderPtsH[0].X, targetH.Y, 0);
             }
 
-            // Rozkład skośny: ramię idzie od środka WZDŁUŻ linii rozkładu do jej końca, dopiero tam
-            // skręca w pionie do tekstu (wcześniej pionowe ramię ze środka przecinało pręty).
-            {
-                var axH = (baseEndH - baseStartH).Length > 1e-9 ? (baseEndH - baseStartH).GetNormal() : Vector3d.YAxis;
-                var startExtH = hasSkewH ? baseStartH - axH * Scaled(DistEndExtension, bar) : baseStartH;
-                leaderPtsH = FollowSkewEnd(leaderPtsH, startExtH, finalEndH, alongIsY: true, hasSkewH, ArmLength);
-            }
+            // Rozkład skośny / obrócony: ramię idzie od środka WZDŁUŻ linii rozkładu do jej końca,
+            // dopiero tam skręca do tekstu (wcześniej ramię ze środka przecinało pręty).
+            leaderPtsH = ApplyElbow(bar, leaderPtsH, offset);
 
             // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
             bar.LeaderPoints = EncodeLeaderPoints(leaderPtsH);
@@ -297,7 +293,7 @@ namespace BricsCadRc.Core
             var baseEndV   = new Point3d(lastBarX + lineExt + ox, bar.SkewEnd + oy,   0);
             bool hasSkewV  = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
             Point3d finalEndV;
-            if (hasSkewV)
+            if (NeedsElbow(bar))
             {
                 var axDir = (baseEndV - baseStartV).Length > 1e-9
                     ? (baseEndV - baseStartV).GetNormal() : Vector3d.XAxis;
@@ -358,12 +354,8 @@ namespace BricsCadRc.Core
                 leaderPtsV[0] = new Point3d(targetV.X, leaderPtsV[0].Y, 0);
             }
 
-            // Rozkład skośny: ramię wzdłuż linii rozkładu do jej końca, potem poziomo do tekstu
-            {
-                var axV = (baseEndV - baseStartV).Length > 1e-9 ? (baseEndV - baseStartV).GetNormal() : Vector3d.XAxis;
-                var startExtV = hasSkewV ? baseStartV - axV * Scaled(DistEndExtension, bar) : baseStartV;
-                leaderPtsV = FollowSkewEnd(leaderPtsV, startExtV, finalEndV, alongIsY: false, hasSkewV, ArmLength);
-            }
+            // Rozkład skośny / obrócony: ramię wzdłuż linii rozkładu do jej końca, potem do tekstu
+            leaderPtsV = ApplyElbow(bar, leaderPtsV, offset);
 
             // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
             bar.LeaderPoints = EncodeLeaderPoints(leaderPtsV);
@@ -377,13 +369,157 @@ namespace BricsCadRc.Core
         /// przy skosie — [środek linii rozkładu, koniec linii rozkładu po stronie tekstu, ramię od tego końca].
         /// Bez skosu — wraca do prostego [środek, koniec ramienia]. Leadery złamane (poziome dla X) bez zmian.
         /// </summary>
+        /// <summary>Kąt obrotu nie jest wielokrotnością 90° (rozkład ukośny względem osi rysunku).</summary>
+        internal static bool IsOblique(double angle)
+        {
+            double q = Math.PI / 2.0;
+            double m = angle % q;
+            if (m < 0) m += q;
+            return Math.Min(m, q - m) > 1e-4;
+        }
+
+        /// <summary>Rozkład skośny albo obrócony ukośnie — linia rozkładu przedłużona, leader z załamaniem na jej końcu.</summary>
+        private static bool NeedsElbow(BarData bar)
+            => Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6 || IsOblique(bar.Angle);
+
+        /// <summary>
+        /// Leader „jak ASD” dla rozkładu skośnego/obróconego: od środka wzdłuż linii rozkładu do jej
+        /// (przedłużonego) końca, potem ramię do tekstu. offset = przesunięcie linii rozkładu w BTR annotacji.
+        /// bar.Angle = obrót bloku annotacji (WCS).
+        /// </summary>
+        /// <summary>Odcinek leadera za końcem linii rozkładu do załamania (ustawiany gripem).</summary>
+        private static double ElbowExtOf(BarData bar)
+            => bar.ElbowExt > 0 ? bar.ElbowExt : Scaled(DistEndExtension, bar);
+
+        public static double GetElbowExt(BarData bar) => ElbowExtOf(bar);
+
+        /// <summary>Przedłużenie rysowanej linii rozkładu (nie dłuższe niż odcinek do załamania).</summary>
+        private static double DrawnExtOf(BarData bar)
+            => Math.Min(Scaled(DistEndExtension, bar), ElbowExtOf(bar));
+
+        /// <summary>Annotacja ma leader z załamaniem na końcu linii rozkładu (grip długości odcinka skośnego).</summary>
+        internal static bool HasElbowGrip(BarData annot, double rotation, List<Point3d> pts)
+        {
+            if (annot == null || pts == null || pts.Count < 3) return false;
+            bool skew = Math.Abs(annot.SkewEnd - annot.SkewStart) > 1e-6;
+            if (IsOblique(rotation)) return true;
+            if (pts.Count != 3) return false;
+            if (!skew) return false;
+            var seg = pts[2] - pts[1];
+            return annot.Direction == "X" ? Math.Abs(seg.X) < 1e-3 : Math.Abs(seg.Y) < 1e-3;
+        }
+
+        /// <summary>
+        /// Grip załamania: nowa długość odcinka za ostatnim prętem (wzdłuż linii rozkładu).
+        /// Ramię do tekstu przesuwa się razem z załamaniem (zachowuje długość i kierunek).
+        /// </summary>
+        public static void SetElbowExtension(BlockReference br, double newExt)
+        {
+            var db = br.Database;
+            using var tr = db.TransactionManager.StartTransaction();
+            var brRw = tr.GetObject(br.ObjectId, OpenMode.ForWrite) as BlockReference;
+            var bar = brRw != null ? ReadAnnotXData(brRw) : null;
+            if (bar == null) { tr.Commit(); return; }
+            bar.Angle = brRw.Rotation;
+            var pts = DecodeLeaderPoints(bar.LeaderPoints);
+            if (pts.Count < 3) { tr.Commit(); return; }
+
+            double oldExt = ElbowExtOf(bar);
+            newExt = Math.Max(Scaled(50.0, bar), newExt);
+            var axis = pts[1] - pts[0];
+            if (axis.Length < 1e-9) { tr.Commit(); return; }
+            axis = axis.GetNormal();
+            // całe ramię (z dalszymi załamaniami) przesuwa się razem z załamaniem
+            var move = axis * (newExt - oldExt);
+            for (int i = 1; i < pts.Count; i++) pts[i] = pts[i] + move;
+            bar.ElbowExt = newExt;
+
+            var offset = pts[0] - CalcDistLineCenter(bar);
+            pts = ApplyElbow(bar, pts, offset);
+            bar.LeaderPoints = EncodeLeaderPoints(pts);
+
+            var btr = (BlockTableRecord)tr.GetObject(brRw.BlockTableRecord, OpenMode.ForWrite);
+            var ids = new List<ObjectId>();
+            foreach (ObjectId oid in btr) if (!oid.IsErased) ids.Add(oid);
+            foreach (var oid in ids) ((DBObject)tr.GetObject(oid, OpenMode.ForWrite)).Erase();
+            string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            BuildDistLineAndDots(tr, btr, bar, ltName, offset);
+            BuildMLeaderInBtr(tr, btr, db, bar, pts);
+            WriteAnnotXData(brRw, bar);
+            tr.Commit();
+            try { brRw.RecordGraphicsModified(true); } catch { }
+        }
+
+        private static List<Point3d> ApplyElbow(BarData bar, List<Point3d> pts, Vector3d offset)
+        {
+            if (pts == null || pts.Count < 2 || bar == null) return pts;
+            bool horizontal = bar.Direction == "X";
+            double ox = offset.X, oy = offset.Y;
+            double lineExt = (bar.Count >= 1 && bar.Count <= 3) ? Scaled(DotRadius, bar) : 0.0;
+            double lastBar = (bar.Count - 1) * bar.Spacing;
+            var bs = horizontal ? new Point3d(bar.SkewStart + ox, -lineExt + oy, 0)
+                                : new Point3d(-lineExt + ox, bar.SkewStart + oy, 0);
+            var be = horizontal ? new Point3d(bar.SkewEnd + ox, lastBar + lineExt + oy, 0)
+                                : new Point3d(lastBar + lineExt + ox, bar.SkewEnd + oy, 0);
+            bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            bool elbow = NeedsElbow(bar);
+            var ax = (be - bs).Length > 1e-9 ? (be - bs).GetNormal() : (horizontal ? Vector3d.YAxis : Vector3d.XAxis);
+            double ext = ElbowExtOf(bar);
+            var endExt   = elbow ? be + ax * ext : be;
+            var startExt = elbow ? bs - ax * ext : bs;
+            // Obrócony ukośnie: ramię z tekstem nie krótsze niż tekst + odstępy (tekst nie wchodzi na pręty)
+            double minArm = ArmLength;
+            if (IsOblique(bar.Angle))
+            {
+                double textLen = bar.TextLen > 0 ? bar.TextLen
+                    : ($"{bar.EffectiveCount} {bar.Mark}").Length * Scaled(DefaultTextHeight, bar) * 0.85;
+                minArm = textLen + 2 * Scaled(TextArmOffset, bar);
+            }
+            return FollowSkewEnd(pts, startExt, endExt, horizontal, hasSkew, minArm, bar.Angle);
+        }
+
         private static List<Point3d> FollowSkewEnd(List<Point3d> pts, Point3d distStart, Point3d distEnd,
-                                                   bool alongIsY, bool hasSkew, double minArm)
+                                                   bool alongIsY, bool hasSkew, double minArm, double rotation = 0.0)
         {
             if (pts == null || pts.Count < 2) return pts;
             var p0 = pts[0];
             var last = pts[pts.Count - 1];
             var prev = pts[pts.Count - 2];
+
+            if (IsOblique(rotation))
+            {
+                // Rozkład obrócony ukośnie (jak ASD): wzdłuż linii rozkładu do jej końca po stronie tekstu,
+                // potem ramię POZIOME albo PIONOWE w układzie rysunku (tekst 0° / 90°, czytelny).
+                var axis = distEnd - distStart;
+                if (axis.Length < 1e-9) return pts;
+                axis = axis.GetNormal();
+                // Struktura: [środek, załamanie (na osi rozkładu), koniec ramienia, dalsze załamania użytkownika...]
+                // Z jigu przychodzi [środek, koniec ramienia, ...] — wtedy załamanie dopiero wstawiamy.
+                var rel1 = pts[1] - p0;
+                bool hasElbow = pts.Count >= 3 && Math.Abs(rel1.X * axis.Y - rel1.Y * axis.X) < 1.0;
+                int armIdx = hasElbow ? 2 : 1;
+                var armTip = pts[armIdx];
+                var rest = pts.Skip(armIdx + 1).ToList();
+                bool toEnd = (armTip - p0).DotProduct(axis) >= 0;
+                var elbowPt = toEnd ? distEnd : distStart;
+                var outward = toEnd ? axis : -axis;
+                var desired = armTip - elbowPt;
+                if (rest.Count > 0) minArm = 50.0;   // tekst na ostatnim odcinku — pierwsze ramię dowolnie krótkie
+                Vector3d best = outward;
+                double bestScore = double.NegativeInfinity;
+                for (int k = 0; k < 4; k++)
+                {
+                    var dW = new Vector3d(Math.Cos(k * Math.PI / 2.0), Math.Sin(k * Math.PI / 2.0), 0);
+                    var dL = dW.RotateBy(-rotation, Vector3d.ZAxis);
+                    if (dL.DotProduct(outward) <= 1e-6) continue;   // ramię nie może wracać na pręty
+                    double score = desired.Length > 1e-6 ? dL.DotProduct(desired) : dL.DotProduct(outward);
+                    if (score > bestScore) { bestScore = score; best = dL; }
+                }
+                double len = Math.Max(best.DotProduct(desired), minArm);
+                var res = new List<Point3d> { p0, elbowPt, elbowPt + best * len };
+                res.AddRange(rest);
+                return res;
+            }
             // Leader „wzdłuż osi rozkładu” (dla prętów X: ostatni odcinek bardziej pionowy niż poziomy).
             // Leadery złamane w bok (ostatni odcinek poprzeczny) zostawiamy bez zmian.
             double dAlong = alongIsY ? Math.Abs(last.Y - prev.Y) : Math.Abs(last.X - prev.X);
@@ -503,10 +639,10 @@ namespace BricsCadRc.Core
                 : new Point3d(lastBarPos + lineExt, bar.SkewEnd, 0);
 
             Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
-            bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
+            bool hasSkew = NeedsElbow(bar);
             Vector3d axisDir = hasSkew && (baseEnd - baseStart).Length > 1e-9
                 ? (baseEnd - baseStart).GetNormal() : fallback;
-            Point3d finalEnd = hasSkew ? baseEnd + axisDir * Scaled(DistEndExtension, bar) : baseEnd;
+            Point3d finalEnd = hasSkew ? baseEnd + axisDir * DrawnExtOf(bar) : baseEnd;
             double expectedLen = (finalEnd - baseStart).Length;
 
             var v = ln.EndPoint - ln.StartPoint;
@@ -538,11 +674,11 @@ namespace BricsCadRc.Core
             Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
             Vector3d axisDir;
             Point3d  finalEnd;
-            if (hasSkew)
+            if (NeedsElbow(bar))
             {
                 axisDir  = (baseEnd - baseStart).Length > 1e-9
                     ? (baseEnd - baseStart).GetNormal() : fallback;
-                finalEnd = baseEnd + axisDir * Scaled(DistEndExtension, bar);
+                finalEnd = baseEnd + axisDir * DrawnExtOf(bar);
             }
             else
             {
@@ -650,6 +786,7 @@ namespace BricsCadRc.Core
 
             var bar = ReadAnnotXData(brRw);
             if (bar == null) { tr.Commit(); return; }
+            bar.Angle = brRw.Rotation;
 
             // Przelicz nową pozycję tekstu do lokalnego BTR
             var inv     = brRw.BlockTransform.Inverse();
@@ -721,6 +858,8 @@ namespace BricsCadRc.Core
 
             var bar = ReadAnnotXData(brRw);
             if (bar == null) { tr.Commit(); return; }
+            bar.Angle = brRw.Rotation;
+            bool oblique = IsOblique(bar.Angle);
 
             var inv = brRw.BlockTransform.Inverse();
             var perpLocal  = perpShiftWCS.TransformBy(inv);
@@ -731,8 +870,8 @@ namespace BricsCadRc.Core
 
             // Rozkład skośny z ramieniem wzdłuż osi rozkładu: kink przypięty do końca linii rozkładu
             // (nie ślizga się po skosie), ostatni odcinek zostaje ściśle pionowy/poziomy.
-            bool skewArm = false;
-            if (pts.Count >= 3 && Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6)
+            bool skewArm = oblique;   // obrócony ukośnie: załamanie liczone od nowa (ApplyElbow niżej)
+            if (!oblique && pts.Count >= 3 && Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6)
             {
                 var segL = pts[pts.Count - 1] - pts[pts.Count - 2];
                 skewArm = bar.Direction == "X" ? Math.Abs(segL.X) < 1e-3 : Math.Abs(segL.Y) < 1e-3;
@@ -740,6 +879,17 @@ namespace BricsCadRc.Core
 
             // Kink (pts[N-2]): ślizganie wzdłuż arm (pts[0]→kink) — zachowuje kąt arm
             // lastPt (pts[N-1]): pełen offset użytkownika
+            if (oblique && pts.Count >= 4)
+            {
+                // obrócony z dodatkowymi załamaniami: przedostatni punkt ślizga się wzdłuż swojego odcinka
+                var segV = pts[pts.Count - 2] - pts[pts.Count - 3];
+                if (segV.Length > 1e-9)
+                {
+                    var segD = segV.GetNormal();
+                    var dT = perpLocal + alongLocal;
+                    pts[pts.Count - 2] = pts[pts.Count - 2] + segD * (dT.X * segD.X + dT.Y * segD.Y);
+                }
+            }
             if (pts.Count >= 3 && !skewArm)
             {
                 var armVec = pts[pts.Count - 2] - pts[0];
@@ -753,7 +903,7 @@ namespace BricsCadRc.Core
                 }
             }
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
-            if (skewArm)
+            if (skewArm && !oblique)
             {
                 var kinkL = pts[pts.Count - 2];
                 var lastL = pts[pts.Count - 1];
@@ -781,6 +931,11 @@ namespace BricsCadRc.Core
                     // pts[0].X bez zmian — set przez RebuildDistLineInBtr z localOffset
                 }
             }
+
+            // Obrócony ukośnie: ramię poziome/pionowe w układzie rysunku od końca linii rozkładu
+            // (przeciągnięcie w bok może przełączyć ramię z pionowego na poziome i odwrotnie).
+            if (oblique && pts.Count >= 2)
+                pts = ApplyElbow(bar, pts, pts[0] - CalcDistLineCenter(bar));
 
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
@@ -849,11 +1004,16 @@ namespace BricsCadRc.Core
             }
             var lastDir    = diff.GetNormal();
             // 3. Kąt tekstu = kąt ostatniego segmentu (dokładny, nie snap do 0/90°)
+            // Czytelność oceniamy w układzie RYSUNKU (blok annotacji może być obrócony o bar.Angle)
             double rawAngle = Math.Atan2(lastDir.Y, lastDir.X);
-            double textAngle = rawAngle;
+            double rawW = rawAngle + bar.Angle;
+            while (rawW >  Math.PI) rawW -= 2 * Math.PI;
+            while (rawW <= -Math.PI) rawW += 2 * Math.PI;
+            double normW = rawW;
             // Normalizuj żeby tekst był czytelny (nie do góry nogami)
-            if (textAngle > Math.PI / 2.0 + 1e-6) textAngle -= Math.PI;
-            else if (textAngle <= -Math.PI / 2.0 + 1e-6) textAngle += Math.PI;
+            if (normW > Math.PI / 2.0 + 1e-6) normW -= Math.PI;
+            else if (normW <= -Math.PI / 2.0 + 1e-6) normW += Math.PI;
+            double textAngle = rawAngle + (normW - rawW);
 
             var textDir = new Vector3d(Math.Cos(textAngle), Math.Sin(textAngle), 0);
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
@@ -1287,6 +1447,7 @@ namespace BricsCadRc.Core
                 updatedBar.LeaderUp         = existingAnnot.LeaderUp;
                 updatedBar.ArmMidY          = existingAnnot.ArmMidY;
                 updatedBar.TextLen          = existingAnnot.TextLen;
+                updatedBar.ElbowExt         = existingAnnot.ElbowExt;
                 // Przefiltruj LeaderPoints — usuń zdegenerowane segmenty (duplikaty)
                 if (!string.IsNullOrEmpty(existingAnnot.LeaderPoints))
                 {
@@ -1319,16 +1480,14 @@ namespace BricsCadRc.Core
                         if (sourceBlockBarData != null && srcBr != null)
                         {
                             updatedBar.AnnotScale = sourceBlockBarData.AnnotScale;
-                            bool horizontal = updatedBar.Direction == "X";
-                            localOffset = horizontal
-                                ? new Vector3d(0, srcBr.Position.Y - annotBr.Position.Y, 0)
-                                : new Vector3d(srcBr.Position.X - annotBr.Position.X, 0, 0);
+                            localOffset = DistLineLocalOffset(annotBr, srcBr.Position, updatedBar.Direction == "X");
                         }
                     }
                 }
                 catch { }
             }
 
+            updatedBar.Angle = annotBr.Rotation;   // geometria leadera/tekstu zależy od obrotu bloku annotacji
             var btr = (BlockTableRecord)tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite);
 
             // Wymazanie calej zawartosci BTR
@@ -1400,12 +1559,10 @@ namespace BricsCadRc.Core
             // 2. Odbuduj dist line + doty/strzałki/ticki
             Vector3d localOffset = new Vector3d(0, 0, 0);
             if (blockPos.HasValue)
-            {
-                bool horizontal = barData.Direction == "X";
-                localOffset = horizontal
-                    ? new Vector3d(0, blockPos.Value.Y - annotBr.Position.Y, 0)
-                    : new Vector3d(blockPos.Value.X - annotBr.Position.X, 0, 0);
-            }
+                localOffset = DistLineLocalOffset(annotBr, blockPos.Value, barData.Direction == "X");
+            barData.Angle = annotBr.Rotation;
+            var annotPre = ReadAnnotXData(annotBr);
+            if (annotPre != null) barData.ElbowExt = annotPre.ElbowExt;
             string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
             BuildDistLineAndDots(tr, btr, barData, ltName, localOffset);
 
@@ -1418,6 +1575,9 @@ namespace BricsCadRc.Core
                 {
                     Point3d target = CalcDistLineCenter(barData);
                     pts[0] = new Point3d(target.X + localOffset.X, target.Y + localOffset.Y, 0);
+                    annotBar.Angle = annotBr.Rotation;
+                    if (NeedsElbow(barData))
+                        pts = ApplyElbow(barData, pts, localOffset);   // załamanie zostaje na końcu linii rozkładu
                     annotBar.LeaderPoints = EncodeLeaderPoints(pts);
                     WriteAnnotXData(annotBr, annotBar);
                     BuildMLeaderInBtr(tr, btr, db, annotBar, pts);
@@ -1425,6 +1585,16 @@ namespace BricsCadRc.Core
             }
 
             tr.Commit();
+        }
+
+        /// <summary>
+        /// Przesunięcie linii rozkładu w BTR annotacji: wektor (pozycja bloku prętów − pozycja annotacji)
+        /// w UKŁADZIE BLOKU annotacji (uwzględnia obrót), składowa wzdłuż rozkładu.
+        /// </summary>
+        private static Vector3d DistLineLocalOffset(BlockReference annotBr, Point3d blockPos, bool horizontal)
+        {
+            var d = (blockPos - annotBr.Position).RotateBy(-annotBr.Rotation, Vector3d.ZAxis);
+            return horizontal ? new Vector3d(0, d.Y, 0) : new Vector3d(d.X, 0, 0);
         }
 
         /// <summary>
@@ -1522,7 +1692,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewEnd),            // [18]
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),          // [19]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [20] CountDisplay (-1 = null)
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0))  // [21] IsLabelManual
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)), // [21] IsLabelManual
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ElbowExt > 0 ? bar.ElbowExt : -1.0) // [22] ElbowExt (-1 = domyślny)
             );
         }
 
@@ -1574,6 +1745,11 @@ namespace BricsCadRc.Core
                 catch { bd.IsLabelManual = false; }
             }
             else bd.IsLabelManual = false;
+            if (v.Length >= 23)
+            {
+                try { double e = Convert.ToDouble(v[22].Value); bd.ElbowExt = e > 0 ? e : double.NaN; }
+                catch { bd.ElbowExt = double.NaN; }
+            }
 
             return bd;
         }

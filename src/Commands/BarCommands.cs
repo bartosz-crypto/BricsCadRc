@@ -598,6 +598,12 @@ namespace BricsCadRc.Commands
                     // ETAP 3 — wielosegmentowy leader: pętla GetPoint z live preview
                     var leaderWcsPts = new List<Point3d> { kinkPt };  // start = kinkPt z jig2
 
+                    // Rozkład obrócony ukośnie: podgląd ETAP 3 zaczyna się od środka rozkładu przez
+                    // załamanie na końcu linii rozkładu (jak w ETAP 2); kolejne kliki = kolejne załamania.
+                    bool obliqueLeader = AnnotationEngine.IsOblique(sourceBar.Angle);
+                    var previewPrefix = obliqueLeader
+                        ? new List<Point3d> { distCenter, jig2.ElbowPt }
+                        : new List<Point3d>();
                     using (var drawer = new LeaderTransientDrawer())
                     {
                         while (true)
@@ -612,7 +618,7 @@ namespace BricsCadRc.Commands
                             {
                                 try
                                 {
-                                    drawer.UpdatePreview(leaderWcsPts, ev.Context.ComputedPoint);
+                                    drawer.UpdatePreview(previewPrefix.Concat(leaderWcsPts).ToList(), ev.Context.ComputedPoint);
                                     Application.UpdateScreen();
                                 }
                                 catch { }
@@ -663,7 +669,8 @@ namespace BricsCadRc.Commands
                     localPts.Insert(0, distLinePt);
 
                     // Detekcja "zawracania" — usuń punkty pośrednie które tworzą kąt ostry
-                    for (int k = localPts.Count - 2; k >= 1; k--)
+                    // (obrócony ukośnie: punkt [1] to koniec ramienia, a nie załamanie przy środku — nie usuwaj)
+                    for (int k = localPts.Count - 2; k >= (obliqueLeader ? 2 : 1); k--)
                     {
                         var before = localPts[k - 1];
                         var mid    = localPts[k];

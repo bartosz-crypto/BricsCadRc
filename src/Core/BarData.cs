@@ -92,6 +92,9 @@ namespace BricsCadRc.Core
         /// <summary>Zmierzona dlugosc tekstu (z GeometricExtents) — stala po utworzeniu, uzywana w UpdateArmInBlock</summary>
         public double TextLen { get; set; }
 
+        /// <summary>Annotacja: odcinek leadera za ostatnim prętem do załamania (rozkład skośny/obrócony) [mm]; NaN = domyślny.</summary>
+        public double ElbowExt { get; set; } = double.NaN;
+
         /// <summary>Czy etykieta wychodzi z boku rozkładu (true) czy z góry/dołu (false)</summary>
         public bool LeaderHorizontal { get; set; }
 

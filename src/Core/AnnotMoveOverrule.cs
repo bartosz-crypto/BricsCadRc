@@ -53,6 +53,9 @@ namespace BricsCadRc.Core
             = new Dictionary<long, double>();
         private static readonly Dictionary<long, Point3d> _dragStartLastPt
             = new Dictionary<long, Point3d>();
+        // Grip [2] annotacji (załamanie): długość odcinka za ostatnim prętem + kierunek na zewnątrz (WCS) ze startu dragu
+        private static readonly Dictionary<long, (double ext, Vector3d outWcs)> _dragElbow
+            = new Dictionary<long, (double ext, Vector3d outWcs)>();
 
 
         // Transienty podglądu dragu arm — czyszczone przed każdym nowym wywołaniem MoveGripPointsAt
@@ -351,6 +354,8 @@ namespace BricsCadRc.Core
                 _dragStartSegLen.Remove(0L);
                 _dragStartLastPt.Remove(hv);
                 _dragStartLastPt.Remove(0L);
+                _dragElbow.Remove(hv);
+                _dragElbow.Remove(0L);
                 ClearGripTransients();
 
 
@@ -377,9 +382,11 @@ namespace BricsCadRc.Core
                                 var srcBr0 = trG.GetObject(srcId0, OpenMode.ForRead) as BlockReference;
                                 if (srcBr0 != null)
                                 {
+                                    // w układzie bloku annotacji (obrócony opis — wcześniej grip lądował daleko)
+                                    var d0 = (srcBr0.Position - br.Position).RotateBy(-br.Rotation, Vector3d.ZAxis);
                                     localOff0 = (barAnnot.Direction == "X")
-                                        ? new Vector3d(0, srcBr0.Position.Y - br.Position.Y, 0)
-                                        : new Vector3d(srcBr0.Position.X - br.Position.X, 0, 0);
+                                        ? new Vector3d(0, d0.Y, 0)
+                                        : new Vector3d(d0.X, 0, 0);
                                 }
                                 trG.Commit();
                             }
@@ -404,6 +411,10 @@ namespace BricsCadRc.Core
                 }
                 gripPoints.Add(grip1);  // [1] arm end
 
+                // [2] załamanie leadera (rozkład skośny/obrócony) — długość odcinka skośnego
+                if (AnnotationEngine.HasElbowGrip(barAnnot, br.Rotation, ptsGrip))
+                    gripPoints.Add(ptsGrip[1].TransformBy(br.BlockTransform));
+
                 return;
             }
 
@@ -424,6 +435,19 @@ namespace BricsCadRc.Core
 
             // Wyznacz indeksy przeciaganych gripow po ich pozycji
             bool isGrip1 = false;
+            {
+                var annE = AnnotationEngine.ReadAnnotXData(br);
+                if (annE != null)
+                {
+                    var ptsE = AnnotationEngine.DecodeLeaderPoints(annE.LeaderPoints);
+                    if (AnnotationEngine.HasElbowGrip(annE, br.Rotation, ptsE))
+                    {
+                        var elbowW = ptsE[1].TransformBy(br.BlockTransform);
+                        foreach (GripData gd in grips)
+                            if (IsNear(gd.GripPoint, elbowW)) { DragElbow(br, offset); return; }
+                    }
+                }
+            }
             foreach (GripData gd in grips)
             {
                 var barBlock = BarBlockEngine.ReadXData(br);
@@ -485,7 +509,10 @@ namespace BricsCadRc.Core
 
             bool isGrip1 = false;
             foreach (int idx in indices)
+            {
                 if (idx == 1) isGrip1 = true;
+                if (idx == 2 && AnnotationEngine.IsAnnotation(br)) { DragElbow(br, offset); return; }
+            }
 
             // RC_BAR_ANNOT grip[0]: project offset onto bar axis so grip marker follows same path
             if (!isGrip1)
@@ -502,6 +529,37 @@ namespace BricsCadRc.Core
                 }
             }
             ApplyGripMove(entity, br, offset, isGrip1);
+        }
+
+        /// <summary>Grip [2] annotacji: przesunięcie załamania wzdłuż linii rozkładu (offset kumulatywny od startu dragu).</summary>
+        private static void DragElbow(BlockReference br, Vector3d offset)
+        {
+            if (br.ObjectId.IsNull || br.Database == null) return;   // klon podglądu
+            long handle = br.ObjectId.Handle.Value;
+            try
+            {
+                if (!_dragElbow.ContainsKey(handle))
+                {
+                    BarData a = null;
+                    using (var tr = br.Database.TransactionManager.StartTransaction())
+                    {
+                        var brT = tr.GetObject(br.ObjectId, OpenMode.ForRead) as BlockReference;
+                        a = brT != null ? AnnotationEngine.ReadAnnotXData(brT) : null;
+                        tr.Commit();
+                    }
+                    var pts = a != null ? AnnotationEngine.DecodeLeaderPoints(a.LeaderPoints) : null;
+                    if (pts == null || pts.Count < 3) return;
+                    var ax = pts[1] - pts[0];
+                    if (ax.Length < 1e-9) return;
+                    var outW = ax.GetNormal().TransformBy(br.BlockTransform);
+                    outW = new Vector3d(outW.X, outW.Y, 0).GetNormal();
+                    _dragElbow[handle] = (AnnotationEngine.GetElbowExt(a), outW);
+                }
+                var st = _dragElbow[handle];
+                double newExt = st.ext + offset.DotProduct(st.outWcs);
+                AnnotationEngine.SetElbowExtension(br, newExt);
+            }
+            catch (System.Exception ex) { Log.Error("AnnotGripOverrule.DragElbow", ex); }
         }
 
         // ----------------------------------------------------------------
@@ -705,6 +763,8 @@ namespace BricsCadRc.Core
     internal static class AnnotOverruleState
     {
         public static bool InGripDrag { get; set; } = false;
+        /// <summary>Obrót annotacji razem z prętami (ApplyPendingRotations) — bez własnej logiki ATR.</summary>
+        public static bool SuppressAnnotTransform { get; set; } = false;
     }
 
     // ----------------------------------------------------------------
@@ -730,6 +790,7 @@ namespace BricsCadRc.Core
         {
             // p258 ETAP 1 — Annot przesuwa się swobodnie (ASD-style: independent).
             base.TransformBy(entity, transform);
+            if (AnnotOverruleState.SuppressAnnotTransform) return;
 
             // p265 — Po MOVE annot solo, dist line pozostaje na prętach: rebuild z nowym
             // offsetem = block.Position (niezmienione) − annot.Position (po move).
@@ -767,7 +828,7 @@ namespace BricsCadRc.Core
                 // Kompensujemy lokalne BTR coords przez -V_local. Text (pts[N-1]) zostaje
                 // (intuicyjne: MOVE annot = przesuń tekst). Dla bez-kinka (pts.Count==2)
                 // loop pusty — status quo.
-                if (transform.Translation.Length > 1e-6)
+                if (transform.Translation.Length > 1e-6 && !BarBlockTransformOverrule.HasRotation(transform))
                 {
                     var kinkPts = AnnotationEngine.DecodeLeaderPoints(annotData.LeaderPoints);
                     if (kinkPts.Count >= 3)
@@ -819,6 +880,16 @@ namespace BricsCadRc.Core
 
             string annotHandle = ReadAnnotHandle(br);
             if (string.IsNullOrEmpty(annotHandle)) return;
+
+            // ROTATE prętów: annotacja obraca się razem z nimi — w CommandEnded (ApplyPendingRotations),
+            // bo gdy annotacja też jest zaznaczona, BricsCAD obraca ją sam (nie wolno obrócić drugi raz).
+            if (HasRotation(transform))
+            {
+                if (!br.ObjectId.IsNull)
+                    _pendingRot[br.ObjectId] = _pendingRot.TryGetValue(br.ObjectId, out var prev)
+                        ? transform * prev : transform;
+                return;
+            }
 
             var translation = transform.Translation;
             if (translation.Length < 0.001) return;
@@ -874,6 +945,74 @@ namespace BricsCadRc.Core
             // AnnotHandle pusty albo zapisany jako handle 1005). Teraz: właściwe pole [11].
             string h = BarBlockEngine.ReadXData(br)?.AnnotHandle;
             return string.IsNullOrEmpty(h) ? null : h;
+        }
+
+        // ── Obrót prętów → obrót annotacji ────────────────────────────────
+        private static readonly Dictionary<ObjectId, Matrix3d> _pendingRot = new Dictionary<ObjectId, Matrix3d>();
+
+        internal static bool HasRotation(Matrix3d m)
+        {
+            var x = Vector3d.XAxis.TransformBy(m);
+            var y = Vector3d.YAxis.TransformBy(m);
+            if (x.X * y.Y - x.Y * y.X <= 0) return false;   // lustro — nie obrót
+            return x.Length > 1e-9 && Math.Abs(Math.Atan2(x.Y, x.X)) > 1e-9;
+        }
+
+        internal static void DiscardPendingRotations() => _pendingRot.Clear();
+
+        private static double AngleDiff(double a, double b)
+        {
+            double d = (a - b) % (2 * Math.PI);
+            if (d > Math.PI) d -= 2 * Math.PI;
+            if (d < -Math.PI) d += 2 * Math.PI;
+            return Math.Abs(d);
+        }
+
+        /// <summary>
+        /// Po komendzie z obrotem prętów: annotacja (jeśli sama nie była obracana) dostaje ten sam obrót,
+        /// kąt rozkładu w XData [23] aktualizowany, opis przebudowany (leader jak w ASD).
+        /// </summary>
+        internal static void ApplyPendingRotations(Database db)
+        {
+            if (db == null || _pendingRot.Count == 0) return;
+            var items = new Dictionary<ObjectId, Matrix3d>(_pendingRot);
+            _pendingRot.Clear();
+
+            foreach (var kv in items)
+            {
+                if (kv.Key.IsNull || kv.Key.IsErased || kv.Key.Database != db) continue;
+                try
+                {
+                    BarData bd = null;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var br = tr.GetObject(kv.Key, OpenMode.ForWrite) as BlockReference;
+                        bd = br != null ? BarBlockEngine.ReadXData(br) : null;
+                        if (bd == null) { tr.Commit(); continue; }
+                        bd.Angle = br.Rotation;
+                        BarBlockEngine.WriteXData(br, bd);
+
+                        if (!string.IsNullOrEmpty(bd.AnnotHandle)
+                            && long.TryParse(bd.AnnotHandle, NumberStyles.HexNumber, null, out long hv)
+                            && db.TryGetObjectId(new Handle(hv), out ObjectId annotId)
+                            && !annotId.IsNull && !annotId.IsErased
+                            && tr.GetObject(annotId, OpenMode.ForWrite) is BlockReference annot)
+                        {
+                            var ad = AnnotationEngine.ReadAnnotXData(annot);
+                            bool mine = ad != null && XLink.Same(ad.SourceBlockHandle, br.Handle.Value.ToString("X8"));
+                            if (mine && AngleDiff(annot.Rotation, br.Rotation) > 1e-6)
+                            {
+                                AnnotOverruleState.SuppressAnnotTransform = true;
+                                try { annot.TransformBy(kv.Value); }
+                                finally { AnnotOverruleState.SuppressAnnotTransform = false; }
+                            }
+                        }
+                        tr.Commit();
+                    }
+                    if (bd != null) AnnotationEngine.SyncAnnotation(db, bd);
+                }
+                catch (System.Exception ex) { Log.Error($"BarBlockTransformOverrule.ApplyPendingRotations {kv.Key}", ex); }
+            }
         }
     }
 
