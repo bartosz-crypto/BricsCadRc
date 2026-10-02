@@ -251,6 +251,14 @@ namespace BricsCadRc.Core
                 leaderPtsH[0] = new Point3d(leaderPtsH[0].X, targetH.Y, 0);
             }
 
+            // Rozkład skośny: ramię idzie od środka WZDŁUŻ linii rozkładu do jej końca, dopiero tam
+            // skręca w pionie do tekstu (wcześniej pionowe ramię ze środka przecinało pręty).
+            {
+                var axH = (baseEndH - baseStartH).Length > 1e-9 ? (baseEndH - baseStartH).GetNormal() : Vector3d.YAxis;
+                var startExtH = hasSkewH ? baseStartH - axH * Scaled(DistEndExtension, bar) : baseStartH;
+                leaderPtsH = FollowSkewEnd(leaderPtsH, startExtH, finalEndH, alongIsY: true, hasSkewH, ArmLength);
+            }
+
             // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
             bar.LeaderPoints = EncodeLeaderPoints(leaderPtsH);
 
@@ -350,11 +358,53 @@ namespace BricsCadRc.Core
                 leaderPtsV[0] = new Point3d(targetV.X, leaderPtsV[0].Y, 0);
             }
 
+            // Rozkład skośny: ramię wzdłuż linii rozkładu do jej końca, potem poziomo do tekstu
+            {
+                var axV = (baseEndV - baseStartV).Length > 1e-9 ? (baseEndV - baseStartV).GetNormal() : Vector3d.XAxis;
+                var startExtV = hasSkewV ? baseStartV - axV * Scaled(DistEndExtension, bar) : baseStartV;
+                leaderPtsV = FollowSkewEnd(leaderPtsV, startExtV, finalEndV, alongIsY: false, hasSkewV, ArmLength);
+            }
+
             // Zapisz rescalowane punkty do XData — bez tego GetGripPoints czytałoby stare pozycje
             bar.LeaderPoints = EncodeLeaderPoints(leaderPtsV);
 
             BuildMLeaderInBtr(tr, btr, db, bar, leaderPtsV);
             return bar.ArmTotalLen;
+        }
+
+        /// <summary>
+        /// Leader prosty (ostatni odcinek wzdłuż osi rozkładu: pionowy dla prętów X, poziomy dla Y):
+        /// przy skosie — [środek linii rozkładu, koniec linii rozkładu po stronie tekstu, ramię od tego końca].
+        /// Bez skosu — wraca do prostego [środek, koniec ramienia]. Leadery złamane (poziome dla X) bez zmian.
+        /// </summary>
+        private static List<Point3d> FollowSkewEnd(List<Point3d> pts, Point3d distStart, Point3d distEnd,
+                                                   bool alongIsY, bool hasSkew, double minArm)
+        {
+            if (pts == null || pts.Count < 2) return pts;
+            var p0 = pts[0];
+            var last = pts[pts.Count - 1];
+            var prev = pts[pts.Count - 2];
+            // Leader „wzdłuż osi rozkładu” (dla prętów X: ostatni odcinek bardziej pionowy niż poziomy).
+            // Leadery złamane w bok (ostatni odcinek poprzeczny) zostawiamy bez zmian.
+            double dAlong = alongIsY ? Math.Abs(last.Y - prev.Y) : Math.Abs(last.X - prev.X);
+            double dCross = alongIsY ? Math.Abs(last.X - prev.X) : Math.Abs(last.Y - prev.Y);
+            bool straight = dCross < 1e-3 || (hasSkew && pts.Count == 3 && dAlong > dCross);
+            if (!straight) return pts;
+
+            double a0 = alongIsY ? p0.Y : p0.X, aL = alongIsY ? last.Y : last.X;
+            bool positive = aL > a0;
+            if (!hasSkew)
+            {
+                // Po usunięciu skosu: punkt pośredni zbędny, jeśli wszystkie punkty leżą na jednej prostej osi
+                bool colinear = pts.All(q => alongIsY ? Math.Abs(q.X - p0.X) < 1e-3 : Math.Abs(q.Y - p0.Y) < 1e-3);
+                return colinear && pts.Count > 2 ? new List<Point3d> { p0, last } : pts;
+            }
+
+            var end = positive ? distEnd : distStart;
+            double eA = alongIsY ? end.Y : end.X;
+            double tipA = positive ? Math.Max(aL, eA + minArm) : Math.Min(aL, eA - minArm);
+            var tip = alongIsY ? new Point3d(end.X, tipA, 0) : new Point3d(tipA, end.Y, 0);
+            return new List<Point3d> { p0, end, tip };
         }
 
         // ----------------------------------------------------------------
@@ -679,9 +729,18 @@ namespace BricsCadRc.Core
             var pts = DecodeLeaderPoints(bar.LeaderPoints);
             if (pts.Count < 2) { tr.Commit(); return; }
 
+            // Rozkład skośny z ramieniem wzdłuż osi rozkładu: kink przypięty do końca linii rozkładu
+            // (nie ślizga się po skosie), ostatni odcinek zostaje ściśle pionowy/poziomy.
+            bool skewArm = false;
+            if (pts.Count >= 3 && Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6)
+            {
+                var segL = pts[pts.Count - 1] - pts[pts.Count - 2];
+                skewArm = bar.Direction == "X" ? Math.Abs(segL.X) < 1e-3 : Math.Abs(segL.Y) < 1e-3;
+            }
+
             // Kink (pts[N-2]): ślizganie wzdłuż arm (pts[0]→kink) — zachowuje kąt arm
             // lastPt (pts[N-1]): pełen offset użytkownika
-            if (pts.Count >= 3)
+            if (pts.Count >= 3 && !skewArm)
             {
                 var armVec = pts[pts.Count - 2] - pts[0];
                 double armLen = armVec.Length;
@@ -694,6 +753,14 @@ namespace BricsCadRc.Core
                 }
             }
             pts[pts.Count - 1] = pts[pts.Count - 1] + perpLocal + alongLocal;
+            if (skewArm)
+            {
+                var kinkL = pts[pts.Count - 2];
+                var lastL = pts[pts.Count - 1];
+                pts[pts.Count - 1] = bar.Direction == "X"
+                    ? new Point3d(kinkL.X, lastL.Y, 0)
+                    : new Point3d(lastL.X, kinkL.Y, 0);
+            }
 
             // Rescale leadera — pts[0] na środek dist line (spójny z grip[0] UI)
             if (pts.Count >= 2)

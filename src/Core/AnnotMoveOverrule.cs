@@ -633,6 +633,14 @@ namespace BricsCadRc.Core
                         perpShift  = new Vector3d(0, 0, 0);
                         alongShift = segDir * projAlong;
                     }
+                    else if (Math.Abs(barAnnot.SkewEnd - barAnnot.SkewStart) > 1e-6
+                             && (barAnnot.Direction == "X" ? Math.Abs(segLocal.X) < 1e-3 : Math.Abs(segLocal.Y) < 1e-3))
+                    {
+                        // Rozkład skośny: ramię przypięte do KOŃCA linii rozkładu (ostatni odcinek wzdłuż osi
+                        // rozkładu) — przeciąganie tekstu tylko wydłuża/skraca ramię, punkt załamania zostaje.
+                        perpShift  = new Vector3d(0, 0, 0);
+                        alongShift = segDir * projAlong;
+                    }
                     else
                     {
                         // Leader z kinkiem — decompose: perp przesuwa segment, along wydłuża
