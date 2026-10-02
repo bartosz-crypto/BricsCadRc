@@ -94,6 +94,10 @@ namespace BricsCadRc.Core
             = new Dictionary<ObjectId, (double span, double skewEnd)>();
         private static readonly Dictionary<ObjectId, Vector3d> _pendingAnnotMove
             = new Dictionary<ObjectId, Vector3d>();
+        // Grip [0] rozkładu: przesunięcie początku (pierwszy pręt o otulinę od gripa), drugi koniec bez zmian.
+        // shift = przesunięcie początku wzdłuż rozkładu (lokalnie, + = do środka), span = nowy BarsSpan.
+        private static readonly Dictionary<ObjectId, (double shift, double span, double skewStart)> _pendingStart
+            = new Dictionary<ObjectId, (double shift, double span, double skewStart)>();
         // Ostatni rozkład, dla którego pokazano gripy — gdy drag idzie na klonie (ObjectId.Null).
         private static ObjectId _lastGripOwner = ObjectId.Null;
 
@@ -103,6 +107,7 @@ namespace BricsCadRc.Core
             ClearGripTransients();
             _pendingSpan.Clear();
             _pendingAnnotMove.Clear();
+            _pendingStart.Clear();
             _dragOrigPos.Clear();
             _annotDragStart.Clear();
         }
@@ -116,12 +121,21 @@ namespace BricsCadRc.Core
         internal static void ApplyPendingGripEdits(Database db)
         {
             ClearGripTransients();
-            if (db == null || (_pendingSpan.Count == 0 && _pendingAnnotMove.Count == 0)) return;
+            if (db == null || (_pendingSpan.Count == 0 && _pendingAnnotMove.Count == 0 && _pendingStart.Count == 0)) return;
 
             var spans = new Dictionary<ObjectId, (double span, double skewEnd)>(_pendingSpan);
             var moves = new Dictionary<ObjectId, Vector3d>(_pendingAnnotMove);
+            var starts = new Dictionary<ObjectId, (double shift, double span, double skewStart)>(_pendingStart);
             _pendingSpan.Clear();
             _pendingAnnotMove.Clear();
+            _pendingStart.Clear();
+
+            foreach (var kv in starts)
+            {
+                if (kv.Key.IsNull || kv.Key.IsErased || kv.Key.Database != db) continue;
+                try { ApplyStartStretch(db, kv.Key, kv.Value.shift, kv.Value.span, kv.Value.skewStart); }
+                catch (System.Exception ex) { Log.Error($"ApplyPendingGripEdits.Start {kv.Key}", ex); }
+            }
 
             foreach (var kv in spans)
             {
@@ -191,6 +205,75 @@ namespace BricsCadRc.Core
                 if (bar.Direction == "X") { a = new Point3d(shift, along, 0); b = new Point3d(shift + bar.LengthA, along, 0); }
                 else                      { a = new Point3d(along, shift, 0); b = new Point3d(along, shift + bar.LengthA, 0); }
                 AddGripTransientLine(a.TransformBy(xf), b.TransformBy(xf), 4);
+            }
+        }
+
+        /// <summary>Podgląd grip [0]: pręty od nowego początku (shift) co rozstaw, do niezmienionego drugiego końca.</summary>
+        private static void DrawStartPreview(BlockReference br, BarData bar, double shift, int count, double newSkewStart)
+        {
+            ClearGripTransients();
+            var xf = br.BlockTransform;
+            for (int i = 0; i < count; i++)
+            {
+                double along = shift + i * bar.Spacing;
+                double frac  = count > 1 ? (double)i / (count - 1) : 0.0;
+                double sk    = newSkewStart + frac * (bar.SkewEnd - newSkewStart);
+                Point3d a, b;
+                if (bar.Direction == "X") { a = new Point3d(sk, along, 0); b = new Point3d(sk + bar.LengthA, along, 0); }
+                else                      { a = new Point3d(along, sk, 0); b = new Point3d(along, sk + bar.LengthA, 0); }
+                AddGripTransientLine(a.TransformBy(xf), b.TransformBy(xf), 4);
+            }
+        }
+
+        /// <summary>
+        /// Zapis grip [0]: początek rozkładu przesunięty o shift wzdłuż rozkładu, nowy BarsSpan i SkewStart.
+        /// Strefy cięcia (otwory) i ręczna widoczność prętów przeliczone do nowego początku; opis podąża.
+        /// </summary>
+        private static void ApplyStartStretch(Database db, ObjectId id, double shift, double newSpan, double newSkewStart)
+        {
+            BarData updated = null;
+            Vector3d move;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var br = tr.GetObject(id, OpenMode.ForWrite) as BlockReference;
+                var bar = br != null ? BarBlockEngine.ReadXData(br) : null;
+                if (bar == null) { tr.Commit(); return; }
+
+                var alongLocal = bar.Direction == "X" ? Vector3d.YAxis : Vector3d.XAxis;
+                move = alongLocal.RotateBy(br.Rotation, Vector3d.ZAxis) * shift;
+
+                // Strefy cięcia są w układzie bloku → po przesunięciu początku s maleje o shift
+                if (!string.IsNullOrEmpty(bar.CutZones))
+                    bar.CutZones = BarBlockEngine.FormatCutZones(
+                        BarBlockEngine.ParseCutZones(bar.CutZones)
+                                      .Select(z => (z.s0 - shift, z.s1 - shift, z.a0, z.a1)));
+                // Ręcznie widoczne pręty liczone od początku → przesuń indeksy o liczbę dodanych/ubyłych
+                if (bar.VisibilityMode == BarVisibilityMode.Manual && !string.IsNullOrEmpty(bar.VisibleIndices))
+                {
+                    int k = (int)Math.Round(shift / bar.Spacing);
+                    var idx = bar.VisibleIndices.Split(',')
+                                 .Select(t => int.TryParse(t.Trim(), out int v) ? v - k : -1)
+                                 .Where(v => v >= 0).ToList();
+                    bar.VisibleIndices = idx.Count > 0 ? string.Join(",", idx) : "0";
+                }
+                BarBlockEngine.WriteXData(br, bar);
+
+                AnnotOverruleState.InGripDrag = true;   // bez auto-sync annotacji przy przesunięciu
+                try { br.Position = br.Position + move; }
+                finally { AnnotOverruleState.InGripDrag = false; }
+
+                BarBlockEngine.RegenerateBarBlock(br, newSpan, newSkewStart: newSkewStart);
+                updated = BarBlockEngine.ReadXData(br);
+
+                var annotId = ResolveAnnotId(br, updated);
+                if (!annotId.IsNull && tr.GetObject(annotId, OpenMode.ForWrite) is BlockReference annot)
+                    annot.Position = annot.Position + move;
+                tr.Commit();
+            }
+            if (updated != null)
+            {
+                AnnotationEngine.SyncAnnotation(db, updated);
+                AnnotationEngine.UpdateBarLabelCount(db, updated.SourceBarHandle ?? "", markOverride: updated.Mark);
             }
         }
 
@@ -466,26 +549,23 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    long handle = br.ObjectId.Handle.Value;
-                    if (!_dragOrigPos.ContainsKey(handle))
-                        _dragOrigPos[handle] = br.Position;
-                    var origPos = _dragOrigPos[handle];
-                    var target  = new Point3d(origPos.X + offset.X, origPos.Y + offset.Y, origPos.Z);
-                    var disp    = target - br.Position;
+                    // Grip [0] = krawędź (obwiednia) po stronie PIERWSZEGO pręta: pierwszy pręt zawsze
+                    // dokładnie o otulinę od gripa (płynnie, bez skoku co rozstaw). Drugi koniec (grip [1])
+                    // zostaje w miejscu — liczba prętów wynika z odległości, ostatni pręt ma faktyczny
+                    // odstęp od krawędzi. Do przesuwania całego rozkładu jest MOVE.
+                    var localOff = offset.RotateBy(-br.Rotation, Vector3d.ZAxis);
+                    double alongDelta = barBlock.Direction == "X" ? localOff.Y : localOff.X;
+                    double perpDelta  = barBlock.Direction == "X" ? localOff.X : localOff.Y;
+                    if (barBlock.Spacing <= 0) return;
 
-                    // Wyłącz auto-sync annotacji w BarBlockTransformOverrule (używamy własnej logiki)
-                    AnnotOverruleState.InGripDrag = true;
-                    try { entity.TransformBy(Matrix3d.Displacement(disp)); }
-                    finally { AnnotOverruleState.InGripDrag = false; }
+                    double shift    = Math.Min(alongDelta, barBlock.BarsSpan);   // początek nie za drugi koniec
+                    double newSpan  = barBlock.BarsSpan - shift;                  // drugi koniec bez zmian
+                    int    newCount = Math.Min(2000, (int)(newSpan / barBlock.Spacing + 1e-9) + 1);
+                    double newSkewStart = barBlock.SkewStart + perpDelta;
 
-                    // Annotacja: w trakcie dragu tylko "duch", przesunięcie w bazie w CommandEnded.
-                    var annotId = ResolveAnnotId(br, barBlock);
-                    ClearGripTransients();
-                    if (!annotId.IsNull)
-                    {
-                        DrawAnnotGhost(br.Database, annotId, offset);
-                        _pendingAnnotMove[annotId] = offset;
-                    }
+                    DrawStartPreview(br, barBlock, shift, newCount, newSkewStart);
+                    var realId = RealId(br);
+                    if (!realId.IsNull) _pendingStart[realId] = (shift, newSpan, newSkewStart);
                 }
                 return;
             }
