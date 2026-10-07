@@ -33,9 +33,10 @@ namespace BricsCadRc.Commands
         /// RC_GENERUJ_SIATKA — cała siatka płyty jednym poleceniem, na tych samych silnikach
         /// co RC_GENERUJ_B1/B2/T1/T2 i RC_GENERUJ_UB_B1/B2:
         ///   1. grubość płyty (dla U-barów),
-        ///   2. obrys rzutu DOLNEGO → B1, B2, UB B1, UB B2,
+        ///   2. obrys rzutu DOLNEGO → B1, B2,
         ///   3. obrys rzutu GÓRNEGO (zawsze osobny rzut) → T1, T2 — zakłady góry liczone względem
-        ///      właśnie wygenerowanego dołu (≥ 750 mm w świetle).
+        ///      właśnie wygenerowanego dołu (≥ 750 mm w świetle),
+        ///   4. UB B1, UB B2 (i UB NIB) na rzucie dolnym.
         /// W rozkładach widoczny jest tylko pręt reprezentatywny (RC_SHOW_ALL_BARS pokazuje wszystkie).
         /// </summary>
         [CommandMethod("RC_GENERUJ_SIATKA", CommandFlags.Modal)]
@@ -83,6 +84,12 @@ namespace BricsCadRc.Commands
                                                diameter: 10, representativeOnly: true));
                 nB2 = Run(ed, "B2", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "Y", "B2",
                                                diameter: 10, representativeOnly: true));
+                // Góra liczy zakłady względem właśnie wygenerowanego dołu (≥ 750 mm)
+                nT1 = Run(ed, "T1", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "X", "T1",
+                                               diameter: 12, representativeOnly: true));
+                nT2 = Run(ed, "T2", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "Y", "T2",
+                                               diameter: 12, representativeOnly: true));
+                // UB (dół) — po górze
                 nU1 = Run(ed, "UB B1", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B1",
                                                thickness, "X", representativeOnly: true));
                 nU2 = Run(ed, "UB B2", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B2",
@@ -91,11 +98,6 @@ namespace BricsCadRc.Commands
                 if (hasNib)
                     nU3 = Run(ed, "UB NIB", () => AutoRebarEngine.GenerateNibUBLayer(doc, bottomId, "rebar_bottom",
                                                    representativeOnly: true));
-                // Góra liczy zakłady względem właśnie wygenerowanego dołu (≥ 750 mm)
-                nT1 = Run(ed, "T1", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "X", "T1",
-                                               diameter: 12, representativeOnly: true));
-                nT2 = Run(ed, "T2", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "Y", "T2",
-                                               diameter: 12, representativeOnly: true));
 
                 // Czytelność: widoczne pręty odsunięte od linii rozkładów i innych widocznych prętów
                 Run(ed, "kolizje dół", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, bottomId));

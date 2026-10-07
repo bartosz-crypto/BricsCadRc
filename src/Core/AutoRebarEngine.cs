@@ -22,7 +22,7 @@ namespace BricsCadRc.Core
     /// Chain pattern mirrors RC_PUNCHING_SUMMARY_BARS (PunchingTagCommands.cs).
     /// Etap 1: axis-aligned slabs only.
     /// </summary>
-    public static class AutoRebarEngine
+    public static partial class AutoRebarEngine
     {
         public const double DefaultSpacing       = 200.0;
         public const double DefaultCover         = 40.0;
@@ -280,6 +280,10 @@ namespace BricsCadRc.Core
                 EraseOldDistributions(db, plan.OldDistributionsToErase);
                 InitLabelOccupancy(db);
 
+                // Nib: góra przy krawędziach uskoku = UB 01/02 (każdy pręt górny ma swój UB)
+                var nibPlan = nib != null && layerCode.StartsWith("T")
+                    ? PlanNibStepBars(nib, strips, horizontal, bottomView, cover, spacing) : null;
+
                 foreach (var strip in strips.Where(s => s.Valid))
                 {
                     double stripHeight = strip.ScanHigh - strip.ScanLow;
@@ -355,6 +359,16 @@ namespace BricsCadRc.Core
                             ed.WriteMessage($"\n[AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {kept.Count} prętów " +
                                             "góry w położeniach prętów dołu (pręty w nibie pominięte).\n");
                         }
+                    }
+
+                    if (nibPlan != null && nibPlan.StripPositions.TryGetValue(strip, out var stepPos) && stepPos.Count > 0)
+                    {
+                        y0 = stepPos[0]; y1 = stepPos[stepPos.Count - 1];
+                        spacingMode = SpacingMode.Nominal;
+                        singleBarMode = stepPos.Count == 1;
+                        nibForcedSpacing = stepPos.Count > 1 ? (y1 - y0) / (stepPos.Count - 1) : double.NaN;
+                        ed.WriteMessage($"\n[AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {stepPos.Count} prętów " +
+                                        "góry = UB 01/02 krawędzi uskoku (każdy pręt ma swój UB).\n");
                     }
 
                     // X multi-dist plan for this strip
@@ -828,6 +842,15 @@ namespace BricsCadRc.Core
                 if (nib != null)
                     using (var trB = db.TransactionManager.StartOpenCloseTransaction())
                         ubBottom = FindBottomView(db, trB, slabPolyId, nib.Outer, layerCode, isUBB1);
+                // Krawędzie obrysu zewnętrznego (UB 01/02 na uskoku liczone względem krawędzi zewnętrznej)
+                var outerEdges = nib != null && !nibUB
+                    ? GeometryHelper.EnumerateAxisAlignedEdges(nib.Outer)
+                        .Where(e => e.Orientation == (isUBB1 ? GeometryHelper.EdgeOrientation.Vertical
+                                                             : GeometryHelper.EdgeOrientation.Horizontal)).ToList()
+                    : null;
+
+                var nibPlan = nib != null && !nibUB
+                    ? PlanNibStepBars(nib, mainStrips, isUBB1, ubBottom, cover, spacing) : null;
 
                 foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
@@ -914,9 +937,33 @@ namespace BricsCadRc.Core
                         distLow = distHigh = (segLow + segHigh) / 2.0;
                         totalCount = 1;
                     }
-                    // Nib: UB = pręty dołu dochodzące do tej krawędzi (UB 03 — wszystkie, UB 01/02 na uskoku — bez
-                    // prętów leżących w nibie), te same położenia co pręty dołu / góry
-                    if (ubBottom != null)
+                    // Nib — UB 03 (krawędź zewnętrzna) = pręty dołu przy krawędzi.
+                    // UB 01/02 na uskoku = UB krawędzi zewnętrznej ± 1 na każdy koniec: narożnik wypukły (uskok krótszy)
+                    // −1, wklęsły (uskok dłuższy, np. wcięcie) +1; ta sama długość → ta sama liczba. Równo na uskoku.
+                    bool stepDone = false;
+                    if (outerEdges != null)
+                    {
+                        int rule = StepEdgeRuleCount(nib, ubBottom, isUBB1, edgeCoord, segLow, segHigh, cover, spacing, out int nOuter);
+                        if (rule > 0)
+                        {
+                            totalCount = rule;
+                            distLow = segLow + cover; distHigh = segHigh - cover;
+                            if (totalCount == 1 || distHigh < distLow) distLow = distHigh = (segLow + segHigh) / 2.0;
+                            stepDone = true;
+                            // UB = pręty góry dochodzące do krawędzi (ten sam plan co T1/T2)
+                            var topPos = nibPlan?.UbPositions(edgeCoord, segLow, segHigh);
+                            if (topPos != null && topPos.Count > 0)
+                            {
+                                totalCount = topPos.Count;
+                                distLow = topPos[0]; distHigh = topPos[topPos.Count - 1];
+                            }
+                            ed.WriteMessage($"\n[AutoRebar UB] Nib: uskok {edgeCoord:F0} — krawędź zewnętrzna {nOuter} UB" +
+                                            $" {(rule - nOuter >= 0 ? "+" : "")}{rule - nOuter} (narożniki) → {rule} UB" +
+                                            (totalCount != rule ? $"; pręty góry dochodzące do krawędzi: {totalCount} → {totalCount} UB" : "") +
+                                            ".\n");
+                        }
+                    }
+                    if (!stepDone && ubBottom != null)
                     {
                         var kept = BottomPositionsIn(ubBottom, segLow + cover - 0.5, segHigh - cover + 0.5,
                                                      edgeCoord - 300.0, edgeCoord + 300.0, out _);
@@ -2146,6 +2193,7 @@ namespace BricsCadRc.Core
                 }
                 else ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, representativeSegment);
             }
+            AddBarLinesOf(db, barResult.BlockRefId);   // widoczne pręty — przeszkody dla kolejnych opisów
 
             // Step 6: show outline
             // Bez podświetlania obrysu: przy generowaniu automatycznym zostawały zielone obrysy wszystkich rozkładów
@@ -2155,6 +2203,115 @@ namespace BricsCadRc.Core
         }
 
         // ── Nib ─────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Nib — wspólny plan dla góry (T1/T2) i UB 01/02 na uskoku, żeby KAŻDY pręt górny miał swój UB.
+        /// Krawędź uskoku: liczba = UB 03 krawędzi zewnętrznej ± 1 na każdy narożnik (wypukły −1, wklęsły +1),
+        /// równo od otuliny do otuliny. Pas góry bierze położenia z „swojej” krawędzi uskoku (na końcu pręta,
+        /// zakres najlepiej pasujący do pasa). UB na krawędzi = suma prętów górnych pasów dochodzących do niej.
+        /// </summary>
+        private sealed class NibStepPlan
+        {
+            public readonly Dictionary<StripBounds, List<double>> StripPositions = new Dictionary<StripBounds, List<double>>();
+            public readonly List<StripBounds> Strips = new List<StripBounds>();
+            public readonly List<(double c, double lo, double hi, int rule)> Edges = new List<(double, double, double, int)>();
+
+            /// <summary>Położenia UB na krawędzi = pręty góry dochodzące do niej; null gdy któryś pas nie ma planu.</summary>
+            public List<double> UbPositions(double c, double segLow, double segHigh)
+            {
+                var res = new List<double>();
+                bool any = false;
+                foreach (var s in Strips)
+                {
+                    bool touches = Math.Abs(s.PerpLow - c) < 1.0 || Math.Abs(s.PerpHigh - c) < 1.0;
+                    if (!touches || Math.Min(s.ScanHigh, segHigh) - Math.Max(s.ScanLow, segLow) < 1.0) continue;
+                    if (!StripPositions.TryGetValue(s, out var pos)) return null;
+                    any = true;
+                    foreach (double p in pos)
+                        if (p >= segLow - 0.5 && p <= segHigh + 0.5 && !res.Any(q => Math.Abs(q - p) < 1.0)) res.Add(p);
+                }
+                if (!any) return null;
+                res.Sort();
+                return res;
+            }
+        }
+
+        /// <summary>
+        /// Liczba prętów/UB na krawędzi uskoku c [lo..hi] (oś rozkładu): pręty dołu przy krawędzi zewnętrznej
+        /// ± 1 na każdy koniec. -1 gdy krawędź nie leży na uskoku.
+        /// </summary>
+        private static int StepEdgeRuleCount(NibDetector.NibInfo nib, BottomView bottom, bool barsAlongX,
+            double c, double lo, double hi, double cover, double spacing, out int nOuter)
+        {
+            nOuter = 0;
+            var ne = nib.Edges.FirstOrDefault(nz => nz.Vertical == barsAlongX && Math.Abs(nz.InnerCoord - c) < 1.0
+                                                  && Math.Min(nz.Hi, hi) - Math.Max(nz.Lo, lo) > 1.0);
+            if (ne == null) return -1;
+            var oe = GeometryHelper.EnumerateAxisAlignedEdges(nib.Outer)
+                .Where(e => e.Orientation == (barsAlongX ? GeometryHelper.EdgeOrientation.Vertical
+                                                         : GeometryHelper.EdgeOrientation.Horizontal))
+                .Select(e => (c: barsAlongX ? e.Start.X : e.Start.Y,
+                              lo: barsAlongX ? Math.Min(e.Start.Y, e.End.Y) : Math.Min(e.Start.X, e.End.X),
+                              hi: barsAlongX ? Math.Max(e.Start.Y, e.End.Y) : Math.Max(e.Start.X, e.End.X)))
+                .Where(e => Math.Abs(e.c - ne.OuterCoord) < 1.0 && Math.Min(e.hi, hi + 500) - Math.Max(e.lo, lo - 500) > 1.0)
+                .OrderByDescending(e => Math.Min(e.hi, hi) - Math.Max(e.lo, lo))
+                .Cast<(double c, double lo, double hi)?>().FirstOrDefault();
+            if (!oe.HasValue) return -1;
+            var o = oe.Value;
+            nOuter = bottom != null
+                ? BottomPositionsIn(bottom, o.lo + cover - 0.5, o.hi - cover + 0.5, o.c - 300.0, o.c + 300.0, out _).Count
+                : 0;
+            if (nOuter == 0) nOuter = (int)Math.Floor((o.hi - o.lo - 2 * cover) / spacing + 1e-9) + 1;
+            int dLow  = lo < o.lo - 1.0 ? 1 : lo > o.lo + 1.0 ? -1 : 0;
+            int dHigh = hi > o.hi + 1.0 ? 1 : hi < o.hi - 1.0 ? -1 : 0;
+            return Math.Max(1, nOuter + dLow + dHigh);
+        }
+
+        private static List<double> EvenPositions(double lo, double hi, int n, double cover)
+        {
+            double a = lo + cover, b = hi - cover;
+            var res = new List<double>();
+            if (n <= 1 || b < a) { res.Add((lo + hi) / 2.0); return res; }
+            for (int i = 0; i < n; i++) res.Add(a + (b - a) * i / (n - 1));
+            return res;
+        }
+
+        /// <param name="strips">Pasy na obrysie uskoku (nib.Inner), scanIsY = barsAlongX.</param>
+        private static NibStepPlan PlanNibStepBars(NibDetector.NibInfo nib, List<StripBounds> strips, bool barsAlongX,
+            BottomView bottom, double cover, double spacing)
+        {
+            var plan = new NibStepPlan();
+            foreach (var e in GeometryHelper.EnumerateAxisAlignedEdges(nib.Inner))
+            {
+                if (e.Orientation != (barsAlongX ? GeometryHelper.EdgeOrientation.Vertical
+                                                 : GeometryHelper.EdgeOrientation.Horizontal)) continue;
+                double c  = barsAlongX ? e.Start.X : e.Start.Y;
+                double lo = barsAlongX ? Math.Min(e.Start.Y, e.End.Y) : Math.Min(e.Start.X, e.End.X);
+                double hi = barsAlongX ? Math.Max(e.Start.Y, e.End.Y) : Math.Max(e.Start.X, e.End.X);
+                int n = StepEdgeRuleCount(nib, bottom, barsAlongX, c, lo, hi, cover, spacing, out _);
+                if (n > 0) plan.Edges.Add((c, lo, hi, n));
+            }
+            if (plan.Edges.Count == 0) return null;
+
+            foreach (var s in strips)
+            {
+                if (!s.Valid || s.ScanHigh - s.ScanLow < 50.0) continue;
+                if ((s.PerpHigh - s.PerpLow) - 2.0 * cover < TemplateMinLen) continue;
+                plan.Strips.Add(s);
+                var owner = plan.Edges
+                    .Where(e => (Math.Abs(e.c - s.PerpLow) < 1.0 || Math.Abs(e.c - s.PerpHigh) < 1.0)
+                             && Math.Min(e.hi, s.ScanHigh) - Math.Max(e.lo, s.ScanLow) > 1.0)
+                    .OrderBy(e => Math.Abs(e.lo - s.ScanLow) + Math.Abs(e.hi - s.ScanHigh))
+                    .Cast<(double c, double lo, double hi, int rule)?>().FirstOrDefault();
+                if (!owner.HasValue) continue;
+                var ow = owner.Value;
+                var pos = EvenPositions(ow.lo, ow.hi, ow.rule, cover)
+                    .Where(p => p >= s.ScanLow - 0.5 && p < s.ScanHigh - 0.5).ToList();
+                if (pos.Count == 0) pos.Add((s.ScanLow + s.ScanHigh) / 2.0);
+                plan.StripPositions[s] = pos;
+            }
+            return plan;
+        }
 
         /// <summary>Pas (obrys uskoku) graniczy z nibem: jego granica w osi rozkładu leży na linii uskoku.</summary>
         private static bool StripTouchesNib(NibDetector.NibInfo nib, StripBounds strip, bool horizontal)
@@ -3613,6 +3770,7 @@ namespace BricsCadRc.Core
 
             if (representativeOnly)
                 ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, 0);
+            AddBarLinesOf(db, barResult.BlockRefId);
 
             // Bez podświetlania obrysu: przy generowaniu automatycznym zostawały zielone obrysy wszystkich rozkładów
 
@@ -3636,6 +3794,67 @@ namespace BricsCadRc.Core
         // Linie opisów (leadery, linie rozkładów) — przeszkody dla tekstów; nowe leadery nie mogą przecinać tekstów
         private static readonly List<(Point2d a, Point2d b)> _labelSegs = new List<(Point2d, Point2d)>();
         private const double LineGap = 50.0;
+
+        // Wszystkie generowania: tekst opisu nie leży na widocznym pręcie, leader nie biegnie wzdłuż innej linii opisu.
+        // Tryb dozbrojenia (ADD): dodatkowo tekst poza obrysem płyty.
+        private static bool _addMode;
+        // Obrys płyty w trybie ADD — tekst opisu musi leżeć poza płytą
+        private static List<Point2d> _addSlabPoly;
+
+        /// <summary>Prostokąt zachodzi na wnętrze wielokąta (narożnik w środku, wierzchołek w prostokącie albo przecięcie krawędzi).</summary>
+        private static bool RectTouchesPolygon((double x0, double y0, double x1, double y1) r, List<Point2d> poly)
+        {
+            if (poly == null || poly.Count < 3) return false;
+            foreach (var c in new[] { new Point2d(r.x0, r.y0), new Point2d(r.x1, r.y0), new Point2d(r.x1, r.y1), new Point2d(r.x0, r.y1),
+                                      new Point2d((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2) })
+                if (GeometryHelper.IsPointInsidePolygon(poly, c)) return true;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i]; var b = poly[(i + 1) % poly.Count];
+                if (a.X >= r.x0 && a.X <= r.x1 && a.Y >= r.y0 && a.Y <= r.y1) return true;
+                if (SegHitsRect(a, b, r, 0.0)) return true;
+            }
+            return false;
+        }
+        private static readonly List<(Point2d a, Point2d b)> _barSegs = new List<(Point2d, Point2d)>();
+
+        /// <summary>Widoczne pręty (linie) rozkładu RC_BAR_BLOCK — przeszkody dla tekstów opisów w trybie ADD.</summary>
+        private static void AddBarLines(Transaction tr, BlockReference br)
+        {
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+            foreach (ObjectId eid in btr)
+            {
+                if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is Line ln)) continue;
+                var a = ln.StartPoint.TransformBy(br.BlockTransform);
+                var b = ln.EndPoint.TransformBy(br.BlockTransform);
+                if (a.DistanceTo(b) < 300.0) continue;   // symbole końców (haki) pomijamy
+                _barSegs.Add((new Point2d(a.X, a.Y), new Point2d(b.X, b.Y)));
+            }
+        }
+
+        private static void AddBarLinesOf(Database db, ObjectId distId)
+        {
+            if (distId.IsNull) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (tr.GetObject(distId, OpenMode.ForRead) is BlockReference br) AddBarLines(tr, br);
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.AddBarLinesOf", ex); }
+        }
+
+        /// <summary>Odcinki równoległe, w odległości ≤ tol i zachodzące na siebie (linie „jedna na drugiej”).</summary>
+        private static bool SegsOverlap(Point2d a, Point2d b, Point2d c, Point2d d, double tol)
+        {
+            var u = b - a; double len = u.Length;
+            if (len < 1e-6) return false;
+            u = u / len;
+            var ac = c - a; var ad = d - a;
+            if (Math.Abs(ac.X * u.Y - ac.Y * u.X) > tol || Math.Abs(ad.X * u.Y - ad.Y * u.X) > tol) return false;
+            double tc = ac.DotProduct(u), td = ad.DotProduct(u);
+            return Math.Min(len, Math.Max(tc, td)) - Math.Max(0, Math.Min(tc, td)) > 1.0;
+        }
 
         private static void AddAnnotLines(Transaction tr, BlockReference br)
         {
@@ -3685,6 +3904,7 @@ namespace BricsCadRc.Core
         {
             _labelRects.Clear();
             _labelSegs.Clear();
+            _barSegs.Clear();
             _charSamples.Clear();
             _charPerHeight = AnnotationEngine.TextCharWidth / AnnotationEngine.DefaultTextHeight;
             _lastLabelRectIdx = -1;
@@ -3709,6 +3929,7 @@ namespace BricsCadRc.Core
                         continue;
                     }
                     if (!(obj is BlockReference br)) continue;
+                    if (BarBlockEngine.IsBarBlock(br)) { AddBarLines(tr, br); continue; }
                     if (!AnnotationEngine.IsAnnotation(br)) continue;
                     AddAnnotLines(tr, br);
                     var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
@@ -3792,11 +4013,14 @@ namespace BricsCadRc.Core
                 if (LabelOverlaps(r)) return false;
                 var tb = TextBox(ins, pts);
                 foreach (var sg in _labelSegs) if (SegHitsRect(sg.a, sg.b, tb, LineGap)) return false;
+                foreach (var sg in _barSegs) if (SegHitsRect(sg.a, sg.b, tb, 30.0)) return false;   // tekst nie na pręcie
+                if (_addMode && RectTouchesPolygon(tb, _addSlabPoly)) return false;   // opis ADD zawsze poza płytą
                 for (int k = 0; k + 1 < pts.Count; k++)
                 {
                     var a = new Point2d(ins.X + pts[k].X, ins.Y + pts[k].Y);
                     var b = new Point2d(ins.X + pts[k + 1].X, ins.Y + pts[k + 1].Y);
                     foreach (var o in _labelRects) if (SegHitsRect(a, b, o, 30.0)) return false;
+                    foreach (var sg in _labelSegs) if (SegsOverlap(a, b, sg.a, sg.b, 60.0)) return false;   // leader nie po innej linii
                 }
                 return true;
             }

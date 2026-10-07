@@ -171,6 +171,7 @@ namespace BricsCadRc.Core
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
+            ColorizeAdd(tr, btr, bar);
         }
 
         // ----------------------------------------------------------------
@@ -205,6 +206,68 @@ namespace BricsCadRc.Core
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
+            ColorizeAdd(tr, btr, bar);
+        }
+
+        // ----------------------------------------------------------------
+        // Dozbrojenie (opis z „ADD”, np. „H10-08-200 B1 ADD”, „B+T ADD”) — pręty rozkładu w kolorze CYAN (4)
+        // ----------------------------------------------------------------
+        public const short AddColor = 4;
+
+        public static bool IsAddMark(string mark) =>
+            !string.IsNullOrEmpty(mark) && System.Text.RegularExpressions.Regex.IsMatch(mark, @"\bADD\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// <summary>Kolor prętów i symboli w bloku rozkładu: ADD → cyan, inaczej ByLayer (inne kolory ręczne zostają).</summary>
+        private static void ColorizeAdd(Transaction tr, BlockTableRecord btr, BarData bar)
+        {
+            short want = IsAddMark(bar?.Mark) ? AddColor : (short)256;
+            foreach (ObjectId id in btr)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead) is Entity e)) continue;
+                if (e.ColorIndex == want || (e.ColorIndex != 256 && e.ColorIndex != AddColor)) continue;
+                e.UpgradeOpen();
+                e.ColorIndex = want;
+            }
+        }
+
+        /// <summary>Wszystkie rozkłady w rysunku: ADD → cyan (np. starsze rysunki, ręczne opisy). Zwraca liczbę zmienionych.</summary>
+        public static int RecolorAllAdd(Database db)
+        {
+            int n = 0;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = ReadXData(br);
+                    if (bar == null || !IsAddMark(bar.Mark)) continue;
+                    var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                    bool any = false;
+                    foreach (ObjectId cid in btr)
+                        if (tr.GetObject(cid, OpenMode.ForRead) is Entity e && e.ColorIndex == 256) { any = true; break; }
+                    if (!any) continue;
+                    ColorizeAdd(tr, btr, bar);
+                    n++;
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("BarBlockEngine.RecolorAllAdd", ex); }
+            return n;
+        }
+
+        /// <summary>Po zmianie opisu (np. dopisanie „ADD” w edycji etykiety) — przekolorowanie bloku rozkładu.</summary>
+        private static void RecolorAdd(BlockReference br, BarData bar)
+        {
+            try
+            {
+                var tr = br.Database?.TransactionManager.TopTransaction;
+                if (tr == null || br.BlockTableRecord.IsNull) return;
+                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                ColorizeAdd(tr, btr, bar);
+            }
+            catch (System.Exception ex) { Log.Error("BarBlockEngine.RecolorAdd", ex); }
         }
 
         public static HashSet<int> GetVisibleIndicesPublic(BarVisibilityMode mode, string customIndices, int count)
@@ -797,6 +860,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)),  // [30] IsLabelManual
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? "")                   // [31] CutZones (otwory)
             );
+            if (entity is BlockReference br) RecolorAdd(br, bar);
         }
 
         public static BarData ReadXData(Entity entity)
