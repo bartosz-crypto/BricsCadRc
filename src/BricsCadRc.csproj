@@ -30,6 +30,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- NPOI: zapis BBS w formacie .xls (szablon Speedeck), jak w AsdRcSlab. DLL-e NPOI trafiaja do bin obok BricsCadRc.dll -->
+    <PackageReference Include="NPOI" Version="2.5.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Wbudowany szablon BBS (RC_BBS) -->
+    <EmbeddedResource Include="Resources\default-bbs.xls" LogicalName="BricsCadRc.default-bbs.xls" />
+    <!-- Ikony wstazki (32 i 16 px) -->
+    <EmbeddedResource Include="Resources\Icons\*.png" LogicalName="BricsCadRc.Icons.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Referencje .NET 4.8 bez koniecznosci instalacji Visual Studio -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
       <PrivateAssets>all</PrivateAssets>

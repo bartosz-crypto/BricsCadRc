@@ -338,6 +338,25 @@ namespace BricsCadRc.Core
                         && TryAnchorAtInternal(y1 - y0, spacing, lowerOffset, out double anchorShift))
                         y0 += anchorShift;
 
+                    // Nib: góra przy krawędzi z nibem = pręty dołu bez tych, które leżą w nibie (bliżej uskoku
+                    // niż otulina) — na każdą stronę z nibem dokładnie o jeden (przy nibie ≥ rozstaw: więcej) pręt
+                    // mniej niż dołem, rozstaw identyczny jak dołem.
+                    double nibForcedSpacing = double.NaN;
+                    if (nib != null && layerCode.StartsWith("T") && bottomView != null && StripTouchesNib(nib, strip, horizontal))
+                    {
+                        var kept = BottomPositionsIn(bottomView, strip.ScanLow + cover - 0.5, strip.ScanHigh - cover + 0.5,
+                                                     strip.PerpLow, strip.PerpHigh, out double bSpacing);
+                        if (kept.Count >= 1)
+                        {
+                            y0 = kept[0]; y1 = kept[kept.Count - 1];
+                            spacingMode = SpacingMode.Nominal;
+                            singleBarMode = kept.Count == 1;
+                            nibForcedSpacing = kept.Count > 1 ? bSpacing : double.NaN;
+                            ed.WriteMessage($"\n[AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {kept.Count} prętów " +
+                                            "góry w położeniach prętów dołu (pręty w nibie pominięte).\n");
+                        }
+                    }
+
                     // X multi-dist plan for this strip
                     double xAvailable = (strip.PerpHigh - strip.PerpLow) - 2.0 * cover;
                     // Góra (T1/T2): zakłady przesunięte względem dołu (B1/B2) tego samego kierunku
@@ -441,7 +460,8 @@ namespace BricsCadRc.Core
                             diameter, length, spacing, layerCode, filterDirection,
                             lowerOffset, stripHeight, spacingMode,
                             slabMin, slabMax,
-                            representativeOnly ? segIdx : -1);
+                            representativeOnly ? segIdx : -1,
+                            forcedSpacing: nibForcedSpacing);
 
                         if (ok) generated++;
                     }
@@ -803,6 +823,12 @@ namespace BricsCadRc.Core
                 var mainStrips = DecomposeStrips(slabVertices, scanIsY: isUBB1)
                     .Where(st => st.Valid).ToList();
 
+                // Nib: rzeczywiste pręty dołu tego rzutu (ten sam obrys) — liczba i położenie UB jak pręty
+                BottomView ubBottom = null;
+                if (nib != null)
+                    using (var trB = db.TransactionManager.StartOpenCloseTransaction())
+                        ubBottom = FindBottomView(db, trB, slabPolyId, nib.Outer, layerCode, isUBB1);
+
                 foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
                     var parts = new List<(double lo, double hi, double lowOff, double highOff, SpacingMode mode, bool lowExt, bool highExt)>();
@@ -887,6 +913,19 @@ namespace BricsCadRc.Core
                         // Bardzo krótka krawędź: jeden UB w środku krawędzi
                         distLow = distHigh = (segLow + segHigh) / 2.0;
                         totalCount = 1;
+                    }
+                    // Nib: UB = pręty dołu dochodzące do tej krawędzi (UB 03 — wszystkie, UB 01/02 na uskoku — bez
+                    // prętów leżących w nibie), te same położenia co pręty dołu / góry
+                    if (ubBottom != null)
+                    {
+                        var kept = BottomPositionsIn(ubBottom, segLow + cover - 0.5, segHigh - cover + 0.5,
+                                                     edgeCoord - 300.0, edgeCoord + 300.0, out _);
+                        if (kept.Count >= 1)
+                        {
+                            totalCount = kept.Count;
+                            distLow = kept[0];
+                            distHigh = kept[kept.Count - 1];
+                        }
                     }
                     double uSpacing = totalCount > 1 && distHigh > distLow
                         ? (distHigh - distLow) / (totalCount - 1)
@@ -1910,7 +1949,8 @@ namespace BricsCadRc.Core
             int    representativeSegment = -1,   // ≥0: widoczny tylko pręt reprezentatywny tego odcinka
             string markSuffix = null,            // sufiks opisu (domyślnie layerCode, np. "T IN NIB")
             Func<Point3d, List<List<Point3d>>> leaderWcsFor = null,   // własne warianty leadera (WCS, kolejność = preferencja)
-            double alongMinOverride = double.NaN, double alongMaxOverride = double.NaN)   // zakres linii rozkładu wzdłuż prętów
+            double alongMinOverride = double.NaN, double alongMaxOverride = double.NaN,   // zakres linii rozkładu wzdłuż prętów
+            double forcedSpacing = double.NaN)   // rozstaw geometryczny narzucony (np. góra przy nibie = pręty dołu); opis nominalny
         {
             bool horizontal = filterDirection == "X";
 
@@ -1933,6 +1973,11 @@ namespace BricsCadRc.Core
                     (effectiveSpacing, adjustStatus) = ComputeContinuousSpacing(
                         availableSpan, spacing);
                     break;
+            }
+            if (!double.IsNaN(forcedSpacing) && forcedSpacing > 0)
+            {
+                effectiveSpacing = forcedSpacing;
+                adjustStatus = Math.Abs(forcedSpacing - spacing) > 0.5 ? 1 : 0;
             }
 
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -2110,6 +2155,39 @@ namespace BricsCadRc.Core
         }
 
         // ── Nib ─────────────────────────────────────────────────────────────
+
+        /// <summary>Pas (obrys uskoku) graniczy z nibem: jego granica w osi rozkładu leży na linii uskoku.</summary>
+        private static bool StripTouchesNib(NibDetector.NibInfo nib, StripBounds strip, bool horizontal)
+            => nib.Edges.Any(e => e.Vertical == !horizontal
+                && (Math.Abs(e.InnerCoord - strip.ScanLow) < 1.0 || Math.Abs(e.InnerCoord - strip.ScanHigh) < 1.0)
+                && Math.Min(e.Hi, strip.PerpHigh) - Math.Max(e.Lo, strip.PerpLow) > 1.0);
+
+        /// <summary>
+        /// Położenia prętów dołu (oś rozkładu) w zakresie scanLo..scanHi, z rozkładów dołu przecinających
+        /// pas perpLo..perpHi (wzdłuż prętów); zdublowane (zakłady) scalane. spacing = rozstaw dołu.
+        /// </summary>
+        private static List<double> BottomPositionsIn(BottomView view, double scanLo, double scanHi,
+                                                      double perpLo, double perpHi, out double spacing)
+        {
+            spacing = double.NaN;
+            var pos = new List<double>();
+            foreach (var d in view.Dists)
+            {
+                if (Math.Min(d.PerpHi, perpHi) - Math.Max(d.PerpLo, perpLo) <= 1.0) continue;
+                if (d.ScanHi < scanLo - 1.0 || d.ScanLo > scanHi + 1.0) continue;
+                int n = Math.Max(1, d.Count);
+                for (int i = 0; i < n; i++)
+                {
+                    double p = d.ScanLo + i * (n > 1 ? d.Spacing : 0);
+                    if (p < scanLo || p > scanHi) continue;
+                    if (!pos.Any(q => Math.Abs(q - p) < 1.0)) pos.Add(p);
+                }
+                if (n > 1 && double.IsNaN(spacing)) spacing = d.Spacing;
+            }
+            pos.Sort();
+            return pos;
+        }
+
         public const string NibTopSuffix   = "T IN NIB";
         public const double NibTopSpacing  = 150.0;
         public const int    NibTopDiameter = 12;
@@ -3965,6 +4043,8 @@ namespace BricsCadRc.Core
         {
             public double ScanLo, ScanHi;   // oś rozkładu (prostopadła do prętów), układ rzutu GÓRNEGO
             public double PerpLo, PerpHi;   // oś pręta (od początku do końca pręta), układ rzutu GÓRNEGO
+            public int    Count;            // liczba prętów
+            public double Spacing;          // rozstaw geometryczny (pręt i = ScanLo + i·Spacing)
         }
 
         private class BottomView
@@ -4044,9 +4124,11 @@ namespace BricsCadRc.Core
                 double px = br.Position.X + delta.X, py = br.Position.Y + delta.Y;
                 view.Dists.Add(horizontal
                     ? new BottomDist { ScanLo = py, ScanHi = py + bar.BarsSpan,
-                                       PerpLo = px + skewMin, PerpHi = px + bar.LengthA + skewMax }
+                                       PerpLo = px + skewMin, PerpHi = px + bar.LengthA + skewMax,
+                                       Count = bar.Count, Spacing = bar.Spacing }
                     : new BottomDist { ScanLo = px, ScanHi = px + bar.BarsSpan,
-                                       PerpLo = py + skewMin, PerpHi = py + bar.LengthA + skewMax });
+                                       PerpLo = py + skewMin, PerpHi = py + bar.LengthA + skewMax,
+                                       Count = bar.Count, Spacing = bar.Spacing });
             }
             return view.Dists.Count > 0 ? view : null;
         }

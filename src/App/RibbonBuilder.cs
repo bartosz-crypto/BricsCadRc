@@ -1,8 +1,17 @@
+using System;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Bricscad.Ribbon;
 using Bricscad.Windows;
+using BricsCadRc.Core;
 
 namespace BricsCadRc.App
 {
+    /// <summary>
+    /// Wstążka „RC SLAB” (po angielsku). Główne akcje jako duże przyciski, pomocnicze jako kolumny małych.
+    /// Generowanie warstw: jeden przycisk RC_GENERATE z wyborem w linii poleceń.
+    /// Ikony: Resources/Icons/&lt;nazwa&gt;_32.png i _16.png (EmbeddedResource „BricsCadRc.Icons.*”).
+    /// </summary>
     public static class RibbonBuilder
     {
         private const string TabId = "RC_SLAB_TAB";
@@ -11,97 +20,90 @@ namespace BricsCadRc.App
         {
             RibbonControl ribbon = ComponentManager.Ribbon;
             if (ribbon == null) return;
+            if (ribbon.FindTab(TabId) != null) return;   // np. po ponownym NETLOAD
 
-            // Nie dodawaj zakladki jesli juz istnieje (np. po RELOADA)
-            if (ribbon.FindTab(TabId) != null) return;
+            var tab = new RibbonTab { Title = "RC SLAB", Id = TabId };
 
-            RibbonTab tab = new RibbonTab
-            {
-                Title = "RC SLAB",
-                Id = TabId
-            };
+            // 1. Setup — przygotowanie rysunku
+            tab.Panels.Add(Panel("Setup", "RC_PANEL_SETUP",
+                Large("Prepare GA", "RC_PREPARE_GA", "prepare_ga",
+                    "Prepare the RC drawing from a GA drawing: pick the plot, clean slab outline, piles and door thresholds as bottom and top plans, plot label (PLOT / SSL / thickness), titles and template frames. Then copies title block and slab notes from the GA layout."),
+                Column(
+                    Small("GA Texts", "RC_GA_TEXTS", "ga_texts",
+                        "Copy texts from the GA layout to RC layouts: client / project, TITLE_1, RCxxx drawing numbers, SLAB NOTES, HYSTOOLS by slab thickness."),
+                    Small("Reinf. Maps", "RC_IMPORT_MAP", "maps",
+                        "Import reinforcement maps (reinf_maps.dxf): pick the plot and place the T1 / T2 / B1 / B2 frames."))));
 
-            tab.Panels.Add(BuildBarPanel());
-            tab.Panels.Add(BuildGeneratePanel());
-            tab.Panels.Add(BuildEditPanel());
-            tab.Panels.Add(BuildCountPanel());
+            // 2. Reinforcement — generowanie
+            tab.Panels.Add(Panel("Reinforcement", "RC_PANEL_GEN",
+                Large("Generate", "RC_GENERATE", "generate",
+                    "Generate slab reinforcement. Choose in the command line: Mesh (all layers), B1, B2, T1, T2, UB1, UB2, UBNib."),
+                Large("Opening Detail", "RC_OPENING_DETAIL", "opening",
+                    "Opening detail: DETAIL 'n' frame on the plan plus H16 bars and U-bars around the opening."),
+                Large("Punching", "RC_PUNCHING_AUTO", "punching",
+                    "Punching from the xlsx report: PH1–9 tags at piles, detail notes (APPLICABLE FOR), bars 501 / 502 for the BBS."),
+                Column(
+                    Small("3D Model", "RC_MODEL_3D", "model3d",
+                        "Preview 3D model of the slab reinforcement (B1, B2, UB, T1, T2, concrete with openings, piles) next to the drawing."),
+                    Small("Summary Bars", "RC_PUNCHING_SUMMARY_BARS", "summary_bars",
+                        "Summary bars 501 / 502 from PH zone counts."))));
+
+            // 3. Bars — ręczne pręty
+            tab.Panels.Add(Panel("Bars", "RC_PANEL_BAR",
+                Large("New Bar", "RC_BAR", "new_bar", "Create a single bar (shape code BS 8666) in elevation."),
+                Large("Distribution", "RC_DISTRIBUTION", "distribution", "Distribute the selected bar on the plan.")));
+
+            // 4. Edit — kolumny małych przycisków
+            tab.Panels.Add(Panel("Edit", "RC_PANEL_EDIT",
+                Column(
+                    Small("Edit Bar", "RC_EDIT_BAR", "edit_bar", "Edit the selected bar: shape, dimensions, diameter."),
+                    Small("Edit Distribution", "RC_EDIT_DISTRIBUTION", "edit_distribution", "Edit bar count, spacing and cover of a distribution."),
+                    Small("Edit Label", "RC_EDIT_LABEL", "edit_label", "Edit the distribution label (count, mark, diameter, spacing).")),
+                Column(
+                    Small("Bar End", "RC_BAR_END", "bar_end", "Bar end symbol in the distribution (None / Circle / Hook)."),
+                    Small("Label Scale", "RC_SCALE_ANNOT", "annot_scale", "Visual scale of the distribution label (text, dots, arrows)."),
+                    Small("Update Bars", "RC_UPDATE_BAR", "update", "Update bar lengths in distributions after editing the bar polyline.")),
+                Column(
+                    Small("Single Bar View", "RC_SET_REPR_BAR", "repr_bar", "Show only the selected (representative) bar of a distribution."),
+                    Small("Show All Bars", "RC_SHOW_ALL_BARS", "show_all", "Show all bars of a distribution again."))));
+
+            // 5. Schedule — BBS
+            tab.Panels.Add(Panel("Schedule", "RC_PANEL_BBS",
+                Large("BBS", "RC_BBS", "bbs",
+                    "Bar bending schedule (.xls, Speedeck template) straight from the drawing: preview with warnings, BOTTOM / TOP layouts, accessories from SLAB AREA."),
+                Column(
+                    Small("Bar Schedule", "RC_SCHEDULE", "schedule", "Bar schedule to BS 8666:2020 in a dialog, CSV export."),
+                    Small("Count Bars", "RC_COUNT_BBS", "count", "Count bars and tonnage (command line)."))));
 
             ribbon.Tabs.Add(tab);
         }
 
         // ----------------------------------------------------------------
-        // Panel 0: PRET (tworzenie pojedynczego preta + rozkład)
-        // ----------------------------------------------------------------
-        private static RibbonPanel BuildBarPanel()
+
+        private static RibbonPanel Panel(string title, string id, params RibbonItem[] items)
         {
-            var src = new RibbonPanelSource { Title = "Pret", Id = "RC_PANEL_BAR" };
-
-            src.Items.Add(MakeButton("Nowy pret",    "RC_BAR",          "Tworzy pojedynczy pret w widoku elewacji (FLOW 1)"));
-            src.Items.Add(MakeButton("Rozklad",      "RC_DISTRIBUTION", "Rozklada wybrany pret w planie (FLOW 2)"));
-
+            var src = new RibbonPanelSource { Title = title, Id = id };
+            foreach (var it in items) src.Items.Add(it);
             return new RibbonPanel { Source = src };
         }
 
-        // ----------------------------------------------------------------
-        // Panel 1: ZBROJENIE (generowanie ukladow pretow)
-        // ----------------------------------------------------------------
-        private static RibbonPanel BuildGeneratePanel()
+        private static RibbonButton Large(string label, string command, string icon, string tooltip)
         {
-            var src = new RibbonPanelSource { Title = "Zbrojenie", Id = "RC_PANEL_GEN" };
-
-            // User-requested order: UB B1 → UB B2 → B1 → B2.
-            // RC_GENERATE_SLAB removed from ribbon (command still accessible via command line).
-            src.Items.Add(MakeButton("Generuj siatkę",  "RC_GENERUJ_SIATKA",  "Cała siatka jednym poleceniem: obrys dołu (B1, B2, UB B1, UB B2), potem obrys góry (T1, T2); widoczny pręt reprezentatywny"));
-            src.Items.Add(MakeButton("Detal otworu",    "RC_DETAL_OTWORU",    "Detal otworu: obramówka DETAIL 'n' na planie + pręty H16 i U-bary przy otworze we wskazanym miejscu"));
-            src.Items.Add(MakeButton("Model 3D",        "RC_SIATKA_3D",       "Poglądowy model 3D zbrojenia płyty (B1, B2, UB, T1, T2, beton z otworami, pale) obok rysunku"));
-            src.Items.Add(MakeButton("Generuj UB B1",   "RC_GENERUJ_UB_B1",   "Auto-generuje UB (shape 21) na krawędziach płyty (H12-01-200 UB, prompt grubość 225/300)"));
-            src.Items.Add(MakeButton("Generuj UB B2",   "RC_GENERUJ_UB_B2",   "Auto-generuje UB B2 (Y-bars, horizontal edges) na krawędziach płyty (H12-02-200 UB, prompt grubość 225/300)"));
-            src.Items.Add(MakeButton("Generuj UB nib",  "RC_GENERUJ_UB_NIB",  "UB 03 w nibie (H10, shape 13, 610-70-610 @200) przy krawędzi zewnętrznej, na krawędziach z nibem (linia uskoku < 255 mm)"));
-            src.Items.Add(MakeButton("Generuj B1",      "RC_GENERUJ_B1",      "Auto-generuje dolna warstwe B1 (H10-XX, rozstaw 200) z biblioteki rebar_bottom"));
-            src.Items.Add(MakeButton("Generuj B2",      "RC_GENERUJ_B2",      "Auto-generuje dolna warstwe B2 (Y-bars) z biblioteki rebar_bottom"));
-            src.Items.Add(MakeButton("Generuj T1",      "RC_GENERUJ_T1",      "Auto-generuje gorna warstwe T1 (H12, rozstaw 200), zaklady przesuniete wzgledem B1"));
-            src.Items.Add(MakeButton("Generuj T2",      "RC_GENERUJ_T2",      "Auto-generuje gorna warstwe T2 (H12, Y-bars), zaklady przesuniete wzgledem B2"));
-
-            return new RibbonPanel { Source = src };
+            var b = Button(label, command, tooltip, RibbonButtonStyle.LargeWithText);
+            var img = Icon(icon, 32);
+            if (img != null) { b.LargeImage = img; b.Image = Icon(icon, 16); b.ShowImage = true; }
+            return b;
         }
 
-        // ----------------------------------------------------------------
-        // Panel 2: EDYCJA pretow
-        // ----------------------------------------------------------------
-        private static RibbonPanel BuildEditPanel()
+        private static RibbonButton Small(string label, string command, string icon, string tooltip)
         {
-            var src = new RibbonPanelSource { Title = "Edycja", Id = "RC_PANEL_EDIT" };
-
-            src.Items.Add(MakeButton("Edytuj pret",     "RC_EDIT_BAR",           "Edytuj rozstaw, liczbe lub opis wybranego preta"));
-            src.Items.Add(MakeButton("Edytuj rozklad",  "RC_EDIT_DISTRIBUTION",  "Edytuj liczbe pretow, rozstaw i otulina istniejacego rozkladu"));
-            src.Items.Add(MakeButton("Edytuj etykiete", "RC_EDIT_LABEL",         "Edytuj tresc etykiety rozkładu (Count, Mark, Diameter, Spacing)"));
-            src.Items.Add(MakeButton("Koniec preta",    "RC_BAR_END",            "Edytuj symbol konca preta w rozkladzie (None/Circle/Hook)"));
-            src.Items.Add(MakeButton("Skala opisu",     "RC_SCALE_ANNOT",        "Ustaw skale wizualna opisu rozkladu (tekst, doty, strzalki)"));
-            src.Items.Add(MakeButton("Aktualizuj",      "RC_UPDATE_BAR",         "Aktualizuje dlugosc pretow w rozkladach po edycji geometrii polilinii"));
-            src.Items.Add(MakeButton("Repr. pret",      "RC_SET_REPR_BAR",       "Ustaw wybrany pret jako reprezentatywny (ukryj pozostale)"));
-            src.Items.Add(MakeButton("Pokaz wszystkie", "RC_SHOW_ALL_BARS",      "Przywroc widocznosc wszystkich pretow w ukladzie"));
-
-            return new RibbonPanel { Source = src };
+            var b = Button(label, command, tooltip, RibbonButtonStyle.SmallWithText);
+            var img = Icon(icon, 16);
+            if (img != null) { b.Image = img; b.LargeImage = Icon(icon, 32); b.ShowImage = true; }
+            return b;
         }
 
-        // ----------------------------------------------------------------
-        // Panel 3: BBS (zliczanie + tonaz)
-        // ----------------------------------------------------------------
-        private static RibbonPanel BuildCountPanel()
-        {
-            var src = new RibbonPanelSource { Title = "BBS", Id = "RC_PANEL_BBS" };
-
-            src.Items.Add(MakeButton("Zlicz prety",  "RC_COUNT_BBS",  "Zlicz prety i oblicz tonaz wg BS8666"));
-            src.Items.Add(MakeButton("Zestawienie", "RC_SCHEDULE",   "Zestawienie pretow (BBS) wg BS 8666:2020 — dialog z eksportem CSV"));
-            src.Items.Add(MakeButton("Mapy zbrojenia", "RC_IMPORT_MAP",            "Import map zbrojenia (reinf_maps.dxf): wybor plyty i wstawienie ramek T1/T2/B1/B2 we wskazanym miejscu"));
-            src.Items.Add(MakeButton("Auto PH",      "RC_PUNCHING_AUTO",          "Przebicie z raportu xlsx: tagi PH1-9 przy palach, opisy detali (APPLICABLE FOR), prety 501/502 do BBS"));
-            src.Items.Add(MakeButton("Summary bars", "RC_PUNCHING_SUMMARY_BARS", "Generate summary bars (poz. 501/502) from PH zone counts"));
-
-            return new RibbonPanel { Source = src };
-        }
-
-        // ----------------------------------------------------------------
-        private static RibbonButton MakeButton(string label, string command, string tooltip)
+        private static RibbonButton Button(string label, string command, string tooltip, RibbonButtonStyle style)
         {
             return new RibbonButton
             {
@@ -109,8 +111,42 @@ namespace BricsCadRc.App
                 CommandParameter = command,
                 ToolTip = tooltip,
                 Id = command,
-                ButtonStyle = RibbonButtonStyle.LargeWithText
+                ShowText = true,
+                ButtonStyle = style
             };
+        }
+
+        /// <summary>Kolumna małych przycisków jeden pod drugim.</summary>
+        private static RibbonRowPanel Column(params RibbonItem[] items)
+        {
+            var row = new RibbonRowPanel();
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (i > 0) row.Items.Add(new RibbonRowBreak());
+                row.Items.Add(items[i]);
+            }
+            return row;
+        }
+
+        private static ImageSource Icon(string name, int size)
+        {
+            try
+            {
+                var s = typeof(RibbonBuilder).Assembly.GetManifestResourceStream($"BricsCadRc.Icons.{name}_{size}.png");
+                if (s == null) return null;
+                var bi = new BitmapImage();
+                bi.BeginInit();
+                bi.StreamSource = s;
+                bi.CacheOption = BitmapCacheOption.OnLoad;
+                bi.EndInit();
+                bi.Freeze();
+                return bi;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("RibbonBuilder.Icon", ex);
+                return null;
+            }
         }
     }
 }
