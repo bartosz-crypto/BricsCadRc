@@ -475,11 +475,21 @@ namespace BricsCadRc.Core
                     : ($"{bar.EffectiveCount} {bar.Mark}").Length * Scaled(DefaultTextHeight, bar) * 0.85;
                 minArm = textLen + 2 * Scaled(TextArmOffset, bar);
             }
-            return FollowSkewEnd(pts, startExt, endExt, horizontal, hasSkew, minArm, bar.Angle);
+            var res = FollowSkewEnd(pts, startExt, endExt, horizontal, hasSkew, minArm, bar.Angle,
+                                    bs, be, Scaled(50.0, bar));
+            // Rozkład obrócony: załamanie ustawia się swobodnie (odcinek skośny wynika z położenia końca ramienia)
+            // — zapamiętaj faktyczną długość, żeby grip załamania i linia rozkładu z nią współgrały
+            if (IsOblique(bar.Angle) && res != null && res.Count >= 3)
+            {
+                double dS = (res[1] - bs).Length, dE = (res[1] - be).Length;
+                bar.ElbowExt = Math.Min(dS, dE);
+            }
+            return res;
         }
 
         private static List<Point3d> FollowSkewEnd(List<Point3d> pts, Point3d distStart, Point3d distEnd,
-                                                   bool alongIsY, bool hasSkew, double minArm, double rotation = 0.0)
+                                                   bool alongIsY, bool hasSkew, double minArm, double rotation = 0.0,
+                                                   Point3d? baseStart = null, Point3d? baseEnd = null, double minExt = 0.0)
         {
             if (pts == null || pts.Count < 2) return pts;
             var p0 = pts[0];
@@ -496,14 +506,17 @@ namespace BricsCadRc.Core
                 // Struktura: [środek, załamanie (na osi rozkładu), koniec ramienia, dalsze załamania użytkownika...]
                 // Z jigu przychodzi [środek, koniec ramienia, ...] — wtedy załamanie dopiero wstawiamy.
                 var rel1 = pts[1] - p0;
-                bool hasElbow = pts.Count >= 3 && Math.Abs(rel1.X * axis.Y - rel1.Y * axis.X) < 1.0;
+                // załamanie z jigu leży na osi rozkładu (odległość od osi, nie iloczyn — przy dłuższym odcinku
+                // drobne przesunięcie środka dawało > 1 i załamanie brane było za koniec ramienia → krzywe odcinki)
+                bool hasElbow = pts.Count >= 3 && rel1.Length > 1e-6
+                                && Math.Abs(rel1.X * axis.Y - rel1.Y * axis.X) / rel1.Length < 10.0;
                 int armIdx = hasElbow ? 2 : 1;
                 var armTip = pts[armIdx];
                 var rest = pts.Skip(armIdx + 1).ToList();
                 bool toEnd = (armTip - p0).DotProduct(axis) >= 0;
                 var elbowPt = toEnd ? distEnd : distStart;
                 var outward = toEnd ? axis : -axis;
-                var desired = armTip - elbowPt;
+                var desired = armTip - (hasElbow ? pts[1] : elbowPt);
                 if (rest.Count > 0) minArm = 50.0;   // tekst na ostatnim odcinku — pierwsze ramię dowolnie krótkie
                 Vector3d best = outward;
                 double bestScore = double.NegativeInfinity;
@@ -516,6 +529,22 @@ namespace BricsCadRc.Core
                     if (score > bestScore) { bestScore = score; best = dL; }
                 }
                 double len = Math.Max(best.DotProduct(desired), minArm);
+                // Załamanie SWOBODNE: odcinek skośny tak długi, żeby ramię (poziome / pionowe) trafiało w koniec
+                // ramienia wskazany przez użytkownika (grip / jig) — wcześniej stała długość odcinka skośnego.
+                var baseP = toEnd ? baseEnd : baseStart;
+                if (baseP.HasValue)
+                {
+                    double det = outward.X * best.Y - outward.Y * best.X;
+                    if (Math.Abs(det) > 1e-9)
+                    {
+                        var d = armTip - baseP.Value;
+                        double t = (d.X * best.Y - d.Y * best.X) / det;
+                        double sArm = (outward.X * d.Y - outward.Y * d.X) / det;
+                        t = Math.Max(t, minExt);
+                        elbowPt = baseP.Value + outward * t;
+                        len = Math.Max(sArm, minArm);
+                    }
+                }
                 var res = new List<Point3d> { p0, elbowPt, elbowPt + best * len };
                 res.AddRange(rest);
                 return res;
@@ -673,12 +702,25 @@ namespace BricsCadRc.Core
             bool hasSkew = Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6;
             Vector3d fallback = horizontal ? Vector3d.YAxis : Vector3d.XAxis;
             Vector3d axisDir;
+            Point3d  finalStart = baseStart;
             Point3d  finalEnd;
             if (NeedsElbow(bar))
             {
                 axisDir  = (baseEnd - baseStart).Length > 1e-9
                     ? (baseEnd - baseStart).GetNormal() : fallback;
-                finalEnd = baseEnd + axisDir * DrawnExtOf(bar);
+                // Przedłużenie linii rozkładu TYLKO po stronie załamania leadera (tekstu) — wcześniej zawsze
+                // na końcu, więc gdy opis był przy początku, linia sterczała z drugiej strony prętów.
+                bool atStart = false;
+                var lp = DecodeLeaderPoints(bar.LeaderPoints);
+                if (lp.Count >= 2)
+                {
+                    var mid = new Point3d((baseStart.X + baseEnd.X) / 2, (baseStart.Y + baseEnd.Y) / 2, 0);
+                    var tip = lp.Count >= 3 ? lp[1] : lp[lp.Count - 1];
+                    atStart = (tip - mid).DotProduct(axisDir) < 0;
+                }
+                double drawnExt = IsOblique(bar.Angle) ? 0.0 : DrawnExtOf(bar);   // obrócony: odcinek do załamania rysuje leader
+                if (atStart) { finalStart = baseStart - axisDir * drawnExt; finalEnd = baseEnd; }
+                else           finalEnd = baseEnd + axisDir * drawnExt;
             }
             else
             {
@@ -686,7 +728,7 @@ namespace BricsCadRc.Core
                 finalEnd = baseEnd;
             }
 
-            var dl = new Line(baseStart, finalEnd)
+            var dl = new Line(finalStart, finalEnd)
             {
                 Layer      = LayerManager.LeaderLayer,
                 ColorIndex = 256,

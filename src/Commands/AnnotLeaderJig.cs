@@ -297,6 +297,20 @@ namespace BricsCadRc.Commands
                     if (sc > bestScore) { bestScore = sc; best = d; }
                 }
                 double len = Math.Max(best.DotProduct(desired), MinArm);
+                // Załamanie SWOBODNE (jak w AnnotationEngine.ApplyElbow): odcinek skośny tak długi, żeby ramię
+                // poziome / pionowe trafiało w kursor; min. 50 mm za ostatnim prętem
+                {
+                    var basePt = _centerPt + outward * (_barsSpan / 2.0);
+                    double det = outward.X * best.Y - outward.Y * best.X;
+                    if (Math.Abs(det) > 1e-9)
+                    {
+                        var d = cursor - basePt;
+                        double t = Math.Max((d.X * best.Y - d.Y * best.X) / det, 50.0);
+                        double sArm = (outward.X * d.Y - outward.Y * d.X) / det;
+                        elbow = basePt + outward * t;
+                        len = Math.Max(sArm, MinArm);
+                    }
+                }
                 _elbowPt = elbow;
                 newSnap = elbow + best * len;
                 if (newSnap.IsEqualTo(_snappedPt, Tolerance.Global)) return SamplerStatus.NoChange;
