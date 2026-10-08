@@ -38,6 +38,8 @@ namespace BricsCadRc.App
             tab.Panels.Add(Panel("Reinforcement", "RC_PANEL_GEN",
                 Large("Generate", "RC_GENERATE", "generate",
                     "Generate slab reinforcement. Choose in the command line: Mesh (all layers), B1, B2, T1, T2, UB1, UB2, UBNib, Add (bottom additional bars B1/B2 ADD from imported reinforcement maps)."),
+                Large("Section", "RC_SECTION", "section",
+                    "Slab section from a real cut: pick the slab outline and the cut line (horizontal / vertical) on the bottom or top plan. Thickness and SSL from the plot label, nib from the outline, bars from the bottom and top plans; section marks on both plans."),
                 Large("Opening Detail", "RC_OPENING_DETAIL", "opening",
                     "Opening detail: DETAIL 'n' frame on the plan plus H16 bars and U-bars around the opening."),
                 Large("Punching", "RC_PUNCHING_AUTO", "punching",
