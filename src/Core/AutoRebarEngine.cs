@@ -3605,7 +3605,10 @@ namespace BricsCadRc.Core
             double? forcedSpacing = null,
             bool representativeOnly = false,
             int diameter = UBDiameter,
-            double? annotAlongWorld = null)   // położenie linii rozkładu wzdłuż pręta (np. poza płytą dla UB 03)
+            double? annotAlongWorld = null,   // położenie linii rozkładu wzdłuż pręta (np. poza płytą dla UB 03)
+            string markSuffix = null,         // np. "UB ADD" (dozbrojenie UB z map T1/T2)
+            double? leaderEndAlong = null)    // opis jak przy prętach prostych: linia rozkładu w płycie, odnośnik wzdłuż
+                                              // prętów (prostopadle do linii rozkładu) za krawędź płyty — do tej współrzędnej
         {
             bool isXBars = filterDirection == "X";
 
@@ -3678,7 +3681,7 @@ namespace BricsCadRc.Core
 
             // Mark with UB suffix (NOT " B1" / " B2")
             string baseMark = BarData.FormatMark(diameter, posNr, spacing, 2);
-            distBar.Mark            = $"{baseMark} {UBSuffix}";  // "H12-01-200 UB" or "H12-02-200 UB"
+            distBar.Mark            = $"{baseMark} {markSuffix ?? UBSuffix}";  // "H12-01-200 UB" / "H12-02-200 UB" / "… UB ADD"
             distBar.Spacing         = effSpacing;
             distBar.Direction       = filterDirection;
             distBar.Count           = 0;
@@ -3742,7 +3745,25 @@ namespace BricsCadRc.Core
 
             // Step 4: annotation (z odsunięciem opisu, jeśli koliduje z istniejącymi) — najpierw w bok
             double ubAlongMin = (isXBars ? x0 : y0) + 50.0, ubAlongMax = (isXBars ? x1 : y1) - 50.0;
-            if (annotAlongWorld.HasValue)
+            var ubCandidates = new List<string> { distBar.LeaderPoints };
+            if (leaderEndAlong.HasValue)
+            {
+                // Odnośnik ze środka linii rozkładu (wewnątrz płyty) prosto za krawędź, tekst wzdłuż odnośnika
+                double insAlong = isXBars ? annotInsertPt.X : annotInsertPt.Y;
+                double span = Math.Max(0, distBar.BarsSpan);
+                double sgn = leaderEndAlong.Value >= insAlong ? 1.0 : -1.0;
+                ubCandidates.Clear();
+                foreach (double extra in new[] { 0.0, 400.0, 900.0, 1500.0 })
+                    foreach (double at in new[] { span / 2.0 })   // AnnotationEngine i tak zaczepia odnośnik w środku linii rozkładu
+                    {
+                        double len = leaderEndAlong.Value + sgn * extra - insAlong;
+                        var pts = isXBars
+                            ? new List<Point3d> { new Point3d(0, at, 0), new Point3d(len, at, 0) }
+                            : new List<Point3d> { new Point3d(at, 0, 0), new Point3d(at, len, 0) };
+                        ubCandidates.Add(AnnotationEngine.EncodeLeaderPoints(pts));
+                    }
+            }
+            else if (annotAlongWorld.HasValue)
             {
                 // UB 03: linia rozkładu poza płytą — przesuwanie w bok tylko dalej na zewnątrz (do 1250 mm)
                 double a = annotAlongWorld.Value;
@@ -3751,12 +3772,21 @@ namespace BricsCadRc.Core
                 ubAlongMax = Math.Max(a, a + outDir * 1250.0);
             }
             distBar.LeaderPoints = PlaceLabel(
-                new List<string> { distBar.LeaderPoints }, ref annotInsertPt,
+                ubCandidates, ref annotInsertPt,
                 $"{distBar.EffectiveCount} {distBar.Mark}", distBar.AnnotScale,
                 ubAlongMin, ubAlongMax, isXBars);
+            if (leaderEndAlong.HasValue)
+            {
+                var fin = AnnotationEngine.DecodeLeaderPoints(distBar.LeaderPoints);
+                if (fin.Count >= 2)
+                {
+                    var tipV = fin[fin.Count - 1] - fin[fin.Count - 2];
+                    if (isXBars) leaderRight = tipV.X >= 0; else leaderUp = tipV.Y >= 0;
+                }
+            }
             var annotResult = AnnotationEngine.CreateLeader(
                 db, barResult, distBar,
-                leaderHorizontal: !isXBars, posNr: posNr,
+                leaderHorizontal: leaderEndAlong.HasValue ? isXBars : !isXBars, posNr: posNr,
                 customInsertPt: annotInsertPt,
                 barsHorizontal: isXBars,
                 leaderRight: leaderRight,
@@ -3769,7 +3799,10 @@ namespace BricsCadRc.Core
                 BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
             if (representativeOnly)
-                ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count, 0);
+                // Odnośnik wzdłuż prętów wychodzi ze środka linii rozkładu — przy nieparzystej liczbie prętów środkowy
+                // (widoczny) pręt leżałby pod odnośnikiem i tekstem; widoczny wtedy pręt obok środka
+                ShowRepresentativeOnly(db, barResult.BlockRefId, distBar.Count,
+                                       leaderEndAlong.HasValue && distBar.Count % 2 == 1 ? -1 : 0);
             AddBarLinesOf(db, barResult.BlockRefId);
 
             // Bez podświetlania obrysu: przy generowaniu automatycznym zostawały zielone obrysy wszystkich rozkładów

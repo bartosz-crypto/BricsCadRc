@@ -24,6 +24,7 @@ namespace BricsCadRc.Core
         {
             public int Distributions;
             public int Zones;
+            public int UbAdd;                                     // rozkłady UB ADD z map T1 / T2
             public List<string> Messages = new List<string>();   // H12 / H16 i ostrzeżenia (okno na końcu)
         }
 
@@ -60,7 +61,7 @@ namespace BricsCadRc.Core
             var maps = ReadBottomMaps(db);
             if (maps.Count == 0)
             {
-                res.Messages.Add("Brak zaimportowanych map B1 / B2 (RC_IMPORT_MAP).");
+                res.Messages.Add("Brak zaimportowanych map B1 / B2 / T1 / T2 (RC_IMPORT_MAP).");
                 return res;
             }
 
@@ -81,6 +82,7 @@ namespace BricsCadRc.Core
 
                     foreach (var code in new[] { "B1", "B2" })
                     {
+                        if (!maps.Any(m => m.Code == code)) continue;
                         // Mapa tej płyty: obrys mapy przystający do obrysu płyty (ten sam bbox); przy kilku — ta z PLOT płyty
                         var cands = maps.Where(m => m.Code == code && m.Slab.HasValue
                             && Math.Abs(m.Slab.Value.MaxPoint.X - m.Slab.Value.MinPoint.X - sw) < 10
@@ -121,6 +123,29 @@ namespace BricsCadRc.Core
                             foreach (var w in d.Warnings) res.Messages.Add($"{code} strefy {zl}: {w}.");
                         }
                     }
+
+                    // Mapy GÓRY (T1 / T2): pręty górne bez zmian, tylko UB ADD przy krawędzi, gdy mapa jest blisko
+                    _addMode = false;   // opisy UB jak przy zwykłych UB
+                    foreach (var code in new[] { "T1", "T2" })
+                    {
+                        if (!maps.Any(m => m.Code == code)) continue;
+                        var cands = maps.Where(m => m.Code == code && m.Slab.HasValue
+                            && Math.Abs(m.Slab.Value.MaxPoint.X - m.Slab.Value.MinPoint.X - sw) < 10
+                            && Math.Abs(m.Slab.Value.MaxPoint.Y - m.Slab.Value.MinPoint.Y - sh) < 10).ToList();
+                        var map = cands.FirstOrDefault(m => slabPlot != null && Norm(m.Plot).StartsWith(Norm(slabPlot)))
+                                  ?? cands.FirstOrDefault();
+                        if (map == null)
+                        {
+                            res.Messages.Add($"Mapa {code}: obrys mapy nie pasuje do wskazanej płyty — pominięta.");
+                            continue;
+                        }
+                        bool horizontal = code == "T1";             // T1 = pręty X → UB 01 na krawędziach pionowych
+                        string ubCode = "B" + code.Substring(1);    // UB 01 / 02 mają kod warstwy B1 / B2
+                        EraseOldDistributions(db, ScanUbAdd(db, verts, ubCode));
+                        var zones = BuildZones(map, slabBox.MinPoint - map.Slab.Value.MinPoint, horizontal, res, code);
+                        res.Zones += zones.Count;
+                        res.UbAdd += CreateUbAdd(db, ed, verts, slabBox, code, ubCode, horizontal, zones, res);
+                    }
                 }
             }
             finally
@@ -153,7 +178,7 @@ namespace BricsCadRc.Core
                     var x = e.GetXDataForApplication(MapImportEngine.XApp)?.AsArray();
                     if (x == null || x.Length < 3) continue;
                     string plot = x[1].Value as string ?? "", code = (x[2].Value as string ?? "").ToUpperInvariant();
-                    if (code != "B1" && code != "B2") continue;             // T1 / T2 — bez zmian
+                    if (code != "B1" && code != "B2" && code != "T1" && code != "T2") continue;   // T1 / T2 — tylko UB ADD
                     string key = plot + "|" + code;
                     if (!maps.TryGetValue(key, out var m)) maps[key] = m = new MapData { Plot = plot, Code = code };
 
@@ -415,6 +440,167 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Poprzednie dozbrojenie tej płyty w warstwie <paramref name="code"/>: rozkłady „… B1 ADD” z opisami i wymiary RC_ADD.</summary>
+        // ------------------------------------------------------------------
+        //  UB ADD z map T1 / T2
+        // ------------------------------------------------------------------
+
+        /// <summary>Mapa ≤ 750 mm²/m: UB ADD, gdy mapa ≤ 400 mm od krawędzi; mapa > 750: gdy ≤ 600 mm.</summary>
+        public const double UbAddValueLimit = 750.0, UbAddDistSmall = 400.0, UbAddDistLarge = 600.0;
+        public const string UbAddSuffix = "UB ADD";
+        /// <summary>Liczba UB ADD na strefę mapy (wyśrodkowane na strefie).</summary>
+        public const int UbAddCount = 7;
+        /// <summary>Linia rozkładu UB ADD w płycie: ułamek długości ramienia UB od krawędzi (opis UB jest w połowie).</summary>
+        public const double UbAddAnnotInside = 0.75;
+
+        private static List<(ObjectId, ObjectId)> ScanUbAdd(Database db, List<Point2d> verts, string ubCode)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var old = ScanOldDistributions(db, tr, verts, ubCode, markSuffix: UbAddSuffix);
+            tr.Commit();
+            return old;
+        }
+
+        private sealed class UbEdge
+        {
+            public double EdgeCoord; public string Side;          // Left: wnętrze po stronie rosnącej współrzędnej
+            public List<double> Pos = new List<double>();          // położenia UB wzdłuż krawędzi
+            public BlockReference Br; public BarData Bar;
+        }
+
+        /// <summary>
+        /// UB ADD: dla każdej strefy mapy T1 / T2 — najbliższa krawędź z UB 01 / 02 (koniec prętów tej warstwy); odległość
+        /// strefy (kontur albo prostokąt) od krawędzi ≤ 400 (mapa ≤ 750) albo ≤ 600 (mapa > 750) → dodatkowe UB w połowie
+        /// między istniejącymi UB — zawsze 7, wyśrodkowane na strefie (ten sam pręt, opis „… UB ADD”, cyan).
+        /// </summary>
+        private static int CreateUbAdd(Database db, Bricscad.EditorInput.Editor ed, List<Point2d> verts, Extents3d slabBox,
+                                       string code, string ubCode, bool horizontal, List<AddReinfPlanner.Zone> zones, AddResult res)
+        {
+            string dir = horizontal ? "X" : "Y";
+            var edges = new List<UbEdge>();
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || bar.LayerCode != ubCode || string.IsNullOrEmpty(bar.Mark) || !bar.Mark.EndsWith(" " + UBSuffix)) continue;
+                    if (!string.Equals(bar.Direction, dir, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (SingleBarEngine.ExtractPosNr(bar.Mark) == NibUBPosNr) continue;            // UB 03 — nie
+                    if (Math.Abs(br.Rotation) > 1e-6 || !BelongsToCurrentSlab(br, verts)) continue;
+                    double along0 = horizontal ? br.Position.X : br.Position.Y;                     // początek pręta
+                    double scan0  = horizontal ? br.Position.Y : br.Position.X;                     // pierwszy UB
+                    bool left = string.Equals(bar.SymbolSide, "Left", StringComparison.OrdinalIgnoreCase);
+                    double edge = left ? along0 - DefaultCover : along0 + bar.LengthA + DefaultCover;
+                    var e = edges.FirstOrDefault(x => Math.Abs(x.EdgeCoord - edge) < 1.0 && x.Side == (left ? "Left" : "Right"));
+                    if (e == null) edges.Add(e = new UbEdge { EdgeCoord = edge, Side = left ? "Left" : "Right", Br = br, Bar = bar });
+                    int n = Math.Max(1, bar.Count);
+                    double sp = n > 1 && bar.BarsSpan > 0 ? bar.BarsSpan / (n - 1) : bar.Spacing;
+                    for (int i = 0; i < n; i++) e.Pos.Add(scan0 + i * sp);
+                }
+                tr.Commit();
+            }
+            if (edges.Count == 0)
+            {
+                if (zones.Count > 0) res.Messages.Add($"Mapa {code}: brak UB {ubCode.Substring(1).PadLeft(2, '0')} na płycie — najpierw wygeneruj UB, potem ADD.");
+                return 0;
+            }
+            foreach (var e in edges) { e.Pos.Sort(); }
+
+            // strefy → położenia UB ADD na krawędziach
+            var wanted = new Dictionary<UbEdge, SortedSet<double>>();
+            foreach (var z in zones)
+            {
+                double a0 = double.IsNaN(z.ContA0) ? z.RectA0 : z.ContA0, a1 = double.IsNaN(z.ContA1) ? z.RectA1 : z.ContA1;
+                double c0 = double.IsNaN(z.ContC0) ? z.RectC0 : z.ContC0, c1 = double.IsNaN(z.ContC1) ? z.RectC1 : z.ContC1;
+                UbEdge best = null; double bestD = double.MaxValue;
+                foreach (var e in edges)
+                {
+                    if (e.Pos.Count == 0 || e.Pos[e.Pos.Count - 1] < c0 - 200 || e.Pos[0] > c1 + 200) continue;
+                    double dist = e.Side == "Left" ? a0 - e.EdgeCoord : e.EdgeCoord - a1;
+                    if (dist < -1.0 && (e.Side == "Left" ? a1 < e.EdgeCoord : a0 > e.EdgeCoord)) continue;   // strefa za krawędzią
+                    dist = Math.Max(0, dist);
+                    if (dist < bestD) { bestD = dist; best = e; }
+                }
+                if (best == null) continue;
+                double limit = z.Value > UbAddValueLimit ? UbAddDistLarge : UbAddDistSmall;
+                if (bestD > limit + 0.5)
+                {
+                    ed.WriteMessage($"\n[RC ADD] {code} strefa {z.Label}: {bestD:F0} mm od krawędzi (> {limit:F0}) — bez UB ADD.");
+                    continue;
+                }
+                // zawsze UbAddCount UB ADD: w połowie między istniejącymi UB, wyśrodkowane na strefie (wzdłuż krawędzi)
+                var allMids = new List<double>();
+                for (int i = 0; i + 1 < best.Pos.Count; i++)
+                    if (best.Pos[i + 1] - best.Pos[i] > 1.0) allMids.Add((best.Pos[i] + best.Pos[i + 1]) / 2);
+                var mids = new List<double>();
+                if (allMids.Count > 0)
+                {
+                    double cc = (c0 + c1) / 2;
+                    int k0 = 0;
+                    for (int i = 1; i < allMids.Count; i++) if (Math.Abs(allMids[i] - cc) < Math.Abs(allMids[k0] - cc)) k0 = i;
+                    int take = Math.Min(UbAddCount, allMids.Count);
+                    int start = Math.Max(0, Math.Min(allMids.Count - take, k0 - take / 2));
+                    mids.AddRange(allMids.GetRange(start, take));
+                }
+                if (mids.Count == 0) continue;
+                if (!wanted.TryGetValue(best, out var set)) wanted[best] = set = new SortedSet<double>();
+                foreach (var m in mids) set.Add(Math.Round(m, 1));
+                ed.WriteMessage($"\n[RC ADD] {code} strefa {z.Label}: {bestD:F0} mm od krawędzi (≤ {limit:F0}) → {mids.Count} UB ADD.");
+            }
+
+            int made = 0;
+            foreach (var kv in wanted)
+            {
+                var e = kv.Key; var list = kv.Value.ToList();
+                // ciągłe serie (kolejne połówki między UB) → jeden rozkład na serię
+                var runs = new List<List<double>>();
+                foreach (var m in list)
+                {
+                    var last = runs.LastOrDefault();
+                    double gap = e.Pos.Count > 1 ? (e.Pos[e.Pos.Count - 1] - e.Pos[0]) / (e.Pos.Count - 1) : 200;
+                    if (last != null && m - last[last.Count - 1] <= gap * 1.5) last.Add(m);
+                    else runs.Add(new List<double> { m });
+                }
+                ObjectId tplId = SingleBarEngine.HandleToObjectId(db, e.Bar.SourceBarHandle);
+                BarData tpl = null;
+                if (!tplId.IsNull)
+                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        if (tr.GetObject(tplId, OpenMode.ForRead) is Entity te) tpl = SingleBarEngine.ReadBarXData(te);
+                        tr.Commit();
+                    }
+                if (tpl == null) { res.Messages.Add($"Mapa {code}: UB na krawędzi {e.EdgeCoord:F0} bez pręta wzorcowego — UB ADD pominięte."); continue; }
+                int posNr = SingleBarEngine.ExtractPosNr(e.Bar.Mark);
+                double acrossMin = horizontal ? slabBox.MinPoint.Y : slabBox.MinPoint.X;
+                double acrossMax = horizontal ? slabBox.MaxPoint.Y : slabBox.MaxPoint.X;
+                foreach (var run in runs)
+                {
+                    double? forced = run.Count > 1 ? (run[run.Count - 1] - run[0]) / (run.Count - 1) : (double?)null;
+                    bool leftSide = e.Side == "Left";
+                    double inside = leftSide ? e.EdgeCoord + DefaultCover + UbAddAnnotInside * tpl.LengthA
+                                             : e.EdgeCoord - DefaultCover - UbAddAnnotInside * tpl.LengthA;
+                    double slabLo = horizontal ? slabBox.MinPoint.X : slabBox.MinPoint.Y;
+                    double slabHi = horizontal ? slabBox.MaxPoint.X : slabBox.MaxPoint.Y;
+                    double leaderEnd = leftSide ? slabLo - 600.0 : slabHi + 600.0;
+                    try
+                    {
+                        bool ok = GenerateUBDistribution(db, e.EdgeCoord, run[0], run[run.Count - 1], 0.0, 0.0,
+                            tplId, tpl, tpl.LengthA, tpl.LengthB, tpl.LengthC, 200, ubCode, e.Side, SpacingMode.Nominal,
+                            acrossMin, acrossMax, posNr, tpl.ShapeCode ?? e.Bar.ShapeCode, dir,
+                            forcedSpacing: forced, representativeOnly: true, diameter: e.Bar.Diameter, markSuffix: UbAddSuffix,
+                            // opis jak przy prętach prostych: linia rozkładu w płycie (bliżej wewnętrznego końca UB, nie na
+                            // linii opisu UB tej krawędzi), odnośnik wzdłuż prętów za krawędź płyty
+                            annotAlongWorld: inside, leaderEndAlong: leaderEnd);
+                        if (ok) made++;
+                    }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.CreateUbAdd", ex); }
+                }
+            }
+            if (made > 0) res.Messages.Add($"Mapa {code}: UB ADD — {made} rozkład(y) przy krawędziach (mapy blisko krawędzi).");
+            return made;
+        }
+
         private static void EraseOldAdd(Database db, List<Point2d> verts, string slabTag, string code)
         {
             List<(ObjectId, ObjectId)> old;

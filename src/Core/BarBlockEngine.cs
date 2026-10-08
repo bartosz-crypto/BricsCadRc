@@ -161,7 +161,9 @@ namespace BricsCadRc.Core
                 double xShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(xShift,            y, 0);
                 var    ptE = new Point3d(barWidth + xShift, y, 0);
-                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, y, xShift, barWidth + xShift))
+                // Kółko końca pręta mieści się W długości pręta: linia kończy się w jego środku (koniec − r)
+                var (trimS, trimE) = CircleTrims(cat, bar.SymbolSide, bar.AnnotScale, barWidth);
+                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, y, xShift + trimS, barWidth + xShift - trimE))
                 {
                     var line = new Line(new Point3d(a0, y, 0), new Point3d(a1, y, 0))
                         { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
@@ -196,7 +198,9 @@ namespace BricsCadRc.Core
                 double yShift   = bar.SkewStart + skewFrac * (bar.SkewEnd - bar.SkewStart);
                 var    ptS = new Point3d(x, yShift,             0);
                 var    ptE = new Point3d(x, barHeight + yShift, 0);
-                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, x, yShift, barHeight + yShift))
+                // Kółko końca pręta mieści się W długości pręta: linia kończy się w jego środku (koniec − r)
+                var (trimS, trimE) = CircleTrims(cat, bar.SymbolSide, bar.AnnotScale, barHeight);
+                foreach (var (a0, a1) in BarPiecesAfterCuts(cuts, x, yShift + trimS, barHeight + yShift - trimE))
                 {
                     var line = new Line(new Point3d(x, a0, 0), new Point3d(x, a1, 0))
                         { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
@@ -393,6 +397,29 @@ namespace BricsCadRc.Core
             return pieces;
         }
 
+        /// <summary>Promień kółka końca pręta (w układzie bloku, ze skalą opisu).</summary>
+        public static double EndCircleRadius(double annotScale) => Scaled(35.0, annotScale);
+
+        /// <summary>
+        /// Skrócenie linii pręta przy kółku (start, koniec): kółko leży w długości pręta (krawędź kółka = koniec pręta),
+        /// linia dochodzi do jego środka — długość pręta na rzucie i gripy bez zmian, z kółkiem czy bez.
+        /// </summary>
+        private static (double start, double end) CircleTrims(BarSymbolCategory cat, string symbolSide, double annotScale, double length)
+        {
+            double r = EndCircleRadius(annotScale);
+            if (length <= 4 * r) return (0, 0);   // bardzo krótki pręt — bez skracania
+            switch (cat)
+            {
+                case BarSymbolCategory.Link: return (r, r);
+                case BarSymbolCategory.UBar:
+                {
+                    string side = string.IsNullOrEmpty(symbolSide) ? "Right" : symbolSide;
+                    return (side == "Left" || side == "Both" ? r : 0, side == "Right" || side == "Both" ? r : 0);
+                }
+                default: return (0, 0);
+            }
+        }
+
         private static void AddBarSymbols(
             Transaction tr, BlockTableRecord btr, string layer,
             BarSymbolCategory cat, Point3d startPt, Point3d endPt,
@@ -402,18 +429,30 @@ namespace BricsCadRc.Core
             double HookLen = Scaled(100.0, annotScale);
             const double Cos45   = 0.7071067811865476;
 
+            // Kółka: środek o promień do środka pręta (krawędź kółka = koniec pręta), jak w CircleTrims
+            Point3d cS = startPt, cE = endPt;
+            {
+                double ddx = endPt.X - startPt.X, ddy = endPt.Y - startPt.Y, dl = Math.Sqrt(ddx * ddx + ddy * ddy);
+                if (dl > 4 * SymR)
+                {
+                    var u = new Vector3d(ddx / dl, ddy / dl, 0);
+                    cS = startPt + u * SymR;
+                    cE = endPt - u * SymR;
+                }
+            }
+
             switch (cat)
             {
                 case BarSymbolCategory.Link:
-                    AppendCircle(tr, btr, layer, startPt, SymR);
-                    AppendCircle(tr, btr, layer, endPt,   SymR);
+                    AppendCircle(tr, btr, layer, cS, SymR);
+                    AppendCircle(tr, btr, layer, cE, SymR);
                     break;
 
                 case BarSymbolCategory.UBar:
                 {
                     string side = string.IsNullOrEmpty(symbolSide) ? "Right" : symbolSide;
-                    if (side == "Left"  || side == "Both") AppendCircle(tr, btr, layer, startPt, SymR);
-                    if (side == "Right" || side == "Both") AppendCircle(tr, btr, layer, endPt,   SymR);
+                    if (side == "Left"  || side == "Both") AppendCircle(tr, btr, layer, cS, SymR);
+                    if (side == "Right" || side == "Both") AppendCircle(tr, btr, layer, cE, SymR);
                     break;
                 }
 

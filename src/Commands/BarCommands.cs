@@ -314,16 +314,18 @@ namespace BricsCadRc.Commands
                 double edgeY = (pt1.Y + pt2.Y) / 2.0;
                 x0      = Math.Min(pt1.X, pt2.X) + cover;
                 x1Bound = Math.Max(pt1.X, pt2.X) - cover;
-                if (isFlipped) { y0 = edgeY - viewLength; y1Bound = edgeY; }
-                else           { y0 = edgeY;              y1Bound = edgeY + viewLength; }
+                // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
+                if (isFlipped) { y1Bound = edgeY - cover; y0 = y1Bound - viewLength; }
+                else           { y0 = edgeY + cover;      y1Bound = y0 + viewLength; }
             }
             else
             {
                 double edgeX = (pt1.X + pt2.X) / 2.0;
                 y0      = Math.Min(pt1.Y, pt2.Y) + cover;
                 y1Bound = Math.Max(pt1.Y, pt2.Y) - cover;
-                if (isFlipped) { x0 = edgeX - viewLength; x1Bound = edgeX; }
-                else           { x0 = edgeX;              x1Bound = edgeX + viewLength; }
+                // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
+                if (isFlipped) { x1Bound = edgeX - cover; x0 = x1Bound - viewLength; }
+                else           { x0 = edgeX + cover;      x1Bound = x0 + viewLength; }
             }
 
             if (x0 >= x1Bound || y0 >= y1Bound)

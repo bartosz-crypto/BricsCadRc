@@ -77,6 +77,8 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 ### `src/Core` — silniki
 - `SingleBarEngine` — pręt (polilinia), etykieta MLeader, XData pręta.
 - `BarBlockEngine` — rozkłady (BTR + BlockReference), XData rozkładu, `GenerateFromBounds`, `UpdateBarLength`.
+  Kółko końca pręta (bar end Circle, r = 35 × skala opisu) leży W długości pręta: krawędź kółka = koniec pręta,
+  linia kończy się w środku kółka — długość pręta na rzucie i gripy takie same z kółkiem i bez.
 - `AnnotationEngine` — opisy rozkładów, linia rozkładu, `SyncAnnotation`, `UpdateBarLabelCount`.
 - `AutoRebarEngine` — automatyczne zbrojenie płyty (sekcja 4).
 - `BarGeometryBuilder`, `ShapeCodeLibrary`, `BarShape` — kształty BS 8666 (promień gięcia 3.5d dla d ≥ 20).
@@ -252,6 +254,13 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   **wymiary** (SPEEDECK-1-50 RC, SD-PILED-RAFT, XData RC_ADD): pal → koniec prętów i pal → skrajny pręt; bez pala — od krawędzi.
 - Ponowne wywołanie zastępuje dozbrojenie tej płyty (rozkłady „… ADD” i wymiary RC_ADD). Siatka B1/B2 nie kasuje ADD.
 - **Każdy rozkład z „ADD” w opisie jest cyan** (pręty w bloku kolor 4) — także ręczny opis i „B+T ADD” w detalach.
+
+- **Mapy T1 / T2 → UB ADD** (pręty górne bez zmian): dla każdej strefy mapy najbliższa krawędź z UB tej warstwy
+  (T1 → UB 01 na krawędziach pionowych, T2 → UB 02 na poziomych; krawędź = koniec prętów, przy nibie linia uskoku),
+  odległość strefy (kontur, inaczej prostokąt) od krawędzi: mapa ≤ 750 i odległość ≤ 400 → UB ADD; mapa > 750 i ≤ 600 → UB ADD;
+  dalej — nic. UB ADD = ten sam pręt co UB (ta sama pozycja), ZAWSZE 7 sztuk w połowie między istniejącymi UB, wyśrodkowane na strefie,
+  opis „n H12-02-200 UB ADD” (cyan) jak przy prętach prostych: linia rozkładu w płycie na 3/4 ramienia UB od krawędzi
+  (opis UB jest w połowie), odnośnik ze środka linii rozkładu wzdłuż prętów za krawędź (600 za płytą), tekst wzdłuż odnośnika; widoczny (reprezentatywny) pręt UB ADD obok środka, nie pod odnośnikiem. Wymaga wygenerowanych UB; po ponownym UB uruchom ADD jeszcze raz.
 
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
 - Wskazanie: obrys płyty (rzut dolny albo górny), 2 punkty linii cięcia (pozioma / pionowa wg dłuższej składowej),

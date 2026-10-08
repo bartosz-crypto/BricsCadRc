@@ -62,13 +62,13 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
             const string T = "[RC ADD]";
-            doc.Editor.WriteMessage($"\n{T} Wskaż obrys płyty na rzucie DOLNYM (mapy B1 / B2; T1 / T2 bez zmian).");
+            doc.Editor.WriteMessage($"\n{T} Wskaż obrys płyty na rzucie DOLNYM (mapy B1 / B2 → B ADD; T1 / T2 → UB ADD przy krawędzi).");
             var slabId = BricsCadRc.Core.SlabPicker.PickOrDraw(doc, "SD-PILED-RAFT", out bool isDrawn);
             if (slabId.IsNull) return;
             try
             {
                 var r = BricsCadRc.Core.AutoRebarEngine.GenerateAddFromMaps(doc, slabId);
-                string head = $"Dozbrojenie dołem: {r.Distributions} rozkład(y) z {r.Zones} stref map.";
+                string head = $"Dozbrojenie dołem: {r.Distributions} rozkład(y), UB ADD: {r.UbAdd} — z {r.Zones} stref map.";
                 doc.Editor.WriteMessage($"\n{T} {head}\n");
                 foreach (var m in r.Messages) doc.Editor.WriteMessage($"\n{T} {m}");
                 if (r.Messages.Count > 0)
