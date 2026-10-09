@@ -157,6 +157,9 @@ namespace BricsCadRc.Commands
                 return;
             }
 
+            // Identyczny pręt (średnica, kształt, wymiary) już jest na rysunku — także z innym numerem
+            if (!ConfirmIdenticalBars(db, selResult.ObjectId, sourceBar)) return;
+
             // --- Krok 2: Dialog "Reinforcement detailing" ---
             var detailDlg = new ReinfDetailingDialog();
             if (Application.ShowModalWindow(detailDlg) != true) return;
@@ -439,6 +442,42 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage($"\n[RC SLAB] Distribution created: {sourceBar.Count} bars  {sourceBar.Mark}");
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+        }
+
+        /// <summary>
+        /// RC_DISTRIBUTION: inne pręty o identycznych wymiarach (średnica, kształt, A–E) — także z innym numerem
+        /// pozycji. Okno z listą numerów; Anuluj przerywa rozkład. Brak takich prętów → true bez okna.
+        /// </summary>
+        private static bool ConfirmIdenticalBars(Database db, ObjectId barId, BarData bar)
+        {
+            var found = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id == barId || id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)) continue;
+                    var other = SingleBarEngine.ReadBarXData(pl);
+                    if (other == null || !PositionReconciler.SameShape(other, bar)) continue;
+                    string key = (other.Mark ?? "?").Split(' ')[0];
+                    found.TryGetValue(key, out int n);
+                    found[key] = n + 1;
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("BarCommands.ConfirmIdenticalBars", ex); return true; }
+            if (found.Count == 0) return true;
+
+            string dims = string.Join("/", new[] { bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE }
+                                           .Where(v => v > 0).Select(v => v.ToString("F0")));
+            string list = string.Join("\n", found.Select(kv => $"   • {kv.Key}  ({kv.Value} szt.)"));
+            string own  = (bar.Mark ?? "").Split(' ')[0];
+            var res = System.Windows.MessageBox.Show(
+                $"Na rysunku jest już pręt identyczny z {own} (H{bar.Diameter}, kształt {bar.ShapeCode ?? "00"}, {dims} mm):\n\n" +
+                list + "\n\nKontynuować rozkład z wybranego pręta?",
+                "Identyczny pręt", System.Windows.MessageBoxButton.OKCancel, System.Windows.MessageBoxImage.Information);
+            return res == System.Windows.MessageBoxResult.OK;
         }
 
         // ================================================================
@@ -1206,6 +1245,7 @@ namespace BricsCadRc.Commands
             int updated = PositionReconciler.PropagateToDistributions(
                 db, primaryId, bar, legacyPosNr: renumbered != null ? 0 : oldPosNr);
             AnnotationEngine.UpdateBarLabelCount(db, primaryId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
+            BarGeometryWatcher.Forget(primaryId);   // zmiany już rozpropagowane — watcher nie liczy ich drugi raz
 
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
             ed.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {oldLength:F0} → {newLength:F0} mm\n");
@@ -1346,6 +1386,8 @@ namespace BricsCadRc.Commands
             // Szukamy po SourceBarHandle (nie po posNr) — handle pręta nie zmienia się gdy user
             // zmienia posNr lub diameter, więc zawsze znajdziemy właściwe rozkłady.
             PositionReconciler.PropagateToDistributions(db, editId, updated);
+            // Zmiany już rozpropagowane — watcher nie może wziąć przebudowy obrysu za grip i doliczyć jej drugi raz
+            BarGeometryWatcher.Forget(editId);
 
             ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
             try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }

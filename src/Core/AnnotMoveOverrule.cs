@@ -1042,6 +1042,10 @@ namespace BricsCadRc.Core
 
                 BarBlockEngine.ClearSkewCache(br.BlockTableRecord.Handle.Value);
 
+                // UNDO (Ctrl+Z, „Cofnij” w COPY) samo odtwarza powiązane obiekty — bez kaskady.
+                // Wcześniej cofnięcie kopii rozkładu kasowało opis ORYGINAŁU (kopia wskazywała jego opis).
+                if (dbObject.IsUndoing) return;
+
                 // Opcjonalnie usuń powiązaną annotację (jeśli istnieje).
                 string annotHandle = ReadAnnotHandle(br);
                 if (string.IsNullOrEmpty(annotHandle)) return;
@@ -1056,13 +1060,21 @@ namespace BricsCadRc.Core
                     || annotId.IsNull || !annotId.IsValid || annotId.IsErased)
                 { tr.Commit(); return; }
 
-                var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                var annotBr = tr.GetObject(annotId, OpenMode.ForRead) as BlockReference;
                 if (annotBr == null) { tr.Commit(); return; }
 
+                // Kasuj opis tylko, gdy naprawdę należy do TEGO rozkładu (back-link [16] opisu).
+                // Kopia rozkładu skopiowana bez opisu wskazuje opis oryginału — nie wolno go usunąć.
+                var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
+                if (annotData != null && !string.IsNullOrEmpty(annotData.SourceBlockHandle)
+                    && !XLink.Same(annotData.SourceBlockHandle, br.Handle.Value.ToString("X8")))
+                { tr.Commit(); return; }
+
+                annotBr.UpgradeOpen();
                 annotBr.Erase(true);
                 tr.Commit();
             }
-            catch { /* nie przerywaj głównego usuwania */ }
+            catch (System.Exception ex) { Log.Error("BarBlockEraseOverrule.Erase", ex); }
         }
 
         public new void SetCustomFilter()
@@ -1098,9 +1110,13 @@ namespace BricsCadRc.Core
             var db = pline.Database;
             if (db == null) return;
 
-            // Odczytaj LabelHandle z XData RC_SINGLE_BAR
+            // UNDO samo odtwarza etykietę i rozkłady — bez kaskady
+            if (dbObject.IsUndoing) return;
+
+            // Odczytaj dane pręta. Pręt BEZ etykiety (np. kopia bez etykiety) też ma kasować swoje
+            // rozkłady — wcześniej pusty LabelHandle kończył obsługę i rozkłady zostawały.
             var bar = SingleBarEngine.ReadBarXData(pline);
-            if (bar == null || string.IsNullOrEmpty(bar.LabelHandle)) return;
+            if (bar == null) return;
 
             try
             {
@@ -1108,7 +1124,7 @@ namespace BricsCadRc.Core
 
                 // Obsługuj zarówno hex jak i decimal format handle
                 ObjectId lblId = ObjectId.Null;
-                if (long.TryParse(bar.LabelHandle,
+                if (!string.IsNullOrEmpty(bar.LabelHandle) && long.TryParse(bar.LabelHandle,
                         System.Globalization.NumberStyles.HexNumber,
                         null, out long hValHex))
                 {
@@ -1116,7 +1132,7 @@ namespace BricsCadRc.Core
                     if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
                         lblId = id;
                 }
-                if (lblId.IsNull && long.TryParse(bar.LabelHandle,
+                if (lblId.IsNull && !string.IsNullOrEmpty(bar.LabelHandle) && long.TryParse(bar.LabelHandle,
                         System.Globalization.NumberStyles.Integer,
                         null, out long hValDec))
                 {
@@ -1178,7 +1194,7 @@ namespace BricsCadRc.Core
 
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception ex) { Log.Error("BarPolylineEraseOverrule.Erase", ex); }
         }
 
         public new void SetCustomFilter()

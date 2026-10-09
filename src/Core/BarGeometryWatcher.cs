@@ -21,6 +21,11 @@ namespace BricsCadRc.Core
     public static class BarGeometryWatcher
     {
         private static bool _active;
+
+        /// <summary>Długość odcinka zmienianego gripem / STRETCH zaokrąglana do pełnych 50 mm.</summary>
+        public const double GripLengthStep = 50.0;
+
+        private static double SnapLength(double v) => Math.Round(v / GripLengthStep) * GripLengthStep;
         private static readonly HashSet<ObjectId> _pending = new HashSet<ObjectId>();
 
         // Reentrancy guard (licznik, bo wywołania się zagnieżdżają) — > 0 gdy watcher sam
@@ -75,6 +80,18 @@ namespace BricsCadRc.Core
             DocumentWatch.Unsubscribe("BarGeometryWatcher");
             _active = false;
             ResetCommandState();
+        }
+
+        /// <summary>
+        /// Komenda wtyczki sama zmieniła pręt i propaguje zmiany (RC_EDIT_BAR, RC_UPDATE_BAR) — watcher ma ten
+        /// pręt pominąć w CommandEnded. Inaczej różnicę obrysu (stary → przebudowany) brał za grip na końcu
+        /// i doliczał ją drugi raz do już nowej długości (3000 → 3500 dawało 4000).
+        /// </summary>
+        public static void Forget(ObjectId id)
+        {
+            _pending.Remove(id);
+            _preAxisStart.Remove(id);
+            _preOutline.Remove(id);
         }
 
         private static void ResetCommandState()
@@ -186,7 +203,8 @@ namespace BricsCadRc.Core
                 return false;
             }
             var pv = bar.ParamValues;
-            double newVal = pv[k] + delta;
+            double newVal = SnapLength(pv[k] + delta);   // co 50 mm
+            delta = newVal - pv[k];
             if (newVal < Math.Max(2.0 * bar.Diameter, 50.0))
             {
                 why = $"Pręt {bar.Mark}: za krótki odcinek ({newVal:F0} mm) — zmiana cofnięta.";
@@ -206,6 +224,35 @@ namespace BricsCadRc.Core
             }
             newAxisStart = atStart ? axis[0] + outward * delta : axis[0];
             return true;
+        }
+
+        /// <summary>
+        /// Pręt prosty: wydłuża / skraca obrys o <paramref name="add"/> wzdłuż osi po stronie końca, który
+        /// przesunął użytkownik (porównanie z obrysem sprzed komendy; domyślnie koniec osi).
+        /// </summary>
+        private static void SnapStraightOutline(Polyline pl, double add, List<Point3d> pre)
+        {
+            int total = pl.NumberOfVertices;
+            if (total < 4 || total % 2 != 0) return;
+            int n = total / 2;
+            Point3d Mid(int a, int b) { var p = pl.GetPoint3dAt(a); var q = pl.GetPoint3dAt(b);
+                                        return new Point3d((p.X + q.X) / 2, (p.Y + q.Y) / 2, 0); }
+            var axis = Mid(n - 1, n) - Mid(0, total - 1);
+            if (axis.Length < 1e-6) return;
+            axis = axis.GetNormal();
+            bool moveStart = false;
+            if (pre != null && pre.Count == total)
+            {
+                double ds = pl.GetPoint3dAt(0).DistanceTo(pre[0]) + pl.GetPoint3dAt(total - 1).DistanceTo(pre[total - 1]);
+                double de = pl.GetPoint3dAt(n - 1).DistanceTo(pre[n - 1]) + pl.GetPoint3dAt(n).DistanceTo(pre[n]);
+                moveStart = ds > de + 0.01;
+            }
+            var shift = axis * (moveStart ? -add : add);
+            foreach (int i in moveStart ? new[] { 0, total - 1 } : new[] { n - 1, n })
+            {
+                var p = pl.GetPoint3dAt(i) + shift;
+                pl.SetPointAt(i, new Point2d(p.X, p.Y));
+            }
         }
 
         /// <summary>Parametr, którego zmiana o delta wydłuża tylko dany koniec (reszta kształtu bez zmian).</summary>
@@ -460,7 +507,7 @@ namespace BricsCadRc.Core
                         mark      = bar.Mark;
 
                         // Grip na KOŃCU pręta (narożnik albo bok końca) → nowa długość odcinka końcowego.
-                        // Drugi koniec zostaje na miejscu; wymiar dokładny (bez zaokrąglania).
+                        // Drugi koniec zostaje na miejscu; wymiar zaokrąglany do 50 mm (GripLengthStep).
                         string why = null;
                         BarData stretched = null;
                         Point3d newAxisStart = Point3d.Origin;
@@ -471,7 +518,32 @@ namespace BricsCadRc.Core
                             ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart);
                             continue;
                         }
-                        if (why != null) doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
+                        if (why != null)
+                        {
+                            // Odrzucona zmiana (za krótki odcinek / koniec nieedytowalny gripem) — naprawdę cofnij:
+                            // obrys z danych pręta (wcześniej ścieżka 00 przyjmowała krótką długość z obrysu).
+                            doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
+                            try
+                            {
+                                _rebuildDepth++;
+                                if (pre != null && pre.Count == pline.NumberOfVertices)
+                                {
+                                    // obrys sprzed komendy (kierunek pręta zachowany)
+                                    pline.UpgradeOpen();
+                                    for (int i = 0; i < pre.Count; i++)
+                                        pline.SetPointAt(i, new Point2d(pre[i].X, pre[i].Y));
+                                    tr.Commit();
+                                }
+                                else
+                                {
+                                    tr.Commit();
+                                    SingleBarEngine.RebuildCompanions(db, oid, bar);
+                                }
+                            }
+                            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RejectStretch", ex); }
+                            finally { _rebuildDepth--; }
+                            continue;
+                        }
 
                         // Detekcja translacji bar-a (move entire entity).
                         // Porównuje current axis_start z pozycją sprzed komendy (preAxisStart).
@@ -538,10 +610,25 @@ namespace BricsCadRc.Core
                             continue;
                         }
 
-                        // Struktura walidna — akceptuj stretch
-                        newLength = SingleBarEngine.GetStraightBarAxisLength(pline);
+                        // Struktura walidna — akceptuj stretch (długość co 50 mm)
+                        double rawLength = SingleBarEngine.GetStraightBarAxisLength(pline);
                         // Pomiń jeśli zmiana < 1mm (numeryczna niedokładność)
-                        if (Math.Abs(newLength - bar.LengthA) < 1.0) { tr.Commit(); continue; }
+                        if (Math.Abs(rawLength - bar.LengthA) < 1.0) { tr.Commit(); continue; }
+                        newLength = Math.Max(SnapLength(rawLength), GripLengthStep);
+                        if (Math.Abs(newLength - rawLength) > 0.5)
+                        {
+                            // obrys do zaokrąglonej długości: przesunięty koniec dociągnięty wzdłuż osi
+                            // (kierunek pręta zachowany — także dla prętów obróconych)
+                            try
+                            {
+                                _rebuildDepth++;
+                                pline.UpgradeOpen();
+                                SnapStraightOutline(pline, newLength - rawLength,
+                                    preOutline.TryGetValue(oid, out var preS) ? preS : null);
+                            }
+                            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.SnapStraightOutline", ex); }
+                            finally { _rebuildDepth--; }
+                        }
                         tr.Commit();
                     }
 

@@ -98,6 +98,7 @@ namespace BricsCadRc.Core
                 if (isCopyLike && doc?.Database != null && _newBars.Count > 0)
                 {
                     RemapCopiedBarLabels(doc.Database);
+                    ReportSameNumberCopies(doc);
                 }
             }
             catch (System.Exception ex) { Log.Error($"BarCopyWatcher.HandleCommandFinish {cmdRaw}", ex); }
@@ -186,6 +187,48 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
             }
+        }
+
+        /// <summary>
+        /// Kopia pręta o identycznych wymiarach dostaje ten sam numer pozycji co oryginał (jeden numer = jeden
+        /// kształt) — komunikat w linii poleceń, żeby było wiadomo, że kopia liczy się do tej samej pozycji.
+        /// </summary>
+        private static void ReportSameNumberCopies(Document doc)
+        {
+            var db = doc.Database;
+            try
+            {
+                var copies = new List<BarData>();
+                var others = new List<BarData>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    foreach (ObjectId id in ms)
+                    {
+                        if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)) continue;
+                        var bar = SingleBarEngine.ReadBarXData(pl);
+                        if (bar == null || SingleBarEngine.ExtractPosNr(bar.Mark) <= 0) continue;
+                        (_newBars.Contains(id) ? copies : others).Add(bar);
+                    }
+                    tr.Commit();
+                }
+
+                var counts = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var c in copies)
+                {
+                    int nr = SingleBarEngine.ExtractPosNr(c.Mark);
+                    bool same = others.Exists(o => SingleBarEngine.ExtractPosNr(o.Mark) == nr
+                                                   && PositionReconciler.SameShape(o, c));
+                    if (!same) continue;
+                    counts.TryGetValue(c.Mark, out int n);
+                    counts[c.Mark] = n + 1;
+                }
+                foreach (var kv in counts)
+                    doc.Editor?.WriteMessage(
+                        $"\n[RC] Kopia pręta {kv.Key} ({kv.Value} szt.) ma identyczne wymiary jak istniejący pręt — " +
+                        "ten sam numer pozycji (liczy się do tej samej pozycji w BBS).");
+            }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.ReportSameNumberCopies", ex); }
         }
 
         private static bool TryGetArrowTip(MLeader ml, out Point3d tip)

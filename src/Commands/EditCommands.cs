@@ -399,8 +399,9 @@ namespace BricsCadRc.Commands
             var db  = doc.Database;
             var ed  = doc.Editor;
 
-            // 1. Wybór RC_BAR_BLOCK lub RC_SINGLE_BAR
-            var selOpts = new PromptEntityOptions("\nWybierz pręt lub rozkład: ");
+            // 1. Wybór rozkładu (RC_BAR_BLOCK) — symbol końca jest cechą rozkładu, pręt (polilinia)
+            //    nie ma go w danych RC_SINGLE_BAR
+            var selOpts = new PromptEntityOptions("\nWybierz rozkład: ");
             selOpts.SetRejectMessage("\nTo nie jest pręt RC.");
             selOpts.AddAllowedClass(typeof(Polyline),        true);
             selOpts.AddAllowedClass(typeof(BlockReference),  true);
@@ -424,15 +425,16 @@ namespace BricsCadRc.Commands
                         isBarBlock = true;
                     }
                 }
-                else if (ent is Polyline poly)
+                else if (ent is Polyline poly && SingleBarEngine.ReadBarXData(poly) != null)
                 {
-                    barData  = SingleBarEngine.ReadBarXData(poly);
-                    targetId = selRes.ObjectId;
+                    tr.Commit();
+                    ed.WriteMessage("\n[RC] Symbol końca ustawia się na rozkładzie — wskaż rozkład, nie pręt.");
+                    return;
                 }
                 tr.Commit();
             }
 
-            if (barData == null || targetId.IsNull)
+            if (barData == null || targetId.IsNull || !isBarBlock)
             {
                 ed.WriteMessage("\nWybrany obiekt nie zawiera danych pręta RC.");
                 return;
@@ -447,26 +449,8 @@ namespace BricsCadRc.Commands
             if (Application.ShowModalWindow(dlg) != true) return;
 
             // 3. Aktualizuj
-            if (isBarBlock)
-            {
-                BarBlockEngine.RebuildBarEndStyle(db, targetId,
-                    dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
-            }
-            else
-            {
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    var poly = tr.GetObject(targetId, OpenMode.ForWrite) as Polyline;
-                    if (poly != null)
-                    {
-                        barData.SymbolType      = dlg.SymbolType;
-                        barData.SymbolSide      = dlg.SymbolSide;
-                        barData.SymbolDirection = dlg.SymbolDirection;
-                        SingleBarEngine.WriteXData(poly, barData);
-                    }
-                    tr.Commit();
-                }
-            }
+            BarBlockEngine.RebuildBarEndStyle(db, targetId,
+                dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
 
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
             ed.WriteMessage("\n[RC] Symbol końca pręta zaktualizowany.");
