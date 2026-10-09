@@ -44,10 +44,10 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// Minimalny promień gięcia wg BS 8666 Table 2 (B500): 2d dla d≤16, 3.5d dla d≥20.
-        /// (Poprzednio 4d dla d>25 — zawyżało promień i zaniżało długości cięcia H32–H50.)
+        /// Minimalny (wewnętrzny) promień gięcia — jak w firmowym kalkulatorze BS8666_Calculator:
+        /// 2d dla d ≤ 16, 3.5d dla d ≤ 25, 4d dla d > 25.
         /// </summary>
         public static double MinBendRadius(double d) =>
-            d <= 16.0 ? 2.0 * d : 3.5 * d;
+            d <= 16.0 ? 2.0 * d : d <= 25.0 ? 3.5 * d : 4.0 * d;
     }
 }

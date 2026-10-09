@@ -314,6 +314,23 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - Detal otworu: 4 narożniki otworu (dwusieczna 45°, na zewnątrz otworu); opis od strony dalszego pręta, ramię pionowe za
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
 
+## 4i. Kształty prętów BS 8666 (ShapeCodeLibrary, BarGeometryBuilder)
+- Źródła (decyzja użytkownika): **wzory długości i promienie gięcia wg firmowego kalkulatora**
+  BS8666_Calculator (r = 2d dla d ≤ 16, 3.5d dla d ≤ 25, 4d powyżej; 00 bez zaokrąglenia, reszta w górę do 25 mm;
+  51 = 2A + 2B + MAX(16d,160), 63 = 2A + 3B + MAX(14d,150) przy pustym C); **rysunek kształtów wg BS 8666:2000 Table 1**.
+- Kształty z listy wyboru (00, 11, 13, 15, 21, 33, 44, 46, 51, 63): **wymiary A–E są zewnętrzne** (kl. 7.1) —
+  `BarGeometryBuilder` przelicza je na oś (ramię do gięcia −d/2, wymiar między dwoma gięciami −d), więc obrys ma
+  gabaryty z BBS. Pozostałe kody: jak dotąd (oś) — do poprawy osobno.
+- Łuk gięcia rysowany po osi pręta: promień r + d/2, punkty styczne R·tan(φ/2) od naroża (także gięcia ≠ 90°);
+  odcinki zerowej długości pomijane (wcześniej NaN).
+- 11: (B) poziomo, A pionowo (jak w normie). 15: A skośnie (rzut pionowy B), (C) poziomo. 33: pętla z dwoma
+  półkolami, A × B, (C) zakład. **44 = „kapelusz”** (A półka, B, C dno, D, (E) półka); stary pierścień 44
+  (tylko A) rysowany dalej jako okrąg (`IsLegacyRing`). 46: crank symetryczny, parametry A, B, C, D, E
+  (D = głębokość, tylko do rysunku; wzór A + 2B + C + E). 51 / 63: parametry A, B, C (haki, opcjonalne): puste C →
+  wzór z kalkulatora i hak MAX(16d,160) / MAX(14d,150); podane C → 51: 2(A+B+C) − 2.5r − 5d, 63: 2A + 3B + 2C − 3r − 6d.
+  33: oba końce na górnej prostej, na długości zakładu (C) nachodzą na siebie.
+- Przekrój (RC_SECTION) bierze geometrię z `BarGeometryBuilder` bez własnego przeliczania dla 11/13/21.
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD).
 2. Użytkownik akceptuje plan (przy większych zmianach).

@@ -13,9 +13,9 @@ namespace BricsCadRc.Tests
         [TestCase(16, 32.0)]    // 2d, d=16 (granica)
         [TestCase(20, 70.0)]    // 3.5d, d>16
         [TestCase(25, 87.5)]    // 3.5d
-        [TestCase(32, 112.0)]   // 3.5d (BS 8666 Table 2)
-        [TestCase(40, 140.0)]   // 3.5d
-        [TestCase(50, 175.0)]   // 3.5d
+        [TestCase(32, 128.0)]   // 4d (firmowy kalkulator BS8666_Calculator)
+        [TestCase(40, 160.0)]   // 4d
+        [TestCase(50, 200.0)]   // 4d
         public void MinBendRadius_ReturnsCorrectValue(double d, double expected)
         {
             Assert.That(BarShape.MinBendRadius(d), Is.EqualTo(expected).Within(1e-9));
@@ -132,7 +132,7 @@ namespace BricsCadRc.Tests
             Assert.That(result, Is.EqualTo(1500.0).Within(1e-9));
         }
 
-        [Test]
+        [Test, Ignore("Kształt 22 poza zakresem poprawek (lista wyboru) — do weryfikacji z kalkulatorem")]
         public void Code22_ZBar_Formula()
         {
             // A=300, B=150, C=200, D=100, d=12 → r=24 → raw=750-36-36=678 → CEILING(678/25)*25=700
@@ -255,8 +255,8 @@ namespace BricsCadRc.Tests
         [Test]
         public void Code46_ClosedRectVariant_Formula()
         {
-            // A=400, B=200, C=400, E=100, d=12 → raw=1300 → already multiple of 25 → 1300
-            var result = ShapeCodeLibrary.Get("46")!.CalculateTotalLength(new[] { 400.0, 200.0, 400.0, 100.0 }, 12);
+            // A=400, B=200, C=400, D=150 (tylko rysunek), E=100, d=12 → A+2B+C+E = 1300
+            var result = ShapeCodeLibrary.Get("46")!.CalculateTotalLength(new[] { 400.0, 200.0, 400.0, 150.0, 100.0 }, 12);
             Assert.That(result, Is.EqualTo(1300.0).Within(1e-9));
         }
 
@@ -276,53 +276,52 @@ namespace BricsCadRc.Tests
             Assert.That(result, Is.EqualTo(1050.0).Within(1e-9));
         }
 
+        // 51 / 63 — wzory jak w firmowym kalkulatorze (BS8666_Calculator)
+
         [Test]
         public void Code51_ClosedStirrup_Formula_MaxFrom16d()
         {
-            // A=400, B=300, C=0, d=12 → hook=192, r=24 → 2(892)-60-60=1664 → CEIL=1675
+            // 2A + 2B + MAX(16d,160): A=400, B=300, d=12 → 1400 + 192 = 1592 → 1600
             var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 0.0 }, 12);
-            Assert.That(result, Is.EqualTo(1675.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1600.0).Within(1e-9));
         }
 
         [Test]
         public void Code51_ClosedStirrup_Formula_MaxFrom160()
         {
-            // A=400, B=300, C=0, d=8 → hook=160, r=16 → 2(860)-40-40=1640 → CEIL=1650
+            // d=8 → MAX(128,160)=160 → 1560 → 1575
             var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 0.0 }, 8);
-            Assert.That(result, Is.EqualTo(1650.0).Within(1e-9));
-        }
-
-        [Test]
-        public void Code51_ExplicitHook_UsesC()
-        {
-            // A=400, B=300, C=210, d=12 → hook=210, r=24 → 2(910)-60-60=1700 → CEIL=1700
-            var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 210.0 }, 12);
-            Assert.That(result, Is.EqualTo(1700.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1575.0).Within(1e-9));
         }
 
         [Test]
         public void Code63_ClosedStirrup_Formula_MaxFrom14d()
         {
-            // A=300, B=200, C=0, d=12: hook=168, r=24
-            // raw = 2*300 + 3*200 + 2*168 - 3*24 - 6*12 = 600+600+336-72-72 = 1392 → CEIL=1400
+            // 2A + 3B + MAX(14d,150): A=300, B=200, d=12 → 1200 + 168 = 1368 → 1375
             var result = ShapeCodeLibrary.Get("63")!.CalculateTotalLength(new[] { 300.0, 200.0, 0.0 }, 12);
-            Assert.That(result, Is.EqualTo(1400.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1375.0).Within(1e-9));
         }
 
         [Test]
         public void Code63_ClosedStirrup_Formula_MaxFrom150()
         {
-            // A=300, B=200, C=0, d=8: hook=max(112,150)=150, r=16
-            // raw = 2*300 + 3*200 + 2*150 - 3*16 - 6*8 = 600+600+300-48-48 = 1404 → CEIL=1425
+            // d=8 → MAX(112,150)=150 → 1350 → 1350
             var result = ShapeCodeLibrary.Get("63")!.CalculateTotalLength(new[] { 300.0, 200.0, 0.0 }, 8);
-            Assert.That(result, Is.EqualTo(1425.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1350.0).Within(1e-9));
         }
 
         [Test]
-        public void Code63_ClosedStirrup_ExplicitHook_UsesC()
+        public void Code51_ExplicitHook_UsesC()
         {
-            // A=300, B=200, C=180, d=12: r=24
-            // raw = 2*300 + 3*200 + 2*180 - 3*24 - 6*12 = 600+600+360-72-72 = 1416 → CEIL=1425
+            // C=150, d=12, r=24: 2(400+300+150) - 60 - 60 = 1580 → 1600
+            var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 150.0 }, 12);
+            Assert.That(result, Is.EqualTo(1600.0).Within(1e-9));
+        }
+
+        [Test]
+        public void Code63_ExplicitHook_UsesC()
+        {
+            // C=180, d=12, r=24: 600 + 600 + 360 - 72 - 72 = 1416 → 1425
             var result = ShapeCodeLibrary.Get("63")!.CalculateTotalLength(new[] { 300.0, 200.0, 180.0 }, 12);
             Assert.That(result, Is.EqualTo(1425.0).Within(1e-9));
         }

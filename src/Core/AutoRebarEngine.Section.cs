@@ -206,13 +206,14 @@ namespace BricsCadRc.Core
         /// </summary>
         private static double[] AxisParams(string code, double[] p, double d)
         {
+            // 11, 13, 21 (i inne z listy wyboru): BarGeometryBuilder sam przelicza wymiary zewnętrzne na oś
             var a = (double[])p.Clone();
             switch (code ?? "00")
             {
-                case "13": case "21": case "22":
+                case "22":
                     a[0] = Math.Max(1, a[0] - d / 2); a[1] = Math.Max(1, a[1] - d); a[2] = Math.Max(0, a[2] - d / 2);
                     break;
-                case "11": case "12":
+                case "12":
                     a[0] = Math.Max(1, a[0] - d / 2); a[1] = Math.Max(1, a[1] - d / 2);
                     break;
             }

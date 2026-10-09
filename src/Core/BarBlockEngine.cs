@@ -303,7 +303,7 @@ namespace BricsCadRc.Core
         // ── Symbol category lookup ─────────────────────────────────────────
 
         private static readonly HashSet<string> _linkCodes =
-            new HashSet<string> { "51","63","34","35","36","41","46","47" };
+            new HashSet<string> { "51","63","33","34","35","36","41","47" };   // 46 = crank (otwarty)
         private static readonly HashSet<string> _ubarCodes =
             new HashSet<string> { "21","13","12","22","23","24","25","26" };
         private static readonly HashSet<string> _lbarCodes =

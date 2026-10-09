@@ -169,6 +169,8 @@ namespace BricsCadRc.Dialogs
             for (int i = 0; i < paramCount; i++)
             {
                 string txt = _paramBoxes[i].Text ?? "";
+                bool optional = ShapeCodeLibrary.IsOptionalParam(_selectedShape.Code, i);
+                if (optional && (string.IsNullOrWhiteSpace(txt) || txt.Trim() == "0")) { values[i] = 0; continue; }
                 if (!NumberParser.TryParseDouble(txt, out double v) || v <= 0)
                 {
                     TotalLengthBox.Text = "";
@@ -243,7 +245,10 @@ namespace BricsCadRc.Dialogs
 
             for (int i = 0; i < paramCount; i++)
             {
-                if (!NumberParser.TryParseDouble(_paramBoxes[i].Text, out double v) || v <= 0)
+                string txtP = _paramBoxes[i].Text ?? "";
+                if (ShapeCodeLibrary.IsOptionalParam(_selectedShape.Code, i)
+                    && (string.IsNullOrWhiteSpace(txtP) || txtP.Trim() == "0")) { paramVals[i] = 0; continue; }
+                if (!NumberParser.TryParseDouble(txtP, out double v) || v <= 0)
                 {
                     MessageBox.Show($"Invalid value for {_selectedShape.Parameters[i]}.", "RC BAR",
                         MessageBoxButton.OK, MessageBoxImage.Warning);

@@ -11,9 +11,13 @@ namespace BricsCadRc.Core
     ///   X = wzdłuż pręta (wymiar A)
     ///   Y = prostopadły, "w górę" w widoku elewacji
     ///
-    /// Każdy naróż wewnętrzny zastępowany jest łukiem kołowym
-    /// o promieniu r = BarShape.MinBendRadius(diameter).
-    /// Łuk aproksymowany jest (steps+1) punktami co 15° (steps=6 → 7 pkt).
+    /// Każdy naróż zastępowany jest łukiem kołowym OSI pręta o promieniu r + d/2
+    /// (r = BarShape.MinBendRadius — promień wewnętrzny gięcia wg BS 8666), punkty styczne
+    /// w odległości R·tan(φ/2) od naroża (φ = kąt zmiany kierunku).
+    ///
+    /// Kształty z listy wyboru (00, 11, 13, 15, 21, 33, 44, 46, 51, 63): wymiary A–E są ZEWNĘTRZNE
+    /// (BS 8666 kl. 7.1, jak w BBS) — tu przeliczane na oś pręta, więc obrys ma gabaryty z BBS.
+    /// Pozostałe kody: wymiary jak dotąd (oś).
     /// </summary>
     public static class BarGeometryBuilder
     {
@@ -40,13 +44,19 @@ namespace BricsCadRc.Core
         public static List<(double X, double Y)> GetLocalPoints(
             string shapeCode, double[] paramValues, double diameter)
         {
-            if (shapeCode == "44") return CirclePoints(paramValues);
+            if (IsLegacyRing(shapeCode, paramValues)) return CirclePoints(paramValues);
             if (shapeCode == "75") return SpiralPoints(paramValues);
             if (shapeCode == "13") return HairpinPoints(paramValues, diameter);
+            if (shapeCode == "33") return LoopPoints(paramValues, diameter);
 
-            double r = BarShape.MinBendRadius(diameter);
-            var sharp = GetSharpPoints(shapeCode, paramValues, r, diameter);
-            if (sharp.Count < 3) return sharp;
+            double r = AxisBendRadius(diameter);
+            var raw = GetSharpPoints(shapeCode, paramValues, BarShape.MinBendRadius(diameter), diameter);
+            // odcinki zerowej długości (np. brak wymiaru) — bez nich (wcześniej NaN w łukach)
+            var sharp = new List<(double X, double Y)>(raw.Count);
+            foreach (var p in raw)
+                if (sharp.Count == 0 || Math.Abs(p.X - sharp[sharp.Count - 1].X) + Math.Abs(p.Y - sharp[sharp.Count - 1].Y) > 1e-6)
+                    sharp.Add(p);
+            if (sharp.Count < 3) return sharp.Count >= 2 ? sharp : raw;
 
             var result = new List<(double, double)>();
             result.Add(sharp[0]);
@@ -56,6 +66,16 @@ namespace BricsCadRc.Core
             result.Add(sharp[sharp.Count - 1]);
             return result;
         }
+
+        /// <summary>Promień łuku OSI pręta: promień wewnętrzny gięcia (BS 8666) + d/2.</summary>
+        public static double AxisBendRadius(double diameter) => BarShape.MinBendRadius(diameter) + diameter / 2.0;
+
+        /// <summary>
+        /// Stary pierścień zapisany jako 44 (tylko A = średnica, B–E puste) — 44 w BS 8666 to „kapelusz”,
+        /// ale stare rysunki z pierścieniem dalej rysują się jako okrąg.
+        /// </summary>
+        public static bool IsLegacyRing(string shapeCode, double[] pv)
+            => shapeCode == "44" && Param(pv, 1) <= 0 && Param(pv, 2) <= 0 && Param(pv, 3) <= 0 && Param(pv, 4) <= 0;
 
         /// <summary>
         /// Generuje (steps+1) punktów na łuku kołowym.
@@ -85,7 +105,7 @@ namespace BricsCadRc.Core
         public static IEnumerable<(double X, double Y)> CornerArcPoints(
             (double X, double Y) prev, (double X, double Y) curr, (double X, double Y) next,
             double diameter)
-            => BendArcPoints(prev, curr, next, BarShape.MinBendRadius(diameter));
+            => BendArcPoints(prev, curr, next, AxisBendRadius(diameter));
 
         // ── Private helpers ───────────────────────────────────────────────────
 
@@ -109,8 +129,11 @@ namespace BricsCadRc.Core
                     return Pts((0, 0), (a, 0));
 
                 // ── Haki jednostronne / obustronne ───────────────────────────
-                case "11": // hak 90° na prawym końcu
-                    return Pts((0, 0), (a, 0), (a, b));
+                case "11": // BS 8666: (B) poziomo, A pionowo w górę; wymiary zewnętrzne
+                {
+                    double h = diameter / 2.0;
+                    return Pts((0, 0), (b - h, 0), (b - h, a - h));
+                }
 
                 case "12": // L-bend z większym promieniem R (R = p[2] = LengthC)
                     return Pts((0, 0), (a, 0), (a, b));
@@ -119,14 +142,22 @@ namespace BricsCadRc.Core
                 case "14": // hook 45°
                     return Pts((0, 0), (a, 0), (a + b * Cos45, b * Cos45));
 
-                case "15": // hook 135°
-                    return Pts((0, 0), (a, 0), (a - b * Cos45, b * Cos45));
+                case "15": // BS 8666: A skośnie (rzut pionowy B), potem (C) poziomo; L = A + (C)
+                {
+                    double h = diameter / 2.0;
+                    double la = Math.Max(a - h, 1.0), lc = Math.Max(c - h, 0.0);
+                    double sin = Math.Min(1.0, Math.Max(0.0, (b - diameter) / la));
+                    double cos = Math.Sqrt(1.0 - sin * sin);
+                    return Pts((0, la * sin), (la * cos, 0), (la * cos + lc, 0));
+                }
 
                 // ── U-bary ────────────────────────────────────────────────────
-                case "21": // U-bar symetryczny/asymetryczny
+                case "21": // U-bar: A lewe ramię, B szerokość, (C) prawe ramię — wymiary zewnętrzne
                 {
+                    double h = diameter / 2.0;
                     double cv = paramValues != null && paramValues.Length > 2 ? paramValues[2] : b;
-                    return Pts((0, 0), (0, -a), (b, -a), (b, cv - a));
+                    double aa = Math.Max(a - h, 1.0), bb = Math.Max(b - diameter, 1.0), cc = Math.Max(cv - h, 0.0);
+                    return Pts((0, 0), (0, -aa), (bb, -aa), (bb, cc - aa));
                 }
 
                 case "22": // U-shape nierówny
@@ -193,8 +224,23 @@ namespace BricsCadRc.Core
                 case "41": // wielokąt 4-boczny z ukośnym narożnikiem
                     return Pts((0, 0), (a, 0), (a + b * Cos45, b * Cos45), (a, b), (0, 0));
 
-                case "46": // romb
-                    return Pts((a / 2, 0), (a, b / 2), (a / 2, b), (0, b / 2), (a / 2, 0));
+                case "46": // BS 8666: A poziomo, B skos w dół, C dno, B skos w górę, (E) poziomo; D = głębokość (zewn.)
+                {
+                    double dep = Math.Max(d - diameter, 0.0);
+                    double sin = b > 1e-9 ? Math.Min(1.0, dep / b) : 0.0;
+                    double dx = b * Math.Sqrt(1.0 - sin * sin), dy = b * sin;
+                    return Pts((0, 0), (a, 0), (a + dx, -dy), (a + dx + c, -dy), (a + 2 * dx + c, 0), (a + 2 * dx + c + e, 0));
+                }
+
+                case "44": // BS 8666 „kapelusz”: A półka, B w dół, C dno, D w górę, (E) półka — wymiary zewnętrzne
+                {
+                    double h = diameter / 2.0;
+                    double x1 = Math.Max(a - h, 0.0);
+                    double x2 = x1 + Math.Max(c - diameter, 1.0);
+                    double yb = -Math.Max(b - diameter, 1.0);
+                    double yr = yb + Math.Max(d - diameter, 1.0);
+                    return Pts((0, 0), (x1, 0), (x1, yb), (x2, yb), (x2, yr), (x2 + Math.Max(e - h, 0.0), yr));
+                }
 
                 case "47": // trójkąt
                     return Pts((0, 0), (a, 0), (a / 2, b), (0, 0));
@@ -202,9 +248,11 @@ namespace BricsCadRc.Core
                 // ── Linki zamknięte z hakiem ──────────────────────────────────
                 case "51": // BS8666: closed link — jeden pręt, overlap w górnym prawym rogu
                 // Górny prawy narożnik odwiedzany DWUKROTNIE (oba haki wychodzą z tego samego rogu).
-                // Daje 5 narożników 90° (wszystkie identyczne jak w shape 34).
+                // A × B zewnętrzne → oś (A−d) × (B−d). Hak = C (= D, od zewnętrznej krawędzi),
+                // puste C → MAX(16d,160).
                 {
-                    double hook51 = c > 0 ? c : Math.Max(16.0 * diameter, 160.0);
+                    double hook51 = c > 0 ? Math.Max(c - diameter / 2.0, 1.0) : Math.Max(16.0 * diameter, 160.0);
+                    a = Math.Max(a - diameter, 1.0); b = Math.Max(b - diameter, 1.0);
                     return Pts((a, b - hook51),    // prawy hak (dół)
                                (a, b),             // górny prawy — 1. przejście: UP→LEFT
                                (0, b),             // górny lewy — LEFT→DOWN
@@ -217,10 +265,12 @@ namespace BricsCadRc.Core
                 case "63": // BS8666: closed link — haki PIONOWO W DÓŁ z obu górnych rogów
                 // Jeden ciągły pręt, double-visit na górnych rogach (jak shape 51).
                 // 8 węzłów, 6 narożników 90° CW → 1+6×7+1=44 pkt
-                // A=wysokość (p[0]), B=szerokość (p[1]), C=hook (p[2])
+                // A=wysokość, B=szerokość (zewnętrzne → oś −d). Hak = C (od zewnętrznej krawędzi),
+                // puste C → MAX(14d,150).
                 {
-                    double hook63 = c > 0 ? c : Math.Max(14.0 * diameter, 150.0);
-                    return Pts((0,         hook63),      // lewy hak koniec — free end
+                    double hook63 = c > 0 ? Math.Max(c - diameter / 2.0, 1.0) : Math.Max(14.0 * diameter, 150.0);
+                    a = Math.Max(a - diameter, 1.0); b = Math.Max(b - diameter, 1.0);
+                    return Pts((0,         a - hook63),  // lewy hak koniec — free end (hak w dół od górnego rogu)
                                (0,         a),           // górny lewy — UP→RIGHT   (CW, 1. wizyta)
                                (b,         a),           // górny prawy — RIGHT→DOWN (CW, 1. wizyta)
                                (b,         0),           // dolny prawy — DOWN→LEFT  (CW)
@@ -272,9 +322,11 @@ namespace BricsCadRc.Core
         //       nie blokujemy, plugin rysuje zgodnie z wymiarami podanymi przez usera.
         private static List<(double X, double Y)> HairpinPoints(double[] paramValues, double diameter)
         {
-            double a = Param(paramValues, 0);
-            double b = Param(paramValues, 1);
-            double c = Param(paramValues, 2);
+            // wymiary zewnętrzne (BS 8666) → oś: A, C − d/2 (do zewnętrznej łuku), B − d (wysokość pętli)
+            double h = diameter / 2.0;
+            double b = Math.Max(Param(paramValues, 1) - diameter, 1.0);
+            double a = Math.Max(Param(paramValues, 0) - h, b / 2.0);
+            double c = Math.Max(Param(paramValues, 2) - h, b / 2.0);
             double r = b / 2.0;
 
             // Środek łuku półkola: prawy kraniec pętli minus promień, na wysokości B/2
@@ -306,6 +358,36 @@ namespace BricsCadRc.Core
             // 4. Lewy koniec górnej nogi
             pts.Add((a - c, b));
 
+            return pts;
+        }
+
+        /// <summary>
+        /// BS 8666 kształt 33: pętla zamknięta z dwoma półkolami. A = długość całkowita, B = szerokość
+        /// (zewnętrzne), (C) = zakład końców na górnej prostej (od wolnego końca do zewnętrznej łuku).
+        /// Oba końce leżą na górnej prostej i na długości zakładu na siebie nachodzą.
+        /// </summary>
+        private static List<(double X, double Y)> LoopPoints(double[] paramValues, double diameter)
+        {
+            double A = Param(paramValues, 0), B = Param(paramValues, 1), C = Param(paramValues, 2);
+            double h = diameter / 2.0;
+            double rho = Math.Max((B - diameter) / 2.0, diameter);      // promień osi półkola
+            double lc  = Math.Max(A - B, 0.0);                          // rozstaw środków półkoli
+            double xEnd = Math.Min(lc + rho + h - Math.Max(C, 0.0), lc);
+            const int steps = 12;
+            var pts = new List<(double, double)> { (lc, rho), (0, rho) };
+            for (int i = 1; i <= steps; i++)                            // lewe półkole: 90° → 270°
+            {
+                double t = Math.PI / 2 + Math.PI * i / steps;
+                pts.Add((rho * Math.Cos(t), rho * Math.Sin(t)));
+            }
+            pts.Add((lc, -rho));
+            for (int i = 1; i <= steps; i++)                            // prawe półkole: −90° → 90°
+            {
+                double t = -Math.PI / 2 + Math.PI * i / steps;
+                pts.Add((lc + rho * Math.Cos(t), rho * Math.Sin(t)));
+            }
+            // koniec po półkolu wraca po górnej prostej na długości zakładu — ramiona na siebie nachodzą
+            pts.Add((Math.Min(xEnd, lc), rho));
             return pts;
         }
 
@@ -354,18 +436,22 @@ namespace BricsCadRc.Core
             // Wektory jednostkowe kierunków
             double d1x = curr.X - prev.X, d1y = curr.Y - prev.Y;
             double len1 = Math.Sqrt(d1x * d1x + d1y * d1y);
-            d1x /= len1; d1y /= len1;
-
             double d2x = next.X - curr.X, d2y = next.Y - curr.Y;
             double len2 = Math.Sqrt(d2x * d2x + d2y * d2y);
+            if (len1 < 1e-9 || len2 < 1e-9) { yield return curr; yield break; }
+            d1x /= len1; d1y /= len1;
             d2x /= len2; d2y /= len2;
 
-            // Punkty styczne (r od narożnika, na odpowiednich odcinkach)
-            double tp1x = curr.X - d1x * r,  tp1y = curr.Y - d1y * r;
-            double tp2x = curr.X + d2x * r,  tp2y = curr.Y + d2y * r;
-
-            // Iloczyn wektorowy: > 0 → skręt CCW (w lewo)
+            // Kąt zmiany kierunku φ; punkty styczne w odległości R·tan(φ/2) od naroża
             double cross = d1x * d2y - d1y * d2x;
+            double dot   = d1x * d2x + d1y * d2y;
+            double phi   = Math.Atan2(Math.Abs(cross), dot);
+            if (phi < 1e-6 || phi > Math.PI - 1e-3) { yield return curr; yield break; }
+            double t = r * Math.Tan(phi / 2.0);
+            double tMax = Math.Min(len1, len2);
+            if (t > tMax) { t = tMax; r = t / Math.Tan(phi / 2.0); }   // krótkie ramię — mniejszy łuk
+
+            double tp1x = curr.X - d1x * t,  tp1y = curr.Y - d1y * t;
             bool ccw = cross > 0;
 
             // Normalna wewnętrzna (ku środkowi łuku) w tp1
@@ -376,17 +462,12 @@ namespace BricsCadRc.Core
             double cy = tp1y + ny * r;
 
             double startAngle = Math.Atan2(tp1y - cy, tp1x - cx);
-            double endAngle   = Math.Atan2(tp2y - cy, tp2x - cx);
-
-            // Wymuś właściwy kierunek obrotu
-            double sweep = endAngle - startAngle;
-            if ( ccw && sweep < 0) sweep += 2 * Math.PI;
-            if (!ccw && sweep > 0) sweep -= 2 * Math.PI;
+            double sweep = ccw ? phi : -phi;
 
             for (int i = 0; i <= steps; i++)
             {
-                double t     = (double)i / steps;
-                double angle = startAngle + sweep * t;
+                double k     = (double)i / steps;
+                double angle = startAngle + sweep * k;
                 yield return (cx + r * Math.Cos(angle), cy + r * Math.Sin(angle));
             }
         }

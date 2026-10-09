@@ -32,7 +32,7 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,35 5,10 50,10 50,25\"/>"),
                 (p, d) => p[0] + p[1] - 0.43 * p[2] - 1.2 * d));
 
-            Add(new BarShape("13", "Hook 180°",
+            Add(new BarShape("13", "Semicircular hook",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,20 40,20 40,30 15,30\"/>"),
                 (p, d) => p[0] + 0.57 * p[1] + p[2] - 1.6 * d));
@@ -42,7 +42,7 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,35 5,10 45,5\"/>"),
                 (p, d) => p[0] + p[2] - 4 * d));
 
-            Add(new BarShape("15", "Hook 135°",
+            Add(new BarShape("15", "Angled bend",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,10 50,10 40,25\"/>"),
                 (p, d) => p[0] + p[2]));
@@ -108,7 +108,7 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,35 5,20 20,20 20,10 40,10 40,20 55,20\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] - 1.5 * r - 3 * d; }));
 
-            Add(new BarShape("33", "4-leg bar variant",
+            Add(new BarShape("33", "Closed loop (2 semicircles)",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,20 5,10 30,10 30,30 55,30 55,20\"/>"),
                 (p, d) => 2 * p[0] + 1.7 * p[1] + 2 * p[2] - 4 * d));
@@ -136,16 +136,19 @@ namespace BricsCadRc.Core
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2 * r - 4 * d; }));
 
             // ── 44 Okrąg (A+B+C+D+E-2r-4d) ──────────────────────────────────
-            Add(new BarShape("44", "Circle / ring",
+            // BS 8666: 44 = „kapelusz” (A półka, B, C dno, D, (E) półka). Stare pierścienie 44 (tylko A)
+            // rysowane dalej jako okrąg (BarGeometryBuilder.IsLegacyRing).
+            Add(new BarShape("44", "Top hat (2 cranks)",
                 new[] { "A", "B", "C", "D", "E" },
                 Svg("<circle cx=\"30\" cy=\"20\" r=\"15\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2 * r - 4 * d; }));
 
             // ── 46 Zamknięty prostokąt variant (A+2B+C+E) ────────────────────
-            Add(new BarShape("46", "Closed rectangle variant",
-                new[] { "A", "B", "C", "E" },
+            // BS 8666: A półka, B skos, C dno, B skos, (E) półka; D = głębokość (tylko do rysunku)
+            Add(new BarShape("46", "Symmetric crank",
+                new[] { "A", "B", "C", "D", "E" },
                 Svg("<rect x=\"8\" y=\"6\" width=\"44\" height=\"28\"/>"),
-                (p, d) => p[0] + 2 * p[1] + p[2] + p[3]));
+                (p, d) => p[0] + 2 * p[1] + p[2] + p[4]));
 
             // ── 47 Zamknięty trójkąt (2A+B+MAX(21d,240)) ─────────────────────
             Add(new BarShape("47", "Closed triangle",
@@ -154,20 +157,24 @@ namespace BricsCadRc.Core
                 (p, d) => 2 * p[0] + p[1] + Math.Max(21 * d, 240)));
 
             // ── 51 Strzemię zamknięte (2(A+B+C)-2.5r-5d; C=0→MAX(16d,160)) ──
+            // C (= D, haki) puste → wzór jak w firmowym kalkulatorze: 2A + 2B + MAX(16d, 160);
+            // C podane → BS 8666: 2(A + B + C) − 2.5r − 5d. A × B zewnętrzne.
             Add(new BarShape("51", "Closed stirrup",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,20 15,20 15,10 35,10 35,20 45,20 45,35\"/>"),
-                (p, d) => { double hook51 = p[2] > 0 ? p[2] : Math.Max(16 * d, 160);
-                             double r51    = BarShape.MinBendRadius(d);
-                             return 2 * (p[0] + p[1] + hook51) - 2.5 * r51 - 5 * d; }));
+                (p, d) => p.Length > 2 && p[2] > 0
+                    ? 2 * (p[0] + p[1] + p[2]) - 2.5 * BarShape.MinBendRadius(d) - 5 * d
+                    : 2 * p[0] + 2 * p[1] + Math.Max(16 * d, 160)));
 
             // ── 63 Strzemię zamknięte (2(A+B+C)-2.5r-5d; C=0→MAX(14d,150)) ─
+            // C (haki) puste → wzór jak w firmowym kalkulatorze: 2A + 3B + MAX(14d, 150);
+            // C podane → 2A + 3B + 2C − 3r − 6d.
             Add(new BarShape("63", "Closed stirrup 63",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,20 15,20 15,10 45,10 45,20 55,20 55,35\"/>"),
-                (p, d) => { double hook63 = p[2] > 0 ? p[2] : Math.Max(14 * d, 150);
-                             double r63    = BarShape.MinBendRadius(d);
-                             return 2 * p[0] + 3 * p[1] + 2 * hook63 - 3 * r63 - 6 * d; }));
+                (p, d) => p.Length > 2 && p[2] > 0
+                    ? 2 * p[0] + 3 * p[1] + 2 * p[2] - 3 * BarShape.MinBendRadius(d) - 6 * d
+                    : 2 * p[0] + 3 * p[1] + Math.Max(14 * d, 150)));
 
             // ── 6-nożne (A+B+C+D+E-2.5r-5d) ─────────────────────────────────
             Add(new BarShape("56", "6-leg bar",
@@ -231,6 +238,10 @@ namespace BricsCadRc.Core
         {
             "00", "11", "13", "15", "21", "33", "44", "46", "51", "63"
         };
+
+        /// <summary>Parametr może być pusty (0): C (haki) w strzemionach 51 / 63 — wtedy domyślny hak.</summary>
+        public static bool IsOptionalParam(string code, int index) =>
+            index == 2 && (code == "51" || code == "63");
 
         /// <summary>Sprawdza czy podany kod istnieje w rejestrze.</summary>
         public static bool Contains(string code) =>

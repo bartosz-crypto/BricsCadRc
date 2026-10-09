@@ -171,7 +171,7 @@ namespace BricsCadRc.Core
             result = null; newAxisStart = Point3d.Origin; why = null; frame = null;
             string shapeCode = bar.ShapeCode ?? "00";
             int total = pl.NumberOfVertices;
-            if (shapeCode == "44" || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
+            if (BarGeometryBuilder.IsLegacyRing(shapeCode, bar.ParamValues) || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
             int n = total / 2;
 
             var moved = new List<int>();

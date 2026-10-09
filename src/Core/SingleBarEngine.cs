@@ -408,7 +408,7 @@ namespace BricsCadRc.Core
             BarShape shape, double[] paramValues, double diameter,
             Point3d startPoint, Vector3d direction, bool mirrored = false)
         {
-            if (shape.Code == "44") return null;
+            if (BarGeometryBuilder.IsLegacyRing(shape.Code, paramValues)) return null;
 
             var localPts = BarGeometryBuilder.GetLocalPoints(shape.Code, paramValues, diameter);
             int n = localPts.Count;
@@ -478,8 +478,8 @@ namespace BricsCadRc.Core
 
             double halfD = diameter / 2.0;
 
-            // ── Shape 44: dwa osobne zamknięte okręgi (outer + inner ring) ──────
-            if (shape.Code == "44")
+            // ── Stary pierścień 44 (tylko A): dwa osobne zamknięte okręgi (outer + inner ring) ──────
+            if (BarGeometryBuilder.IsLegacyRing(shape.Code, paramValues))
             {
                 double ringDiam   = paramValues != null && paramValues.Length > 0
                     ? paramValues[0] : diameter;
@@ -585,7 +585,7 @@ namespace BricsCadRc.Core
                 if (total < 4 || total % 2 != 0) return false;
                 int n = total / 2;
                 var shape = ShapeCodeLibrary.Get(outlineBar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
-                if (shape.Code == "44") return false;
+                if (BarGeometryBuilder.IsLegacyRing(shape.Code, outlineBar.ParamValues)) return false;
                 var lp = BarGeometryBuilder.GetLocalPoints(shape.Code, outlineBar.ParamValues, outlineBar.Diameter);
                 if (lp == null || lp.Count != n) return false;
 
@@ -648,18 +648,15 @@ namespace BricsCadRc.Core
         {
             EnsureAppIdRegistered(db);
 
+            // Stary pierścień 44 (dwa okręgi) — bez przebudowy; wcześniej kasowany był wewnętrzny okrąg
+            if (BarGeometryBuilder.IsLegacyRing(bar.ShapeCode, bar.ParamValues)) return;
+
             using var tr  = db.TransactionManager.StartTransaction();
             string handle = primaryPolyId.Handle.ToString();
-            DeleteLinkedEntities(db, tr, handle);
+            DeleteLinkedEntities(db, tr, handle);   // np. wewnętrzny okrąg pierścienia po zmianie kształtu
 
             var pline = (Polyline)tr.GetObject(primaryPolyId, OpenMode.ForRead);
             var shape = ShapeCodeLibrary.Get(bar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
-
-            if (shape.Code == "44")
-            {
-                tr.Commit();
-                return;
-            }
 
             var lPts = BarGeometryBuilder.GetLocalPoints(shape.Code, bar.ParamValues, bar.Diameter);
             if (lPts == null || lPts.Count < 2) { tr.Commit(); return; }
@@ -824,10 +821,16 @@ namespace BricsCadRc.Core
         /// Działa dla wszystkich shape codes z outline left+reverse(right) — tj. shape != 44.
         /// Dla shape 44 (ring) zwraca pline.GetPoint3dAt(0) jako fallback (TODO: osobny fix).
         /// </summary>
+        private static bool IsLegacyRingBar(Polyline pl)
+        {
+            var b = ReadBarXData(pl);
+            return b != null && BarGeometryBuilder.IsLegacyRing(b.ShapeCode, b.ParamValues);
+        }
+
         public static Point3d GetAxisFirstPointFromOutline(Polyline pl, string shapeCode)
         {
-            if (shapeCode == "44")
-                return pl.GetPoint3dAt(0); // TODO: ring axis recovery — osobny case do zaimplementowania
+            if (shapeCode == "44" && IsLegacyRingBar(pl))
+                return pl.GetPoint3dAt(0); // stary pierścień — punkt okręgu
 
             int total = pl.NumberOfVertices;
             if (total < 4 || total % 2 != 0)
@@ -873,7 +876,7 @@ namespace BricsCadRc.Core
             var result = new List<Point3d>();
             if (pl == null || pl.NumberOfVertices < 2) return result;
             int total = pl.NumberOfVertices;
-            if (shapeCode == "44")
+            if (shapeCode == "44" && IsLegacyRingBar(pl))
             {
                 for (int i = 0; i < total; i++)
                     result.Add(pl.GetPoint3dAt(i));

@@ -16,7 +16,7 @@ namespace BricsCadRc.Core
         // Shape codes renderowane jako Polygon (IsClosed) zamiast Polyline
         private static readonly HashSet<string> _closedCodes =
             new HashSet<string>(StringComparer.Ordinal)
-            { "34", "35", "36", "41", "44", "46", "47" };
+            { "34", "35", "36", "41", "47" };
 
         // Domyślne parametry podglądu indeksowane liczbą parametrów (0–5)
         private static readonly double[][] _defaultSample =
@@ -36,7 +36,17 @@ namespace BricsCadRc.Core
             {
                 // 75: BarGeometryBuilder używa A=diam, B=nTurns, C=pitch
                 // (ShapeCodeLibrary ma ["A","B"] gdzie B=n×P, ale geometria nie zmieniała się)
-                { "75", new[] { 100.0, 3.0, 30.0 } }
+                { "75", new[] { 100.0, 3.0, 30.0 } },
+                // kształty z wymiarami zewnętrznymi — proporcje jak na rysunkach BS 8666
+                { "11", new[] { 60.0, 120.0 } },
+                { "13", new[] { 140.0, 50.0, 60.0 } },
+                { "15", new[] { 80.0, 50.0, 80.0 } },
+                { "21", new[] { 60.0, 120.0, 60.0 } },
+                { "33", new[] { 160.0, 60.0, 50.0 } },
+                { "44", new[] { 50.0, 60.0, 80.0, 60.0, 50.0 } },
+                { "46", new[] { 40.0, 60.0, 60.0, 40.0, 40.0 } },
+                { "51", new[] { 120.0, 80.0, 40.0 } },
+                { "63", new[] { 80.0, 120.0, 40.0 } }
             };
 
         /// <summary>Średnica używana wyłącznie do obliczeń geometrii w podglądzie.</summary>
