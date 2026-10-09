@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    S-REG (docs/PLAN_C_etap2.md, 6.1): scenariusz regresji wzorzec (aba0ed1, assembly BricsCadRc)
+    vs nasza wtyczka (assembly NaSmartRc) w prawdziwym BricsCAD V25 + znormalizowany zrzut rysunku.
+    BEZ referencji do wtyczki: dostęp wyłącznie przez refleksję na zestawie wczytanym przez BricsCAD
+    (autoload z rejestru), żeby ten sam DLL działał z obiema wersjami.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BrxMgd">
+      <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\BrxMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TD_Mgd">
+      <HintPath>$(ProgramW6432)\Bricsys\BricsCAD V25 en_US\TD_Mgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

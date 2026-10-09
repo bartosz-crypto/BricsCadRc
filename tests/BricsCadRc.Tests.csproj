@@ -27,7 +27,15 @@
     <Compile Include="..\src\Core\BarShape.cs" />
     <Compile Include="..\src\Core\ShapeCodeLibrary.cs" />
     <Compile Include="..\src\Core\BarGeometryBuilder.cs" />
+    <Compile Include="..\src\Core\LegacyBarGeometry.cs" />
+    <Compile Include="..\src\Core\Log.cs" />
+    <Compile Include="..\src\App\ProductInfo.cs" />
     <Compile Include="..\src\Core\MLeaderSnapGeometry.cs" />
+    <Compile Include="..\src\Core\BarRecordRules.cs" />
+    <Compile Include="..\src\Core\BarLengthRules.cs" />
+    <Compile Include="..\src\Core\BarFrameRules.cs" />
+    <Compile Include="..\src\Core\BarDimensionRules.cs" />
+    <Compile Include="..\src\Core\BarShapeValidation.cs" />
   </ItemGroup>
 
 </Project>

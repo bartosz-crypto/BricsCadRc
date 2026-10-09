@@ -1,0 +1,41 @@
+# bug: 1
+# opis: RC_EDIT_BAR dolicza zmianę dwa razy — pręt-blok nie ma błędu od etapu 3d (REC.bar3: wzorzec 4000, nasz 3500; F1b: C wzorzec 900, nasz 700)
+# W4e (#13, 2026-10-09): linie „=>” z obrysem pręta / pierścieniem po W4e (wymiary zewnętrzne BS 8666 kl. 7.1, łuk osi r + d/2, pierścień: obrys zewnętrzny A/2) — różnica łączna tej poprawki i #13; tylko wierzchołki, r pierścienia i grot etykiety F4c.
+# zrzut: main
+<= row 7: BarMark=9; Diameter=12; DimA=STR; DimB=; DimC=; DimD=; DimE=; Dims=[4000.00,NaN,NaN,NaN,NaN]; IsStraight=True; Layer=Bottom; LayerText=BOTTOM; Length=4000.00; LengthText=4000; LinearMass=0.89; MarkText=09; MassKg=17.76; MassText=17.8; NoEach=5; NoMembers=1; Note=; ShapeCode=00; Total=5; TypeSize=H12; 
+<= entry 7: A=4000.00; B=0.00; C=0.00; ColA=4000; ColB=; ColC=; ColD=; ColE=; ColLength=4000; ColMass=17.76; CuttingLength=4000.00; D=0.00; Diameter=12; E=0.00; LinearMass=0.89; Mark=H12-09; NoOfMembers=1; PosNr=09; ShapeCode=00; TotalCount=5; TotalMassKg=17.76; TotalNoBarsStr=5; TypeAndSize=H12; 
+<=   X RC_SINGLE_BAR[4] 1040=4000.00
+<=   X RC_SINGLE_BAR[11] 1040=4000.00
+<=   r0v1 (4000.00,40006.00,0.00) b=0.0000
+<=   r0v2 (4000.00,39994.00,0.00) b=0.0000
+<=   X RC_BAR_ANNOT[8] 1040=4000.00
+<=   X RC_BAR_BLOCK[8] 1040=4000.00
+<=     |   (0.00,0.00,0.00) -> (4000.00,0.00,0.00)
+<=     |   (0.00,200.00,0.00) -> (4000.00,200.00,0.00)
+<=     |   (0.00,400.00,0.00) -> (4000.00,400.00,0.00)
+<=     |   (0.00,600.00,0.00) -> (4000.00,600.00,0.00)
+<=     |   (0.00,800.00,0.00) -> (4000.00,800.00,0.00)
+=> row 7: BarMark=9; Diameter=12; DimA=STR; DimB=; DimC=; DimD=; DimE=; Dims=[3500.00,NaN,NaN,NaN,NaN]; IsStraight=True; Layer=Bottom; LayerText=BOTTOM; Length=3500.00; LengthText=3500; LinearMass=0.89; MarkText=09; MassKg=15.54; MassText=15.5; NoEach=5; NoMembers=1; Note=; ShapeCode=00; Total=5; TypeSize=H12; 
+=> entry 7: A=3500.00; B=0.00; C=0.00; ColA=3500; ColB=; ColC=; ColD=; ColE=; ColLength=3500; ColMass=15.54; CuttingLength=3500.00; D=0.00; Diameter=12; E=0.00; LinearMass=0.89; Mark=H12-09; NoOfMembers=1; PosNr=09; ShapeCode=00; TotalCount=5; TotalMassKg=15.54; TotalNoBarsStr=5; TypeAndSize=H12; 
+=>   X RC_SINGLE_BAR[4] 1040=3500.00
+=>   X RC_SINGLE_BAR[11] 1040=3500.00
+=>   r0v1 (3500.00,40006.00,0.00) b=0.0000
+=>   r0v2 (3500.00,39994.00,0.00) b=0.0000
+=>   X RC_BAR_ANNOT[8] 1040=3500.00
+=>   X RC_BAR_BLOCK[8] 1040=3500.00
+=>     |   (0.00,0.00,0.00) -> (3500.00,0.00,0.00)
+=>     |   (0.00,200.00,0.00) -> (3500.00,200.00,0.00)
+=>     |   (0.00,400.00,0.00) -> (3500.00,400.00,0.00)
+=>     |   (0.00,600.00,0.00) -> (3500.00,600.00,0.00)
+=>     |   (0.00,800.00,0.00) -> (3500.00,800.00,0.00)
+# zrzut: fix
+<= F1b| F1b bar Mark=H10-10 shape=21 A=500.00 B=300.00 C=900.00 TL=1675.00 ovr=False angle=-90.00 mirrored=False axis0=(0.00,110000.00,0.00) rings=1 label=etykieta
+<= F1b|   X RC_SINGLE_BAR[6] 1040=900.00
+<= F1b|   X RC_SINGLE_BAR[11] 1040=1675.00
+<= F1b|   r0v15 (295.00,110400.00,0.00) b=0.0000
+<= F1b|   r0v16 (305.00,110400.00,0.00) b=0.0000
+=> F1b| F1b bar Mark=H10-10 shape=21 A=500.00 B=300.00 C=700.00 TL=1475.00 ovr=False angle=-90.00 mirrored=False axis0=(0.00,110000.00,0.00) rings=1 label=etykieta
+=> F1b|   X RC_SINGLE_BAR[6] 1040=700.00
+=> F1b|   X RC_SINGLE_BAR[11] 1040=1475.00
+=> F1b|   r0v15 (285.00,110200.00,0.00) b=0.0000
+=> F1b|   r0v16 (295.00,110200.00,0.00) b=0.0000

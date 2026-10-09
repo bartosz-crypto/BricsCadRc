@@ -1,0 +1,19 @@
+# bug: 3b
+# opis: _-ARRAY: wzorzec pomijał -ARRAY (biała lista StartsWith("ARRAY")) — [11]/[16] kopii → oryginał, BTR wspólny; nasz: pary rozkład ↔ opis z mapy (każda kopia ↔ swój opis), własne BTR *U
+# zrzut: fix
+<= F3d|   X RC_BAR_ANNOT[16] 1005=#8
+<= F3d|   X RC_BAR_ANNOT[16] 1005=#8
+<= F3d|   block=RC_ANNOT_027_# pos=(13340.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+<= F3d|   block=RC_ANNOT_027_# pos=(8340.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+<= F3d|   X RC_BAR_BLOCK[11] 1005=#5
+<= F3d|   X RC_BAR_BLOCK[11] 1005=#5
+<= F3d|   block=RC_SLAB_BARS_027 pos=(10040.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+<= F3d|   block=RC_SLAB_BARS_027 pos=(5040.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3d|   X RC_BAR_ANNOT[16] 1005=#7
+=> F3d|   block=*U# pos=(13340.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3d|   block=*U# pos=(8340.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3d|   X RC_BAR_ANNOT[16] 1005=#9
+=> F3d|   X RC_BAR_BLOCK[11] 1005=#4
+=> F3d|   block=*U# pos=(10040.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3d|   block=*U# pos=(5040.00,282040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3d|   X RC_BAR_BLOCK[11] 1005=#6

@@ -1,0 +1,28 @@
+FILEDIA
+0
+OSMODE
+0
+ORTHOMODE
+0
+SNAPMODE
+0
+DYNMODE
+0
+PICKFIRST
+0
+PICKADD
+1
+_NETLOAD
+"C:/Users/test/Desktop/AI/BricsCadRc - BJ/bin/NaSmartRc.dll"
+_NETLOAD
+"C:/Users/test/Desktop/AI/BricsCadRc - BJ/tools/BrxSmokeTests/bin/Release/net48/BrxSmokeTests.dll"
+_.UCS
+_W
+RCSMOKE_E2B_SETUP
+RCSMOKE_E2B_S5
+RCSMOKE_E2B_S6
+RCSMOKE_E2B_S7
+RCSMOKE_E2B_S8
+RCSMOKE_E2B_REPORT
+_QUIT
+_N

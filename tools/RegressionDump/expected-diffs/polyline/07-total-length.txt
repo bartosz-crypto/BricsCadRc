@@ -1,0 +1,11 @@
+# bug: 7
+# opis: TotalLength nieprzeliczane po zmianie A: F7a watcher 00 (wzorzec TL 2500, nasz 3000), F7c RC_UPDATE_BAR (wzorzec 2000, nasz 3000); F7b nadpisana — bez różnic
+# zrzut: fix
+<= F7a| F7a bar Mark=H12-21 shape=00 A=3000.00 B=0.00 C=0.00 TL=2500.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,220000.00,0.00) rings=1 label=brak
+<= F7a|   X RC_SINGLE_BAR[11] 1040=2500.00
+<= F7c| F7c bar Mark=H12-23 shape=00 A=3000.00 B=0.00 C=0.00 TL=2000.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,240000.00,0.00) rings=1 label=brak
+<= F7c|   X RC_SINGLE_BAR[11] 1040=2000.00
+=> F7a| F7a bar Mark=H12-21 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,220000.00,0.00) rings=1 label=brak
+=> F7a|   X RC_SINGLE_BAR[11] 1040=3000.00
+=> F7c| F7c bar Mark=H12-23 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,240000.00,0.00) rings=1 label=brak
+=> F7c|   X RC_SINGLE_BAR[11] 1040=3000.00

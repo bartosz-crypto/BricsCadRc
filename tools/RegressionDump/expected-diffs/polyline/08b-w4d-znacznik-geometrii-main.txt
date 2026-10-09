@@ -1,0 +1,27 @@
+# bug: 8
+# opis: W4d runda 2 (D34): znacznik geometrii W4d w ogonie RC_SINGLE_BAR — pręt-polilinia utworzony (PlaceBar) albo przebudowany (RebuildCompanions: RC_EDIT_BAR, Plan B watchera) przez wtyczkę od W4d dostaje [14] = Int16 1 i [15] = Int16 2021 (wzorzec bez ogona). Tylko pola [14]/[15]; pozostałe pola rekordu bez zmian.
+# zrzut: main
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[14] 1070=1
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021
+=>   X RC_SINGLE_BAR[15] 1070=2021

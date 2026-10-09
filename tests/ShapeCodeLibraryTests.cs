@@ -12,7 +12,7 @@ namespace BricsCadRc.Tests
         [TestCase(12, 24.0)]    // 2d, d<=16
         [TestCase(16, 32.0)]    // 2d, d=16 (granica)
         [TestCase(20, 70.0)]    // 3.5d, d>16
-        [TestCase(25, 87.5)]    // 3.5d
+        [TestCase(25, 87.0)]    // BS 8666:2020 Table 2 (W4b; 3.5d = 87.5)
         [TestCase(32, 112.0)]   // 3.5d (BS 8666 Table 2)
         [TestCase(40, 140.0)]   // 3.5d
         [TestCase(50, 175.0)]   // 3.5d
@@ -135,9 +135,10 @@ namespace BricsCadRc.Tests
         [Test]
         public void Code22_ZBar_Formula()
         {
-            // A=300, B=150, C=200, D=100, d=12 → r=24 → raw=750-36-36=678 → CEILING(678/25)*25=700
-            var result = ShapeCodeLibrary.Get("22")!.CalculateTotalLength(new[] { 300.0, 150.0, 200.0, 100.0 }, 12);
-            Assert.That(result, Is.EqualTo(700.0).Within(1e-9));
+            // BS 8666:2020: A+B+0.57C+D−0.5r−2.6d; A=400, B=600, C=150, D=300, d=12 → r=24
+            // → raw = 400+600+85.5+300−12−31.2 = 1342.3 → CEILING(1342.3/25)*25 = 1350
+            var result = ShapeCodeLibrary.Get("22")!.CalculateTotalLength(new[] { 400.0, 600.0, 150.0, 300.0 }, 12);
+            Assert.That(result, Is.EqualTo(1350.0).Within(1e-9));
         }
 
         [Test]
@@ -173,7 +174,7 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void Code44_Circle_Formula()
+        public void Code44_Hat_Formula()
         {
             // A=500, B=400, C=500, D=400, E=300, d=12 → r=24 → raw=2100-48-48=2004 → CEILING(2004/25)*25=2025
             var result = ShapeCodeLibrary.Get("44")!.CalculateTotalLength(new[] { 500.0, 400.0, 500.0, 400.0, 300.0 }, 12);
@@ -181,11 +182,11 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void Code75_Helix_Formula()
+        public void Code75_Ring_Formula()
         {
-            // A=100, B=500, d=12 → raw=π*(100-12)+500=π*88+500≈776.46 → CEILING(776.46/25)*25=800
+            // W4b BS 8666:2020: π(A−d)+B+25; A=100, B=500, d=12 → 801.46 → 825
             var result = ShapeCodeLibrary.Get("75")!.CalculateTotalLength(new[] { 100.0, 500.0 }, 12);
-            Assert.That(result, Is.EqualTo(800.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(825.0).Within(1e-9));
         }
 
         [Test]
@@ -207,16 +208,16 @@ namespace BricsCadRc.Tests
         [Test]
         public void Code14_Hook45_Formula()
         {
-            // A=400, B=100, C=300, d=12 → raw=652 → CEILING(652/25)*25=675
-            var result = ShapeCodeLibrary.Get("14")!.CalculateTotalLength(new[] { 400.0, 100.0, 300.0 }, 12);
-            Assert.That(result, Is.EqualTo(675.0).Within(1e-9));
+            // W4b BS 8666:2020: A + (C); A=400, B=100, C=300 → 700
+            var result = ShapeCodeLibrary.Get("14")!.CalculateTotalLength(new[] { 400.0, 100.0, 300.0, 0.0 }, 12);   // W4d: + D
+            Assert.That(result, Is.EqualTo(700.0).Within(1e-9));
         }
 
         [Test]
         public void Code15_Hook135_Formula()
         {
             // A=400, B=100, C=300, d=12 → raw=700 → already multiple of 25 → 700
-            var result = ShapeCodeLibrary.Get("15")!.CalculateTotalLength(new[] { 400.0, 100.0, 300.0 }, 12);
+            var result = ShapeCodeLibrary.Get("15")!.CalculateTotalLength(new[] { 400.0, 100.0, 300.0, 0.0 }, 12);   // W4d: + D
             Assert.That(result, Is.EqualTo(700.0).Within(1e-9));
         }
 
@@ -224,7 +225,7 @@ namespace BricsCadRc.Tests
         public void Code24_Crank_Formula()
         {
             // A=300, B=200, C=400, d=12 → raw=900 → already multiple of 25 → 900
-            var result = ShapeCodeLibrary.Get("24")!.CalculateTotalLength(new[] { 300.0, 200.0, 400.0 }, 12);
+            var result = ShapeCodeLibrary.Get("24")!.CalculateTotalLength(new[] { 300.0, 200.0, 400.0, 0.0, 0.0 }, 12);   // W4d: + D, E
             Assert.That(result, Is.EqualTo(900.0).Within(1e-9));
         }
 
@@ -256,40 +257,47 @@ namespace BricsCadRc.Tests
         public void Code46_ClosedRectVariant_Formula()
         {
             // A=400, B=200, C=400, E=100, d=12 → raw=1300 → already multiple of 25 → 1300
-            var result = ShapeCodeLibrary.Get("46")!.CalculateTotalLength(new[] { 400.0, 200.0, 400.0, 100.0 }, 12);
+            var result = ShapeCodeLibrary.Get("46")!.CalculateTotalLength(new[] { 400.0, 200.0, 400.0, 100.0, 0.0 }, 12);   // W4d: + D
             Assert.That(result, Is.EqualTo(1300.0).Within(1e-9));
         }
 
         [Test]
-        public void Code47_ClosedTriangle_Formula_MaxFrom21d()
+        public void Code47_ClosedTriangle_Formula_2020()
         {
-            // A=300, B=200, d=12 → max(252,240)=252 → raw=1052 → CEILING(1052/25)*25=1075
-            var result = ShapeCodeLibrary.Get("47")!.CalculateTotalLength(new[] { 300.0, 200.0 }, 12);
-            Assert.That(result, Is.EqualTo(1075.0).Within(1e-9));
+            // W4b BS 8666:2020: 2A+B+2(C)+2q−3r−6d; A=300, B=200, C=200, d=12 → q=85, r=24
+            // raw = 600+200+400+170−72−72 = 1226 → 1250
+            var result = ShapeCodeLibrary.Get("47")!.CalculateTotalLength(new[] { 300.0, 200.0, 200.0 }, 12);
+            Assert.That(result, Is.EqualTo(1250.0).Within(1e-9));
         }
 
         [Test]
-        public void Code47_ClosedTriangle_Formula_MaxFrom240()
+        public void Code47_WithoutC_Throws()
         {
-            // A=300, B=200, d=10 → max(210,240)=240 → raw=1040 → CEILING(1040/25)*25=1050
-            var result = ShapeCodeLibrary.Get("47")!.CalculateTotalLength(new[] { 300.0, 200.0 }, 10);
-            Assert.That(result, Is.EqualTo(1050.0).Within(1e-9));
+            Assert.Throws<InvalidOperationException>(() =>
+                ShapeCodeLibrary.Get("47")!.CalculateTotalLength(new[] { 300.0, 200.0, 0.0 }, 12));
+        }
+
+        [Test]
+        public void Code47_D50_QNotAvailable_Throws()
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                ShapeCodeLibrary.Get("47")!.CalculateTotalLength(new[] { 300.0, 200.0, 200.0 }, 50));
         }
 
         [Test]
         public void Code51_ClosedStirrup_Formula_MaxFrom16d()
         {
-            // A=400, B=300, C=0, d=12 → hook=192, r=24 → 2(892)-60-60=1664 → CEIL=1675
+            // W4b BS 8666:2020 C=0: 2A+2B+max(16d,160); A=400, B=300, d=12 → 1400+192 = 1592 → 1600
             var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 0.0 }, 12);
-            Assert.That(result, Is.EqualTo(1675.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1600.0).Within(1e-9));
         }
 
         [Test]
         public void Code51_ClosedStirrup_Formula_MaxFrom160()
         {
-            // A=400, B=300, C=0, d=8 → hook=160, r=16 → 2(860)-40-40=1640 → CEIL=1650
+            // W4b C=0, d=8 → 1400 + max(128,160) = 1560 → 1575
             var result = ShapeCodeLibrary.Get("51")!.CalculateTotalLength(new[] { 400.0, 300.0, 0.0 }, 8);
-            Assert.That(result, Is.EqualTo(1650.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1575.0).Within(1e-9));
         }
 
         [Test]
@@ -303,19 +311,17 @@ namespace BricsCadRc.Tests
         [Test]
         public void Code63_ClosedStirrup_Formula_MaxFrom14d()
         {
-            // A=300, B=200, C=0, d=12: hook=168, r=24
-            // raw = 2*300 + 3*200 + 2*168 - 3*24 - 6*12 = 600+600+336-72-72 = 1392 → CEIL=1400
+            // W4b BS 8666:2020 C=0, d≤16: 2A+3B+max(14d,140); A=300, B=200, d=12 → 1200+168 = 1368 → 1375
             var result = ShapeCodeLibrary.Get("63")!.CalculateTotalLength(new[] { 300.0, 200.0, 0.0 }, 12);
-            Assert.That(result, Is.EqualTo(1400.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1375.0).Within(1e-9));
         }
 
         [Test]
         public void Code63_ClosedStirrup_Formula_MaxFrom150()
         {
-            // A=300, B=200, C=0, d=8: hook=max(112,150)=150, r=16
-            // raw = 2*300 + 3*200 + 2*150 - 3*16 - 6*8 = 600+600+300-48-48 = 1404 → CEIL=1425
+            // W4b C=0, d=8 → 1200 + max(112,140) = 1340 → 1350
             var result = ShapeCodeLibrary.Get("63")!.CalculateTotalLength(new[] { 300.0, 200.0, 0.0 }, 8);
-            Assert.That(result, Is.EqualTo(1425.0).Within(1e-9));
+            Assert.That(result, Is.EqualTo(1350.0).Within(1e-9));
         }
 
         [Test]

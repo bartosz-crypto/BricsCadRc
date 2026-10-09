@@ -1,0 +1,63 @@
+# bug: 3
+# opis: COPY/MIRROR N/ARRAY: [18] kopii rozkładu i [13]/[1] kopii pręta/etykiety wskazywały ORYGINAŁ (BricsCAD nie przemapowuje 1005); nasz: mapa klonowania — kopia rozkładu → kopia pręta, etykiety n / n (wzorzec 2n), F3d: etykiety kopii przy swoich prętach; F5c: RC_BAR_LINK kopii pierścienia → kopia (wewn. okrąg kopii zostaje po RC_EDIT_BAR oryginału; linia entities=2→4 także z #5) Od W4c (#8) wiersz „=> F5c … bar Mark=H12-32” ma też shape=75 i TL wg BS 8666:2020 — linia łączna #3 + #8, zostaje tu; czyste różnice #8: 08-ksztalt-75-pierscien.txt.
+# W4e (#13, 2026-10-09): linie „=>” z obrysem pręta / pierścieniem po W4e (wymiary zewnętrzne BS 8666 kl. 7.1, łuk osi r + d/2, pierścień: obrys zewnętrzny A/2) — różnica łączna tej poprawki i #13; tylko wierzchołki, r pierścienia i grot etykiety F4c.
+# zrzut: fix
+<= F3a| F3a label "10 H12-24" bar=pręt H12-24
+=> F3a| F3a label "5 H12-24" bar=pręt H12-24
+<= F3a|   X RC_BAR_BLOCK[18] 1005=#7
+<= F3a|   mleader content=MTextContent mtext="10 H12-24" loc=(3000.40,250214.00,0.00) h=70.00 tl=(3000.40,250214.00,0.00) style=RC_BAR_LABEL
+<= F3d|   X RC_BAR_BLOCK[18] 1005=#10
+<= F3d|   X RC_BAR_BLOCK[18] 1005=#10
+<= F3d|   X RC_BAR_LABEL[1] 1005=#10
+<= F3d|   X RC_BAR_LABEL[1] 1005=#10
+<= F3d|   leader 0/0: (3000.00,280006.00,0.00) (12950.00,280144.00,0.00)
+<= F3d|   leader 0/0: (3000.00,280006.00,0.00) (7950.00,280144.00,0.00)
+<= F3d|   X RC_SINGLE_BAR[13] 1005=#8
+<= F3d|   X RC_SINGLE_BAR[13] 1005=#8
+<= F5c| F5c bar Mark=H12-32 shape=44 A=300.00 B=0.00 C=0.00 TL=225.00 ovr=False angle=0.00 mirrored=False center=(6150.00,310150.00,0.00) r=156.00 rings=1 label=brak
+<= F5c| entities=2
+=> F5c|   closed=True elev=0.00 cw=0.00 n=24
+<= F3f| F3f label "10 H12-29" bar=pręt H12-29
+=> F3f| F3f label "5 H12-29" bar=pręt H12-29
+<= F3f|   X RC_BAR_BLOCK[18] 1005=#7
+<= F3f|   mleader content=MTextContent mtext="10 H12-29" loc=(3000.40,320214.00,0.00) h=70.00 tl=(3000.40,320214.00,0.00) style=RC_BAR_LABEL
+=> F3a|   X RC_BAR_BLOCK[18] 1005=#8
+=> F3a|   mleader content=MTextContent mtext="5 H12-24" loc=(3000.40,250214.00,0.00) h=70.00 tl=(3000.40,250214.00,0.00) style=RC_BAR_LABEL
+=> F3d|   X RC_BAR_BLOCK[18] 1005=#11
+=> F3d|   X RC_BAR_BLOCK[18] 1005=#12
+=> F3d|   X RC_BAR_LABEL[1] 1005=#11
+=> F3d|   leader 0/0: (12950.00,280006.00,0.00) (12950.00,280144.00,0.00)
+=> F3d|   X RC_BAR_LABEL[1] 1005=#12
+=> F3d|   leader 0/0: (7950.00,280006.00,0.00) (7950.00,280144.00,0.00)
+=> F3d|   X RC_SINGLE_BAR[13] 1005=#7
+=> F3d|   X RC_SINGLE_BAR[13] 1005=#9
+=> F5c| F5c bar Mark=H12-32 shape=75 A=300.00 B=0.00 C=0.00 TL=950.00 ovr=False angle=0.00 mirrored=False center=(6150.00,310150.00,0.00) r=150.00 rings=2 label=brak
+=> F5c| entities=4
+=> F5c|   X RC_BAR_LINK[0] 1001
+=> F5c|   X RC_BAR_LINK[1] 1005=#4
+=> F5c|   v0 (6288.00,310150.00) b=0.0000 w=0.00/0.00
+=> F5c|   v1 (6283.30,310185.72) b=0.0000 w=0.00/0.00
+=> F5c|   v2 (6269.51,310219.00) b=0.0000 w=0.00/0.00
+=> F5c|   v3 (6247.58,310247.58) b=0.0000 w=0.00/0.00
+=> F5c|   v4 (6219.00,310269.51) b=0.0000 w=0.00/0.00
+=> F5c|   v5 (6185.72,310283.30) b=0.0000 w=0.00/0.00
+=> F5c|   v6 (6150.00,310288.00) b=0.0000 w=0.00/0.00
+=> F5c|   v7 (6114.28,310283.30) b=0.0000 w=0.00/0.00
+=> F5c|   v8 (6081.00,310269.51) b=0.0000 w=0.00/0.00
+=> F5c|   v9 (6052.42,310247.58) b=0.0000 w=0.00/0.00
+=> F5c|   v10 (6030.49,310219.00) b=0.0000 w=0.00/0.00
+=> F5c|   v11 (6016.70,310185.72) b=0.0000 w=0.00/0.00
+=> F5c|   v12 (6012.00,310150.00) b=0.0000 w=0.00/0.00
+=> F5c|   v13 (6016.70,310114.28) b=0.0000 w=0.00/0.00
+=> F5c|   v14 (6030.49,310081.00) b=0.0000 w=0.00/0.00
+=> F5c|   v15 (6052.42,310052.42) b=0.0000 w=0.00/0.00
+=> F5c|   v16 (6081.00,310030.49) b=0.0000 w=0.00/0.00
+=> F5c|   v17 (6114.28,310016.70) b=0.0000 w=0.00/0.00
+=> F5c|   v18 (6150.00,310012.00) b=0.0000 w=0.00/0.00
+=> F5c|   v19 (6185.72,310016.70) b=0.0000 w=0.00/0.00
+=> F5c|   v20 (6219.00,310030.49) b=0.0000 w=0.00/0.00
+=> F5c|   v21 (6247.58,310052.42) b=0.0000 w=0.00/0.00
+=> F5c|   v22 (6269.51,310081.00) b=0.0000 w=0.00/0.00
+=> F5c|   v23 (6283.30,310114.28) b=0.0000 w=0.00/0.00
+=> F3f|   X RC_BAR_BLOCK[18] 1005=#8
+=> F3f|   mleader content=MTextContent mtext="5 H12-29" loc=(3000.40,320214.00,0.00) h=70.00 tl=(3000.40,320214.00,0.00) style=RC_BAR_LABEL

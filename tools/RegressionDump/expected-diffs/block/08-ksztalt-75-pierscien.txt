@@ -1,0 +1,19 @@
+# bug: 8
+# opis: W4c (BS 8666:2020, docs/PLAN_W4_BS8666.md): pierścień = kształt 75 (44 = „kapelusz”). Przypadki F5a / F5b / F5c (pierścień A=300, F5b i oryginał F5c A → 400) tworzone kodem pierścienia wtyczki (RegFixCommands.RingShapeCode — wzorzec „44”, nasz „75”): pole XData [3] „44” → „75” i [11] TotalLength wg formuły 75 π(A−d)+B+25 (225 → 950, 325 → 1250) zamiast formuły 44. Wiersze „bar” (shape / TL) są w 05, 05c, 03 (linie łączne).
+# zrzut: fix
+<= F5a|   X RC_SINGLE_BAR[3] 1000="44"
+=> F5a|   X RC_SINGLE_BAR[3] 1000="75"
+<= F5a|   X RC_SINGLE_BAR[11] 1040=225.00
+=> F5a|   X RC_SINGLE_BAR[11] 1040=950.00
+<= F5b|   X RC_SINGLE_BAR[3] 1000="44"
+=> F5b|   X RC_SINGLE_BAR[3] 1000="75"
+<= F5b|   X RC_SINGLE_BAR[11] 1040=325.00
+=> F5b|   X RC_SINGLE_BAR[11] 1040=1250.00
+<= F5c|   X RC_SINGLE_BAR[3] 1000="44"
+<= F5c|   X RC_SINGLE_BAR[3] 1000="44"
+=> F5c|   X RC_SINGLE_BAR[3] 1000="75"
+=> F5c|   X RC_SINGLE_BAR[3] 1000="75"
+<= F5c|   X RC_SINGLE_BAR[11] 1040=325.00
+=> F5c|   X RC_SINGLE_BAR[11] 1040=1250.00
+<= F5c|   X RC_SINGLE_BAR[11] 1040=225.00
+=> F5c|   X RC_SINGLE_BAR[11] 1040=950.00

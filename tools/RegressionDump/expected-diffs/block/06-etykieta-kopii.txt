@@ -1,0 +1,13 @@
+# bug: 6
+# opis: F6: A bez etykiety, B z etykietą 40 mm nad A, COPY A+B+etykieta: wzorzec przypina kopię etykiety B do kopii A (grot < 50 mm, kolejność); nasz: para dwustronna z mapy — etykieta przy kopii B
+# zrzut: fix
+<= F6| F6 bar Mark=H12-30 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(6000.00,300000.00,0.00) rings=1 label=etykieta
+<= F6| F6 bar Mark=H12-31 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(6000.00,300040.00,0.00) rings=1 label=brak
+<= F6| F6 label "H12-31" bar=pręt H12-30
+=> F6| F6 label "H12-31" bar=pręt H12-31
+<= F6|   X RC_BAR_LABEL[1] 1005=#2
+<= F6|   leader 0/0: (8950.00,300006.00,0.00) (8950.00,300184.00,0.00)
+=> F6| F6 bar Mark=H12-30 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(6000.00,300000.00,0.00) rings=1 label=brak
+=> F6| F6 bar Mark=H12-31 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(6000.00,300040.00,0.00) rings=1 label=etykieta
+=> F6|   X RC_BAR_LABEL[1] 1005=#3
+=> F6|   leader 0/0: (8950.00,300046.00,0.00) (8950.00,300184.00,0.00)

@@ -1,0 +1,101 @@
+# bug: 2
+# opis: ERASE pręta bez etykiety zostawia rozkłady i opisy (F2a: wzorzec — rozkład i opis zostają, nasz — usunięte; F2b kontrola bez różnic)
+# zrzut: fix
+<= F2a| F2a dist Mark=H12-13-200 B1 count=5 A=3000.00 src=usunięty
+<= F2a| entities=2
+<= F2a|   X RC_BAR_ANNOT[0] 1001
+<= F2a|   X RC_BAR_ANNOT[1] 1000="H12-13-200 B1"
+<= F2a|   X RC_BAR_ANNOT[2] 1000="B1"
+<= F2a|   X RC_BAR_ANNOT[3] 1070=5
+<= F2a|   X RC_BAR_ANNOT[4] 1070=12
+<= F2a|   X RC_BAR_ANNOT[5] 1040=200.00
+<= F2a|   X RC_BAR_ANNOT[6] 1000="X"
+<= F2a|   X RC_BAR_ANNOT[7] 1000="TOP"
+<= F2a|   X RC_BAR_ANNOT[8] 1040=3000.00
+<= F2a|   X RC_BAR_ANNOT[9] 1040=960.00
+<= F2a|   X RC_BAR_ANNOT[10] 1040=580.00
+<= F2a|   X RC_BAR_ANNOT[11] 1040=1666.67
+<= F2a|   X RC_BAR_ANNOT[12] 1070=0
+<= F2a|   X RC_BAR_ANNOT[13] 1070=1
+<= F2a|   X RC_BAR_ANNOT[14] 1040=480.00
+<= F2a|   X RC_BAR_ANNOT[15] 1070=1
+<= F2a|   X RC_BAR_ANNOT[16] 1005=#2
+<= F2a|   X RC_BAR_ANNOT[17] 1000="0.0000,400.0000;0.0000,980.0000"
+<= F2a|   X RC_BAR_ANNOT[18] 1040=0.00
+<= F2a|   X RC_BAR_ANNOT[19] 1040=0.00
+<= F2a|   X RC_BAR_ANNOT[20] 1070=-1
+<= F2a|   X RC_BAR_ANNOT[21] 1070=0
+<= F2a|   X RC_BAR_ANNOT[22] 1040=-1.00
+<= F2a|   block=RC_ANNOT_013_# pos=(3340.00,142040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+<= F2a|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     |   c=(0.00,200.00,0.00) r=35.00
+<= F2a|     |   c=(0.00,400.00,0.00) r=35.00
+<= F2a|     |   c=(0.00,600.00,0.00) r=35.00
+<= F2a|     | DBText L=RC-SLAB-ANNOT C=2 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     |   text="5 H12-13-200 B1" pos=(-70.00,-756.67,0.00) align=(0.00,0.00,0.00) h=125.00 rot=1.5708 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+<= F2a|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     |   hatch pat=SOLID loops=1 ext=(-35.00,165.00,0.00)..(35.00,235.00,0.00)
+<= F2a|     |   hatch pat=SOLID loops=1 ext=(-35.00,365.00,0.00)..(35.00,435.00,0.00)
+<= F2a|     |   hatch pat=SOLID loops=1 ext=(-35.00,565.00,0.00)..(35.00,635.00,0.00)
+<= F2a|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     |   (-105.00,0.00,0.00) -> (105.00,0.00,0.00)
+<= F2a|     |   (-105.00,800.00,0.00) -> (105.00,800.00,0.00)
+<= F2a|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+<= F2a|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+<= F2a|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+<= F2a|     |   (0.00,-756.67,0.00) -> (0.00,980.00,0.00)
+<= F2a|     |   (0.00,0.00,0.00) -> (0.00,800.00,0.00)
+<= F2a|     |   (0.00,400.00,0.00) -> (0.00,980.00,0.00)
+<= F2a|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F2a|     |   ext=(-22.50,0.00,0.00)..(22.50,151.00,0.00)
+<= F2a|     |   ext=(-22.50,649.00,0.00)..(22.50,800.00,0.00)
+<= F2a|   X RC_BAR_BLOCK[0] 1001
+<= F2a|   X RC_BAR_BLOCK[1] 1000="H12-13-200 B1"
+<= F2a|   X RC_BAR_BLOCK[2] 1000="B1"
+<= F2a|   X RC_BAR_BLOCK[3] 1070=5
+<= F2a|   X RC_BAR_BLOCK[4] 1070=12
+<= F2a|   X RC_BAR_BLOCK[5] 1040=200.00
+<= F2a|   X RC_BAR_BLOCK[6] 1000="X"
+<= F2a|   X RC_BAR_BLOCK[7] 1000="TOP"
+<= F2a|   X RC_BAR_BLOCK[8] 1040=3000.00
+<= F2a|   X RC_BAR_BLOCK[9] 1040=960.00
+<= F2a|   X RC_BAR_BLOCK[10] 1040=40.00
+<= F2a|   X RC_BAR_BLOCK[11] 1005=#1
+<= F2a|   X RC_BAR_BLOCK[12] 1000="00"
+<= F2a|   X RC_BAR_BLOCK[13] 1000="Right"
+<= F2a|   X RC_BAR_BLOCK[14] 1000="Up"
+<= F2a|   X RC_BAR_BLOCK[15] 1000="Auto"
+<= F2a|   X RC_BAR_BLOCK[16] 1070=-1
+<= F2a|   X RC_BAR_BLOCK[17] 1000="Auto"
+<= F2a|   X RC_BAR_BLOCK[18] 1005=@erased
+<= F2a|   X RC_BAR_BLOCK[19] 1000=""
+<= F2a|   X RC_BAR_BLOCK[20] 1000=""
+<= F2a|   X RC_BAR_BLOCK[21] 1070=0
+<= F2a|   X RC_BAR_BLOCK[22] 1000=""
+<= F2a|   X RC_BAR_BLOCK[23] 1040=0.00
+<= F2a|   X RC_BAR_BLOCK[24] 1040=1.00
+<= F2a|   X RC_BAR_BLOCK[25] 1040=0.00
+<= F2a|   X RC_BAR_BLOCK[26] 1040=0.00
+<= F2a|   X RC_BAR_BLOCK[27] 1070=-1
+<= F2a|   X RC_BAR_BLOCK[28] 1070=0
+<= F2a|   X RC_BAR_BLOCK[29] 1070=1
+<= F2a|   X RC_BAR_BLOCK[30] 1070=0
+<= F2a|   X RC_BAR_BLOCK[31] 1000=""
+<= F2a|   block=RC_SLAB_BARS_013 pos=(40.00,142040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+<= F2a|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight035 vis=True
+<= F2a|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight035 vis=True
+<= F2a|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight035 vis=True
+<= F2a|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight035 vis=True
+<= F2a|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight035 vis=True
+<= F2a|     |   (0.00,0.00,0.00) -> (3000.00,0.00,0.00)
+<= F2a|     |   (0.00,200.00,0.00) -> (3000.00,200.00,0.00)
+<= F2a|     |   (0.00,400.00,0.00) -> (3000.00,400.00,0.00)
+<= F2a|     |   (0.00,600.00,0.00) -> (3000.00,600.00,0.00)
+<= F2a|     |   (0.00,800.00,0.00) -> (3000.00,800.00,0.00)
+=> F2a| entities=0
