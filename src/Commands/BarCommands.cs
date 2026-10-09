@@ -1313,6 +1313,16 @@ namespace BricsCadRc.Commands
             updated.Direction   = bar.Direction;
             updated.LabelHandle = bar.LabelHandle;
 
+            // Układ pręta (ROTATE / MIRROR) z obecnego obrysu — liczony dla STARYCH wymiarów, przed zapisem
+            SingleBarEngine.OutlineFrame? editFrame = null;
+            using (var trF = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                if (trF.GetObject(editId, OpenMode.ForRead) is Polyline plF
+                    && SingleBarEngine.TryGetOutlineFrame(SingleBarEngine.OutlinePoints(plF), bar, out var fr))
+                    editFrame = fr;
+                trF.Commit();
+            }
+
             // Krok 3 — zapisz XData i przebuduj geometrię
             using (var tr2 = db.TransactionManager.StartTransaction())
             {
@@ -1335,7 +1345,7 @@ namespace BricsCadRc.Commands
                 }
             }
 
-            SingleBarEngine.RebuildCompanions(db, editId, updated);
+            SingleBarEngine.RebuildCompanions(db, editId, updated, editFrame?.AxisStart, editFrame);
 
             // Krok 3b — napraw grot strzałki etykiety pręta (geometria się zmieniła)
             using (var trFix = db.TransactionManager.StartTransaction())

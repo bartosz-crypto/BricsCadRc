@@ -165,9 +165,10 @@ namespace BricsCadRc.Core
         /// False → zwykła ścieżka (MOVE / STRETCH całości / cofnięcie złej edycji).
         /// </summary>
         private static bool TryEndStretch(Polyline pl, BarData bar, List<Point3d> pre,
-                                          out BarData result, out Point3d newAxisStart, out string why)
+                                          out BarData result, out Point3d newAxisStart, out string why,
+                                          out SingleBarEngine.OutlineFrame? frame)
         {
-            result = null; newAxisStart = Point3d.Origin; why = null;
+            result = null; newAxisStart = Point3d.Origin; why = null; frame = null;
             string shapeCode = bar.ShapeCode ?? "00";
             int total = pl.NumberOfVertices;
             if (shapeCode == "44" || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
@@ -210,6 +211,9 @@ namespace BricsCadRc.Core
                 why = $"Pręt {bar.Mark}: za krótki odcinek ({newVal:F0} mm) — zmiana cofnięta.";
                 return false;
             }
+
+            // układ pręta (obrót / odbicie) z obrysu sprzed edycji, dla wymiarów sprzed zmiany
+            if (SingleBarEngine.TryGetOutlineFrame(pre, bar, out var fr)) frame = fr;
 
             result = bar;   // świeży odczyt XData — można zmieniać
             SetParam(result, k, newVal);
@@ -254,6 +258,25 @@ namespace BricsCadRc.Core
                 pl.SetPointAt(i, new Point2d(p.X, p.Y));
             }
         }
+
+        /// <summary>Obrys przystający do obrysu sprzed komendy (MOVE / ROTATE / MIRROR) — odległości zachowane.</summary>
+        private static bool IsRigidMotion(Polyline pl, List<Point3d> pre)
+        {
+            if (pre == null || pre.Count != pl.NumberOfVertices || pre.Count < 2) return false;
+            var p0 = pl.GetPoint3dAt(0);
+            for (int i = 1; i < pre.Count; i++)
+            {
+                var pi = pl.GetPoint3dAt(i);
+                if (Math.Abs(p0.DistanceTo(pi) - pre[0].DistanceTo(pre[i])) > 0.5) return false;
+                var pj = pl.GetPoint3dAt(i - 1);
+                if (Math.Abs(pj.DistanceTo(pi) - pre[i - 1].DistanceTo(pre[i])) > 0.5) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Układ pręta z obrysu sprzed komendy (cofanie złej edycji wierzchołka) — null gdy brak.</summary>
+        private static SingleBarEngine.OutlineFrame? FrameOf(List<Point3d> pre, BarData bar)
+            => pre != null && SingleBarEngine.TryGetOutlineFrame(pre, bar, out var f) ? f : (SingleBarEngine.OutlineFrame?)null;
 
         /// <summary>Parametr, którego zmiana o delta wydłuża tylko dany koniec (reszta kształtu bez zmian).</summary>
         private static int FindEndParam(BarShape shape, double[] pv, double d, bool atStart, double delta)
@@ -307,14 +330,15 @@ namespace BricsCadRc.Core
 
         /// <summary>Zapis nowych wymiarów, odbudowa obrysu od nowego początku osi, numeracja, rozkłady, etykieta.</summary>
         private static void ApplyEndStretch(Document doc, Database db, ObjectId oid, string oldMark,
-                                            BarData stretched, Point3d axisStart)
+                                            BarData stretched, Point3d axisStart,
+                                            SingleBarEngine.OutlineFrame? frame = null)
         {
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 if (tr.GetObject(oid, OpenMode.ForWrite) is Polyline pl) SingleBarEngine.WriteXData(pl, stretched);
                 tr.Commit();
             }
-            SingleBarEngine.RebuildCompanions(db, oid, stretched, axisStart);
+            SingleBarEngine.RebuildCompanions(db, oid, stretched, axisStart, frame);
 
             int oldPosNr = SingleBarEngine.ExtractPosNr(oldMark);
             string newMark = PositionReconciler.ReconcileAfterGeometryChange(db, oid);
@@ -511,11 +535,12 @@ namespace BricsCadRc.Core
                         string why = null;
                         BarData stretched = null;
                         Point3d newAxisStart = Point3d.Origin;
+                        SingleBarEngine.OutlineFrame? endFrame = null;
                         if (preOutline.TryGetValue(oid, out var pre)
-                            && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why))
+                            && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why, out endFrame))
                         {
                             tr.Commit();
-                            ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart);
+                            ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart, endFrame);
                             continue;
                         }
                         if (why != null)
@@ -576,12 +601,17 @@ namespace BricsCadRc.Core
                             // Plan B: wycofujemy ruch przez regenerację outline z istniejących parametrów XData.
                             // Outline "odskakuje" do stanu sprzed grip move. Zmiana parametrów bar-a tylko
                             // przez dialog RC_EDIT_BAR.
+                            // MOVE / ROTATE / MIRROR (ruch sztywny) — kształt bez zmian, nic nie przebudowujemy
+                            // (wcześniej przebudowa kładła obrócony pręt z powrotem poziomo).
+                            if (IsRigidMotion(pline, pre)) { tr.Commit(); continue; }
+                            var revertFrame = FrameOf(pre, bar);
                             tr.Commit();
 
                             try
                             {
                                 _rebuildDepth++;
-                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                                SingleBarEngine.RebuildCompanions(db, oid, bar,
+                                    revertFrame?.AxisStart, revertFrame);
                             }
                             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions", ex); }
                             finally
@@ -596,11 +626,13 @@ namespace BricsCadRc.Core
                         // Jeśli struktura jest walidna (stretch wzdłuż osi z zachowaniem diameter) → akceptuj nową długość.
                         if (!IsValidStraightBarOutline(pline, bar.Diameter))
                         {
+                            var revertFrame00 = FrameOf(pre, bar);
                             tr.Commit();
                             try
                             {
                                 _rebuildDepth++;
-                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                                SingleBarEngine.RebuildCompanions(db, oid, bar,
+                                    revertFrame00?.AxisStart, revertFrame00);
                             }
                             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions(invalid outline)", ex); }
                             finally

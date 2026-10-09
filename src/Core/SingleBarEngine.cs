@@ -406,7 +406,7 @@ namespace BricsCadRc.Core
 
         public static List<Point2d> ComputeOutlineVertices(
             BarShape shape, double[] paramValues, double diameter,
-            Point3d startPoint, Vector3d direction)
+            Point3d startPoint, Vector3d direction, bool mirrored = false)
         {
             if (shape.Code == "44") return null;
 
@@ -418,6 +418,8 @@ namespace BricsCadRc.Core
             double ax  = len > 1e-9 ? direction.X / len : 1.0;
             double ay  = len > 1e-9 ? direction.Y / len : 0.0;
             double px  = -ay, py = ax;
+
+            if (mirrored) { px = -px; py = -py; }   // odbicie (MIRROR): lokalne Y w drugą stronę
 
             double halfD = diameter / 2.0;
 
@@ -559,15 +561,90 @@ namespace BricsCadRc.Core
             }
         }
 
+        /// <summary>Kierunek osi lokalnej X pręta w świecie i odbicie (MIRROR) — odczytane z obrysu.</summary>
+        public struct OutlineFrame
+        {
+            public Vector3d Dir;
+            public bool Mirrored;
+            public Point3d AxisStart;
+        }
+
+        /// <summary>
+        /// Układ pręta z obrysu (wierzchołki left + reverse(right)) zbudowanego dla <paramref name="outlineBar"/>:
+        /// kąt = kąt odcinka osi w świecie − kąt tego odcinka w układzie lokalnym kształtu; odbicie — znak
+        /// iloczynu wektorowego dwóch kolejnych nierównoległych odcinków. False → brak dopasowania (np. inna
+        /// liczba punktów osi) — wtedy poziomo, jak dawniej.
+        /// </summary>
+        public static bool TryGetOutlineFrame(IList<Point3d> outline, BarData outlineBar, out OutlineFrame frame)
+        {
+            frame = new OutlineFrame { Dir = Vector3d.XAxis, Mirrored = false, AxisStart = Point3d.Origin };
+            try
+            {
+                if (outline == null || outlineBar == null) return false;
+                int total = outline.Count;
+                if (total < 4 || total % 2 != 0) return false;
+                int n = total / 2;
+                var shape = ShapeCodeLibrary.Get(outlineBar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
+                if (shape.Code == "44") return false;
+                var lp = BarGeometryBuilder.GetLocalPoints(shape.Code, outlineBar.ParamValues, outlineBar.Diameter);
+                if (lp == null || lp.Count != n) return false;
+
+                var ax = new Point3d[n];
+                for (int i = 0; i < n; i++)
+                    ax[i] = new Point3d((outline[i].X + outline[total - 1 - i].X) / 2, (outline[i].Y + outline[total - 1 - i].Y) / 2, 0);
+                frame.AxisStart = ax[0];
+
+                int s0 = -1;
+                for (int i = 0; i + 1 < n && s0 < 0; i++)
+                {
+                    double lx = lp[i + 1].X - lp[i].X, ly = lp[i + 1].Y - lp[i].Y;
+                    if (Math.Sqrt(lx * lx + ly * ly) > 1.0 && ax[i].DistanceTo(ax[i + 1]) > 1.0) s0 = i;
+                }
+                if (s0 < 0) return false;
+                double lX = lp[s0 + 1].X - lp[s0].X, lY = lp[s0 + 1].Y - lp[s0].Y;
+                var w = ax[s0 + 1] - ax[s0];
+
+                // odbicie: pierwszy odcinek wyraźnie nierównoległy do s0
+                for (int j = s0 + 1; j + 1 < n; j++)
+                {
+                    double mX = lp[j + 1].X - lp[j].X, mY = lp[j + 1].Y - lp[j].Y;
+                    double lenL = Math.Sqrt(mX * mX + mY * mY) * Math.Sqrt(lX * lX + lY * lY);
+                    if (lenL < 1e-6) continue;
+                    double crossL = lX * mY - lY * mX;
+                    if (Math.Abs(crossL) < 0.05 * lenL) continue;
+                    var v = ax[j + 1] - ax[j];
+                    double crossW = w.X * v.Y - w.Y * v.X;
+                    if (Math.Abs(crossW) < 1e-9) break;
+                    frame.Mirrored = Math.Sign(crossL) != Math.Sign(crossW);
+                    break;
+                }
+
+                double angW = Math.Atan2(w.Y, w.X);
+                double angL = Math.Atan2(lY, lX);
+                double th = frame.Mirrored ? angW + angL : angW - angL;
+                frame.Dir = new Vector3d(Math.Cos(th), Math.Sin(th), 0);
+                return true;
+            }
+            catch (System.Exception ex) { Log.Error("SingleBarEngine.TryGetOutlineFrame", ex); return false; }
+        }
+
+        public static List<Point3d> OutlinePoints(Polyline pl)
+        {
+            var pts = new List<Point3d>(pl.NumberOfVertices);
+            for (int i = 0; i < pl.NumberOfVertices; i++) pts.Add(pl.GetPoint3dAt(i));
+            return pts;
+        }
+
         // ----------------------------------------------------------------
         // RebuildCompanions — aktualizuje geometrię głównej polilinii po edycji.
         // Usuwa stare encje RC_BAR_LINK (compat z poprzednim formatem),
         // potem nadpisuje wierzchołki i ConstantWidth głównej polilinii.
-        // Zakłada kierunek poziomy (1,0,0) — FLOW 1 widok elewacji.
+        // Kierunek i odbicie pręta zachowane (ROTATE / MIRROR): z <paramref name="frame"/> albo
+        // z bieżącego obrysu (zbudowanego dla tych samych danych pręta). Brak dopasowania → poziomo.
         // ----------------------------------------------------------------
 
         public static void RebuildCompanions(Database db, ObjectId primaryPolyId, BarData bar,
-                                             Point3d? axisStartOverride = null)
+                                             Point3d? axisStartOverride = null, OutlineFrame? frame = null)
         {
             EnsureAppIdRegistered(db);
 
@@ -587,12 +664,22 @@ namespace BricsCadRc.Core
             var lPts = BarGeometryBuilder.GetLocalPoints(shape.Code, bar.ParamValues, bar.Diameter);
             if (lPts == null || lPts.Count < 2) { tr.Commit(); return; }
 
-            var pt0        = axisStartOverride ?? GetAxisFirstPointFromOutline(pline, bar.ShapeCode);
-            var startPoint = new Point3d(pt0.X - lPts[0].X, pt0.Y - lPts[0].Y, 0);
+            OutlineFrame fr;
+            if (frame.HasValue) fr = frame.Value;
+            else if (!TryGetOutlineFrame(OutlinePoints(pline), bar, out fr))
+                fr = new OutlineFrame { Dir = Vector3d.XAxis, Mirrored = false,
+                                        AxisStart = GetAxisFirstPointFromOutline(pline, bar.ShapeCode) };
 
-            var direction  = new Vector3d(1.0, 0.0, 0.0);
+            var pt0       = axisStartOverride ?? fr.AxisStart;
+            var direction = fr.Dir;
+            // punkt startu: oś[0] minus lokalny lPts[0] w układzie pręta (obrót + ewentualne odbicie)
+            double ax_ = direction.X, ay_ = direction.Y;
+            double px_ = -ay_, py_ = ax_;
+            if (fr.Mirrored) { px_ = -px_; py_ = -py_; }
+            var startPoint = new Point3d(pt0.X - (lPts[0].X * ax_ + lPts[0].Y * px_),
+                                         pt0.Y - (lPts[0].X * ay_ + lPts[0].Y * py_), 0);
 
-            var outlinePts = ComputeOutlineVertices(shape, bar.ParamValues, bar.Diameter, startPoint, direction);
+            var outlinePts = ComputeOutlineVertices(shape, bar.ParamValues, bar.Diameter, startPoint, direction, fr.Mirrored);
             if (outlinePts == null || outlinePts.Count < 4) { tr.Commit(); return; }
 
             pline.UpgradeOpen();
