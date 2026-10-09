@@ -2758,6 +2758,10 @@ namespace BricsCadRc.Core
                     AddHoleUBars(db, zone, ref tplCount, ubY, "Y", y0, y1, posY, fx0, fx1, hz[2], hz[3]);
                     _annotAlongOverride = double.NaN;
 
+                    // 4b. B3 ADD w narożnikach otworu (2 H10-100, L=1250, po przekątnej) — ramiona pionowe
+                    //     z dala od linii opisów pionowych (vt)
+                    maxArmY = Math.Max(maxArmY, AddHoleB3(db, zone, ref tplCount, x0, y0, x1, y1, fy0, fy1, vt));
+
                     // Czytelność: widoczne pręty z dala od równoległych linii rozkładów
                     ResolveRepresentativeCollisions(doc, detailFrameId);
 

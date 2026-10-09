@@ -13,7 +13,7 @@ namespace BricsCadRc.Commands
         private static string _lastGenerate = "Mesh";
 
         /// <summary>
-        /// RC_GENERATE — Mesh (cała siatka) / B1 / B2 / T1 / T2 / UB1 / UB2 / UBNib (UB 03 w nibie) /
+        /// RC_GENERATE — Mesh (cała siatka) / B1 / B2 / T1 / T2 / UB1 / UB2 / UBNib (UB 03 w nibie) / B3 (B3 ADD w narożnikach wklęsłych) /
         /// Add (dozbrojenie dołem B1 / B2 ADD z zaimportowanych map).
         /// Ostatni wybór jest domyślny (Enter).
         /// </summary>
@@ -23,11 +23,11 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
-            var opts = new PromptKeywordOptions($"\nCo wygenerować [Mesh/B1/B2/T1/T2/UB1/UB2/UBNib/Add] <{_lastGenerate}>: ")
+            var opts = new PromptKeywordOptions($"\nCo wygenerować [Mesh/B1/B2/T1/T2/UB1/UB2/UBNib/B3/Add] <{_lastGenerate}>: ")
             {
                 AllowNone = true
             };
-            foreach (var k in new[] { "Mesh", "B1", "B2", "T1", "T2", "UB1", "UB2", "UBNib", "Add" })
+            foreach (var k in new[] { "Mesh", "B1", "B2", "T1", "T2", "UB1", "UB2", "UBNib", "B3", "Add" })
                 opts.Keywords.Add(k);
             opts.Keywords.Default = _lastGenerate;
 
@@ -48,6 +48,7 @@ namespace BricsCadRc.Commands
                 case "UB1":   ub.GenerateUBB1(); break;
                 case "UB2":   ub.GenerateUBB2(); break;
                 case "UBNib": ub.GenerateUBNib(); break;
+                case "B3":    rebar.GenerateB3(); break;
                 case "Add":   GenerateAdd(); break;
             }
         }

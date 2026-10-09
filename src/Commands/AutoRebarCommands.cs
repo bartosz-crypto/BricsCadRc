@@ -29,6 +29,29 @@ namespace BricsCadRc.Commands
         [CommandMethod("RC_GENERUJ_T2", CommandFlags.Modal)]
         public void GenerateT2() => GenerateForLayer("rebar_top", "Y", "T2", diameter: 12);
 
+        /// <summary>RC_GENERUJ_B3 — B3 ADD (2 H10-100, L=1250) w narożnikach wklęsłych płyty (rzut dolny).</summary>
+        [CommandMethod("RC_GENERUJ_B3", CommandFlags.Modal)]
+        public void GenerateB3()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            ed.WriteMessage("\n[RC B3] Wskaż obrys płyty na rzucie DOLNYM (B3 ADD w narożnikach wklęsłych).");
+            var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
+            if (slabId.IsNull) return;
+            try { AutoRebarEngine.GenerateB3Corners(doc, slabId); }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_GENERUJ_B3", ex);
+                ed.WriteMessage($"\n*** ERROR *** [RC B3] {ex.Message}\n");
+            }
+            finally
+            {
+                if (isDrawn) SlabPicker.Cleanup(doc.Database, slabId);
+            }
+            ed.WriteMessage("\n");
+        }
+
         /// <summary>
         /// RC_GENERUJ_SIATKA — cała siatka płyty jednym poleceniem, na tych samych silnikach
         /// co RC_GENERUJ_B1/B2/T1/T2 i RC_GENERUJ_UB_B1/B2:
@@ -76,7 +99,7 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            int nB1 = 0, nB2 = 0, nU1 = 0, nU2 = 0, nU3 = 0, nT1 = 0, nT2 = 0;
+            int nB1 = 0, nB2 = 0, nU1 = 0, nU2 = 0, nU3 = 0, nT1 = 0, nT2 = 0, nB3 = 0;
             bool hasNib = NibDetector.Detect(db, bottomId) != null;
             try
             {
@@ -102,6 +125,8 @@ namespace BricsCadRc.Commands
                 // Czytelność: widoczne pręty odsunięte od linii rozkładów i innych widocznych prętów
                 Run(ed, "kolizje dół", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, bottomId));
                 Run(ed, "kolizje góra", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, topId));
+                // B3 ADD w narożnikach wklęsłych (pręty ukośne — poza rozsuwaniem kolizji)
+                nB3 = Run(ed, "B3 ADD", () => AutoRebarEngine.GenerateB3Corners(doc, bottomId));
             }
             finally
             {
@@ -112,7 +137,7 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage($"\n[RC SIATKA] Gotowe. Rozkłady: B1={Pos(nB1)}, B2={Pos(nB2)}, " +
                             $"UB B1={Pos(nU1)}, UB B2={Pos(nU2)}" + (hasNib ? $", UB NIB={Pos(nU3)}" : "") +
-                            $", T1={Pos(nT1)}, T2={Pos(nT2)}" + (hasNib ? " (z T IN NIB)" : "") + ". " +
+                            $", T1={Pos(nT1)}, T2={Pos(nT2)}" + (hasNib ? " (z T IN NIB)" : "") + $", B3 ADD={Pos(nB3)}. " +
                             "Widoczny pręt reprezentatywny — wszystkie: RC_SHOW_ALL_BARS.\n");
         }
 
