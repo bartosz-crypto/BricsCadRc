@@ -3,11 +3,15 @@
 > Dokument wspólny dla użytkownika i agentów. Aktualizuj go, gdy zmieniasz schemat XData,
 > dodajesz moduł albo użytkownik ustala nową zasadę.
 
+Produkt: **NA Smart RC** — DLL `bin\NaSmartRc.dll` (namespace `BricsCadRc` bez zmian, `App/ProductInfo`).
+Stara wtyczka kolegi to `BricsCadRc.dll` (te same komendy i XData); wczytana jest jedna naraz — autoload przełącza
+`scripts\wybierz-wtyczke.ps1`. Log i ustawienia: `%LOCALAPPDATA%` / `%APPDATA%\NaSmartRc`.
+
 ## 1. Model obiektów na rysunku
 
 | Obiekt | Encja | XData (RegApp) | Rola |
 |---|---|---|---|
-| Pręt (widok/elewacja) | `Polyline` (obrys pręta) | `RC_SINGLE_BAR` | Definicja pozycji: średnica, kształt, wymiary A–E, Mark `H12-03` |
+| Pręt (widok/elewacja) | `Polyline` (obrys pręta) albo pręt-blok `BlockReference` do własnego BTR `*U` ([14] = 2, format Blok — `RC_BAR_FORMAT`) | `RC_SINGLE_BAR` | Definicja pozycji: średnica, kształt, wymiary A–E, Mark `H12-03` |
 | Etykieta pręta | `MLeader` | `RC_BAR_LABEL` | Opis pręta, np. `24 H12-03` (liczba = suma z rozkładów) |
 | Rozkład | `BlockReference` do BTR `RC_SLAB_BARS_nnn` | `RC_BAR_BLOCK` | Linie prętów w rzucie płyty + symbole końców |
 | Opis rozkładu | `BlockReference` (linia rozkładu + tekst) | `RC_BAR_ANNOT` | Linia rozkładu, strzałka, tekst `H12-03-200 B1` |
@@ -24,18 +28,43 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 ```
 
 ### Zasady powiązań (obowiązkowe)
-- Zapis wyłącznie `XLink.Write(hex)` → DXF **1005** (prawdziwy handle). BricsCAD sam przemapowuje
-  1005 przy COPY/MIRROR/ARRAY/PASTE/INSERT, gdy obie strony są kopiowane razem.
+- Zapis wyłącznie `XLink.Write(hex)` → DXF **1005** (prawdziwy handle). **BricsCAD V25 NIE przemapowuje 1005
+  przy COPY / MIRROR / ARRAY** (klony wskazują oryginały — spike W2-0); przy wstawianiu (PASTECLIP, -INSERT) tłumaczy
+  odwołania do obiektów wstawianych razem, a pozostałe zeruje. Powiązania kopii przepina mapa klonowania
+  (`CloneMap` → `CloneRemap`, W2) — patrz „Reakcje na edycję”.
 - Odczyt wyłącznie `XLink.Read(tv)` — akceptuje 1005 i stary tekst 1000, zwraca „X8”.
 - Porównanie wyłącznie `XLink.Same(a, b)` (nie `string.Equals`).
 - Przed modyfikacją/usunięciem/przeliczeniem etykiety sprawdź **back-link** (etykieta wskazuje
   na ten pręt). Kopia bez etykiety nie może ruszać etykiety oryginału.
-- Stare rysunki (1000): po COPY `BarCopyWatcher.RemapCopiedBarLabels` paruje kopię pręta z kopią
-  etykiety (grot etykiety leży na pręcie); `RemapCopiedPairs` robi to samo dla rozkład ↔ opis.
+- Po COPY / MIRROR / ARRAY / PASTE / INSERT powiązania klonów (także stare rekordy 1000 — zapis 1005) przepina
+  `CloneRemap` z mapy oryginał → klon. Heurystyki `BarCopyWatcher.RemapCopiedBarLabels` (grot etykiety na pręcie)
+  i `RemapCopiedPairs` (rozkład ↔ opis) — tylko zapas dla obiektów spoza mapy.
 
 ### Schematy XData (indeksy pozycyjne — NIE przestawiać, nowe pola tylko na końcu)
 - `RC_SINGLE_BAR`: [1]Mark [2]Diameter [3]ShapeCode [4]A [5]B [6]C [7]LayerCode [8]Position
   [9]D [10]E [11]TotalLength [12]LengthOverridden [13]LabelHandle(1005)
+  [14]FormatVersion (Int16; 2 = pręt jako BlockReference — Plan C; 1 = polilinia z ogonem (W4c); brak pola = polilinia)
+  [15]ShapeStd (Int16; 2020 = kształt wg BS 8666:2020 — W4c, kapelusz 44; **2021 = obrys zbudowany geometrią W4d lub późniejszą**
+  (od W4e także z wymiarami zewnętrznymi — bez nowej wartości znacznika, D35: wariant W4d / W4e jednoznacznie z obrysu) —
+  W4d runda 2: każdy pręt utworzony (PlaceBar, pręt-blok wtyczki) albo przebudowany (RebuildCompanions — RC_EDIT_BAR, RC_UPDATE_BAR,
+  Plan B watchera; pręt-blok: `SingleBarBlock.Rebuild` — RC_EDIT_BAR, RC_UPDATE_BAR / naprawa SCALE, grip końca) przez wtyczkę
+  W4d+, `BarXData.MarkW4dGeometry`; pierścień przy przebudowie i pręt
+  testowy H12-T — bez; stary pierścień „44” bez znacznika — bez, do migracji; polilinia bez [14] dostaje wtedy [14] = 1;
+  znacznik ≥ 2020 nie jest obniżany). **Rekord „44” bez [15] ≥ 2020 = stary pierścień** (rysunek sprzed W4c albo
+  zapisany starą wtyczką, która gubi ogon [14+]): parser `ReadBarXData` podaje go w pamięci jako **75** +
+  `BarData.LegacyRing44` (pole niezapisywane); pierwszy zapis utrwala „75” (migracja leniwa, UNDO cofa). Rozpoznanie
+  po danych, nie po geometrii. Reguły (bez Teigha): `BarRecordRules.IsLegacyRing44 / WithShapeStd / NeedsShapeStd`.
+  **Zapis `RC_SINGLE_BAR` tylko przez `BarXData.Write` / `BarEntity.Write`** — składa nagłówek [0]–[13]
+  i zachowuje ogon istniejącego rekordu od [14] (FormatVersion i nowsze pola; nigdy nie dubluje [14] ani [15]);
+  dla kształtu 44 dopisuje / podmienia znacznik [15].
+- **Wymiary kształtu (W4, zasada parametrów):** XData pozycyjne — parametr i kształtu (`BarShape.Parameters[i]`) → pole
+  LengthA…E o indeksie i (jak dialogi, formuły i BBS). Geometria czyta wymiary **po nazwie** (`BarShape.IndexOf / Value`),
+  np. 25 {A,B,E}: E = pole [6]. Nowe parametry kształtu tylko DOPISYWANE na końcu `Parameters` (W4b: 31 + D, 47 + C;
+  W4d: 14 i 15 + D, 24 + D, E, 46 + D → {A,B,C,E,D}); stare rekordy mają tam 0. Bez migracji danych (poza 44 → 75).
+  Dialogi (RC_BAR, RC_EDIT_BAR, picker) pokazują wiersze alfabetycznie — `BarShape.DisplayOrder` = mapa wiersz → pole.
+  Wymiary określające tylko kąt (W4d, `BarShape.IsAngleParam`) i C dla 51/63 są opcjonalne: puste / 0 = wartość domyślna
+  (kąt 45°, dla 24 — 30°) + ostrzeżenie `[RC] … przyjęto kąt domyślny …` w linii poleceń.
+  `SingleBarEngine.WriteXData` to cienka nakładka na `BarXData.Write` (też zachowuje [14+]).
 - `RC_BAR_BLOCK`: [1]Mark [2]LayerCode [3]Count [4]Diameter [5]Spacing [6]Direction [7]Position
   [8]LengthA [9]BarsSpan [10]Cover [11]AnnotHandle(1005) [12]ShapeCode [13]SymbolSide
   [14]SymbolDirection [15]ViewingDirection [16]ViewSegmentIndex [17]SymbolType
@@ -57,6 +86,14 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 
 ### `src/Commands`
 - `BarCommands` — `RC_BAR`, `RC_DISTRIBUTION`, `RC_EDIT_BAR`, `RC_UPDATE_BAR`, `RC_FIX_LABEL`, `RC_SCHEDULE`.
+- `BarFormatCommands` (Plan C, krok 3f) — `RC_BAR_FORMAT [Polilinia/Blok]`: format NOWYCH prętów (RC_BAR, AutoRebar,
+  przebicie), zapis `%APPDATA%\NaSmartRc\barformat.txt` (`BarFormat`; fallback: plik starej wtyczki); **domyślnie Polilinia**
+  (rysunki dla starej wtyczki kolegi — zawsze Polilinia). Przy starcie: `[NA Smart RC] Nowe pręty: polilinia|blok`.
+  Istniejące pręty bez zmian — rysunek może mieć oba formaty.
+- `RebuildBarsCommands` — `RC_REBUILD_BARS` (W4e, P8): przebudowa obrysów wszystkich prętów przestrzeni modelu wg bieżącej
+  geometrii (ścieżki MOVE / RC_UPDATE_BAR: `RebuildCompanions`, `SingleBarBlock.Rebuild`; rama i axis[0] z obrysu), jedna
+  grupa UNDO; pomija obrys już bieżący, nierozpoznany (lista w linii poleceń) i pręt testowy; grot etykiety (back-link)
+  na nowy obrys. Dane, numery, rozkłady — bez zmian.
 - `EditCommands` — `RC_EDIT_DISTRIBUTION`, `RC_EDIT_LABEL`, `RC_BAR_END`, `RC_SET_REPR_BAR`,
   `RC_SHOW_ALL_BARS`, `RC_SCALE_ANNOT`.
 - `AutoRebarCommands` — `RC_GENERUJ_B1/B2` (Ø10, strefa szablonów `rebar_bottom`),
@@ -70,19 +107,98 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 ### Wstążka (`RibbonBuilder`)
 - Po angielsku (etykiety, podpowiedzi); komunikaty w linii poleceń i dialogi — po polsku.
 - Panele: Setup (Prepare GA; GA Texts, Reinf. Maps) · Reinforcement (Generate, Section, Opening Detail, Punching; 3D Model,
-  Summary Bars) · Bars (New Bar, Distribution) · Edit (kolumny małych przycisków) · Schedule (BBS; Bar Schedule, Count Bars).
+  Summary Bars) · Bars (New Bar, Distribution; Bar Format) · Edit (kolumny małych przycisków) · Schedule (BBS; Bar Schedule, Count Bars).
 - Ikony: `Resources/Icons/<nazwa>_32.png` i `_16.png` (EmbeddedResource `BricsCadRc.Icons.*`), generowane skryptem
   (proste wektorowe, paleta: pomarańczowy = pręty, niebieski = góra/akcje, szary = beton).
 
 ### `src/Core` — silniki
-- `SingleBarEngine` — pręt (polilinia), etykieta MLeader, XData pręta.
+- `SingleBarEngine` — pręt (polilinia), etykieta MLeader, XData pręta (`ReadBarXData` — jedyny parser rekordu).
+  `RebuildCompanions` przebudowuje obrys w **ramie pręta** (poprawka #4): `FrameFromOutline` (obrót + odbicie z obrysu,
+  dane pasujące do TEGO obrysu; zapas: obrys sprzed komendy, cięciwa osi, tożsamość); rama tożsamościowa (pręt poziomy,
+  nieodbity) = dokładnie dawna formuła wzorca (bit w bit). Wywołujący podają ramę jawnie: `BarEditApply` (obrys i dane
+  SPRZED edycji), watcher `ApplyEndStretch` (rama sprzed komendy), Plan B / zepsuty 00 (bieżący obrys, zapas: sprzed komendy).
+  **Pierścień** (poprawka #5; rozpoznanie wyłącznie `BarFrameRules.IsRingShape` / `SingleBarEngine.IsRingShape(bar)` —
+  od W4c kod **75** = `BarFrameRules.RingShapeCode`; stary „44” czytany jako 75): `Rebuild44` przebudowuje OBA okręgi (zewnętrzny = polilinia główna, wewnętrzny = `RC_BAR_LINK`),
+  ŚRODEK zostaje (z obrotem i odbiciem); zmiana kształtu na pierścień — start w axis[0] starego pręta. Pręt-blok:
+  `SingleBarBlock.Rebuild` przesuwa punkt wstawienia tak, by środek pierścienia został przy zmianie A.
+- `BarFrameRules` (W1d, bez Teigha, testy `tests/BarFrameRulesTests.cs`) — `LocalOutline`, `TryFit` (wierzchołek po
+  wierzchołku, kandydaci bez/z odbiciem, `FitTol` 0,5 mm, kąt < 1e-9 → tożsamość dokładnie), `TryFitRing`, `TryChord`,
+  `IsRingShape` / `RingShapeCode` („75”). W4a: `TryFitVariants` — obrys porównywany ze WSZYSTKIMI wariantami geometrii
+  (`BarGeometryOptions.FitCandidates`: bieżąca (W4h) → W4e → W4d → W4b → W4a → pozostałe kombinacje flag → Legacy), więc pręty narysowane przed W4
+  i w każdym etapie W4 zachowują obrót i odbicie (`FrameFromOutline`); `LegacyLocalOutline`, `LocalOutlineFrom`.
+- `BarGeometryBuilder.GetLocalPoints(code, pv, d[, BarGeometryOptions])` (W4) — flagi `{ Bs2020Sharp, TangentArcs,
+  ExternalDims, TableRadius }` (16 kombinacji; rzeczywiste etapy: sprzed W4 = Legacy, W4a = TangentArcs, W4b–W4c =
+  `BarGeometryOptions.W4b` = TangentArcs + TableRadius — promień Table 2 i haki 51/63 wg 2020; `BarGeometryOptions.W4d` = W4b +
+  `Bs2020Sharp`; `BarGeometryOptions.W4e` = W4d + `ExternalDims`; **W4h = `Current`** = W4e + `SlopeFromB`); wszystkie false = **Legacy** = `LegacyBarGeometry` (zamrożona kopia geometrii sprzed W4 — tylko do
+  rozpoznania starych obrysów, NIE poprawiać). Bieżąca: łuk styczny t = r·tan(φ/2) (90° → t = r bit w bit),
+  odcinki zerowe bez łuku, parametry po nazwie, r z Table 2, haki 51/63 C_eff, ostre punkty wg rysunków Table 5 (W4d):
+  12 łuk o promieniu R (≤ 0 → min. promień), 14 / 15 A skośne od wolnego końca + C poziome (14 wstecz, 15 dalej; kąt
+  `BarShape.SlopeAngle` = atan2(B, D), brak → 45°), 22 A–B–półkole C (średnica)–D, 24 A poziome, B skos (atan2(D, E), brak → 30°),
+  C pion, 33 „bieżnia” (półkola średnicy B, długość A, pręt okrąża 1½ raza, końce w odległości C od prawej skrajni),
+  46 A–B skos w dół–C–B skos w górę–E (kąt asin(D / B), brak → 45°), 51 A = wysokość, B = szerokość.
+  **W4e (poprawka #13, `ExternalDims`): wymiary A–E są ZEWNĘTRZNE (kl. 7.1)** — `BarDimensionRules.ToAxis(code, pv, d)` (czysta
+  tabela per kształt, bez Teigha) przelicza je na oś: ramię wolny koniec → lico −d/2, między dwoma licami (U: B, Z: B, 44: B–D,
+  22: B — od lica A do skrajni półkola, strzemiona 51 / 63: A, B) −d, zagięcia ≠ 90° wg rys. 4 / 5 normy (`LegReduction`: φ ≤ 90° — do przecięcia lic zewnętrznych,
+  d/2·tan(φ/2); φ > 90° — do stycznej w skrajni łuku, (r + d) − (r + d/2)·tan(φ/2)); łuk osi r + d/2 (12: R + d/2, 13: pętla
+  (B − d)/2, 22: półkole (C − d)/2, 33: półkola (B − d)/2); haki 51 / 63 przy pustym C: oś C_eff − d/2; pierścień 75: oś (A − d)/2,
+  obrys zewnętrzny A/2, wewnętrzny A/2 − d, środek (A/2, A/2) bez zmian (`SingleBarEngine.BuildVisualEntities`). Kąt skosu
+  (14 / 15 / 24 / 46) z wymiarów podanych przez użytkownika (B / D / E zewnętrzne — przybliżenie).
+  **W4h (`SlopeFromB`, decyzja użytkownika 2026-10-09):** kąt także z jednego wymiaru — 14 / 15: θ = asin(B/A) (albo acos(D/A)),
+  24: asin(D/B) / acos(E/B); z obu jak dotąd; brak → 45° / 30° + ostrzeżenie; rzut ≥ ramię → 90° + ostrzeżenie
+  (`BarShape.SlopeAngle(…, fromSingle)`, `DefaultAngleWarning`). Pole „Kąt [°]” w RC_BAR / RC_EDIT_BAR i pickerze
+  (`BarShape.AngleToDimensions`): wpisany kąt → B, D (24: D, E; 46: D) co 5 mm w dotychczasowych polach (XData bez zmian).
+  Obrysy sprzed W4h (np. 15 z B bez D rysowany 45°) rozpoznaje wariant W4e (`SlopeFromB = false`). Kształty z geometrią do W4d-3
+  (25–29, 31, 32, 34–36, 41, 47, 56, 64, 98) — wymiary bez przeliczenia, tylko łuk r + d/2. axis[0] pręta zostaje (P8).
+  Obrysy zapisane w każdym etapie rozpoznaje `TryFitVariants` (testy na ZAMROŻONYCH obrysach etapów:
+  `tests/FrozenOutlinesW4c.cs`, `tests/FrozenOutlinesW4d.cs`, W4a w `BarW4Round1Tests`).
+- `BarEntity` / `BarXData` / `BarRecordRules` (Plan C, etap 2) — jeden punkt odczytu i zapisu pręta niezależnie od encji:
+  `BarEntity.KindOf/From/Open` rozpoznaje polilinię (v1) i pręt-blok (`BlockReference`, [14]=2); każde miejsce podaje
+  zbiór `BarKinds` (dawny zbiór + `Block`, więc dla polilinii nic się nie zmienia); `OutlineVertices` = wierzchołki obrysu
+  w WCS. `BarXData.Write` — zapis rekordu z zachowaniem [14+]. `BarRecordRules` — czysta logika rekordu (bez Teigha,
+  testy jednostkowe). Bezstanowe, bez cache.
+  Pręt-blok v2 widzą: `BbsDrawingReader` (RC_BBS), `PositionReconciler`, `AnnotationEngine.UpdateBarLabelCount`,
+  `UbHeight` (Rebar3dCommands), `RC_DISTRIBUTION` (wybór pręta), `GetViewLengthManual` (Manual, także RC_EDIT_DISTRIBUTION; W4: odcinek wybrany na bieżącym obrysie,
+  długość z obrysu WZORCOWEGO dla tego samego odcinka — `BarCommands.ManualSegmentLength` → `BarFrameRules.LegacySegmentLength`,
+  mapowanie etykietami ramion / łuków. **Reguła (W4d, rundy 1–2):** (b) pręt ze znacznikiem [15] ≥ 2021 (`BarData.GeometryW4d`),
+  obrys W4d (i późniejszy — W4e) i kształt ze zmienionym układem ramion (`BarFrameRules.ArmLayoutChangedInW4d`: 14, 15, 22,
+  24, 33, 46, 51) → wskazany odcinek geometrii W4d bez wymiarów zewnętrznych (punkt odniesienia W4d także po W4e);
+  W4e: obrys z wymiarami zewnętrznymi i odcinek bez odpowiednika we wzorcu (44, półkola 22 / 33) → ten sam odcinek wariantu
+  bez `ExternalDims` (= długość zmierzona przed W4e) — rozkład Manual przed / po W4e bez zmian; pierścień 75 z obrysem W4e
+  (promień A/2) → cięciwa tego samego odcinka okręgu sprzed W4e (promień A/2 + d/2); punkt odniesienia W4d = bieżący wariant
+  bez `ExternalDims` (`BarGeometryOptions.WithoutExternalDims` — z regułą kąta obrysu);
+  (a) w każdym innym przypadku — brak znacznika (pręt sprzed W4d, także gdy jego obrys jest identyczny z W4d, np. 51 A = B;
+  dopasowanie najpierw do wariantów historycznych), obrys historyczny, kształt bez zmiany układu ramion (00, 11, 12, 13, 21, …)
+  → geometria sprzed W4 (wynik = wzorzec, bit w bit). Istniejące rozkłady nie są przeliczane — reguła działa przy wskazaniu
+  ramienia),
+  kaskada usuwania (`SingleBarBlockEraseOverrule`), `PositionCounter`, `RC_SCHEDULE`. Tworzenie, AutoRebar, watchery,
+  kopiowanie i gripy polilinii — bez zmian (etapy 3–5).
+- `SingleBarBlock` / `BarFormat` (Plan C, etap 3) — pręt-blok: własny BTR `*U` (`Explodable = false`), zawartość = obrys
+  z `BuildVisualEntities` (warstwa 0, ByBlock, bez XData), XData tylko na referencji (`BarXData.Write(…, 2)`); punkt wstawienia =
+  axis[0] w WCS (pierścień 75 — punkt wstawienia polilinii). `Create`, `Rebuild` (zawsze copy-on-write `EnsureOwnBtr`),
+  `RepairScale`, `ApplyEndLength` (grip / STRETCH 00 / 99). `BarFormat.Current` (Polyline | Block; zmienna `RC_REG_BARFORMAT`
+  tylko dla testów, potem plik ustawienia) — jedyny punkt rozgałęzienia w `SingleBarEngine.PlaceBar`.
 - `BarBlockEngine` — rozkłady (BTR + BlockReference), XData rozkładu, `GenerateFromBounds`, `UpdateBarLength`.
   Kółko końca pręta (bar end Circle, r = 35 × skala opisu) leży W długości pręta: krawędź kółka = koniec pręta,
   linia kończy się w środku kółka — długość pręta na rzucie i gripy takie same z kółkiem i bez.
 - `AnnotationEngine` — opisy rozkładów, linia rozkładu, `SyncAnnotation`, `UpdateBarLabelCount`.
 - `AutoRebarEngine` — automatyczne zbrojenie płyty (sekcja 4).
-- `BarGeometryBuilder`, `ShapeCodeLibrary`, `BarShape` — kształty BS 8666 (promień gięcia 3.5d dla d ≥ 20).
-- `BarScheduleEngine`, `BbsCounter` — zestawienie (dialog + CSV). `BbsDrawingReader`, `BbsXlsGenerator`, `BbsModels`,
+- `BarGeometryBuilder`, `ShapeCodeLibrary`, `BarShape` — kształty BS 8666:2020 (W4b: formuły 2020; `BarShape.MinBendRadius`
+  = Table 2 (H25 → 87; poza tabelą 2d / 3.5d), `HookDiameterQ`, `MinEndProjectionP`; 47 bez C, 64 (wymaga F), q dla d = 50
+  → wyjątek = „brak długości”). W4c: **44 = „kapelusz”**, **75 = pierścień** (A = średnica, B = zakład), 77 (helisa)
+  nieobsługiwany; picker: 00 11 13 15 21 33 44 46 51 63 75. W4d: `SlopeAngle` / `DefaultAngleWarning` / `IsAngleParam`,
+  `DisplayOrder`. **W4g: `CalculateTotalLength` zaokrągla także prosty 00 w górę do 25 mm** (kl. 7.2; A bez zmian; tolerancja
+  1e-9 kroku na szum z obrysu).
+- `BarShapeValidation` (W4f, bez Teigha) — `Check(code, pv, d)`: wyłącznie OSTRZEŻENIA BS 8666:2020 — wymiar zerowy (kl. 8.1.4,
+  poza opcjonalnymi), brak wymiarów kąta, wolne końce ≥ P (Table 2 — kolumna wg kąta zagięcia końcowego: 51 / 63 z hakami 90°
+  „links”, pozostałe — także 47 z hakami 180° — „general bend”), 12 / 13 / 22 / 33 wg Table 5
+  (q ≤ pętla ≤ 400 + 2d, ramiona ≥ B/2 + max(5d, 90) itd.), hak 47 / 51 / 63 ≤ boku (przy pustym C — hak minimalny C_eff),
+  kl. 8.4: prosty odcinek osi między łukami dwóch zagięć ≥ 4d (np. 22 narożnik–półkole), Table 4 (wymiar między dwoma
+  zagięciami ≥ 10d min. 75 / 13d: 21 B, 23 B, 44 B–D, 46 C, 51 / 63 A, B), korby kl. 8.2.4 (26, 46: skos, 46: przesunięcie
+  D ≥ 2d), co 5 mm (kl. 7.2), krótszy bok obrysu ≤ 2750 i długość > 12 m (kl. 7.9). Dialogi RC_BAR / RC_EDIT_BAR i picker —
+  TextBlock „Uwagi BS 8666:2020” (OK nie blokowane); RC_BBS — ostrzeżenia „Pozycja NN (kształt KK): …” (bez duplikatów). `BarShapePreviewRenderer`: kształty zamknięte / zachodzące wg normy 33 51 52 56 63 64 75
+  (Polygon tylko, gdy oś wraca do startu).
+- `BarScheduleEngine`, `BbsCounter` — zestawienie (dialog + CSV). Błąd długości pojedynczej pozycji (W4b) → wiersz
+  „brak długości” (`CuttingLength` = NaN, masa 0) + ostrzeżenie `[RC_SCHEDULE] UWAGA`, reszta zestawienia dalej. `BbsDrawingReader`, `BbsXlsGenerator`, `BbsModels`,
   `BbsSettings` — BBS .xls na szablonie Speedeck (`RC_BBS`, sekcja 4e).
 - `PunchingTagEngine` — tagi przebicia (numery 501+).
 - `PositionCounter` — **jedyny** przydział numerów pozycji. `PositionReconciler` — numer po zmianie wymiarów.
@@ -91,8 +207,63 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 ### `src/Core` — reakcje na edycję (event-driven)
 - `DocumentWatch` — rejestruje handlery **per dokument** (każdy otwarty rysunek). `IsUndoCommand`.
 - `BarGeometryWatcher` — stretch/move pręta → długość w XData, numer pozycji, rozkłady, etykieta za prętem.
-- `BarCopyWatcher` — po COPY/PASTE/MIRROR/ARRAY: unikalne BTR, przepięcie par rozkład↔opis i pręt↔etykieta.
-- `AnnotMoveOverrule` — gripy rozkładów/opisów (Grip/Transform/Erase overrule).
+  Po zmianie A (ścieżka 00, RC_UPDATE_BAR) TotalLength wg kształtu (`BarLengthRules.TotalLengthFor`); długość nadpisana
+  (`LengthOverridden`) zostaje + ostrzeżenie `[RC AUTO] … ręcznie nadpisaną długość całkowitą …` (poprawka #7).
+  `Suppress()` (IDisposable, zawsze w `using`) wycisza watcher na czas zmian pręta przez komendę wtyczki — `BarEditApply.Apply`
+  (RC_EDIT_BAR), RC_UPDATE_BAR, RC_BAR_END; `IgnoreThisCommand(id)` pomija pręt w CommandEnded także, gdy trafił do kolejki
+  wcześniej w tej samej komendzie (poprawka #1: wzorzec doliczał zmianę długości drugi raz). Grip/STRETCH użytkownika — bez zmian.
+- `CloneMap` (W2, poprawki #3, #6, 3b; = 3e3 z PLAN_C_etap3) — zapisuje paczki klonowania z `BeginDeepCloneTranslation`
+  / `InsertMappingAvailable` (konteksty Copy, Insert, InsertCopy; deduplikacja; `DeepCloneAborted` odrzuca ostatnią) —
+  handler BEZ zapisów do bazy i bez otwierania obiektów. Wblock z komendy schowka (COPYCLIP / CUTCLIP / COPYBASE) → mapa
+  schowka (handle w pliku schowka → oryginał) + rysunek źródłowy (wskaźnik bazy natywnej); zwykły WBLOCK jej nie nadpisuje.
+  Kontekst Objects (DeepCloneObjects wtyczki, np. EnsureUniqueBtr) — pomijany; `Suppress()` (zawsze w `using`).
+  Mapa schowka działa tylko dla paczki komendy wklejania, której klucze par głównych są w mapie schowka (INSERT nigdy);
+  rysunek źródłowy = Guid czasu życia dokumentu (niezależny od SAVEAS); zamknięcie rysunku unieważnia tylko „żywe źródło”,
+  mapy schowka zostają do następnego COPYCLIP / CUTCLIP (wklejenie do innego rysunku nadal tłumaczy stare 1000).
+  Łańcuch paczek (`ChainOf` / `ResolveInChain`): klon, którego klucz jest klonem wcześniejszej paczki tej komendy
+  (PASTECLIP: plik schowka → blok pomocniczy → model; COPY A→B, potem B→C w jednej komendzie nadrzędnej); stare odwołania
+  tekstowe 1000 (BricsCAD ich nie tłumaczy) — przez klucze korzenia (plik) albo mapę schowka, wynik zapisywany jako 1005.
+  `Take(db)` / `Forget(db)` (UNDO/REDO, CommandFailed, zamknięcie rysunku). Zapytania w trakcie komendy:
+  `IsPendingCloneRetarget` (strażnik kaskady usuwania pręta), `TryResolvePending` (strażnik kaskady usuwania rozkładu).
+- `CloneRemap` — przepięcie powiązań klonów w CommandEnded wg reguł planu 4.3 (docs/PLAN_POPRAWKI_W1_W2.md):
+  Cloned / AlreadyClone / NotCloned; pręt [13] tylko para dwustronna z etykietą (#6), etykieta dla > 1 pręta → nikomu;
+  rozkład [18] → klon pręta (#3), [11] / opis [16] → klony (3b); RC_BAR_LINK [1] → klon pręta; „ten sam rysunek” (COPY,
+  wklejenie ze schowka skopiowanego w tym rysunku = COPY) — wartość obiektu źródłowego; inny rysunek — "". Klony w definicjach
+  bloków pomijane. Zapis: pręt — `BarEntity.Write`, rozkład — `BarBlockEngine.WriteXData`, opis / etykieta / RC_BAR_LINK —
+  punktowa podmiana pola `XLink.Write`. Pary przepięte po komendach kopiowania — `BarCopyWatcher.NormalizeAndRebuildPair`
+  (odbicie → skala +1, przebudowa linii rozkładu, jak wzorzec).
+- `BarCopyWatcher` — po komendzie (CommandEnded/Cancelled najwyższego poziomu; komenda widoku / przezroczysta /
+  zagnieżdżona — nic, paczki czekają na komendę nadrzędną; zagnieżdżona komenda kopiowania przenosi kwalifikację „kopiowanie”
+  na komendę nadrzędną): 1) UNDO/REDO → `CloneMap.Forget`; 2) `CloneMap.Take`;
+  3) komendy kopiowania (COPY, MIRROR, ARRAY / -ARRAY, PASTE*) → unikalne BTR (rozkłady, opisy, pręty-bloki `*U`);
+  4) `CloneRemap.Apply` (każda komenda, która sklonowała obiekty); 5)–6) heurystyki wzorca tylko dla obiektów spoza mapy.
+  Ograniczenie BricsCAD: REDO po COPY nie ponawia zmian z CommandEnded na klonach (przepięcie, unikalne BTR) — jak we wzorcu.
+- `AnnotMoveOverrule` — gripy rozkładów/opisów (Grip/Transform/Erase overrule). Kaskada usuwania pręta
+  (`BarEraseCascade.Run`: etykieta z back-linkiem, rozkłady wskazujące na pręt i ich opisy) — wołana przez
+  `BarPolylineEraseOverrule` (polilinia) i `SingleBarBlockEraseOverrule` (pręt-blok v2; nie mylić z `BarBlockEraseOverrule`
+  = usunięcie rozkładu). Pręt bez `LabelHandle` też usuwa swoje rozkłady i opisy (poprawka #2; wzorzec je zostawiał);
+  etykieta — tylko z back-linkiem. EXPLODE = ERASE. W2: rozkład sklonowany w tej komendzie razem ze swoim prętem nie jest
+  usuwany z kaskadą źródła (`CloneMap.IsPendingCloneRetarget`); usunięcie rozkładu-klonu w trakcie komendy (np. `_U` w COPY)
+  tłumaczy `[11]` przez paczkę (`TryResolvePending` — opis oryginału zostaje); usunięcie przez UNDO (`IsUndoing`) — bez kaskady
+  rozkład → opis (powiązane obiekty odtwarza UNDO).
+- `SingleBarGripOverrule` (Plan C; etap 1 — próba, krok 3f — dla użytkownika) — gripy KAŻDEGO pręta-bloku (BlockReference
+  z `RC_SINGLE_BAR` [14]=2): [0] początek osi = przesunięcie; kształt 00 / 99 — także [1] koniec osi = długość wzdłuż osi
+  (`SingleBarBlock.ApplyEndLength`: co 5 mm, minimum max(2d, 50) → zmiana cofnięta, TotalLength wg kształtu, nadpisana —
+  bez zmian + ostrzeżenie `[RC AUTO]`) i STRETCH oknem (koniec / początek / całość). Kształty gięte: tylko grip [0] i STRETCH
+  całości; częściowy STRETCH odrzucony z komunikatem (długość przez RC_EDIT_BAR). W dragu tylko podgląd (transient, kształt
+  z danych pręta), ZERO zapisów; zapis w `CommandEnded` (`ApplyLengthEdit`, w `_applying`, `LockDocument`), gdy nie trwa inna
+  komenda (przezroczysty 'ZOOM nie zapisuje); po U / UNDO / REDO — nic; ESC = reset. Pręt z numerem pozycji po zapisie →
+  `BarChangePropagator.Run`; pręt testowy `H12-T` (bez numeru) — bez propagacji. Jedna komenda = jeden Ctrl+Z (zmiany
+  z CommandEnded w tej samej grupie UNDO; Ctrl+Y odtwarza stan po gripie). Komunikaty `[RC AUTO]`. Grip w trybie kopiowania
+  (Ctrl / „Copy”): pręt-blok dopisany w trakcie dragu (`ObjectAppended`, tylko zapamiętanie) o Mark i długości pręta z pending
+  → zmiana długości odrzucona (`GripCopyRefusedMessage`), kopia zostaje jak ją utworzył BricsCAD. Koniec komendy czyści
+  podgląd tylko w swoim rysunku.
+  Komenda testowa: `TestBarBlockCommands` (`RC_TEST_BARBLOCK`, opcje Info — opis dowolnego pręta-bloku / Typ).
+  Pręt testowy `H12-T` — poza numeracją i BBS.
+- `BarChangePropagator` (krok 3f) — skutki zmiany wymiarów pręta-bloku (grip / STRETCH): `PositionReconciler.ReconcileAfterGeometryChange`
+  → `PropagateToDistributions(legacyPosNr)` → grot etykiety (`BarEntity.ClosestPoint`, tylko z back-linkiem) →
+  `UpdateBarLabelCount` → komunikat `[RC AUTO] Pręt … → nowa pozycja …  (n rozkład(y))`. Kopia łańcucha wzorcowego
+  `BarGeometryWatcher.ApplyEndStretch` (watcher prętów-polilinii bez zmian).
 - `RcMLeaderOverrule`, `BarBlockHighlightManager` — zachowanie etykiet, podświetlenie obrysu rozkładu.
 
 ### Pułapki BricsCAD (znane, sprawdzone)
@@ -102,9 +273,16 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 - **UNDO/REDO:** w `ObjectModified` pomijaj `IsUndoing`; w `CommandEnded` pomijaj komendy undo
   (`DocumentWatch.IsUndoCommand`). Żadnych cache'y stanu geometrii (po Ctrl+Z są nieaktualne).
 - **Zapisy z handlerów:** licznik reentrancji (`_rebuildDepth`), żeby własne zmiany nie wracały jako eventy.
+  Komendy wtyczki zmieniające pręt-polilinię: `using (BarGeometryWatcher.Suppress())` + `IgnoreThisCommand(id)`.
+  Zbiór pomijanych czyszczony przy CommandEnded / CommandCancelled / CommandFailed komendy najwyższego poziomu
+  (koniec przezroczystego 'ZOOM go nie czyści); CommandFailed czyści stan komendy jak anulowanie.
 - **GripOverrule na natywnej `Polyline` nie działa w BricsCAD** → pręt nie ma własnych gripów.
   Stretch pojedynczego gripu psuje obrys → jest cofany; długość zmienia STRETCH oknem lub `RC_EDIT_BAR`.
-- Pełny refactor (pręt jako BlockReference, „Plan C”) — odłożony.
+- Pręt jako BlockReference („Plan C”, etap 3) — format Blok do wyboru (`RC_BAR_FORMAT`), domyślnie Polilinia.
+  Pręt-blok ma własne gripy (`SingleBarGripOverrule`); pręt-polilinia — jak wyżej.
+- **Stara wtyczka kolegi gubi ogon RC_SINGLE_BAR [14+]**: kapelusz 44 staje się pierścieniem (W4c), a pręt traci znacznik
+  geometrii W4d ([15] = 2021) — długość rozkładu Manual liczona wtedy jak dla pręta historycznego (wzorzec); znacznik wraca
+  przy następnej przebudowie obrysu (MOVE / RC_EDIT_BAR).
 
 ## 3. Numeracja pozycji
 - **UB zawsze 01 (UB B1), 02 (UB B2) i 03 (UB w nibie).** Numeracja automatyczna od **04** (jak ASD;
@@ -117,7 +295,8 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 
 ## 4. AutoRebar — zasady (wymagania użytkownika)
 Ogólne:
-- Program **sam tworzy pręty-szablony** (strefa szablonów obok płyty: proste od lewej, UB od prawej).
+- Program **sam tworzy pręty-szablony** (strefa szablonów obok płyty: proste od lewej, UB od prawej). Etykieta szablonu UB:
+  tekst nad środkiem rzeczywistego obrysu, grot na lewym ramieniu (jak wzorzec; W4e runda 1).
   Nie wymagamy „podkładki” rysowanej ręcznie.
 - **Siatka długości 250 mm. NIE dopuszczać prętów co 50 mm.**
 - Rozstaw nominalny 200 mm, otulina 40 mm. **Opisy zawsze z rozstawem nominalnym** (np. „-200”),
@@ -232,8 +411,14 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 ## 4e. BBS (RC_BBS) — jak ASD-BBS w AsdRcSlab, prosto z rysunku
 - Źródło: rozkłady RC_BAR_BLOCK **z żywym opisem** (bez opisu nie liczone — ostrzeżenie) → pręt RC_SINGLE_BAR;
   ilość = suma EffectiveCount. Pozycja z Mark (`H12-03` → 3). Dół = pozycje < 100, góra = 101+ (także 501/502).
-- Długość cięcia jak w programie (`ShapeCodeLibrary`, zaokrąglenie 25 mm dla giętych; długość nadpisana ma pierwszeństwo).
+- Długość cięcia jak w programie (`ShapeCodeLibrary`, zaokrąglenie w górę do 25 mm — od W4g także prosty 00; długość nadpisana ma pierwszeństwo).
+  W4b: liczona wg BS 8666:2020 także dla starych rysunków; **bezpiecznik** (tylko odczyt): dla kształtów ze zmienioną
+  formułą (`BarShape.FormulaChangedIn2020`) zapisane TL ≠ formuła → ostrzeżenie „Pozycja NN (kształt KK): długość wg
+  BS 8666:2020 = … mm, w rysunku … — sprawdź.”; brak długości (47 bez C, 64) → wiersz „brak długości” + ostrzeżenie;
+  stary pierścień 44 → ostrzeżenie „liczony jako 75 … B = zakład” (W4c). W4g: bezpiecznik obejmuje też prosty 00
+  (stare TL = A, np. 3010 → 3025 z ostrzeżeniem; długość nadpisana — bez) — `BarShape.StoredLengthDiffers`.
   Wymiary do kolumn I–M wg nazw parametrów kształtu (A, B, C, D, E/R). Prosty: kod „00”, A = „STR”.
+  W4f: ostrzeżenia walidacji minimów (`BarShapeValidation`) dla każdej pozycji — tylko lista, arkusz bez zmian.
 - Ta sama pozycja z różnym prętem → osobne wiersze + ostrzeżenie. Rozkład bez pręta źródłowego: prosty liczony z danych
   rozkładu, gięty pominięty (ostrzeżenie).
 - Szablon: wbudowany `Resources/default-bbs.xls` (EmbeddedResource) albo plik użytkownika (zapamiętany w
@@ -282,7 +467,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   orientacja dopasowana (U: zagięcie przy krawędzi, dolne ramię na poziomie dołu). Wymiary: CADS_DIM_20 albo własny
   „RC SECTION 1-20” (nigdy „RBCT DIM 20”).
 - Pręty w widoku mają DOKŁADNIE wymiary pręta wzorcowego z rysunku: wymiary BS 8666 są zewnętrzne, więc oś = ramiona − d/2,
-  wymiar poprzeczny U / spinki − d (UB 225: B = 225 − 40 − 35 − 5 − 5 = 140 po zewnętrznej). U-bary (UB 01/02 i UB 03):
+  wymiar poprzeczny U / spinki − d (UB 225: B = 225 − 40 − 35 − 5 − 5 = 140 po zewnętrznej) — od W4e liczy to wspólna geometria
+  (`BarGeometryBuilder.GetLocalPoints` z `ExternalDims`; dawne `AutoRebarEngine.AxisParams` usunięte — liczyło też 22 B − d/2
+  zamiast − d; łuk osi r + d/2). U-bary (UB 01/02 i UB 03):
   dolne ramię na otulinie dołem + 5 mm zapasu, wysokość z pręta. T IN NIB — w spince UB 03, tuż pod jej górnym ramieniem.
 - Otulina + ZAPAS 5 mm (okno: „Zapas góra / dół”) dotyczy WSZYSTKICH prętów: pierwszy pręt góry 35 + 5 = 40 od wierzchu,
   dołu 40 + 5 = 45 od spodu. Pręty jednego kierunku (główne i ramiona UB tego kierunku) leżą na jednej linii i nachodzą
@@ -299,17 +486,38 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - Etap 2 (do zrobienia): kształty prętów w widoku wg kodu kształtu (haki, odgięcia), zakłady, ponowne generowanie przekroju.
 
 ## 5. Proces pracy
-1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD).
+1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
+   plan recenzuje ChatGPT: `scripts/recenzja-gpt.ps1 -Plan <plik>`.
 2. Użytkownik akceptuje plan (przy większych zmianach).
 3. `implementator`: zmiany + `dotnet build` bez błędów (+ `dotnet test`, jeśli dotyczy geometrii).
-4. `planista-recenzent`: recenzja diffu wg tego dokumentu → lista poprawek albo „AKCEPTUJĘ”.
+4. Recenzja diffu przez ChatGPT (`scripts/recenzja-gpt.ps1`, tylko odczyt) wg tego dokumentu →
+   Claude weryfikuje każdą uwagę → lista poprawek albo „AKCEPTUJĘ”.
 5. Pętla poprawek (max 3 rundy), potem instrukcja testów dla użytkownika.
 6. Użytkownik testuje w BricsCAD → commit robi sam.
 
 ## 6. Otwarte tematy
 - Zestawienie: rozkłady bez opisu nie są liczone.
-- Rozkłady ze starych rysunków (1000) skopiowane razem z prętem wskazują na oryginalny pręt.
-- Kształt 44 (pierścień) — odtwarzanie osi z obrysu; kąt 30° w `BarGeometryBuilder` do weryfikacji z BS 8666;
-  brak ostrzeżenia dla B/2 < min. promień gięcia.
-- „Plan C”: pręt jako BlockReference z własnymi gripami (na razie wariant B: grip na końcu obrysu polilinii
+- (Rozwiązane w W2) Rozkłady skopiowane razem z prętem (także stare rekordy 1000) wskazują na kopię pręta — mapa klonowania.
+- REDO po COPY odtwarza kopie bez przepięcia z CommandEnded (ograniczenie BricsCAD, jak wzorzec) — do decyzji (RANO_DECYZJE).
+- Kształty BS 8666 (W4, `docs/PLAN_W4_BS8666.md`): W4a–W4c, W4d (geometria wg rysunków normy: 12, 14, 15, 22, 24, 33, 46,
+  51), W4g (zaokrąglanie 00 do 25 mm), W4e (wymiary zewnętrzne, łuk osi r + d/2 — #13, `RC_REBUILD_BARS`) i W4f (walidacja
+  minimów — ostrzeżenia) i W4h (kąt ramienia skośnego z B albo wpisany) zrobione (staging) — pierścień = 75, 44 = kapelusz.
+  Do zrobienia: W4d-3 (23, 25–29, 31, 32, 34–36, 41, 47, 56, 98 — geometria wg rysunków i tabela `BarDimensionRules`).
+- Build testów dymnych: `dotnet build tools/BrxSmokeTests/BrxSmokeTests.csproj -c Release -p:BuildProjectReferences=false`
+  (bez tej opcji ProjectReference buduje wtyczkę do `bin\` — nadpisuje DLL użytkownika).
+- Poprawki błędów wzorca (`docs/POPRAWKI_WZORCA.md`): S-REG (`tools/RegressionDump/run-regression.ps1`) porównuje zrzut
+  główny i zrzut przypadków poprawek (`RC_REG_FIX_*`, pasy Y = 100000 + 10000·i) z wzorcem; różnice muszą być DOKŁADNIE
+  sumą `tools/RegressionDump/expected-diffs/{polyline,block}/NN-*.txt` (`# bug:` z POPRAWKI_WZORCA, np. 3 albo 3b). Testy W1:
+  `tools/BrxSmokeTests/run-planc-w1.ps1`; W2: `run-planc-w2.ps1`, spike zdarzeń klonowania: `run-planc-w2spike.ps1`.
+- „Plan C” (plan etapów: `docs/PLAN_C.md`): pręt jako BlockReference z własnymi gripami (na razie wariant B: grip na końcu obrysu polilinii
   zmienia odcinek końcowy — `BarGeometryWatcher.TryEndStretch`; ruch w środku pręta jest cofany).
+  Etap 1 (próba go / no-go, `docs/PLAN_C_etap1.md`): zaimplementowany `RC_TEST_BARBLOCK`, czeka na testy T0–T16 w BricsCAD.
+  Etap 2 (`docs/PLAN_C_etap2.md`, warstwa `BarEntity`) — decyzje z 1-POPRAWKI:
+  - ~~Brak numerowanych prętów-bloków dla użytkownika~~ — **zniesione w etapie 3, krok 3f** (`docs/PLAN_C_etap3.md`):
+    `RC_BAR_FORMAT` → Blok, gripy / STRETCH z propagacją (`BarChangePropagator`). `RC_TEST_BARBLOCK` bez opcji `Pozycja`.
+  - `RC_DISTRIBUTION` z pręta-bloku bez numeru (np. `H12-T`) — odmowa `[RC] Pręt testowy bez numeru pozycji.`
+  - Numerowany pręt-blok w testach zwykle z etykietą (od W1c kaskada ERASE działa też bez etykiety — poprawka #2).
+  - AutoRebar od etapu 3 (3b) widzi pręty-bloki jako szablony; w formacie Blok tworzy szablony jako pręty-bloki (3c).
+  Etap 3 (`docs/PLAN_C_etap3.md`) — kroki 3a–3f zrobione (staging). Testy 3f: `tools/BrxSmokeTests/run-planc-f3.ps1`
+  (RC_BAR_FORMAT, grip / STRETCH numerowanego pręta-bloku z kopią → nowy numer, rozkład, etykieta, BBS; UNDO / REDO;
+  pręt gięty; LengthOverridden; AutoRebar Blok = Polilinia).
