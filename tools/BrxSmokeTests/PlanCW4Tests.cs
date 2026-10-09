@@ -131,6 +131,7 @@ namespace BricsCadRc.BrxSmokeTests
         {
             _w2Mode = false;
             _f3Mode = false;
+            _portMode = false;
             _w4Mode = true;
             ResultsFile = "planc-w4-results.txt";
             Prefix = "[RC W4]";

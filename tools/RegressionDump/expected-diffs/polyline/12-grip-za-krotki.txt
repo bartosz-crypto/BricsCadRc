@@ -1,0 +1,29 @@
+# bug: 12
+# opis: K6 (decyzja D4): _.STRETCH końca pręta 00 do 20 mm (< max(2d, 50)) — wzorzec: komunikat „zmiana cofnięta”, a ścieżka 00 przyjmuje A = 20 (rozkład, grot etykiety, obrys); nasz: pręt sprzed STRETCH (A = 3000, obrys, rozkład, etykieta bez zmian). Pręt-blok (block): ApplyEndLength odrzuca bez zapisu — ta sama różnica względem wzorca.
+# zrzut: fix
+<= F12| F12 bar Mark=H12-33 shape=00 A=20.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,330000.00,0.00) rings=1 label=etykieta
+<= F12| F12 dist Mark=H12-33-200 B1 count=5 A=20.00 src=pręt H12-33
+<= F12|   X RC_BAR_ANNOT[8] 1040=20.00
+<= F12|   X RC_BAR_BLOCK[8] 1040=20.00
+<= F12|     |   (0.00,0.00,0.00) -> (20.00,0.00,0.00)
+<= F12|     |   (0.00,200.00,0.00) -> (20.00,200.00,0.00)
+<= F12|     |   (0.00,400.00,0.00) -> (20.00,400.00,0.00)
+<= F12|     |   (0.00,600.00,0.00) -> (20.00,600.00,0.00)
+<= F12|     |   (0.00,800.00,0.00) -> (20.00,800.00,0.00)
+<= F12|   leader 0/0: (20.00,330006.00,0.00) (2950.00,330144.00,0.00)
+<= F12|   X RC_SINGLE_BAR[4] 1040=20.00
+<= F12|   v1 (20.00,330006.00) b=0.0000 w=0.00/0.00
+<= F12|   v2 (20.00,329994.00) b=0.0000 w=0.00/0.00
+=> F12| F12 bar Mark=H12-33 shape=00 A=3000.00 B=0.00 C=0.00 TL=3000.00 ovr=False angle=0.00 mirrored=False axis0=(0.00,330000.00,0.00) rings=1 label=etykieta
+=> F12| F12 dist Mark=H12-33-200 B1 count=5 A=3000.00 src=pręt H12-33
+=> F12|   X RC_BAR_ANNOT[8] 1040=3000.00
+=> F12|   X RC_BAR_BLOCK[8] 1040=3000.00
+=> F12|     |   (0.00,0.00,0.00) -> (3000.00,0.00,0.00)
+=> F12|     |   (0.00,200.00,0.00) -> (3000.00,200.00,0.00)
+=> F12|     |   (0.00,400.00,0.00) -> (3000.00,400.00,0.00)
+=> F12|     |   (0.00,600.00,0.00) -> (3000.00,600.00,0.00)
+=> F12|     |   (0.00,800.00,0.00) -> (3000.00,800.00,0.00)
+=> F12|   leader 0/0: (2950.00,330006.00,0.00) (2950.00,330144.00,0.00)
+=> F12|   X RC_SINGLE_BAR[4] 1040=3000.00
+=> F12|   v1 (3000.00,330006.00) b=0.0000 w=0.00/0.00
+=> F12|   v2 (3000.00,329994.00) b=0.0000 w=0.00/0.00

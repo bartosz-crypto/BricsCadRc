@@ -91,10 +91,10 @@ namespace BricsCadRc.Core
                         var obj = tr.GetObject(id, OpenMode.ForWrite) as DBObject;
                         obj?.Erase();
                     }
-                    catch { /* encja juz usunieta lub zablokowana */ }
+                    catch (System.Exception logEx) { Log.Error("GroupManager.EraseGroupEntities", logEx); /* encja juz usunieta lub zablokowana */ }
                 }
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("GroupManager.EraseGroupEntities", logEx); }
         }
 
         /// <summary>

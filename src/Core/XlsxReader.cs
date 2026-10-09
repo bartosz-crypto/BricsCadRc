@@ -1,3 +1,4 @@
+#nullable disable   // kompilowany też w tests/ (Nullable enable) — bez ostrzeżeń CS86xx
 using System;
 using System.Collections.Generic;
 using System.IO;

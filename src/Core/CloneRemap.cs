@@ -19,9 +19,13 @@ namespace BricsCadRc.Core
     /// | RC_BAR_LINK [1]       | klon pręta                                              | bez zmian                  | ""                      |
     /// | rozkład [11]          | klon opisu (3b)                                         | ""                         | ""                      |
     /// | opis [16]             | klon rozkładu (3b)                                      | bez zmian                  | ""                      |
+    /// | rozkład RC_AUTOREBAR_SLAB [1], wymiar ADD RC_ADD [1] | klon obrysu płyty (Polyline) (K5)  | "" (P4b)                   | ""                      |
     /// „Ten sam rysunek”: COPY/MIRROR/ARRAY albo wklejenie ze schowka skopiowanego w tym rysunku — wtedy wartość „bez zmian”
     /// to wartość obiektu źródłowego (BricsCAD zeruje w schowku odwołania do obiektów spoza schowka; Ctrl+V = COPY, pyt. 4).
     /// Etykieta przypisana więcej niż jednemu prętowi → wszystkim "" (Log.Info).
+    /// Znacznik płyty (K5, decyzje P4 / P4b): COPY płyty z rozkładami → znacznik kopii wskazuje obrys kopii; kopia samych
+    /// rozkładów / wymiarów ADD (płyta nieskopiowana) → "" — przynależność rozstrzyga wtedy test punktu w obrysie
+    /// (AutoRebarEngine.BelongsToCurrentSlab / EraseOldAdd). Wcześniej ponowne generowanie na oryginale kasowało rozkłady kopii.
     ///
     /// Zapis: pręt — BarEntity.Write (BarXData.Write, polilinia i pręt-blok), rozkład — BarBlockEngine.WriteXData,
     /// opis / etykieta / RC_BAR_LINK — punktowa podmiana pola przez XLink.Write (WriteAnnotXData przy pustym [16]
@@ -30,7 +34,7 @@ namespace BricsCadRc.Core
     /// </summary>
     internal static class CloneRemap
     {
-        private enum Kind { None, Bar, Label, Dist, Annot, Link }
+        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim }
 
         private const int BarLabelIdx   = 13;   // RC_SINGLE_BAR [13] LabelHandle
         private const int LabelBarIdx   = 1;    // RC_BAR_LABEL [1]
@@ -38,6 +42,7 @@ namespace BricsCadRc.Core
         private const int DistBarIdx    = 18;   // RC_BAR_BLOCK [18] SourceBarHandle
         private const int AnnotDistIdx  = 16;   // RC_BAR_ANNOT [16] SourceBlockHandle
         private const int LinkBarIdx    = 1;    // RC_BAR_LINK [1]
+        private const int SlabTagIdx    = 1;    // RC_AUTOREBAR_SLAB [1] (rozkład), RC_ADD [1] (wymiar ADD) — obrys płyty
 
         private sealed class Clone
         {
@@ -252,9 +257,28 @@ namespace BricsCadRc.Core
                     }
                     case Kind.Dist:
                         RelinkDist(tr, db, c, e, clones, Resolve, Keep, relinkedPairs);
+                        RelinkSlabTag(tr, db, c, e, AutoRebarEngine.SlabAppName, Resolve);
+                        break;
+                    case Kind.AddDim:
+                        RelinkSlabTag(tr, db, c, e, AutoRebarEngine.XAddDimApp, Resolve);
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        /// K5: znacznik płyty klonu (rozkład RC_AUTOREBAR_SLAB [1], wymiar ADD RC_ADD [1]) → klon obrysu płyty, gdy płytę
+        /// sklonowano w tej komendzie (Cloned / AlreadyClone i cel to Polyline); inaczej "" (P4b: płyta nieskopiowana —
+        /// przynależność z testu punktu w obrysie). Brak znacznika albo pusty — bez zmian. Zapis punktowy XLink.Write.
+        /// </summary>
+        private static void RelinkSlabTag(Transaction tr, Database db, Clone c, Entity e, string app, ResolveFn resolve)
+        {
+            var cur = ReadField(e, app, SlabTagIdx);
+            if (string.IsNullOrEmpty(cur.Hex)) return;
+            long t = resolve(c, cur, out _);
+            bool isSlab = t != 0 && db.TryGetObjectId(new Handle(t), out var sid) && !sid.IsNull && !sid.IsErased
+                          && tr.GetObject(sid, OpenMode.ForRead) is Polyline;
+            SetLinkIfChanged(e, app, SlabTagIdx, cur, isSlab ? t.ToString("X8") : "");
         }
 
         private static void RelinkDist(Transaction tr, Database db, Clone c, Entity e, Dictionary<long, Clone> clones,
@@ -319,6 +343,7 @@ namespace BricsCadRc.Core
                 return Kind.None;
             }
             if (bk == null && Has(e, SingleBarEngine.XLinkAppName)) return Kind.Link;
+            if (e is Dimension && Has(e, AutoRebarEngine.XAddDimApp)) return Kind.AddDim;   // K5: wymiar ADD (znacznik płyty)
             return Kind.None;
         }
 
@@ -352,6 +377,7 @@ namespace BricsCadRc.Core
                 case Kind.Dist:  return BarBlockEngine.XAppName;
                 case Kind.Annot: return AnnotationEngine.AnnotAppName;
                 case Kind.Link:  return SingleBarEngine.XLinkAppName;
+                case Kind.AddDim: return AutoRebarEngine.XAddDimApp;
                 default:         return "";
             }
         }
@@ -359,7 +385,7 @@ namespace BricsCadRc.Core
         /// <summary>Pole [1] rekordu (Mark / powiązanie) jako tekst — kontrola obiektu źródłowego schowka.</summary>
         private static string Field1(Entity e, Kind k)
         {
-            if (k == Kind.Label || k == Kind.Link) return "";   // [1] to powiązanie — wyzerowane w schowku
+            if (k == Kind.Label || k == Kind.Link || k == Kind.AddDim) return "";   // [1] to powiązanie — wyzerowane w schowku
             using (var rb = e?.GetXDataForApplication(AppOf(k)))
             {
                 var v = rb?.AsArray();

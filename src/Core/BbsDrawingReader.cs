@@ -116,8 +116,13 @@ namespace BricsCadRc.Core
                 // Plan W4f: walidacja minimów BS 8666:2020 (tylko ostrzeżenia; ta sama pozycja z tymi samymi wymiarami — raz)
                 try
                 {
+                    // W5: „Brak długości: …” z walidacji pomijany, gdy wiersz ma już ostrzeżenie „brak długości”
+                    // (BuildRow) albo długość nadpisaną (formuła kształtu nie jest wtedy używana) — bez podwójnego komunikatu
+                    bool skipNoLength = (row.Note != null && row.Note.Contains("brak długości"))
+                                     || (bar.LengthOverridden && bar.TotalLength > 0);
                     foreach (var v in BarShapeValidation.Check(row.ShapeCode, bar.ParamValues, bar.Diameter))
                     {
+                        if (skipNoLength && v.StartsWith("Brak długości:", StringComparison.Ordinal)) continue;
                         string msg = $"Pozycja {pos:00} (kształt {row.ShapeCode}): {v}";
                         if (!res.Warnings.Contains(msg)) res.Warnings.Add(msg);
                     }

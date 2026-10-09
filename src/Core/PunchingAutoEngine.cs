@@ -162,7 +162,7 @@ namespace BricsCadRc.Core
                 Label = p.Label, Piles = p.Piles.Count,
                 Hits = p.Piles.Count(r => Find(r.PileId).t != null)
             }).ToList();
-            if (choices.Count == 0) { res.Warnings.Add("Raport nie zawiera płyt (PLOT …)."); return res; }
+            if (choices.Count == 0) { res.Warnings.Add("Raport nie zawiera płyt (PLOT … / GARAGE …)."); return res; }
             int def = choices.IndexOf(choices.OrderByDescending(c => c.Hits).First());
             int k = choosePlot(choices, def);
             if (k < 0 || k >= plots.Count) return res;
@@ -262,7 +262,7 @@ namespace BricsCadRc.Core
                             erase = code0 == "NOTUSED"
                                  || string.Equals(plot0, plotKey, StringComparison.OrdinalIgnoreCase)
                                  || (!string.IsNullOrEmpty(pile0) && plotPiles.Contains(pile0))
-                                 || code0 == "MANUAL-NOTE" && !(plot0 ?? "").StartsWith("PLOT", StringComparison.OrdinalIgnoreCase);
+                                 || code0 == "MANUAL-NOTE" && !PlotLabelRules.IsReportPlotKey(plot0);   // notatka bez płyty (stara wersja)
                         }
                         else if ((ent is MText mt && mt.Layer.Equals(TagLayer, StringComparison.OrdinalIgnoreCase)
                                   && phTagRx.IsMatch(mt.Contents ?? ""))

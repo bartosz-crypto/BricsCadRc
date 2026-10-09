@@ -86,6 +86,11 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 
 ### `src/Commands`
 - `BarCommands` — `RC_BAR`, `RC_DISTRIBUTION`, `RC_EDIT_BAR`, `RC_UPDATE_BAR`, `RC_FIX_LABEL`, `RC_SCHEDULE`.
+  `RC_DISTRIBUTION` (K4, e7b600d, decyzje D5 / P3): gdy na rysunku są inne pręty o identycznym kształcie
+  (`PositionReconciler.SameShape`; polilinie i pręty-bloki, także kopie o tym samym numerze, bez prętów bez numeru) — okno
+  OK / Anuluj z listą numerów (`ConfirmIdenticalBars` / `FindIdenticalBars`, teksty `IdenticalBarText`); w trybie bez okien
+  (`ScriptMode.IsNonInteractive`: `/automation`, `RC_NO_DIALOGS=1`, bit 4 `CMDACTIVE` = skrypt .scr — LISP / makra pokażą
+  okno) komunikat `[RC] Na rysunku jest już pręt identyczny …` w linii poleceń + log. Tylko odczyt.
 - `BarFormatCommands` (Plan C, krok 3f) — `RC_BAR_FORMAT [Polilinia/Blok]`: format NOWYCH prętów (RC_BAR, AutoRebar,
   przebicie), zapis `%APPDATA%\NaSmartRc\barformat.txt` (`BarFormat`; fallback: plik starej wtyczki); **domyślnie Polilinia**
   (rysunki dla starej wtyczki kolegi — zawsze Polilinia). Przy starcie: `[NA Smart RC] Nowe pręty: polilinia|blok`.
@@ -95,18 +100,20 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   grupa UNDO; pomija obrys już bieżący, nierozpoznany (lista w linii poleceń) i pręt testowy; grot etykiety (back-link)
   na nowy obrys. Dane, numery, rozkłady — bez zmian.
 - `EditCommands` — `RC_EDIT_DISTRIBUTION`, `RC_EDIT_LABEL`, `RC_BAR_END`, `RC_SET_REPR_BAR`,
-  `RC_SHOW_ALL_BARS`, `RC_SCALE_ANNOT`.
+  `RC_SHOW_ALL_BARS`, `RC_SCALE_ANNOT`. `RC_BAR_END` (poprawka #10, jak e7b600d) — tylko na rozkładzie (symbol końca
+  jest cechą rozkładu); wskazany pręt (polilinia / pręt-blok) → `[RC] Symbol końca ustawia się na rozkładzie — wskaż rozkład, nie pręt.`
 - `AutoRebarCommands` — `RC_GENERUJ_B1/B2` (Ø10, strefa szablonów `rebar_bottom`),
   `RC_GENERUJ_T1/T2` (Ø12, `rebar_top`). `AutoRebarUBCommands` — `RC_GENERUJ_UB_B1/B2`.
 - `GenerateCommands` (`RC_GENERATE_SLAB`), `PunchingTagCommands`, `CountCommands`, jigi (`AnnotLeaderJig`, `DistributionJig`).
 
 - `MenuCommands` — angielskie komendy wstążki: `RC_GENERATE` (wybór w linii poleceń: Mesh / B1 / B2 / T1 / T2 / UB1 /
-  UB2 / UBNib, ostatni wybór domyślny), `RC_PREPARE_GA`, `RC_GA_TEXTS`, `RC_OPENING_DETAIL`, `RC_MODEL_3D`.
+  UB2 / UBNib / B3 / Add, ostatni wybór domyślny; B3 = B3 ADD w narożnikach wklęsłych — sekcja 4h), `RC_PREPARE_GA`, `RC_GA_TEXTS`, `RC_OPENING_DETAIL`, `RC_MODEL_3D`.
   Stare nazwy (RC_GENERUJ_*, RC_PRZYGOTUJ_GA, RC_GA_TEKSTY, RC_DETAL_OTWORU, RC_SIATKA_3D) zostają jako aliasy.
 
 ### Wstążka (`RibbonBuilder`)
 - Po angielsku (etykiety, podpowiedzi); komunikaty w linii poleceń i dialogi — po polsku.
-- Panele: Setup (Prepare GA; GA Texts, Reinf. Maps) · Reinforcement (Generate, Section, Opening Detail, Punching; 3D Model,
+- Panele: Setup (Prepare GA; Import Analysis; GA Texts — „Reinf. Maps” zastąpione przez Import Analysis, komenda
+  `RC_IMPORT_MAP` zostaje) · Reinforcement (Generate, Section, Opening Detail, Punching; 3D Model,
   Summary Bars) · Bars (New Bar, Distribution; Bar Format) · Edit (kolumny małych przycisków) · Schedule (BBS; Bar Schedule, Count Bars).
 - Ikony: `Resources/Icons/<nazwa>_32.png` i `_16.png` (EmbeddedResource `BricsCadRc.Icons.*`), generowane skryptem
   (proste wektorowe, paleta: pomarańczowy = pręty, niebieski = góra/akcje, szary = beton).
@@ -187,7 +194,9 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   → wyjątek = „brak długości”). W4c: **44 = „kapelusz”**, **75 = pierścień** (A = średnica, B = zakład), 77 (helisa)
   nieobsługiwany; picker: 00 11 13 15 21 33 44 46 51 63 75. W4d: `SlopeAngle` / `DefaultAngleWarning` / `IsAngleParam`,
   `DisplayOrder`. **W4g: `CalculateTotalLength` zaokrągla także prosty 00 w górę do 25 mm** (kl. 7.2; A bez zmian; tolerancja
-  1e-9 kroku na szum z obrysu).
+  1e-9 kroku na szum z obrysu — **W5: dla wszystkich kodów**, np. 12 H12 115/920/920 = 625, nie 650). **W5:** 27 / 28 =
+  A + B + (C) − 0.5r − d (Table 5; dawniej −2d); długość ≤ 0 / NaN / nieskończona → `InvalidBarLengthException`
+  (= „brak długości” u wywołujących, `BarShapeValidation` — ostrzeżenie „Brak długości: …”).
 - `BarShapeValidation` (W4f, bez Teigha) — `Check(code, pv, d)`: wyłącznie OSTRZEŻENIA BS 8666:2020 — wymiar zerowy (kl. 8.1.4,
   poza opcjonalnymi), brak wymiarów kąta, wolne końce ≥ P (Table 2 — kolumna wg kąta zagięcia końcowego: 51 / 63 z hakami 90°
   „links”, pozostałe — także 47 z hakami 180° — „general bend”), 12 / 13 / 22 / 33 wg Table 5
@@ -197,12 +206,21 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   D ≥ 2d), co 5 mm (kl. 7.2), krótszy bok obrysu ≤ 2750 i długość > 12 m (kl. 7.9). Dialogi RC_BAR / RC_EDIT_BAR i picker —
   TextBlock „Uwagi BS 8666:2020” (OK nie blokowane); RC_BBS — ostrzeżenia „Pozycja NN (kształt KK): …” (bez duplikatów). `BarShapePreviewRenderer`: kształty zamknięte / zachodzące wg normy 33 51 52 56 63 64 75
   (Polygon tylko, gdy oś wraca do startu).
-- `BarScheduleEngine`, `BbsCounter` — zestawienie (dialog + CSV). Błąd długości pojedynczej pozycji (W4b) → wiersz
+- `BarScheduleEngine`, `BbsCounter` — zestawienie (dialog + CSV). W5: długość cięcia z jednej funkcji
+  `BarLengthRules.CuttingLength` (zestawienie i tonaż RC_COUNT_BBS — masa z długości cięcia, nie z A). Błąd długości pojedynczej pozycji (W4b) → wiersz
   „brak długości” (`CuttingLength` = NaN, masa 0) + ostrzeżenie `[RC_SCHEDULE] UWAGA`, reszta zestawienia dalej. `BbsDrawingReader`, `BbsXlsGenerator`, `BbsModels`,
   `BbsSettings` — BBS .xls na szablonie Speedeck (`RC_BBS`, sekcja 4e).
 - `PunchingTagEngine` — tagi przebicia (numery 501+).
+- Holbrook (POPRAWKI_WZORCA 24–26, czyste, testy jednostkowe): `MTextParagraphs` — akapity `MText.Contents` (etykieta płyty z nagłówka map = pierwszy akapit; `MText.Text` w BricsCAD skleja akapity), `OutlineAxisRules` — osiowość obrysu płyty z tolerancją **4 mm** (decyzja użytkownika 2026-10-09), AutoRebar liczy na kopii wyprostowanej (`GeometryHelper.SquaredOrSame`; obrys idealny — te same wierzchołki, obrys w rysunku bez zmian); `NibDetector.Detect` i replika `NibLoopBuilder.LooksLikeNib` prostują obie polilinie nibu tak samo przed analizą (współrzędne nibu wyprostowane), RC_SECTION — też; osiowość = odchyłka krawędzi ≤ 4 mm ORAZ rozrzut wspólnej współrzędnej grupy wierzchołków ≤ 4 mm, `BbsCountRules` — RC_COUNT_BBS z wierszy RC_BBS (`BbsDrawingReader.ReadBars`) + stare RC_BAR.
+- `PlotLabelRules` (POPRAWKI_WZORCA 22, bez Teigha, testy `PlotLabelRulesTests`, `PunchingReportParseTests`) — nazwy płyt
+  „PLOT …” / „GARAGE …”: opis w GA (`IsPlotLabel`), nagłówek raportu przebicia (`TryParseReportHeader`; PLOT — dawna logika 1:1),
+  klucz płyty RC_PH (`IsReportPlotKey`), mapa ↔ płyta w AutoRebar Add (`MapPlotMatches`, POPRAWKI 28: prefiks + granica — następny znak nie cyfra ani „-”). `PunchingReport.Parse` (wiersze arkusza → płyty) wydzielone z `Read`.
+- `NibLoopBuilder` (POPRAWKI_WZORCA 23, bez Teigha, testy `NibLoopBuilderTests`) — automat domykania nibu: otwarte kawałki
+  linii uskoku + obrys → zamknięta pętla (sekcja 4 „Nib”); `LooksLikeNib` = replika kryteriów `NibDetector` (zmiana kryteriów
+  w jednym miejscu → w obu). `NibAutoClose` — zapis (Teigha): `TryClose` (Prepare GA), `EnsureForCommand` (komendy).
 - `PositionCounter` — **jedyny** przydział numerów pozycji. `PositionReconciler` — numer po zmianie wymiarów.
 - `XLink` — powiązania handle. `NumberParser`, `GeometryHelper`, `LayerManager`, `Log`, `DocumentWatch`.
+  `Log.Error` (K2, 96809d3): ten sam błąd (miejsce + typ wyjątku) najwyżej raz na 60 s. `ScriptMode` — tryb bez okien (K4).
 
 ### `src/Core` — reakcje na edycję (event-driven)
 - `DocumentWatch` — rejestruje handlery **per dokument** (każdy otwarty rysunek). `IsUndoCommand`.
@@ -210,7 +228,7 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   Po zmianie A (ścieżka 00, RC_UPDATE_BAR) TotalLength wg kształtu (`BarLengthRules.TotalLengthFor`); długość nadpisana
   (`LengthOverridden`) zostaje + ostrzeżenie `[RC AUTO] … ręcznie nadpisaną długość całkowitą …` (poprawka #7).
   `Suppress()` (IDisposable, zawsze w `using`) wycisza watcher na czas zmian pręta przez komendę wtyczki — `BarEditApply.Apply`
-  (RC_EDIT_BAR), RC_UPDATE_BAR, RC_BAR_END; `IgnoreThisCommand(id)` pomija pręt w CommandEnded także, gdy trafił do kolejki
+  (RC_EDIT_BAR), RC_UPDATE_BAR; `IgnoreThisCommand(id)` pomija pręt w CommandEnded także, gdy trafił do kolejki
   wcześniej w tej samej komendzie (poprawka #1: wzorzec doliczał zmianę długości drugi raz). Grip/STRETCH użytkownika — bez zmian.
 - `CloneMap` (W2, poprawki #3, #6, 3b; = 3e3 z PLAN_C_etap3) — zapisuje paczki klonowania z `BeginDeepCloneTranslation`
   / `InsertMappingAvailable` (konteksty Copy, Insert, InsertCopy; deduplikacja; `DeepCloneAborted` odrzuca ostatnią) —
@@ -228,7 +246,10 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 - `CloneRemap` — przepięcie powiązań klonów w CommandEnded wg reguł planu 4.3 (docs/PLAN_POPRAWKI_W1_W2.md):
   Cloned / AlreadyClone / NotCloned; pręt [13] tylko para dwustronna z etykietą (#6), etykieta dla > 1 pręta → nikomu;
   rozkład [18] → klon pręta (#3), [11] / opis [16] → klony (3b); RC_BAR_LINK [1] → klon pręta; „ten sam rysunek” (COPY,
-  wklejenie ze schowka skopiowanego w tym rysunku = COPY) — wartość obiektu źródłowego; inny rysunek — "". Klony w definicjach
+  wklejenie ze schowka skopiowanego w tym rysunku = COPY) — wartość obiektu źródłowego; inny rysunek — "". **Znacznik płyty**
+  (K5, poprawka 3c): `RC_AUTOREBAR_SLAB` [1] rozkładu i `RC_ADD` [1] wymiaru ADD → klon obrysu płyty, gdy płytę skopiowano
+  razem (cel = Polyline); płyta nieskopiowana (COPY samych rozkładów / wymiarów) → "" (decyzja P4b) — przynależność
+  rozstrzyga test punktu w obrysie. Klony w definicjach
   bloków pomijane. Zapis: pręt — `BarEntity.Write`, rozkład — `BarBlockEngine.WriteXData`, opis / etykieta / RC_BAR_LINK —
   punktowa podmiana pola `XLink.Write`. Pary przepięte po komendach kopiowania — `BarCopyWatcher.NormalizeAndRebuildPair`
   (odbicie → skala +1, przebudowa linii rozkładu, jak wzorzec).
@@ -236,19 +257,25 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   zagnieżdżona — nic, paczki czekają na komendę nadrzędną; zagnieżdżona komenda kopiowania przenosi kwalifikację „kopiowanie”
   na komendę nadrzędną): 1) UNDO/REDO → `CloneMap.Forget`; 2) `CloneMap.Take`;
   3) komendy kopiowania (COPY, MIRROR, ARRAY / -ARRAY, PASTE*) → unikalne BTR (rozkłady, opisy, pręty-bloki `*U`);
-  4) `CloneRemap.Apply` (każda komenda, która sklonowała obiekty); 5)–6) heurystyki wzorca tylko dla obiektów spoza mapy.
+  4) `CloneRemap.Apply` (każda komenda, która sklonowała obiekty); 5)–6) heurystyki wzorca tylko dla obiektów spoza mapy;
+  7) komendy kopiowania: kopia pręta (polilinia / pręt-blok) o tym samym numerze i kształcie co pręt spoza kopii →
+  komunikat `[RC] Kopia pręta … ten sam numer pozycji …` (K4, e7b600d; tylko odczyt, bez prętów bez numeru, usunięte
+  pomijane; `LastSameNumberCopyMessages` — testy).
   Ograniczenie BricsCAD: REDO po COPY nie ponawia zmian z CommandEnded na klonach (przepięcie, unikalne BTR) — jak we wzorcu.
 - `AnnotMoveOverrule` — gripy rozkładów/opisów (Grip/Transform/Erase overrule). Kaskada usuwania pręta
   (`BarEraseCascade.Run`: etykieta z back-linkiem, rozkłady wskazujące na pręt i ich opisy) — wołana przez
   `BarPolylineEraseOverrule` (polilinia) i `SingleBarBlockEraseOverrule` (pręt-blok v2; nie mylić z `BarBlockEraseOverrule`
   = usunięcie rozkładu). Pręt bez `LabelHandle` też usuwa swoje rozkłady i opisy (poprawka #2; wzorzec je zostawiał);
-  etykieta — tylko z back-linkiem. EXPLODE = ERASE. W2: rozkład sklonowany w tej komendzie razem ze swoim prętem nie jest
+  etykieta — tylko z back-linkiem; opis rozkładu (w kaskadzie pręta i przy usunięciu rozkładu) — tylko gdy back-link [16]
+  opisu jest pusty albo wskazuje TEN rozkład (`BarEraseCascade.AnnotBelongsTo`, e7b600d; kopia rozkładu bez opisu nie
+  kasuje opisu oryginału; opis-klon z paczki `TryResolvePending` — bez sprawdzania, ma jeszcze [16] oryginału).
+  Usunięcie pręta przez UNDO / REDO (`IsUndoing`) — bez kaskady (P2). EXPLODE = ERASE. W2: rozkład sklonowany w tej komendzie razem ze swoim prętem nie jest
   usuwany z kaskadą źródła (`CloneMap.IsPendingCloneRetarget`); usunięcie rozkładu-klonu w trakcie komendy (np. `_U` w COPY)
   tłumaczy `[11]` przez paczkę (`TryResolvePending` — opis oryginału zostaje); usunięcie przez UNDO (`IsUndoing`) — bez kaskady
   rozkład → opis (powiązane obiekty odtwarza UNDO).
 - `SingleBarGripOverrule` (Plan C; etap 1 — próba, krok 3f — dla użytkownika) — gripy KAŻDEGO pręta-bloku (BlockReference
   z `RC_SINGLE_BAR` [14]=2): [0] początek osi = przesunięcie; kształt 00 / 99 — także [1] koniec osi = długość wzdłuż osi
-  (`SingleBarBlock.ApplyEndLength`: co 5 mm, minimum max(2d, 50) → zmiana cofnięta, TotalLength wg kształtu, nadpisana —
+  (`SingleBarBlock.ApplyEndLength`: co 5 mm, minimum max(2d, 50) → zmiana cofnięta (pręt bez zmian), TotalLength wg kształtu, nadpisana —
   bez zmian + ostrzeżenie `[RC AUTO]`) i STRETCH oknem (koniec / początek / całość). Kształty gięte: tylko grip [0] i STRETCH
   całości; częściowy STRETCH odrzucony z komunikatem (długość przez RC_EDIT_BAR). W dragu tylko podgląd (transient, kształt
   z danych pręta), ZERO zapisów; zapis w `CommandEnded` (`ApplyLengthEdit`, w `_applying`, `LockDocument`), gdy nie trwa inna
@@ -278,6 +305,11 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   (koniec przezroczystego 'ZOOM go nie czyści); CommandFailed czyści stan komendy jak anulowanie.
 - **GripOverrule na natywnej `Polyline` nie działa w BricsCAD** → pręt nie ma własnych gripów.
   Stretch pojedynczego gripu psuje obrys → jest cofany; długość zmienia STRETCH oknem lub `RC_EDIT_BAR`.
+  Grip / STRETCH końca pręta-polilinii skracający odcinek poniżej max(2d, 50) (poprawka #12, decyzja D4): zmiana odrzucona,
+  pręt wraca do stanu sprzed przeciągnięcia — wierzchołki i wybrzuszenia w OCS zapamiętane w `ObjectOpenedForModify`
+  (`_preOutlineOcs`), przywracane w CommandEnded (ta sama grupa UNDO), bez przesuwania etykiety i bez zmiany długości
+  (wzorzec pisał „zmiana cofnięta”, a ścieżka 00 przyjmowała krótką długość). Długość z gripa polilinii bez zaokrąglania
+  (jak wzorzec, decyzja P1; 5 mm — tylko pręt-blok).
 - Pręt jako BlockReference („Plan C”, etap 3) — format Blok do wyboru (`RC_BAR_FORMAT`), domyślnie Polilinia.
   Pręt-blok ma własne gripy (`SingleBarGripOverrule`); pręt-polilinia — jak wyżej.
 - **Stara wtyczka kolegi gubi ogon RC_SINGLE_BAR [14+]**: kapelusz 44 staje się pierścieniem (W4c), a pręt traci znacznik
@@ -295,6 +327,9 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 
 ## 4. AutoRebar — zasady (wymagania użytkownika)
 Ogólne:
+- **B3 ADD (decyzja użytkownika D1, 2026-10-09; f854684):** w każdym narożniku wklęsłym płyty i w 4 narożnikach otworu
+  (detal) 2 H10 co 100, L = 1250, opis „2 H10-nn-100 B3 ADD” — szczegóły w sekcji 4h. Zmiana wyniku względem wzorca
+  aba0ed1 przyjęta (expected-diffs 14).
 - Program **sam tworzy pręty-szablony** (strefa szablonów obok płyty: proste od lewej, UB od prawej). Etykieta szablonu UB:
   tekst nad środkiem rzeczywistego obrysu, grot na lewym ramieniu (jak wzorzec; W4e runda 1).
   Nie wymagamy „podkładki” rysowanej ręcznie.
@@ -333,11 +368,28 @@ Geometria:
 - Obrys → pasy (`DecomposeStrips`, scanline po rzeczywistym wielokącie; wiele przęseł; ukośne
   krawędzie w pasmach 1000 mm). Pierwszy pręt: otulina przy krawędzi zewnętrznej, s/2 przy wewnętrznej.
 - Rozkłady znakowane obrysem płyty (`RC_AUTOREBAR_SLAB`) — ponowne generowanie usuwa tylko rozkłady
-  tej płyty i tej warstwy.
+  tej płyty i tej warstwy. COPY płyty z rozkładami: znacznik kopii → obrys kopii (`CloneRemap`, K5 — wcześniej kopia
+  wskazywała oryginał i ponowne generowanie na oryginale kasowało rozkłady kopii); COPY samych rozkładów → znacznik "" (test
+  punktu w obrysie). Tak samo wymiary ADD (`RC_ADD` [1], odczyt `XLink.Read`). Znacznik rozstrzyga też `CollectBottom`
+  (rzut dolny dla góry T1/T2) i RC_SECTION (`AutoRebarEngine.Section`): po COPY płyty rozkłady kopii należą do kopii —
+  rzut dolny / przekrój oryginału ich nie liczy, kopii — liczy (wzorzec przypisywał je oryginałowi).
 
 Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) — `NibDetector`:
 - Wykrycie: druga zamknięta polilinia wewnątrz obrysu, równoległa do krawędzi w odległości 50–255 mm na jakiejś
   długości (linia uskoku); gdzie nibu nie ma, pokrywa się z obrysem. Można wskazać obrys albo linię uskoku.
+- **Automat domykania (POPRAWKI_WZORCA 23, decyzje użytkownika 2026-10-09):** gdy `NibDetector.Detect` nie znajduje
+  zamkniętego nibu (bramka — zamknięty nib bit w bit bez zmian), OTWARTA linia uskoku (polilinie / linie / łuki na warstwie
+  obrysu, końce na obrysie, np. z GA) jest domykana krawędzią obrysu: zamknięta polilinia na warstwie obrysu (płyta jak w GA,
+  bez offsetu; zawinięcia nibu na sąsiedniej krawędzi — dosłownie z GA), użyte kawałki usunięte. `NibLoopBuilder`: kawałek
+  w pasie nibu = WSZYSTKIE próbki (wierzchołki + środki odcinków) ≤ 256 mm od obrysu i w obrysie (albo ≤ 4 mm od niego);
+  efektywnie zamknięte (progi drzwi), leżące na obrysie i dalsze (linie strefy 760 mm) — pomijane; przerwa ≤ **4 mm**
+  (między kawałkami: przecięcie prostych / środek; do obrysu: przecięcie z bokiem / rzut); rozgałęzienie, przerwa > 4 mm,
+  koniec na łuku obrysu, przecięcie obrysu, zachodzące linie, pas > 0,4 pola obrysu, linia poza 50–255 mm → komunikat
+  „Nib: nie domknięto — … Płyta bez nibu.”; 0 kawałków w pasie — cisza. Zapis tylko gdy `LooksLikeNib`; po zapisie `Detect`
+  ≠ null, inaczej wycofanie (polilinia usunięta, kawałki przywrócone, `Log.Error`). Wołane: Prepare GA (`GaImportEngine.CloneInto`,
+  PRZED `JoinLoops`), AutoRebar Mesh (oba rzuty, po obu wskazaniach) / B1 / B2 / T1 / T2 / UB1 / UB2 / UBNib (`[AutoRebar] Nib: …`;
+  obrys rysowany — pomijany), RC_SECTION (`[RC SECTION] Nib: …`); B3 i Add — nie. Zapis w grupie UNDO komendy (Ctrl+Z cofa);
+  domknięcie zostaje, gdy dalsze generowanie się nie uda. Ograniczenie: styk „T” (koniec kawałka w środku boku innego) — komunikat o przerwie.
 - **Dół (B1/B2) do krawędzi zewnętrznej** — pręty dolne mieszczą się w nibie.
 - **Góra (T1/T2) do linii uskoku** — pręty górne nie mieszczą się w nibie, więc liczba prętów góry na krawędzi
   wynika z obrysu uskoku (np. nib z obu stron: dół 31 → góra 29).
@@ -373,7 +425,10 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 ## 4b. Przebicie z raportu (RC_PUNCHING_AUTO)
 - Źródło: report_punching.xlsx, arkusz „Punching EC2” (wartości, nie formuły); kolumny po nagłówkach.
   Czytnik xlsx własny (`XlsxReader`, zip + XML) — bez zewnętrznych pakietów.
-- Płytę (PLOT) wybiera użytkownik z listy (podświetlona ta z największą liczbą trafień). Bez wskazywania obrysu:
+- Płytę (PLOT / GARAGE) wybiera użytkownik z listy (podświetlona ta z największą liczbą trafień). Nagłówki płyt w raporcie:
+  „PLOT … (n piles)” i „GARAGE … (n piles)” (`PlotLabelRules.TryParseReportHeader`; POPRAWKI_WZORCA 22 — dawniej pale garaży
+  dopisywały się do poprzedniej płyty); „PLOTS 3-4” nadal nierozpoznane. Sprzątanie notatek MANUAL-NOTE: notatka innej płyty
+  „PLOT …” / „GARAGE …” zostaje, notatka bez płyty (stara wersja) — usuwana (`IsReportPlotKey`). Bez wskazywania obrysu:
   pal = koło SD-Pile z podpisem obok (≤ max(8R, 1500)) w całym modelu; dokładne ID na dowolnej warstwie,
   znormalizowane (617 ≡ P617) tylko na SD-Pile Text*. XData `RC_PH` [kod, pal, PLOT].
 - PH = 3·(H12@200 | H16@200 | H16@100) + (Internal | Edge | Corner) + 1.
@@ -390,16 +445,30 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   przez użytkownika; podgląd ramek w jigu; punkt = lewy górny róg ramki T1. NIE na obrys płyty.
 - XData RC_MAP [PLOT, mapa]; ponowny import tej samej płyty zastępuje poprzedni.
 
+## 4c'. Import analizy razem (RC_IMPORT_ANALYSIS, wstążka „Import Analysis”)
+- Jedno okno z dwoma plikami: mapy (…reinf_maps.dxf/dwg) i raport przebicia (report_punching.xlsx), każdy z polem
+  wyboru (np. same mapy); po wskazaniu jednego drugi szukany w tym samym folderze. Odznaczony plik nie kasuje
+  zapamiętanego. Na wstążce zastępuje przycisk „Reinf. Maps” (komenda RC_IMPORT_MAP zostaje).
+- Mapy wklejane od razu (`MapImportCommands.RunImport`: wybór płyty, ramki). Pliki i płyta zapisywane w rysunku
+  (`AnalysisStore`, NOD „RC_ANALYSIS”: [mapy, raport, PLOT]).
+- RC_PUNCHING_AUTO (Punching) tylko detaluje: gdy w rysunku jest raport z Import Analysis — bez pytania o plik
+  i o płytę (`RunPunching` z zapamiętaną płytą); inaczej jak dawniej wybór xlsx. RC_IMPORT_MAP działa dalej osobno.
+
 ## 4d. Przygotowanie rysunku RC z GA (RC_PRZYGOTUJ_GA)
-- W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” na SD-Text wewnątrz
-  zamkniętego obrysu SD-PILED-RAFT; obrys zewnętrzny = największy zawierający opis).
+- W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” albo „GARAGE n…” na SD-Text
+  wewnątrz zamkniętego obrysu SD-PILED-RAFT — `PlotLabelRules.IsPlotLabel`; obrys zewnętrzny = największy zawierający opis).
+  Lista: najpierw PLOT, potem GARAGE (domyślnie pierwszy PLOT). Garaż: TITLE_1 / DRAWING_NUMBER z layoutu GA (GA3215 → RC3215);
+  garaż bez DRAWING_NUMBER nie ma numeru zapasowego (`GaTitleEngine` szuka „PLOT n” w TITLE_1).
 - Kopiowane z obszaru obrys + 1500 mm: SD-PILED-RAFT (obrys, linia uskoku, door threshold, linie stopni),
   koła SD-Pile, teksty SD-Text **bez „NIB TOC=…”** (opisy belek itp. zostają); podpisy pali (SD-Pile Text*)
   **tylko na rzucie górnym**. Wymiary, architektura, poziomy, kanalizacja — nie.
 - Opis płyty przebudowany: nr plotu, SSL, grubość („225mm THK SLAB”, bez „ON”); ramka dopasowana (+70 mm).
 - Rzut dolny nad tytułem „…BOTTOM LAYER” (środek, 2400 mm nad tytułem), rzut górny 7500 mm obok, tytuł „…TOP LAYER”
   pod nim; ramki rebar_bottom / rebar_top 7500 mm po bokach (przesuwane razem z zawartością).
-- Otwarte kawałki obrysu/uskoku tworzące pętlę łączone w zamkniętą polilinię (wykrywanie nibu).
+- Nib: NAJPIERW automat domykania otwartej linii uskoku krawędzią obrysu (`NibAutoClose.TryClose`, sekcja 4 „Nib”; nowa
+  polilinia z tagiem RC_GA — ponowne wywołanie ją zastępuje; „nib domknięty: n” w komunikacie, problemy z „(rzut dolny/górny)”),
+  POTEM otwarte kawałki tworzące pętlę łączone w zamkniętą polilinię (`JoinLoops`, tol 1 mm, bez łuków) — kolejność ważna:
+  `JoinLoops` sklejał linię uskoku z linią strefy 760 mm w zamknięty pas (PLOT 319).
 - XData RC_GA [PLOT, B|T] — ponowne wywołanie zastępuje płytę.
 - Teksty z layoutów GA (`GaTitleEngine` / `GaNotesText`, jak ASD-GAI) — na końcu RC_PRZYGOTUJ_GA (podgląd, „Pomiń”)
   i osobno `RC_GA_TEKSTY`: A1-BL CLIENT_1..3, PROJ_1..3, APPROVED 1:1; TITLE_1 = prefiks GA przed „GENERAL ARRANGEMENT”
@@ -485,6 +554,17 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   kropkami (kolejne rzędy przy kolizji), pręty w widoku — numer ze strzałką. Znaczniki przekroju na wszystkich rzutach płyty.
 - Etap 2 (do zrobienia): kształty prętów w widoku wg kodu kształtu (haki, odgięcia), zakłady, ponowne generowanie przekroju.
 
+## 4h. B3 ADD — pręty ukośne w narożnikach wklęsłych (AutoRebarEngine.B3.cs)
+- Wymaganie użytkownika: w każdym narożniku wklęsłym (kąt wewnętrzny > 180°) **2 H10 co 100, L = 1250**, opis
+  „2 H10-nn-100 B3 ADD” (kod warstwy B3, warstwa CAD jak B1, cyan jak każde ADD).
+- Pręty prostopadle do dwusiecznej narożnika, wyśrodkowane na niej; pierwszy 75 mm od wierzchołka (B3CornerOffset),
+  drugi 100 dalej w płytę. Rozkład obrócony (Angle w (-90°, 90°], Pt1 = początek pierwszego pręta).
+- Plan: narożniki wklęsłe obrysu dolnego (przy nibie — obrys zewnętrzny); RC_GENERATE → B3 (RC_GENERUJ_B3) i na końcu Mesh.
+  Ponowne wywołanie zastępuje B3 ADD płyty. Opis w pustce za narożnikiem: linia rozkładu przedłużona przez wierzchołek,
+  ramię pionowe (poziome, gdy dwusieczna bez składowej pionowej). Pręt wychodzący poza płytę — komunikat.
+- Detal otworu: 4 narożniki otworu (dwusieczna 45°, na zewnątrz otworu); opis od strony dalszego pręta, ramię pionowe za
+  ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
    plan recenzuje ChatGPT: `scripts/recenzja-gpt.ps1 -Plan <plik>`.
@@ -509,6 +589,8 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   główny i zrzut przypadków poprawek (`RC_REG_FIX_*`, pasy Y = 100000 + 10000·i) z wzorcem; różnice muszą być DOKŁADNIE
   sumą `tools/RegressionDump/expected-diffs/{polyline,block}/NN-*.txt` (`# bug:` z POPRAWKI_WZORCA, np. 3 albo 3b). Testy W1:
   `tools/BrxSmokeTests/run-planc-w1.ps1`; W2: `run-planc-w2.ps1`, spike zdarzeń klonowania: `run-planc-w2spike.ps1`.
+  Przeniesienie zmian kolegi (`docs/PLAN_PRZENIESIENIA_2026-10-09.md`, K3–K6: P16, IDENT, SCRIPT, COPYMSG, P12, P3c):
+  `run-planc-port.ps1`; przypadki S-REG F12 / F3g / F14 (expected-diffs 12, 03c, 14, 08d).
 - „Plan C” (plan etapów: `docs/PLAN_C.md`): pręt jako BlockReference z własnymi gripami (na razie wariant B: grip na końcu obrysu polilinii
   zmienia odcinek końcowy — `BarGeometryWatcher.TryEndStretch`; ruch w środku pręta jest cofany).
   Etap 1 (próba go / no-go, `docs/PLAN_C_etap1.md`): zaimplementowany `RC_TEST_BARBLOCK`, czeka na testy T0–T16 w BricsCAD.

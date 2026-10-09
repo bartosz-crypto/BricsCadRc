@@ -7,11 +7,14 @@ opisy, zestawienie BS 8666, automatyczne zbrojenie płyt (AutoRebar), tagi przeb
 z sekcji „Zasady AutoRebar” i „Numeracja” są wymaganiami użytkownika — nie wolno ich łamać ani
 „upraszczać” bez jego zgody.
 
-**Wzorzec:** wersja kolegi z GitHuba (`origin/main`, commit `aba0ed1`) wyznacza zasady inżynierskie i logikę.
+**Wzorzec:** wersja kolegi z GitHuba (`origin/main`, commit `aba0ed1`) + B3 ADD (`f854684`, decyzja D1) wyznacza zasady
+inżynierskie i logikę. S-REG nadal porównuje z DLL `aba0ed1` — B3 ADD jest tam oczekiwaną różnicą (expected-diffs 14).
 Trwa refaktor „Plan C” ([docs/PLAN_C.md](docs/PLAN_C.md)): pręt jako mądry obiekt (blok z gripami).
 Zmieniamy typ obiektów, nie wyniki — różnica wyniku na rysunku względem wzorca wymaga zgody użytkownika.
 **Wyjątek (decyzja użytkownika 2026-10-09):** błędy wzorca opisane w `docs/Uwagi_dla_kolegi_BricsCadRc_2026-10-08.docx`
-poprawiamy u nas (lista i status: `docs/POPRAWKI_WZORCA.md`). Tylko te różnice są dozwolone; każda inna = BLOKER.
+poprawiamy u nas (lista i status: `docs/POPRAWKI_WZORCA.md`). Dozwolone są też zmiany przyjęte decyzją użytkownika
+przy przenoszeniu zmian kolegi (D1–D5, P1–P4 w `docs/ANALIZA_ZMIAN_KOLEGI_2026-10-09.md` i
+`docs/PLAN_PRZENIESIENIA_2026-10-09.md`, np. B3 ADD, #12, 3c). Tylko te różnice są dozwolone; każda inna = BLOKER.
 S-REG porównuje z wzorcem z listą oczekiwanych różnic (`tools/RegressionDump/expected-diffs`).
 
 ## Komunikacja

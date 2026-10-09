@@ -36,6 +36,14 @@
     <Compile Include="..\src\Core\BarFrameRules.cs" />
     <Compile Include="..\src\Core\BarDimensionRules.cs" />
     <Compile Include="..\src\Core\BarShapeValidation.cs" />
+    <Compile Include="..\src\Core\IdenticalBarText.cs" />
+    <Compile Include="..\src\Core\PlotLabelRules.cs" />
+    <Compile Include="..\src\Core\PunchingReport.cs" />
+    <Compile Include="..\src\Core\XlsxReader.cs" />
+    <Compile Include="..\src\Core\NibLoopBuilder.cs" />
+    <Compile Include="..\src\Core\MTextParagraphs.cs" />
+    <Compile Include="..\src\Core\OutlineAxisRules.cs" />
+    <Compile Include="..\src\Core\BbsCountRules.cs" />
   </ItemGroup>
 
 </Project>

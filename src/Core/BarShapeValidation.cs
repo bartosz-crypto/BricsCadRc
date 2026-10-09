@@ -12,7 +12,8 @@ namespace BricsCadRc.Core
     /// Plan W4f (docs/PLAN_W4_BS8666.md) — walidacja wymiarów pręta wg BS 8666:2020: wyłącznie OSTRZEŻENIA (dialog RC_BAR /
     /// RC_EDIT_BAR / picker — TextBlock, OK nie blokowane; RC_BBS — lista ostrzeżeń). Czysta logika bez API BricsCAD.
     /// Reguły (wymiary zewnętrzne jak w XData, pola po nazwie parametru kształtu):
-    ///  - kl. 8.1.4: żaden wymiar nie może być zerowy (poza wymiarami opcjonalnymi — kąt W4d, C 51 / 63); 12: R = 0 → r min;
+    ///  - kl. 8.1.4: żaden wymiar nie może być zerowy (poza wymiarami opcjonalnymi — kąt W4d, C 51 / 63); 12: R = 0 → rysunek
+    ///    z r min, długość wzorem z R = 0 (W5: komunikat zgodny z obliczeniem);
     ///  - brakujące wymiary kąta (BarShape.DefaultAngleWarning);
     ///  - Table 5: wolne końce ≥ P (Table 2 — kolumna wg kąta zagięcia końcowego: strzemiona z zagięciem końcowym &lt; 150°
     ///    (51, 63 — haki 90°) — „links”; pozostałe, także 47 z hakami 180° — „general bend”), 12: A, B ≥ (R + d) + max(5d, 90),
@@ -23,7 +24,8 @@ namespace BricsCadRc.Core
     ///  - Table 4 (kl. 8.4): wymiar między dwoma zagięciami ≥ X = 10d (min. 75) dla d ≤ 16, 13d dla d &gt; 16 —
     ///    21 B, 23 B, 44 B / C / D, 46 C, 51 A / B, 63 A / B;
     ///  - kl. 8.2.4 (korby — 26, 46): skos B ≥ 10d (min. 75) / 13d, przesunięcie (46: D) ≥ 2d;
-    ///  - kl. 7.2: wymiary co 5 mm; kl. 7.9: krótszy bok prostokąta obrysu ≤ 2750 mm, długość &gt; 12 m — uwaga.
+    ///  - kl. 7.2: wymiary co 5 mm; kl. 7.9: krótszy bok prostokąta obrysu ≤ 2750 mm, długość &gt; 12 m — uwaga;
+    ///  - W5: długość wg wzoru ≤ 0 / nieokreślona (InvalidBarLengthException) — uwaga (BBS: „brak długości”).
     /// Kształty z geometrią do W4d-3 (25–29, 31, 32, 34–36, 41, 56, 64, 98) — tylko reguły P i ogólne.
     /// </summary>
     public static class BarShapeValidation
@@ -72,7 +74,9 @@ namespace BricsCadRc.Core
                 double v = i < pv.Length ? pv[i] : 0.0;
                 if (v > 0) continue;
                 if (code == "12" && n == "R")
-                    w.Add("R = 0 — przyjęto minimalny promień gięcia r = " + F(BarShape.MinBendRadius(d)) + " mm (BS 8666:2020 kl. 8.1.4: podaj R).");
+                    // W5: długość liczona wzorem z R = 0 (A + B − 1.2d), tylko rysunek ma minimalny promień — komunikat jak obliczenie
+                    w.Add("R = 0 — długość liczona wzorem z R = 0 (A + B − 1.2d, dłuższa niż z rzeczywistym promieniem), rysunek z minimalnym promieniem gięcia r = "
+                        + F(BarShape.MinBendRadius(d)) + " mm (BS 8666:2020 kl. 8.1.4: podaj R).");
                 else
                     w.Add("Wymiar " + n + " = 0 (BS 8666:2020 kl. 8.1.4: żaden wymiar nie może być zerowy).");
             }
@@ -166,6 +170,11 @@ namespace BricsCadRc.Core
                 double len = shape.CalculateTotalLength(p, d);
                 if (len > 12000.0)
                     w.Add("Długość pręta " + F(len) + " mm > 12 m — zwykle maks. 12 m, dłuższe (do 18 m) po uzgodnieniu z dostawcą (BS 8666:2020 kl. 7.9).");
+            }
+            catch (InvalidBarLengthException ex)
+            {
+                // W5: długość ≤ 0 / nieokreślona — BBS i zestawienie pokażą „brak długości”
+                w.Add("Brak długości: " + ex.Message);
             }
             catch (Exception ex)
             {

@@ -170,6 +170,23 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
 
         /// <summary>
+        /// NibDetector.Detect + kopie obrysów nibu (zewnętrzny i linia uskoku) wyprostowane jak obrys płyty
+        /// (POPRAWKI_WZORCA 25, tolerancja 4 mm). NibDetector sam prostuje obie polilinie przed analizą (krawędzie
+        /// <c>Edges</c> we współrzędnych wyprostowanych), więc tu prostowanie jest już tylko zabezpieczeniem (idempotentne).
+        /// Obrysy idealnie osiowe — te same listy (bez zmian wyniku).
+        /// </summary>
+        private static NibDetector.NibInfo DetectNibSquared(Database db, ObjectId slabPolyId)
+        {
+            var nib = NibDetector.Detect(db, slabPolyId);
+            if (nib != null)
+            {
+                nib.Outer = GeometryHelper.SquaredOrSame(nib.Outer);
+                nib.Inner = GeometryHelper.SquaredOrSame(nib.Inner);
+            }
+            return nib;
+        }
+
+        /// <summary>
         /// Generates a distribution for one layer code (B1/B2/T1/T2) on the given slab.
         /// Creates a template in rebar_X if no matching one exists.
         /// Cleans up previous distributions of the same layerCode on this slab first.
@@ -191,7 +208,7 @@ namespace BricsCadRc.Core
 
             // Nib (uskok przy krawędzi): dół na obrysie zewnętrznym, góra na linii uskoku.
             // Wskazanie linii uskoku zamiast obrysu też działa — pracujemy na obrysie zewnętrznym.
-            var nib = NibDetector.Detect(db, slabPolyId);
+            var nib = DetectNibSquared(db, slabPolyId);
             if (nib != null) slabPolyId = nib.OuterId;
 
             // Phase 1 (read-only tx): validate slab, compute plan
@@ -573,7 +590,7 @@ namespace BricsCadRc.Core
             var db = doc.Database;
 
             // Nib: UB 01/02 na linii uskoku (jak góra), UB 03 przy krawędzi zewnętrznej (jak dół)
-            var nib = NibDetector.Detect(db, slabPolyId);
+            var nib = DetectNibSquared(db, slabPolyId);
             if (nib != null) slabPolyId = nib.OuterId;
             if (nibUB && nib == null) return 0;
 
@@ -672,15 +689,22 @@ namespace BricsCadRc.Core
                     tr.Commit();
                     return -1;
                 }
-                if (slabPl.Layer != "RC-TEMP-OUTLINE" && !GeometryHelper.IsAxisAlignedPolyline(slabPl))
+                // POPRAWKI 25: krawędź osiowa z tolerancją 4 mm; obliczenia na kopii wyprostowanej (obrys idealny — bez zmian)
+                slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
+                var axis = GeometryHelper.SquareOutline(slabVertices);
+                if (slabPl.Layer != "RC-TEMP-OUTLINE" && !axis.AxisAligned)
                 {
-                    ed.WriteMessage("\n[AutoRebar UB] Etap 1 nie obsługuje płyt pod kątem (NIE drawn).\n");
+                    ed.WriteMessage("\n" + OutlineAxisRules.NotAxisAlignedMessage("[AutoRebar UB]", axis) + "\n");
                     tr.Commit();
                     return -1;
                 }
 
                 slabBbox     = GeometryHelper.PolylineBbox(slabPl);
-                slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
+                if (axis.AxisAligned && axis.Changed)
+                {
+                    slabVertices = GeometryHelper.ToPoints(axis);
+                    slabBbox     = GeometryHelper.VerticesBbox(slabVertices);
+                }
                 _currentSlabHandle = CurrentSlabTagFor(slabPl);
                 if (nib != null && !nibUB) slabVertices = nib.Inner;   // UB 01/02 na uskoku
 
@@ -1104,14 +1128,22 @@ namespace BricsCadRc.Core
             }
             // Note: axis-aligned check skipped for drawn polylines on RC-TEMP-OUTLINE layer.
             // Drawn polylines may be non-axis-aligned; engine uses bbox semantics in either case.
-            if (slabPl.Layer != "RC-TEMP-OUTLINE" && !GeometryHelper.IsAxisAlignedPolyline(slabPl))
+            // POPRAWKI 25: krawędź osiowa z tolerancją 4 mm; obliczenia na kopii wyprostowanej (obrys idealny — bez zmian)
+            var slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
+            var axis = GeometryHelper.SquareOutline(slabVertices);
+            if (slabPl.Layer != "RC-TEMP-OUTLINE" && !axis.AxisAligned)
             {
-                ed.WriteMessage("\n[AutoRebar] Etap 1 nie obsługuje płyt pod kątem (NIE drawn).\n");
+                ed.WriteMessage("\n" + OutlineAxisRules.NotAxisAlignedMessage("[AutoRebar]", axis) + "\n");
                 return null;
             }
 
             var slabBbox     = GeometryHelper.PolylineBbox(slabPl);
-            var slabVertices = GeometryHelper.GetPolylineVertices(slabPl);
+            if (axis.AxisAligned && axis.Changed)
+            {
+                slabVertices = GeometryHelper.ToPoints(axis);
+                slabBbox     = GeometryHelper.VerticesBbox(slabVertices);
+                ed.WriteMessage("\n" + OutlineAxisRules.SquaredMessage("[AutoRebar]", axis) + "\n");
+            }
             var slabCentroid = GeometryHelper.Centroid(slabBbox);
 
             // 2. Compute required bar length and snap to 250mm grid
@@ -1650,7 +1682,9 @@ namespace BricsCadRc.Core
         // Przy ponownym uruchomieniu kasujemy tylko rozkłady tej płyty (także przesunięte),
         // a nie wszystko, co ma punkt wstawienia w bboxie (sąsiednie płyty we wcięciu L/U).
         // Rozkłady bez znacznika (stare / z obrysu rysowanego): test punktu w obrysie.
-        private const string XSlabApp = "RC_AUTOREBAR_SLAB";
+        /// <summary>Znacznik płyty na rozkładzie: [1] = handle obrysu (1005). Przy COPY przepina CloneRemap (K5).</summary>
+        internal const string SlabAppName = "RC_AUTOREBAR_SLAB";
+        private const string XSlabApp = SlabAppName;
         private static string _currentSlabHandle;   // null = obrys rysowany (tymczasowy)
 
         private static string CurrentSlabTagFor(Polyline slabPl)
@@ -1701,7 +1735,7 @@ namespace BricsCadRc.Core
                 if (ent != null)
                     ent.XData = new ResultBuffer(
                         new TypedValue((int)DxfCode.ExtendedDataRegAppName, XSlabApp),
-                        XLink.Write(_currentSlabHandle));   // 1005: COPY płyty z rozkładami przemapuje znacznik
+                        XLink.Write(_currentSlabHandle));   // 1005 — BricsCAD V25 go NIE przemapowuje przy COPY (spike W2-0); kopie przepina CloneRemap (K5)
                 tr.Commit();
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.TagWithSlab", ex); }
@@ -1737,7 +1771,7 @@ namespace BricsCadRc.Core
                         if (db.TryGetObjectId(new Handle(h), out ObjectId aid))
                             annotId = aid;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.ScanOldDistributions", logEx); }
                 }
                 result.Add((oid, annotId));
             }
@@ -1818,7 +1852,7 @@ namespace BricsCadRc.Core
                         if (db.TryGetObjectId(new Handle(h), out ObjectId aid))
                             annotId = aid;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.ScanOldUBDistributions", logEx); }
                 }
                 result.Add((oid, annotId));
             }
@@ -1850,7 +1884,7 @@ namespace BricsCadRc.Core
                             ent?.Erase();
                         }
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.EraseOldDistributions", logEx); }
                 }
                 tr.Commit();
             }
@@ -2761,6 +2795,10 @@ namespace BricsCadRc.Core
                     AddHoleUBars(db, zone, ref tplCount, ubY, "Y", y0, y1, posY, fx0, fx1, hz[2], hz[3]);
                     _annotAlongOverride = double.NaN;
 
+                    // 4b. B3 ADD w narożnikach otworu (2 H10-100, L=1250, po przekątnej) — ramiona pionowe
+                    //     z dala od linii opisów pionowych (vt)
+                    maxArmY = Math.Max(maxArmY, AddHoleB3(db, zone, ref tplCount, x0, y0, x1, y1, fy0, fy1, vt));
+
                     // Czytelność: widoczne pręty z dala od równoległych linii rozkładów
                     ResolveRepresentativeCollisions(doc, detailFrameId);
 
@@ -3059,7 +3097,7 @@ namespace BricsCadRc.Core
                     else if (obj is DBText dt) txt = dt.TextString;
                     else if (obj is MLeader ml && ml.ContentType == ContentType.MTextContent) txt = ml.MText?.Contents;
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("AutoRebar.NextDetailNumber", logEx); }
                 if (string.IsNullOrEmpty(txt)) continue;
                 foreach (System.Text.RegularExpressions.Match m in rx.Matches(txt))
                     if (int.TryParse(m.Groups[1].Value, out int n) && n > max) max = n;
@@ -3078,7 +3116,7 @@ namespace BricsCadRc.Core
                 }
                 foreach (var file in new[] { "default.lin", "acad.lin", "iso.lin" })
                 {
-                    try { db.LoadLineTypeFile("DASHED", file); break; } catch { }
+                    try { db.LoadLineTypeFile("DASHED", file); break; } catch { /* brak w tym pliku — próba kolejnego */ }
                 }
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
@@ -4356,7 +4394,8 @@ namespace BricsCadRc.Core
             var topMin = MinPoint(topVerts);
             foreach (var pl in outlines)
             {
-                var verts = GeometryHelper.GetPolylineVertices(pl);
+                // POPRAWKI 25: obrys dolny wyprostowany jak górny (topVerts) — przystawanie liczone na tych samych kopiach
+                var verts = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));
                 if (verts.Count != topVerts.Count) continue;
                 var delta = topMin - MinPoint(verts);          // dolny + delta = górny
                 if (!Congruent(topVerts, verts, delta)) continue;

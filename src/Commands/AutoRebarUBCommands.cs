@@ -39,6 +39,7 @@ namespace BricsCadRc.Commands
 
             var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
             if (slabId.IsNull) return;
+            if (!isDrawn) NibAutoClose.EnsureForCommand(doc, slabId, "[AutoRebar]");
 
             try
             {
@@ -83,6 +84,7 @@ namespace BricsCadRc.Commands
 
             var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
             if (slabId.IsNull) return;
+            if (!isDrawn) NibAutoClose.EnsureForCommand(doc, slabId, "[AutoRebar]");
 
             try
             {
@@ -116,6 +118,7 @@ namespace BricsCadRc.Commands
 
             var slabId = SlabPicker.PickOrDraw(doc, SlabLayer, out bool isDrawn);
             if (slabId.IsNull) return;
+            if (!isDrawn) NibAutoClose.EnsureForCommand(doc, slabId, "[AutoRebar]");
             try
             {
                 int n = AutoRebarEngine.GenerateNibUBLayer(doc, slabId, "rebar_bottom");

@@ -1,3 +1,4 @@
+#nullable disable   // kompilowany też w tests/ (Nullable enable) — bez ostrzeżeń CS86xx
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -7,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace BricsCadRc.Core
 {
     /// <summary>
-    /// Raport przebicia (report_punching.xlsx, arkusz „Punching EC2”): płyty PLOT → pale z wynikami.
+    /// Raport przebicia (report_punching.xlsx, arkusz „Punching EC2”): płyty PLOT / GARAGE → pale z wynikami.
     /// Kolumny rozpoznawane po nagłówkach (wiersz z „Pile”), nie po stałych numerach.
     /// </summary>
     public static class PunchingReport
@@ -36,7 +37,6 @@ namespace BricsCadRc.Core
             public List<PileResult> Piles = new List<PileResult>();
         }
 
-        private static readonly Regex PlotRx    = new Regex(@"^\s*(PLOT\b.*?)\s*(?:\(\s*(\d+)\s*piles?\s*\))?\s*$", RegexOptions.IgnoreCase);
         private static readonly Regex SectionRx = new Regex(@"^\s*(INTERNAL|EDGE|CORNER|RE-?ENTRANT)\s*\(\s*\d+\s*\)", RegexOptions.IgnoreCase);
 
         /// <summary>Czyta raport. Arkusz „Punching EC2”, a gdy brak — pierwszy z nagłówkiem Pile + Reinf.</summary>
@@ -54,7 +54,16 @@ namespace BricsCadRc.Core
                 }
             }
             if (rows == null) throw new InvalidOperationException($"W pliku nie ma arkusza '{SheetName}' z tabelą pali.");
+            return Parse(rows, warnings);
+        }
 
+        /// <summary>
+        /// Tabela pali z wierszy arkusza (wiersz → kolumna → wartość). Nagłówki płyt: „PLOT … (n piles)” i
+        /// „GARAGE … (n piles)” (<see cref="PlotLabelRules.TryParseReportHeader"/>) — pale garażu nie dopisują się
+        /// do poprzedniej płyty.
+        /// </summary>
+        public static List<Plot> Parse(SortedDictionary<int, Dictionary<int, string>> rows, List<string> warnings)
+        {
             var plots = new List<Plot>();
             Plot cur = null;
             string section = "Internal";
@@ -65,11 +74,9 @@ namespace BricsCadRc.Core
                 var c = kv.Value;
                 string a = Cell(c, 1);
 
-                var pm = a != null ? PlotRx.Match(a) : Match.Empty;
-                if (pm.Success && a.TrimStart().StartsWith("PLOT", StringComparison.OrdinalIgnoreCase) && c.Count == 1)
+                if (c.Count == 1 && PlotLabelRules.TryParseReportHeader(a, out string plotLabel, out int declared))
                 {
-                    cur = new Plot { Label = pm.Groups[1].Value.Trim(),
-                                     DeclaredPiles = int.TryParse(pm.Groups[2].Value, out int n) ? n : 0 };
+                    cur = new Plot { Label = plotLabel, DeclaredPiles = declared };
                     plots.Add(cur);
                     continue;
                 }

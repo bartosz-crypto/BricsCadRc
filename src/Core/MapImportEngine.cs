@@ -71,7 +71,7 @@ namespace BricsCadRc.Core
                         string layer = e.Layer ?? "";
                         if (layer.Equals("PH-SLAB-HEADER", StringComparison.OrdinalIgnoreCase) && e is MText mt)
                         {
-                            string label = FirstLine(mt.Text);
+                            string label = FirstLine(mt);
                             if (label.Length > 0) headers.Add((label, mt.Location.X));
                         }
                         else if (layer.Equals("PH-FRAME", StringComparison.OrdinalIgnoreCase) && e is Polyline fp)
@@ -128,7 +128,7 @@ namespace BricsCadRc.Core
                 foreach (ObjectId id in ms)
                 {
                     var o = tr.GetObject(id, OpenMode.ForRead);
-                    if (o is MText mt) labels.Add(Norm(FirstLine(mt.Text)));
+                    if (o is MText mt) labels.Add(Norm(FirstLine(mt)));
                     else if (o is DBText t) labels.Add(Norm(t.TextString));
                 }
                 tr.Commit();
@@ -233,7 +233,9 @@ namespace BricsCadRc.Core
                     if (rb == null) continue;
                     var v = rb.AsArray();
                     rb.Dispose();
-                    if (v.Length > 1 && string.Equals(v[1].Value as string, plot, StringComparison.OrdinalIgnoreCase))
+                    // Także dawna etykieta sklejona („PLOT 526h = 225 mm | …”, import sprzed poprawki 24) — ponowny import ją zastępuje
+                    if (v.Length > 1 && (string.Equals(v[1].Value as string, plot, StringComparison.OrdinalIgnoreCase)
+                                         || MTextParagraphs.SameMapLabel(v[1].Value as string, plot)))
                         old.Add((id, e.Layer));
                 }
                 tr.Commit();
@@ -276,8 +278,11 @@ namespace BricsCadRc.Core
 
         // ----------------------------------------------------------------
 
-        private static string FirstLine(string s)
-            => (s ?? "").Replace("\r", "\n").Split('\n').Select(x => x.Trim()).FirstOrDefault(x => x.Length > 0) ?? "";
+        /// <summary>
+        /// Pierwszy akapit MText (POPRAWKI_WZORCA 24): z <c>Contents</c> po <c>\P</c>, bez kodów formatowania —
+        /// <c>MText.Text</c> w BricsCAD skleja akapity („PLOT 526h = 225 mm | …”).
+        /// </summary>
+        private static string FirstLine(MText mt) => MTextParagraphs.First(mt.Contents);
 
         private static string Norm(string s) => Regex.Replace((s ?? "").Trim(), @"\s+", " ");
 

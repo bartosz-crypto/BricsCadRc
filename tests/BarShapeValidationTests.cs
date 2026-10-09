@@ -61,7 +61,7 @@ namespace BricsCadRc.Tests
             AssertHas(Check("21", 12, 500, 0, 500), "Wymiar B = 0");
             var w51 = Check("51", 12, 400, 300, 0);   // C puste = hak minimalny (opcjonalny)
             Assert.That(w51.Any(x => x.Contains("Wymiar C")), Is.False, string.Join(" | ", w51));
-            AssertHas(Check("12", 12, 500, 300, 0), "R = 0 — przyjęto minimalny promień gięcia r = 24");
+            AssertHas(Check("12", 12, 500, 300, 0), "rysunek z minimalnym promieniem gięcia r = 24");   // W5: tekst jak obliczenie
         }
 
         [Test]

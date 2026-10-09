@@ -76,7 +76,7 @@ namespace BricsCadRc.Commands
 
                 BarBlockHighlightManager.RefreshOutlineForBlock(blockRefId);
 
-                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
             }
 
             // Zachowaj oryginalne wartości do ewentualnego przywrócenia
@@ -118,7 +118,7 @@ namespace BricsCadRc.Commands
                     var docF = Application.DocumentManager.MdiActiveDocument;
                     docF?.Editor.SetImpliedSelection(new ObjectId[0]);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
             }
 
             if (!confirmed)
@@ -187,7 +187,7 @@ namespace BricsCadRc.Commands
                 BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
                     bar.Spacing, bar.Count, baseMark, blockRefId);
 
-                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
                 return;
             }
 
@@ -338,7 +338,7 @@ namespace BricsCadRc.Commands
                                         drawer.UpdatePreview(leaderWcsPts, ev.Context.ComputedPoint);
                                         Application.UpdateScreen();
                                     }
-                                    catch { }
+                                    catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
                                 };
                                 ed.PointMonitor += monitor;
 
@@ -387,7 +387,7 @@ namespace BricsCadRc.Commands
                 }
             }
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
         }
 
         // ----------------------------------------------------------------
@@ -399,9 +399,10 @@ namespace BricsCadRc.Commands
             var db  = doc.Database;
             var ed  = doc.Editor;
 
-            // 1. Wybór RC_BAR_BLOCK lub RC_SINGLE_BAR
-            var selOpts = new PromptEntityOptions("\nWybierz pręt lub rozkład: ");
-            selOpts.SetRejectMessage("\nTo nie jest pręt RC.");
+            // 1. Wybór rozkładu (RC_BAR_BLOCK) — symbol końca jest cechą rozkładu (poprawka #10);
+            //    pręt (polilinia / pręt-blok) nie ma go w danych RC_SINGLE_BAR
+            var selOpts = new PromptEntityOptions("\nWybierz rozkład: ");
+            selOpts.SetRejectMessage("\n[RC] To nie jest rozkład RC.");
             selOpts.AddAllowedClass(typeof(Polyline),        true);
             selOpts.AddAllowedClass(typeof(BlockReference),  true);
             var selRes = ed.GetEntity(selOpts);
@@ -409,25 +410,25 @@ namespace BricsCadRc.Commands
 
             BarData  barData    = null;
             ObjectId targetId   = ObjectId.Null;
-            bool     isBarBlock = false;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 var ent = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as Entity;
-                if (ent is BlockReference br)
+                var kind = BarEntity.KindOf(ent);
+                if (kind == BarKind.Polyline || kind == BarKind.Block)
                 {
-                    targetId   = ResolveBarBlock(ent, tr);
+                    tr.Commit();
+                    ed.WriteMessage("\n[RC] Symbol końca ustawia się na rozkładzie — wskaż rozkład, nie pręt.");
+                    return;
+                }
+                if (ent is BlockReference)
+                {
+                    targetId = ResolveBarBlock(ent, tr);
                     if (!targetId.IsNull)
                     {
                         var brT = tr.GetObject(targetId, OpenMode.ForRead) as BlockReference;
-                        barData    = brT != null ? BarBlockEngine.ReadXData(brT) : null;
-                        isBarBlock = true;
+                        barData = brT != null ? BarBlockEngine.ReadXData(brT) : null;
                     }
-                }
-                else if (ent is Polyline poly)
-                {
-                    barData  = SingleBarEngine.ReadBarXData(poly);
-                    targetId = selRes.ObjectId;
                 }
                 tr.Commit();
             }
@@ -447,30 +448,10 @@ namespace BricsCadRc.Commands
             if (Application.ShowModalWindow(dlg) != true) return;
 
             // 3. Aktualizuj
-            if (isBarBlock)
-            {
-                BarBlockEngine.RebuildBarEndStyle(db, targetId,
-                    dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
-            }
-            else
-            {
-                // Poprawka #1: zapis XData pręta-polilinii bez reakcji watchera geometrii w CommandEnded
-                using (BarGeometryWatcher.Suppress())
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    var poly = tr.GetObject(targetId, OpenMode.ForWrite) as Polyline;
-                    if (poly != null)
-                    {
-                        barData.SymbolType      = dlg.SymbolType;
-                        barData.SymbolSide      = dlg.SymbolSide;
-                        barData.SymbolDirection = dlg.SymbolDirection;
-                        BarXData.Write(poly, barData);
-                    }
-                    tr.Commit();
-                }
-            }
+            BarBlockEngine.RebuildBarEndStyle(db, targetId,
+                dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.BarEnd", logEx); }
             ed.WriteMessage("\n[RC] Symbol końca pręta zaktualizowany.");
         }
 
@@ -620,7 +601,7 @@ namespace BricsCadRc.Commands
                     }
                     trShow.Commit();
                 }
-                catch { /* fallback true */ }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); /* fallback true */ }
             }
 
             var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing,
@@ -643,7 +624,7 @@ namespace BricsCadRc.Commands
                             BarBlockEngine.RebuildVisibility(
                                 db, prevBlockId, BarVisibilityMode.All, "");
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
                 }
 
                 // User klika pręty — widzi wszystkie, toggle'uje wybrane
@@ -752,7 +733,7 @@ namespace BricsCadRc.Commands
                     if (db.TryGetObjectId(new Handle(hVal), out ObjectId barBlockId) && !barBlockId.IsNull)
                         BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, safeIndices);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
             }
 
             // Przebuduj annotację (kółka na dist line) z nową widocznością
@@ -854,7 +835,7 @@ namespace BricsCadRc.Commands
                 else trArm.Commit();
             }
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
         }
 
         private static string SelectVisibleBarsManually(
@@ -1066,7 +1047,7 @@ namespace BricsCadRc.Commands
                     barData.SymbolSide      ?? "Right",
                     barData.SymbolDirection ?? "Up");
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("EditCommands.RcScaleAnnot", logEx); }
 
             // 4c. Przebuduj anotację (BuildH/V używają Scaled(...) dla tekstu/dotów/strzałek)
             AnnotationEngine.SyncAnnotation(db, barData);

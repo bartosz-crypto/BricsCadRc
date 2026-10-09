@@ -45,6 +45,30 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// W5: długość cięcia jednego pręta [mm] wg BS 8666:2020 — wspólna dla zestawienia (BarScheduleEngine) i tonażu
+        /// RC_COUNT_BBS (BbsCounter). Wartości a–e = pola LengthA…E, przycięte do liczby parametrów kształtu; formuła
+        /// i zaokrąglenie do 25 mm w BarShape.CalculateTotalLength. Nieznany kształt → max(A…E) w górę do 25 mm.
+        /// Wyjątek (47 bez C, 64, długość ≤ 0 / nieokreślona) przechodzi do wywołującego („brak długości”).
+        /// </summary>
+        public static double CuttingLength(string shapeCode, double diameter,
+            double a, double b, double c, double d, double e)
+        {
+            var shape = ShapeCodeLibrary.Get(shapeCode);
+            if (shape != null)
+            {
+                // Przytnij do liczby parametrów kształtu (shape ma 1–5 parametrów)
+                var p = new[] { a, b, c, d, e }.Take(shape.Parameters.Length).ToArray();
+                return shape.CalculateTotalLength(p, diameter);
+            }
+            // Fallback dla nieznanych shape codes
+            double fallback = Math.Max(a, Math.Max(b, Math.Max(c, Math.Max(d, e))));
+            // W5: tolerancja 1e-9 kroku na szum (jak CalculateTotalLength); długość ≤ 0 / nieokreślona → „brak długości”
+            double len = Math.Ceiling(fallback / 25.0 - 1e-9) * 25.0;
+            if (!(len > 0)) throw new InvalidBarLengthException(shapeCode, fallback);
+            return len;
+        }
+
+        /// <summary>
         /// Poprawka #7 (docs/POPRAWKI_WZORCA.md): po zmianie wymiaru (RC_UPDATE_BAR, STRETCH / grip) pręt z ręcznie
         /// nadpisaną długością całkowitą (LengthOverridden) zachowuje TotalLength — komunikat dla użytkownika
         /// (bez znaków nowej linii; wywołujący dokleja „\n”).

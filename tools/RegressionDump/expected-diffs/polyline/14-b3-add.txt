@@ -1,0 +1,87 @@
+# bug: 14
+# opis: K7 (decyzja D1, f854684): B3 ADD w narożniku wklęsłym płyty L — wzorzec aba0ed1 nie ma GenerateB3Corners (krok: „brak B3 ADD”), nasz: rozkład „H10-nn-100 B3 ADD” (2 szt., L = 1250) + opis; szablon H10 L = 1250 poza pasem.
+# zrzut: fix
+<= FIX.F14.b3 = brak B3 ADD (wtyczka bez GenerateB3Corners)
+<= F14| entities=1
+=> FIX.F14.b3 = 1
+=> F14| F14 dist Mark=H10-34-100 B3 ADD count=2 A=1250.00 src=pręt H10-34
+=> F14| entities=3
+=> F14|   X RC_BAR_ANNOT[0] 1001
+=> F14|   X RC_BAR_ANNOT[1] 1000="H10-34-100 B3 ADD"
+=> F14|   X RC_BAR_ANNOT[2] 1000="B3"
+=> F14|   X RC_BAR_ANNOT[3] 1070=2
+=> F14|   X RC_BAR_ANNOT[4] 1070=10
+=> F14|   X RC_BAR_ANNOT[5] 1040=100.00
+=> F14|   X RC_BAR_ANNOT[6] 1000="X"
+=> F14|   X RC_BAR_ANNOT[7] 1000="BOT"
+=> F14|   X RC_BAR_ANNOT[8] 1040=1250.00
+=> F14|   X RC_BAR_ANNOT[9] 1040=100.00
+=> F14|   X RC_BAR_ANNOT[10] 1040=6240.90
+=> F14|   X RC_BAR_ANNOT[11] 1040=2187.50
+=> F14|   X RC_BAR_ANNOT[12] 1070=0
+=> F14|   X RC_BAR_ANNOT[13] 1070=1
+=> F14|   X RC_BAR_ANNOT[14] 1040=50.00
+=> F14|   X RC_BAR_ANNOT[15] 1070=0
+=> F14|   X RC_BAR_ANNOT[16] 1005=#2
+=> F14|   X RC_BAR_ANNOT[17] 1000="0.0000,50.0000;0.0000,-85.0000;4412.9834,-4497.9834"
+=> F14|   X RC_BAR_ANNOT[18] 1040=0.00
+=> F14|   X RC_BAR_ANNOT[19] 1040=0.00
+=> F14|   X RC_BAR_ANNOT[20] 1070=-1
+=> F14|   X RC_BAR_ANNOT[21] 1070=0
+=> F14|   X RC_BAR_ANNOT[22] 1040=50.00
+=> F14|   block=RC_ANNOT_034_# pos=(5876.26,339876.26,0.00) rot=5.4978 scale=1.0000,1.0000,1.0000
+=> F14|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F14|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F14|     |   c=(0.00,0.00,0.00) r=35.00
+=> F14|     |   c=(0.00,100.00,0.00) r=35.00
+=> F14|     | DBText L=RC-SLAB-ANNOT C=2 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F14|     |   text="2 H10-34-100 B3 ADD" pos=(4363.49,-4547.48,0.00) align=(0.00,0.00,0.00) h=125.00 rot=2.3562 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F14|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F14|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F14|     |   hatch pat=SOLID loops=1 ext=(-35.00,-35.00,0.00)..(35.00,35.00,0.00)
+=> F14|     |   hatch pat=SOLID loops=1 ext=(-35.00,65.00,0.00)..(35.00,135.00,0.00)
+=> F14|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F14|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F14|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F14|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F14|     |   (0.00,-35.00,0.00) -> (0.00,135.00,0.00)
+=> F14|     |   (0.00,-85.00,0.00) -> (4412.98,-4497.98,0.00)
+=> F14|     |   (0.00,50.00,0.00) -> (0.00,-85.00,0.00)
+=> F14|     |   (2816.69,-2901.69,0.00) -> (4412.98,-4497.98,0.00)
+=> F14|   X RC_BAR_BLOCK[0] 1001
+=> F14|   X RC_BAR_BLOCK[1] 1000="H10-34-100 B3 ADD"
+=> F14|   X RC_BAR_BLOCK[2] 1000="B3"
+=> F14|   X RC_BAR_BLOCK[3] 1070=2
+=> F14|   X RC_BAR_BLOCK[4] 1070=10
+=> F14|   X RC_BAR_BLOCK[5] 1040=100.00
+=> F14|   X RC_BAR_BLOCK[6] 1000="X"
+=> F14|   X RC_BAR_BLOCK[7] 1000="BOT"
+=> F14|   X RC_BAR_BLOCK[8] 1040=1250.00
+=> F14|   X RC_BAR_BLOCK[9] 1040=100.00
+=> F14|   X RC_BAR_BLOCK[10] 1040=40.00
+=> F14|   X RC_BAR_BLOCK[11] 1005=#1
+=> F14|   X RC_BAR_BLOCK[12] 1000="00"
+=> F14|   X RC_BAR_BLOCK[13] 1000="Right"
+=> F14|   X RC_BAR_BLOCK[14] 1000="Up"
+=> F14|   X RC_BAR_BLOCK[15] 1000="Auto"
+=> F14|   X RC_BAR_BLOCK[16] 1070=-1
+=> F14|   X RC_BAR_BLOCK[17] 1000="Auto"
+=> F14|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+=> F14|   X RC_BAR_BLOCK[19] 1000=""
+=> F14|   X RC_BAR_BLOCK[20] 1000=""
+=> F14|   X RC_BAR_BLOCK[21] 1070=3
+=> F14|   X RC_BAR_BLOCK[22] 1000="1"
+=> F14|   X RC_BAR_BLOCK[23] 1040=-0.79
+=> F14|   X RC_BAR_BLOCK[24] 1040=1.00
+=> F14|   X RC_BAR_BLOCK[25] 1040=0.00
+=> F14|   X RC_BAR_BLOCK[26] 1040=0.00
+=> F14|   X RC_BAR_BLOCK[27] 1070=-1
+=> F14|   X RC_BAR_BLOCK[28] 1070=0
+=> F14|   X RC_BAR_BLOCK[29] 1070=1
+=> F14|   X RC_BAR_BLOCK[30] 1070=0
+=> F14|   X RC_BAR_BLOCK[31] 1000=""
+=> F14|   X RC_AUTOREBAR_SLAB[0] 1001
+=> F14|   X RC_AUTOREBAR_SLAB[1] 1005=#3
+=> F14|   block=RC_SLAB_BARS_034 pos=(5434.31,340318.20,0.00) rot=5.4978 scale=1.0000,1.0000,1.0000
+=> F14|     | Line L=RC-SLAB-BOT-01 C=4 LT=ByLayer LTS=1.00 LW=LineWeight025 vis=True
+=> F14|     |   (0.00,100.00,0.00) -> (1250.00,100.00,0.00)

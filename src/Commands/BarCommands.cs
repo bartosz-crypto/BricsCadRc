@@ -179,6 +179,9 @@ namespace BricsCadRc.Commands
                 return;
             }
 
+            // Identyczny pręt (średnica, kształt, wymiary) już jest na rysunku — także kopia o tym samym numerze (e7b600d, D5)
+            if (!ConfirmIdenticalBars(ed, db, selResult.ObjectId, sourceBar)) return;
+
             // --- Krok 2: Dialog "Reinforcement detailing" ---
             var detailDlg = new ReinfDetailingDialog();
             if (Application.ShowModalWindow(detailDlg) != true) return;
@@ -460,7 +463,56 @@ namespace BricsCadRc.Commands
                 db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
 
             ed.WriteMessage($"\n[RC SLAB] Distribution created: {sourceBar.Count} bars  {sourceBar.Mark}");
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("BarCommands.Distribution", logEx); }
+        }
+
+        /// <summary>
+        /// RC_DISTRIBUTION (e7b600d (a), decyzja D5): na rysunku są inne pręty o identycznych wymiarach (średnica, kształt,
+        /// A–E) — także kopie o tym samym numerze, bez prętów bez numeru. Okno OK / Anuluj z listą numerów; Anuluj przerywa
+        /// rozkład. Tryb skryptowy (<see cref="ScriptMode"/>) — komunikat w linii poleceń + log, bez okna. Tylko odczyt.
+        /// Brak takich prętów (albo błąd odczytu) → true bez okna.
+        /// </summary>
+        internal static bool ConfirmIdenticalBars(Editor ed, Database db, ObjectId barId, BarData bar)
+        {
+            List<string> found;
+            try { found = FindIdenticalBars(db, barId, bar); }
+            catch (System.Exception ex) { Log.Error("BarCommands.ConfirmIdenticalBars", ex); return true; }
+            if (found.Count == 0) return true;
+
+            var dims = new[] { bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE };
+            // Tylko wymiary parametrów kształtu (pole i = parametr i, W4); nieznany kształt — A–E
+            int paramCount = ShapeCodeLibrary.Get(bar.ShapeCode ?? "00")?.Parameters?.Length ?? dims.Length;
+            if (ScriptMode.IsNonInteractive())
+            {
+                string msg = IdenticalBarText.ScriptText(bar.Mark, bar.Diameter, bar.ShapeCode, dims, paramCount, found);
+                ed?.WriteMessage("\n" + msg + "\n");
+                Log.Info(msg);
+                return true;
+            }
+            var dlg = new TextConfirmDialog("Identyczny pręt",
+                IdenticalBarText.DialogText(bar.Mark, bar.Diameter, bar.ShapeCode, dims, paramCount, found)) { Width = 560, Height = 320 };
+            return Application.ShowModalWindow(dlg) == true;
+        }
+
+        /// <summary>
+        /// Numery (Mark) innych prętów (polilinia i pręt-blok) o identycznym kształcie (<see cref="PositionReconciler.SameShape"/>)
+        /// — pomija sam pręt i pręty bez numeru (ExtractPosNr ≤ 0). Tylko odczyt.
+        /// </summary>
+        internal static List<string> FindIdenticalBars(Database db, ObjectId barId, BarData bar)
+        {
+            var res = new List<string>();
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+                {
+                    if (be.Entity.ObjectId == barId) continue;
+                    var other = be.Read();
+                    if (other == null || SingleBarEngine.ExtractPosNr(other.Mark) <= 0) continue;
+                    if (PositionReconciler.SameShape(other, bar)) res.Add(other.Mark);
+                }
+                tr.Commit();
+            }
+            return res;
         }
 
         // ================================================================
@@ -645,7 +697,7 @@ namespace BricsCadRc.Commands
                                     drawer.UpdatePreview(previewPrefix.Concat(leaderWcsPts).ToList(), ev.Context.ComputedPoint);
                                     Application.UpdateScreen();
                                 }
-                                catch { }
+                                catch (System.Exception logEx) { Log.Error("BarCommands.RunAnnotationFlow", logEx); }
                             };
                             ed.PointMonitor += monitor;
 
@@ -841,7 +893,7 @@ namespace BricsCadRc.Commands
                     if (yc >= y1Bound) break;
                 }
             }
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawFlipPreview", logEx); }
         }
 
         private static void DrawBarPreview(bool horizontal,
@@ -871,7 +923,7 @@ namespace BricsCadRc.Commands
                     if (xc >= x1) break;
                 }
             }
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawBarPreview", logEx); }
         }
 
         private static void AddPreviewLine(TransientManager tm, IntegerCollection vpIds,
@@ -893,7 +945,7 @@ namespace BricsCadRc.Commands
             var vpIds = new IntegerCollection();
             foreach (var line in transients)
             {
-                try { tm.EraseTransient(line, vpIds); line.Dispose(); } catch { }
+                try { tm.EraseTransient(line, vpIds); line.Dispose(); } catch (System.Exception logEx) { Log.Error("BarCommands.ClearBarPreview", logEx); }
             }
             transients.Clear();
         }

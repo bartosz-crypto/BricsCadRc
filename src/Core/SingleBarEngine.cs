@@ -75,7 +75,7 @@ namespace BricsCadRc.Core
                             $"\nRC_BAR: shape code '{bar.ShapeCode}' not yet implemented – " +
                             $"drawing as straight line.\n");
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("SingleBarEngine.PlaceBar", logEx); }
             }
 
             // Plan C, etap 3: jedyny punkt rozgałęzienia formatu nowych prętów (domyślnie polilinia — bez zmian)
@@ -900,7 +900,7 @@ namespace BricsCadRc.Core
                         $"\nRC_BAR: shape code '{bar.ShapeCode}' not yet implemented – " +
                         $"drawing as straight line (shape 00).\n");
                 }
-                catch { /* poza kontekstem dokumentu */ }
+                catch (System.Exception logEx) { Log.Error("SingleBarEngine.GetShapePoints", logEx); /* poza kontekstem dokumentu */ }
             }
 
             double[] paramValues = { bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE };

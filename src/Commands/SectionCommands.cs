@@ -48,6 +48,9 @@ namespace BricsCadRc.Commands
                 var pp3 = ed.GetPoint(o3);
                 if (pp3.Status != PromptStatus.OK) return;
 
+                // Nib: otwarta linia uskoku domykana krawędzią obrysu (decyzja użytkownika A9.5)
+                NibAutoClose.EnsureForCommand(doc, per.ObjectId, T);
+
                 var ctx = AutoRebarEngine.PrepareSection(db, per.ObjectId, p1, p2, new Point2d(pp3.Value.X, pp3.Value.Y));
                 if (ctx == null) { ed.WriteMessage($"\n{T} Obrys płyty musi być zamkniętą polilinią.\n"); return; }
                 foreach (var s in ctx.Info) ed.WriteMessage($"\n{T} {s}");

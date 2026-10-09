@@ -28,11 +28,11 @@ namespace BricsCadRc.App
             tab.Panels.Add(Panel("Setup", "RC_PANEL_SETUP",
                 Large("Prepare GA", "RC_PREPARE_GA", "prepare_ga",
                     "Prepare the RC drawing from a GA drawing: pick the plot, clean slab outline, piles and door thresholds as bottom and top plans, plot label (PLOT / SSL / thickness), titles and template frames. Then copies title block and slab notes from the GA layout."),
+                Large("Import Analysis", "RC_IMPORT_ANALYSIS", "maps",
+                    "Load the analysis results: reinforcement maps (reinf_maps.dxf) and / or the punching report (report_punching.xlsx) — untick what you do not want to load (e.g. maps only). The maps of the chosen plot are placed (T1 / T2 / B1 / B2 frames); the report and plot are stored in the drawing, so Punching then only details (no file or plot prompt)."),
                 Column(
                     Small("GA Texts", "RC_GA_TEXTS", "ga_texts",
-                        "Copy texts from the GA layout to RC layouts: client / project, TITLE_1, RCxxx drawing numbers, SLAB NOTES, HYSTOOLS by slab thickness."),
-                    Small("Reinf. Maps", "RC_IMPORT_MAP", "maps",
-                        "Import reinforcement maps (reinf_maps.dxf): pick the plot and place the T1 / T2 / B1 / B2 frames."))));
+                        "Copy texts from the GA layout to RC layouts: client / project, TITLE_1, RCxxx drawing numbers, SLAB NOTES, HYSTOOLS by slab thickness."))));
 
             // 2. Reinforcement — generowanie
             tab.Panels.Add(Panel("Reinforcement", "RC_PANEL_GEN",
@@ -43,7 +43,7 @@ namespace BricsCadRc.App
                 Large("Opening Detail", "RC_OPENING_DETAIL", "opening",
                     "Opening detail: DETAIL 'n' frame on the plan plus H16 bars and U-bars around the opening."),
                 Large("Punching", "RC_PUNCHING_AUTO", "punching",
-                    "Punching from the xlsx report: PH1–9 tags at piles, detail notes (APPLICABLE FOR), bars 501 / 502 for the BBS."),
+                    "Punching detailing: PH1–9 tags at piles, detail notes (APPLICABLE FOR), bars 501 / 502 for the BBS. Uses the report and plot loaded with Import Analysis; without it asks for the xlsx report."),
                 Column(
                     Small("3D Model", "RC_MODEL_3D", "model3d",
                         "Preview 3D model of the slab reinforcement (B1, B2, UB, T1, T2, concrete with openings, piles) next to the drawing."),

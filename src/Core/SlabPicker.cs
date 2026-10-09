@@ -64,7 +64,7 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
             }
-            catch { /* swallow */ }
+            catch (System.Exception logEx) { Log.Error("SlabPicker.Cleanup", logEx); /* swallow */ }
         }
 
         // ---- Internal ----

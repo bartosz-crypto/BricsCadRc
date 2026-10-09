@@ -72,6 +72,49 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Osiowość obrysu płyty z tolerancją 4 mm i kopia wyprostowana (POPRAWKI_WZORCA 25, <see cref="OutlineAxisRules"/>).
+        /// </summary>
+        public static OutlineAxisRules.Result SquareOutline(List<Point2d> vertices)
+        {
+            var pts = new List<(double X, double Y)>(vertices?.Count ?? 0);
+            if (vertices != null) foreach (var v in vertices) pts.Add((v.X, v.Y));
+            return OutlineAxisRules.Square(pts);
+        }
+
+        /// <summary>
+        /// Wierzchołki obrysu do obliczeń zbrojenia: kopia wyprostowana, gdy obrys jest osiowy z tolerancją 4 mm i ma szum;
+        /// inaczej (obrys idealnie osiowy albo pod kątem) — TA SAMA lista (wynik bit w bit jak przed poprawką 25).
+        /// </summary>
+        public static List<Point2d> SquaredOrSame(List<Point2d> vertices)
+        {
+            if (vertices == null) return null;
+            var r = SquareOutline(vertices);
+            return r.AxisAligned && r.Changed ? ToPoints(r) : vertices;
+        }
+
+        /// <summary>Wierzchołki wyniku <see cref="OutlineAxisRules.Square"/> jako Point2d.</summary>
+        public static List<Point2d> ToPoints(OutlineAxisRules.Result r)
+        {
+            var res = new List<Point2d>(r.Points.Length);
+            foreach (var p in r.Points) res.Add(new Point2d(p.X, p.Y));
+            return res;
+        }
+
+        /// <summary>Prostokąt otaczający wierzchołków (XY).</summary>
+        public static Extents3d VerticesBbox(List<Point2d> vertices)
+        {
+            double xMin = double.MaxValue, yMin = double.MaxValue, xMax = double.MinValue, yMax = double.MinValue;
+            foreach (var p in vertices)
+            {
+                if (p.X < xMin) xMin = p.X;
+                if (p.X > xMax) xMax = p.X;
+                if (p.Y < yMin) yMin = p.Y;
+                if (p.Y > yMax) yMax = p.Y;
+            }
+            return new Extents3d(new Point3d(xMin, yMin, 0), new Point3d(xMax, yMax, 0));
+        }
+
+        /// <summary>
         /// Polyline is "effectively closed" if pl.Closed=true OR last vertex == first vertex.
         /// Both patterns render identically; different DXF/DWG generators produce one or other.
         /// </summary>

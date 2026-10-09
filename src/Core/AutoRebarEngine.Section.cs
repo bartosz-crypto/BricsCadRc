@@ -52,7 +52,8 @@ namespace BricsCadRc.Core
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
                 if (!(tr.GetObject(outerId, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl)) return null;
-                verts = GeometryHelper.GetPolylineVertices(pl);
+                // POPRAWKI 25: obrys prawie osiowy (≤ 4 mm) — kopia wyprostowana, spójna z krawędziami nibu; idealny — bez zmian
+                verts = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));
                 outerHandle = pl.Handle.ToString();
             }
             inp.Outline = verts.Select(v => (v.X, v.Y)).ToList();
@@ -107,7 +108,7 @@ namespace BricsCadRc.Core
                 var min0 = MinPoint(verts);
                 foreach (var pl in outlines)
                 {
-                    var v = GeometryHelper.GetPolylineVertices(pl);
+                    var v = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));   // jak FindBottomView
                     if (v.Count != verts.Count) continue;
                     var delta = MinPoint(v) - min0;             // rzut = wskazany + delta
                     if (delta.Length < 1.0 || !Congruent(v, verts, delta)) continue;

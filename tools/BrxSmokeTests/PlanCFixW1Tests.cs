@@ -51,7 +51,7 @@ namespace BricsCadRc.BrxSmokeTests
         private const int KPolyline = 1, KBlock = 2;
 
         /// <summary>Kroki oczekiwane w raporcie — dopisywane przez kolejne części (W1a–W1e).</summary>
-        private static List<string> ExpectedSteps => _f3Mode ? ExpectedStepsF3 : _w4Mode ? ExpectedStepsW4 : _w2Mode ? ExpectedStepsW2 : ExpectedStepsW1;
+        private static List<string> ExpectedSteps => _hbMode ? ExpectedStepsHb : _portMode ? ExpectedStepsPort :_f3Mode ? ExpectedStepsF3 : _w4Mode ? ExpectedStepsW4 : _w2Mode ? ExpectedStepsW2 : ExpectedStepsW1;
 
         private static readonly List<string> ExpectedStepsW1 = new List<string>
         {

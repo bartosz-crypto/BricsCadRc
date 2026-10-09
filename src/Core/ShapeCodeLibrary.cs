@@ -83,16 +83,16 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,35 5,10 30,10 55,10 55,25\"/>"),
                 (p, d) => p[0] + p[1] + p[2]));
 
-            // ── Rodzina (3 nogi, A+B+C-0.5r-2d) ─────────────────────────────
+            // ── Rodzina (3 nogi) — W5: BS 8666:2020 Table 5: A + B + (C) − 0.5r − d (dawniej błędnie −0.5r − 2d) ──
             Add(new BarShape("27", "Hook variant 27",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,30 5,15 35,15 55,5\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - 2 * d; }));
+                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - d; }));
 
             Add(new BarShape("28", "Hook variant 28",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,30 5,10 35,10 55,20\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - 2 * d; }));
+                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - d; }));
 
             // W4b: BS 8666:2020 A + B + (C)
             Add(new BarShape("29", "Hook variant 29",

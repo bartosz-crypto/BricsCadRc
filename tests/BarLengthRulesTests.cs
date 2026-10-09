@@ -117,7 +117,7 @@ namespace BricsCadRc.Tests
 
         [Test]
         public void TotalLength_99_ARoundedUpTo25()
-            // BarShape.CalculateTotalLength: bez zaokrąglenia tylko "00"; 99 = A → w górę do 25 mm
+            // BarShape.CalculateTotalLength: wszystkie kody (od W4g także "00") w górę do 25 mm; 99 = A → 1250
             => Assert.That(BarLengthRules.TotalLengthFor("99", new[] { 1234.0, 0, 0, 0, 0 }, 12), Is.EqualTo(1250).Within(Tol));
 
         [Test]

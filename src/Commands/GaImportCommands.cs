@@ -40,7 +40,7 @@ namespace BricsCadRc.Commands
                 if (src.Plots.Count > 1)
                 {
                     var dlg = new PunchingPlotPickerDialog(src.Plots.Select(p => p.ToString()).ToList(), 0,
-                        "Rysunek GA — wybierz płytę (PLOT)", "Płyty znalezione w pliku GA.");
+                        "Rysunek GA — wybierz płytę (PLOT / GARAGE)", "Płyty znalezione w pliku GA.");
                     if (Application.ShowModalWindow(dlg) != true) return;
                     k = dlg.SelectedIndex;
                 }
@@ -48,6 +48,7 @@ namespace BricsCadRc.Commands
                 var r = GaImportEngine.Import(doc, src, plot, warnings);
                 ed.WriteMessage($"\n{T} {plot.Label}: rzut dolny {r.Bottom} obiektów, rzut górny {r.Top} (z podpisami pali)" +
                     (r.Joined > 0 ? $", połączone kawałki obrysu/uskoku: {r.Joined}" : "") +
+                    (r.NibClosed > 0 ? $", nib domknięty: {r.NibClosed}" : "") +
                     ". Ponowne wywołanie zastąpi płytę.");
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");

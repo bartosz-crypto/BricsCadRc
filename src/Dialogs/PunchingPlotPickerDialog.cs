@@ -5,7 +5,7 @@ using System.Windows.Input;
 
 namespace BricsCadRc.Dialogs
 {
-    /// <summary>Wybór płyty (PLOT) z raportu przebicia — jak PlotPicker w AsdRcSlab.</summary>
+    /// <summary>Wybór płyty (PLOT / GARAGE) z raportu przebicia — jak PlotPicker w AsdRcSlab.</summary>
     public class PunchingPlotPickerDialog : Window
     {
         private readonly ListBox _list;
@@ -14,7 +14,7 @@ namespace BricsCadRc.Dialogs
         public PunchingPlotPickerDialog(IList<string> items, int defaultIndex,
                                         string title = null, string infoText = null)
         {
-            Title = title ?? "Przebicie — wybierz płytę (PLOT)";
+            Title = title ?? "Przebicie — wybierz płytę (PLOT / GARAGE)";
             Width = 640; Height = 420;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.CanResizeWithGrip;

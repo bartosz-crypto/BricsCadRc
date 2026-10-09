@@ -5,6 +5,7 @@ using Bricscad.EditorInput;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.GraphicsInterface;
+using BricsCadRc.Core;
 
 namespace BricsCadRc.Commands
 {
@@ -157,7 +158,7 @@ namespace BricsCadRc.Commands
                 }
             }
 
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelPositionJig.WorldDraw", logEx); }
         }
 
         void AddLine(TransientManager tm, IntegerCollection vpIds,
@@ -188,7 +189,7 @@ namespace BricsCadRc.Commands
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
             foreach (var ln in _transients)
-                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch { }
+                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotLabelPositionJig.ClearTransients", logEx); }
             _transients.Clear();
         }
     }
@@ -385,7 +386,7 @@ namespace BricsCadRc.Commands
                 // Podgląd docelowego leadera: środek → koniec linii rozkładu → ramię do tekstu
                 AddLine(tm, vpIds, _centerPt, _elbowPt, 2);
                 AddLine(tm, vpIds, _elbowPt, _snappedPt, 2);
-                try { Application.UpdateScreen(); } catch { }
+                try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelDirectionJig.WorldDraw", logEx); }
                 return;
             }
 
@@ -401,7 +402,7 @@ namespace BricsCadRc.Commands
                 arrowEnd = _snappedPt;
             AddLine(tm, vpIds, _centerPt, arrowEnd, 2);
 
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelDirectionJig.WorldDraw", logEx); }
         }
 
         void DrawDistLine(TransientManager tm, IntegerCollection vpIds)
@@ -486,7 +487,7 @@ namespace BricsCadRc.Commands
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
             foreach (var ln in _transients)
-                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch { }
+                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotLabelDirectionJig.ClearTransients", logEx); }
             _transients.Clear();
         }
     }
@@ -578,7 +579,7 @@ namespace BricsCadRc.Commands
                 AddLine(tm, vpIds, _kinkPt, armEnd, 2);
             }
 
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelBendJig.WorldDraw", logEx); }
         }
 
         void DrawDistLine(TransientManager tm, IntegerCollection vpIds)
@@ -671,7 +672,7 @@ namespace BricsCadRc.Commands
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
             foreach (var ln in _transients)
-                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch { }
+                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotLabelBendJig.ClearTransients", logEx); }
             _transients.Clear();
         }
     }
@@ -764,7 +765,7 @@ namespace BricsCadRc.Commands
             if (_pts.Count > 0)
                 AddLine(tm, vpIds, _pts[_pts.Count - 1], _cursor, 2);
 
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelMultiSegJig.Update", logEx); }
             return true;
         }
 
@@ -829,7 +830,7 @@ namespace BricsCadRc.Commands
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
             foreach (var ln in _transients)
-                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch { }
+                try { tm.EraseTransient(ln, vpIds); ln.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotLabelMultiSegJig.ClearTransients", logEx); }
             _transients.Clear();
         }
     }
@@ -911,8 +912,8 @@ namespace BricsCadRc.Commands
             var vpIds = new IntegerCollection();
             foreach (var ln in _transients)
             {
-                try { tm.EraseTransient(ln, vpIds); } catch { }
-                try { ln.Dispose(); }               catch { }
+                try { tm.EraseTransient(ln, vpIds); } catch (System.Exception logEx) { Log.Error("BarLabelLeaderJig.ClearTransients", logEx); }
+                try { ln.Dispose(); }               catch (System.Exception logEx) { Log.Error("BarLabelLeaderJig.ClearTransients", logEx); }
             }
             _transients.Clear();
         }
@@ -966,8 +967,8 @@ namespace BricsCadRc.Commands
         {
             foreach (var e in _ents)
             {
-                try { _tm.EraseTransient(e, _viewports); } catch { }
-                try { e.Dispose(); } catch { }
+                try { _tm.EraseTransient(e, _viewports); } catch (System.Exception logEx) { Log.Error("LeaderTransientDrawer.Clear", logEx); }
+                try { e.Dispose(); } catch (System.Exception logEx) { Log.Error("LeaderTransientDrawer.Clear", logEx); }
             }
             _ents.Clear();
         }

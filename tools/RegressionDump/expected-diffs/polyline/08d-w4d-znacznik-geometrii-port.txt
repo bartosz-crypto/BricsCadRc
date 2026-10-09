@@ -1,0 +1,5 @@
+# bug: 8
+# opis: jak 08c — znacznik geometrii W4d ([14] = 1, [15] = 2021) pręta-polilinii utworzonego w nowym przypadku F12 (przeniesienie zmian kolegi, K6); tylko pola [14]/[15].
+# zrzut: fix
+=> F12|   X RC_SINGLE_BAR[14] 1070=1
+=> F12|   X RC_SINGLE_BAR[15] 1070=2021

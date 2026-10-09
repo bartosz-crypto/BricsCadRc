@@ -40,6 +40,11 @@ namespace BricsCadRc.Core
         private static readonly Dictionary<ObjectId, List<Point3d>> _preOutline =
             new Dictionary<ObjectId, List<Point3d>>();
 
+        // #12 (D4): ten sam obrys w OCS polilinii (punkt 2D + wybrzuszenie) — do przywrócenia pręta sprzed przeciągnięcia,
+        // gdy zmiana gripem / STRETCH jest odrzucona (odcinek krótszy niż max(2d, 50)).
+        private static readonly Dictionary<ObjectId, List<(Point2d pt, double bulge)>> _preOutlineOcs =
+            new Dictionary<ObjectId, List<(Point2d pt, double bulge)>>();
+
         // MLeadery zmodyfikowane w bieżącej komendzie przez użytkownika (np. MOVE pręt + etykieta
         // razem) — takich nie przesuwamy drugi raz.
         private static readonly HashSet<ObjectId> _modifiedLeaders = new HashSet<ObjectId>();
@@ -63,7 +68,7 @@ namespace BricsCadRc.Core
                         d.Database.ObjectOpenedForModify -= OnObjectOpenedForModify;
                         d.Database.ObjectModified        -= OnObjectModified;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("BarGeometryWatcher.Register", logEx); }
                     d.CommandEnded     -= OnCommandEnded;
                     d.CommandCancelled -= OnCommandCancelled;
                     d.CommandFailed    -= OnCommandFailed;
@@ -82,7 +87,7 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Poprawka #1 (docs/POPRAWKI_WZORCA.md): wyciszenie watchera na czas zmian pręta wykonywanych przez komendę
-        /// wtyczki (RC_EDIT_BAR → BarEditApply.Apply, RC_UPDATE_BAR, RC_BAR_END). Zmiana obrysu z RebuildCompanions nie trafia
+        /// wtyczki (RC_EDIT_BAR → BarEditApply.Apply, RC_UPDATE_BAR; RC_BAR_END od #10 nie zmienia pręta). Zmiana obrysu z RebuildCompanions nie trafia
         /// do kolejki, więc w CommandEnded nie jest brana za grip na końcu pręta (wzorzec doliczał przyrost drugi raz:
         /// 3000 → 3500 → 4000). Zwiększa licznik reentrancji (_rebuildDepth); Dispose zmniejsza go dokładnie raz.
         /// Używać WYŁĄCZNIE w using. Grip / STRETCH użytkownika nie są wyciszane.
@@ -143,6 +148,7 @@ namespace BricsCadRc.Core
             _pending.Clear();
             _preAxisStart.Clear();
             _preOutline.Clear();
+            _preOutlineOcs.Clear();
             _modifiedLeaders.Clear();
         }
 
@@ -165,6 +171,9 @@ namespace BricsCadRc.Core
                 var verts = new List<Point3d>(pl.NumberOfVertices);
                 for (int i = 0; i < pl.NumberOfVertices; i++) verts.Add(pl.GetPoint3dAt(i));
                 _preOutline[pl.ObjectId] = verts;
+                var ocs = new List<(Point2d pt, double bulge)>(pl.NumberOfVertices);
+                for (int i = 0; i < pl.NumberOfVertices; i++) ocs.Add((pl.GetPoint2dAt(i), pl.GetBulgeAt(i)));
+                _preOutlineOcs[pl.ObjectId] = ocs;
             }
             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.OnObjectOpenedForModify", ex); }
         }
@@ -220,11 +229,13 @@ namespace BricsCadRc.Core
         /// nową długość odcinka końcowego (rzut przesunięcia na oś pręta). Parametr kształtu wybierany
         /// automatycznie: ten, którego zmiana wydłuża tylko ten koniec (dla 00 — A, dla 21 — A albo C itd.).
         /// False → zwykła ścieżka (MOVE / STRETCH całości / cofnięcie złej edycji).
+        /// tooShort = true: ruch końca rozpoznany, ale odcinek krótszy niż max(2d, 50) — zmiana odrzucona (#12: wywołujący
+        /// przywraca obrys sprzed komendy).
         /// </summary>
         private static bool TryEndStretch(Polyline pl, BarData bar, List<Point3d> pre,
-                                          out BarData result, out Point3d newAxisStart, out string why)
+                                          out BarData result, out Point3d newAxisStart, out string why, out bool tooShort)
         {
-            result = null; newAxisStart = Point3d.Origin; why = null;
+            result = null; newAxisStart = Point3d.Origin; why = null; tooShort = false;
             string shapeCode = bar.ShapeCode ?? "00";
             int total = pl.NumberOfVertices;
             if (BarFrameRules.IsRingShape(shapeCode) || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
@@ -269,6 +280,7 @@ namespace BricsCadRc.Core
             if (newVal < Math.Max(2.0 * bar.Diameter, 50.0))
             {
                 why = $"Pręt {bar.Mark}: za krótki odcinek ({newVal:F0} mm) — zmiana cofnięta.";
+                tooShort = true;
                 return false;
             }
 
@@ -503,14 +515,16 @@ namespace BricsCadRc.Core
             ClearIgnoredIfTopLevel(sender, e);
             var preAxisStart = new Dictionary<ObjectId, Point3d>(_preAxisStart);
             var preOutline   = new Dictionary<ObjectId, List<Point3d>>(_preOutline);
+            var preOutlineOcs = new Dictionary<ObjectId, List<(Point2d pt, double bulge)>>(_preOutlineOcs);
             _pending.Clear();
             _preAxisStart.Clear();
             _preOutline.Clear();
+            _preOutlineOcs.Clear();
 
             _rebuildDepth++;
             try
             {
-                ProcessPending(doc, db, toProcess, preAxisStart, preOutline);
+                ProcessPending(doc, db, toProcess, preAxisStart, preOutline, preOutlineOcs);
             }
             finally
             {
@@ -518,12 +532,14 @@ namespace BricsCadRc.Core
                 _modifiedLeaders.Clear();
                 _preAxisStart.Clear();
                 _preOutline.Clear();
+                _preOutlineOcs.Clear();
             }
         }
 
         private static void ProcessPending(Document doc, Database db, List<ObjectId> toProcess,
                                            Dictionary<ObjectId, Point3d> preAxisStart,
-                                           Dictionary<ObjectId, List<Point3d>> preOutline)
+                                           Dictionary<ObjectId, List<Point3d>> preOutline,
+                                           Dictionary<ObjectId, List<(Point2d pt, double bulge)>> preOutlineOcs)
         {
             foreach (var oid in toProcess)
             {
@@ -547,13 +563,14 @@ namespace BricsCadRc.Core
                         // Grip na KOŃCU pręta (narożnik albo bok końca) → nowa długość odcinka końcowego.
                         // Drugi koniec zostaje na miejscu; wymiar dokładny (bez zaokrąglania).
                         string why = null;
+                        bool tooShort = false;
                         BarData stretched = null;
                         Point3d newAxisStart = Point3d.Origin;
                         preOutline.TryGetValue(oid, out var pre);
                         // Poprawka #4: rama pręta sprzed komendy — liczona PRZED TryEndStretch (ten zmienia bar)
                         var preFrame = pre != null ? SingleBarEngine.FrameFromOutline(pre, bar) : BarFrame.Identity;
                         if (pre != null
-                            && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why))
+                            && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why, out tooShort))
                         {
                             // Poprawka #7: nadpisana długość całkowita zostaje — ostrzeżenie (jak RC_UPDATE_BAR)
                             if (stretched.LengthOverridden)
@@ -563,6 +580,22 @@ namespace BricsCadRc.Core
                             continue;
                         }
                         if (why != null) doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
+
+                        // #12 (D4): odrzucona zmiana gripem / STRETCH (za krótki odcinek) — pręt sprzed przeciągnięcia:
+                        // wierzchołki i wybrzuszenia w OCS z początku komendy; bez przesuwania etykiety i bez przyjmowania
+                        // długości. Zapis w CommandEnded (ta sama grupa UNDO — Ctrl+Z / Ctrl+Y jak dotąd).
+                        if (tooShort && preOutlineOcs.TryGetValue(oid, out var preOcs)
+                            && preOcs.Count == pline.NumberOfVertices)
+                        {
+                            pline.UpgradeOpen();
+                            for (int i = 0; i < preOcs.Count; i++)
+                            {
+                                pline.SetPointAt(i, preOcs[i].pt);
+                                pline.SetBulgeAt(i, preOcs[i].bulge);
+                            }
+                            tr.Commit();
+                            continue;
+                        }
 
                         // Detekcja translacji bar-a (move entire entity).
                         // Porównuje current axis_start z pozycją sprzed komendy (preAxisStart).

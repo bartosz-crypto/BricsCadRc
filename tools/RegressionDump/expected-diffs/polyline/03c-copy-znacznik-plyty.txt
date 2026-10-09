@@ -1,0 +1,263 @@
+# bug: 3c
+# opis: K5 (decyzje P4 / P4b): B1 na płycie, COPY płyty z rozkładami (+20000 w X), B1 ponownie na ORYGINALE — wzorzec: znacznik RC_AUTOREBAR_SLAB kopii wskazuje oryginał, ponowne B1 kasuje 3 rozkłady kopii i ich opisy; nasz: znacznik kopii → obrys kopii (CloneRemap), rozkłady i opisy kopii zostają (lokalna numeracja handle przesunięta).
+# zrzut: fix
+=> F3g| F3g dist Mark=H10-04-200 B1 count=41 A=5250.00 src=pręt H10-04
+=> F3g| F3g dist Mark=H10-04-200 B1 count=41 A=5250.00 src=pręt H10-04
+=> F3g| F3g dist Mark=H10-05-200 B1 count=41 A=2500.00 src=pręt H10-05
+<= F3g| entities=8
+=> F3g|   X RC_BAR_ANNOT[0] 1001
+=> F3g|   X RC_BAR_ANNOT[0] 1001
+=> F3g|   X RC_BAR_ANNOT[0] 1001
+=> F3g|   X RC_BAR_ANNOT[1] 1000="H10-04-200 B1"
+=> F3g|   X RC_BAR_ANNOT[1] 1000="H10-04-200 B1"
+=> F3g|   X RC_BAR_ANNOT[2] 1000="B1"
+=> F3g|   X RC_BAR_ANNOT[2] 1000="B1"
+=> F3g|   X RC_BAR_ANNOT[2] 1000="B1"
+=> F3g|   X RC_BAR_ANNOT[3] 1070=41
+=> F3g|   X RC_BAR_ANNOT[3] 1070=41
+=> F3g|   X RC_BAR_ANNOT[3] 1070=41
+=> F3g|   X RC_BAR_ANNOT[4] 1070=10
+=> F3g|   X RC_BAR_ANNOT[4] 1070=10
+=> F3g|   X RC_BAR_ANNOT[4] 1070=10
+=> F3g|   X RC_BAR_ANNOT[5] 1040=198.00
+=> F3g|   X RC_BAR_ANNOT[5] 1040=198.00
+=> F3g|   X RC_BAR_ANNOT[5] 1040=198.00
+=> F3g|   X RC_BAR_ANNOT[6] 1000="X"
+=> F3g|   X RC_BAR_ANNOT[6] 1000="X"
+=> F3g|   X RC_BAR_ANNOT[6] 1000="X"
+=> F3g|   X RC_BAR_ANNOT[7] 1000="BOT"
+=> F3g|   X RC_BAR_ANNOT[7] 1000="BOT"
+=> F3g|   X RC_BAR_ANNOT[7] 1000="BOT"
+=> F3g|   X RC_BAR_ANNOT[8] 1040=5250.00
+=> F3g|   X RC_BAR_ANNOT[8] 1040=5250.00
+=> F3g|   X RC_BAR_ANNOT[9] 1040=7920.00
+=> F3g|   X RC_BAR_ANNOT[9] 1040=7920.00
+=> F3g|   X RC_BAR_ANNOT[9] 1040=7920.00
+=> F3g|   X RC_BAR_ANNOT[10] 1040=6400.00
+=> F3g|   X RC_BAR_ANNOT[10] 1040=6400.00
+=> F3g|   X RC_BAR_ANNOT[10] 1040=6400.00
+=> F3g|   X RC_BAR_ANNOT[11] 1040=1750.00
+=> F3g|   X RC_BAR_ANNOT[11] 1040=1750.00
+=> F3g|   X RC_BAR_ANNOT[11] 1040=1750.00
+=> F3g|   X RC_BAR_ANNOT[12] 1070=0
+=> F3g|   X RC_BAR_ANNOT[12] 1070=0
+=> F3g|   X RC_BAR_ANNOT[12] 1070=0
+=> F3g|   X RC_BAR_ANNOT[13] 1070=1
+=> F3g|   X RC_BAR_ANNOT[13] 1070=1
+=> F3g|   X RC_BAR_ANNOT[13] 1070=1
+=> F3g|   X RC_BAR_ANNOT[14] 1040=3960.00
+=> F3g|   X RC_BAR_ANNOT[14] 1040=3960.00
+=> F3g|   X RC_BAR_ANNOT[14] 1040=3960.00
+=> F3g|   X RC_BAR_ANNOT[15] 1070=1
+=> F3g|   X RC_BAR_ANNOT[15] 1070=1
+=> F3g|   X RC_BAR_ANNOT[15] 1070=1
+<= F3g|   X RC_BAR_ANNOT[16] 1005=#4
+=> F3g|   X RC_BAR_ANNOT[17] 1000="0.0000,3960.0000;0.0000,10360.0000"
+=> F3g|   X RC_BAR_ANNOT[17] 1000="0.0000,3960.0000;0.0000,10360.0000"
+=> F3g|   X RC_BAR_ANNOT[17] 1000="0.0000,3960.0000;0.0000,10360.0000"
+=> F3g|   X RC_BAR_ANNOT[18] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[18] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[18] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[19] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[19] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[19] 1040=0.00
+=> F3g|   X RC_BAR_ANNOT[20] 1070=-1
+=> F3g|   X RC_BAR_ANNOT[20] 1070=-1
+=> F3g|   X RC_BAR_ANNOT[20] 1070=-1
+=> F3g|   X RC_BAR_ANNOT[21] 1070=1
+=> F3g|   X RC_BAR_ANNOT[21] 1070=1
+=> F3g|   X RC_BAR_ANNOT[21] 1070=1
+=> F3g|   X RC_BAR_ANNOT[22] 1040=-1.00
+=> F3g|   X RC_BAR_ANNOT[22] 1040=-1.00
+=> F3g|   X RC_BAR_ANNOT[22] 1040=-1.00
+=> F3g|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     |   c=(0.00,3960.00,0.00) r=35.00
+=> F3g|     | DBText L=RC-SLAB-ANNOT C=2 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | DBText L=RC-SLAB-ANNOT C=2 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | DBText L=RC-SLAB-ANNOT C=2 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     |   text="41 H10-04-200 B1" pos=(-70.00,8540.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=1.5708 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F3g|     |   text="41 H10-04-200 B1" pos=(-70.00,8540.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=1.5708 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F3g|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     |   hatch pat=SOLID loops=1 ext=(-35.00,3925.00,0.00)..(35.00,3995.00,0.00)
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     |   (-105.00,0.00,0.00) -> (105.00,0.00,0.00)
+=> F3g|     |   (-105.00,0.00,0.00) -> (105.00,0.00,0.00)
+=> F3g|     |   (-105.00,0.00,0.00) -> (105.00,0.00,0.00)
+=> F3g|     |   (-105.00,7920.00,0.00) -> (105.00,7920.00,0.00)
+=> F3g|     |   (-105.00,7920.00,0.00) -> (105.00,7920.00,0.00)
+=> F3g|     |   (-105.00,7920.00,0.00) -> (105.00,7920.00,0.00)
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     | Line L=RC-SLAB-LEADERS C=256 LT=Continuous LTS=1.00 LW=LineWeight018 vis=True
+=> F3g|     |   (0.00,0.00,0.00) -> (0.00,7920.00,0.00)
+=> F3g|     |   (0.00,0.00,0.00) -> (0.00,7920.00,0.00)
+=> F3g|     |   (0.00,0.00,0.00) -> (0.00,7920.00,0.00)
+=> F3g|     |   (0.00,3960.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     |   (0.00,3960.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     |   (0.00,3960.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     |   (0.00,8540.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     |   (0.00,8540.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     |   (0.00,8540.00,0.00) -> (0.00,10360.00,0.00)
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F3g|     |   ext=(-22.50,0.00,0.00)..(22.50,151.00,0.00)
+=> F3g|     |   ext=(-22.50,0.00,0.00)..(22.50,151.00,0.00)
+=> F3g|     |   ext=(-22.50,0.00,0.00)..(22.50,151.00,0.00)
+=> F3g|     |   ext=(-22.50,7769.00,0.00)..(22.50,7920.00,0.00)
+=> F3g|     |   ext=(-22.50,7769.00,0.00)..(22.50,7920.00,0.00)
+=> F3g|     |   ext=(-22.50,7769.00,0.00)..(22.50,7920.00,0.00)
+<= F3g|   X RC_BAR_ANNOT[16] 1005=#5
+=> F3g|     |   c=(0.00,4158.00,0.00) r=35.00
+=> F3g|     |   hatch pat=SOLID loops=1 ext=(-35.00,4123.00,0.00)..(35.00,4193.00,0.00)
+=> F3g|   X RC_BAR_ANNOT[1] 1000="H10-05-200 B1"
+=> F3g|   X RC_BAR_ANNOT[8] 1040=2500.00
+<= F3g|   X RC_BAR_ANNOT[16] 1005=#6
+=> F3g|     |   c=(0.00,4356.00,0.00) r=35.00
+=> F3g|     |   text="41 H10-05-200 B1" pos=(-70.00,8540.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=1.5708 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F3g|     |   hatch pat=SOLID loops=1 ext=(-35.00,4321.00,0.00)..(35.00,4391.00,0.00)
+=> F3g|   X RC_BAR_BLOCK[0] 1001
+=> F3g|   X RC_BAR_BLOCK[0] 1001
+=> F3g|   X RC_BAR_BLOCK[0] 1001
+=> F3g|   X RC_BAR_BLOCK[1] 1000="H10-04-200 B1"
+=> F3g|   X RC_BAR_BLOCK[1] 1000="H10-04-200 B1"
+=> F3g|   X RC_BAR_BLOCK[2] 1000="B1"
+=> F3g|   X RC_BAR_BLOCK[2] 1000="B1"
+=> F3g|   X RC_BAR_BLOCK[2] 1000="B1"
+=> F3g|   X RC_BAR_BLOCK[3] 1070=41
+=> F3g|   X RC_BAR_BLOCK[3] 1070=41
+=> F3g|   X RC_BAR_BLOCK[3] 1070=41
+=> F3g|   X RC_BAR_BLOCK[4] 1070=10
+=> F3g|   X RC_BAR_BLOCK[4] 1070=10
+=> F3g|   X RC_BAR_BLOCK[4] 1070=10
+=> F3g|   X RC_BAR_BLOCK[5] 1040=198.00
+=> F3g|   X RC_BAR_BLOCK[5] 1040=198.00
+=> F3g|   X RC_BAR_BLOCK[5] 1040=198.00
+=> F3g|   X RC_BAR_BLOCK[6] 1000="X"
+=> F3g|   X RC_BAR_BLOCK[6] 1000="X"
+=> F3g|   X RC_BAR_BLOCK[6] 1000="X"
+=> F3g|   X RC_BAR_BLOCK[7] 1000="BOT"
+=> F3g|   X RC_BAR_BLOCK[7] 1000="BOT"
+=> F3g|   X RC_BAR_BLOCK[7] 1000="BOT"
+=> F3g|   X RC_BAR_BLOCK[8] 1040=5250.00
+=> F3g|   X RC_BAR_BLOCK[8] 1040=5250.00
+=> F3g|   X RC_BAR_BLOCK[9] 1040=7920.00
+=> F3g|   X RC_BAR_BLOCK[9] 1040=7920.00
+=> F3g|   X RC_BAR_BLOCK[9] 1040=7920.00
+=> F3g|   X RC_BAR_BLOCK[10] 1040=40.00
+=> F3g|   X RC_BAR_BLOCK[10] 1040=40.00
+=> F3g|   X RC_BAR_BLOCK[10] 1040=40.00
+=> F3g|   X RC_BAR_BLOCK[12] 1000="00"
+=> F3g|   X RC_BAR_BLOCK[12] 1000="00"
+=> F3g|   X RC_BAR_BLOCK[12] 1000="00"
+=> F3g|   X RC_BAR_BLOCK[13] 1000="Right"
+=> F3g|   X RC_BAR_BLOCK[13] 1000="Right"
+=> F3g|   X RC_BAR_BLOCK[13] 1000="Right"
+=> F3g|   X RC_BAR_BLOCK[14] 1000="Up"
+=> F3g|   X RC_BAR_BLOCK[14] 1000="Up"
+=> F3g|   X RC_BAR_BLOCK[14] 1000="Up"
+=> F3g|   X RC_BAR_BLOCK[15] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[15] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[15] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[16] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[16] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[16] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[17] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[17] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[17] 1000="Auto"
+=> F3g|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+=> F3g|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+=> F3g|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+=> F3g|   X RC_BAR_BLOCK[19] 1000=""
+=> F3g|   X RC_BAR_BLOCK[19] 1000=""
+=> F3g|   X RC_BAR_BLOCK[19] 1000=""
+=> F3g|   X RC_BAR_BLOCK[20] 1000=""
+=> F3g|   X RC_BAR_BLOCK[20] 1000=""
+=> F3g|   X RC_BAR_BLOCK[20] 1000=""
+=> F3g|   X RC_BAR_BLOCK[21] 1070=3
+=> F3g|   X RC_BAR_BLOCK[21] 1070=3
+=> F3g|   X RC_BAR_BLOCK[21] 1070=3
+=> F3g|   X RC_BAR_BLOCK[22] 1000="20"
+=> F3g|   X RC_BAR_BLOCK[23] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[23] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[23] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[24] 1040=1.00
+=> F3g|   X RC_BAR_BLOCK[24] 1040=1.00
+=> F3g|   X RC_BAR_BLOCK[24] 1040=1.00
+=> F3g|   X RC_BAR_BLOCK[25] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[25] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[25] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[26] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[26] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[26] 1040=0.00
+=> F3g|   X RC_BAR_BLOCK[27] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[27] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[27] 1070=-1
+=> F3g|   X RC_BAR_BLOCK[28] 1070=0
+=> F3g|   X RC_BAR_BLOCK[28] 1070=0
+=> F3g|   X RC_BAR_BLOCK[28] 1070=0
+=> F3g|   X RC_BAR_BLOCK[29] 1070=1
+=> F3g|   X RC_BAR_BLOCK[29] 1070=1
+=> F3g|   X RC_BAR_BLOCK[29] 1070=1
+=> F3g|   X RC_BAR_BLOCK[30] 1070=1
+=> F3g|   X RC_BAR_BLOCK[30] 1070=1
+=> F3g|   X RC_BAR_BLOCK[30] 1070=1
+=> F3g|   X RC_BAR_BLOCK[31] 1000=""
+=> F3g|   X RC_BAR_BLOCK[31] 1000=""
+=> F3g|   X RC_BAR_BLOCK[31] 1000=""
+=> F3g|   X RC_AUTOREBAR_SLAB[0] 1001
+=> F3g|   X RC_AUTOREBAR_SLAB[0] 1001
+=> F3g|   X RC_AUTOREBAR_SLAB[0] 1001
+<= F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#7
+<= F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#7
+<= F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#7
+=> F3g|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight025 vis=True
+=> F3g|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight025 vis=True
+=> F3g|     | Line L=RC-SLAB-BOT-01 C=256 LT=ByLayer LTS=1.00 LW=LineWeight025 vis=True
+=> F3g|     |   (0.00,3960.00,0.00) -> (5250.00,3960.00,0.00)
+=> F3g|   X RC_BAR_BLOCK[22] 1000="21"
+=> F3g|     |   (0.00,4158.00,0.00) -> (5250.00,4158.00,0.00)
+=> F3g|   X RC_BAR_BLOCK[1] 1000="H10-05-200 B1"
+=> F3g|   X RC_BAR_BLOCK[8] 1040=2500.00
+=> F3g|   X RC_BAR_BLOCK[22] 1000="22"
+=> F3g|     |   (0.00,4356.00,0.00) -> (2500.00,4356.00,0.00)
+=> F3g| entities=14
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#7
+=> F3g|   block=*U# pos=(22665.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#9
+=> F3g|   block=*U# pos=(27375.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#8
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#10
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#11
+=> F3g|   block=*U# pos=(30710.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_BAR_ANNOT[16] 1005=#12
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#14
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#14
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#14
+=> F3g|   block=*U# pos=(20040.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#13
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#13
+=> F3g|   X RC_AUTOREBAR_SLAB[1] 1005=#13
+=> F3g|   block=*U# pos=(24750.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_BAR_BLOCK[11] 1005=#4
+=> F3g|   X RC_BAR_BLOCK[11] 1005=#5
+=> F3g|   block=*U# pos=(29460.00,346040.00,0.00) rot=0.0000 scale=1.0000,1.0000,1.0000
+=> F3g|   X RC_BAR_BLOCK[11] 1005=#6

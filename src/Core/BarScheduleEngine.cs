@@ -17,21 +17,11 @@ namespace BricsCadRc.Core
         // Deleguje do ShapeCodeLibrary/BarShape — formuły i zaokrąglenie
         // do 25mm wykonywane wewnątrz CalculateTotalLength.
         // ----------------------------------------------------------------
+        // W5: ta sama funkcja liczy tonaż RC_COUNT_BBS (BbsCounter) — BarLengthRules.CuttingLength.
         private static double CalcCuttingLength(
             string shapeCode, double diameter,
             double a, double b, double c, double d, double e)
-        {
-            var shape = ShapeCodeLibrary.Get(shapeCode);
-            if (shape != null)
-            {
-                // Przytnij do liczby parametrów kształtu (shape ma 1–5 parametrów)
-                var p = new[] { a, b, c, d, e }.Take(shape.Parameters.Length).ToArray();
-                return shape.CalculateTotalLength(p, diameter);
-            }
-            // Fallback dla nieznanych shape codes
-            double fallback = Math.Max(a, Math.Max(b, Math.Max(c, Math.Max(d, e))));
-            return Math.Ceiling(fallback / 25.0) * 25.0;
-        }
+            => BarLengthRules.CuttingLength(shapeCode, diameter, a, b, c, d, e);
 
         // ----------------------------------------------------------------
         // Buduje zestawienie ze wszystkich prętów w rysunku.

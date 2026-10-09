@@ -13,7 +13,7 @@ namespace BricsCadRc.App
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             string built = "?";
-            try { built = System.IO.File.GetLastWriteTime(typeof(PluginApp).Assembly.Location).ToString("yyyy-MM-dd HH:mm"); } catch { }
+            try { built = System.IO.File.GetLastWriteTime(typeof(PluginApp).Assembly.Location).ToString("yyyy-MM-dd HH:mm"); } catch (System.Exception logEx) { Log.Error("PluginApp.Initialize", logEx); }
             doc?.Editor.WriteMessage($"\n[{ProductInfo.Name}] Plugin zaladowany. Build: {built}\n");
             // Plan C, krok 3f: format nowych prętów (RC_BAR_FORMAT, %APPDATA%\NaSmartRc\barformat.txt)
             try { doc?.Editor.WriteMessage($"[{ProductInfo.Name}] Nowe pręty: {BarFormat.DisplayName(BarFormat.Current)}\n"); }

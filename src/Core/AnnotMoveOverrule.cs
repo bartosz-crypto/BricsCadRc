@@ -69,8 +69,8 @@ namespace BricsCadRc.Core
             var vpIds = new IntegerCollection();
             foreach (var e in _gripTransients)
             {
-                try { tm.EraseTransient(e, vpIds); } catch { }
-                try { e.Dispose(); } catch { }
+                try { tm.EraseTransient(e, vpIds); } catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.ClearGripTransients", logEx); }
+                try { e.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.ClearGripTransients", logEx); }
             }
             _gripTransients.Clear();
         }
@@ -392,7 +392,7 @@ namespace BricsCadRc.Core
                             }
                         }
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.GetGripPoints", logEx); }
                 }
 
                 Point3d localGrip0 = (barAnnot.Direction == "X")
@@ -852,7 +852,7 @@ namespace BricsCadRc.Core
                 if (freshBarData != null)
                     AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db, blockPos);
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotTransformOverrule.TransformBy", logEx); }
         }
     }
 
@@ -927,11 +927,11 @@ namespace BricsCadRc.Core
                     if (freshBarData != null)
                         AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db, br.Position);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("BarBlockTransformOverrule.TransformBy", logEx); }
 
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockTransformOverrule.TransformBy", logEx); }
         }
 
         public new void SetCustomFilter()
@@ -1052,10 +1052,12 @@ namespace BricsCadRc.Core
                 // W2 (D8): rozkład sklonowany w trwającej komendzie (np. kopia cofnięta „_U” w COPY) ma jeszcze
                 // nieprzepięte [11] → opis ORYGINAŁU. Powiązanie tłumaczone przez paczkę klonowania; opis spoza
                 // klonowania nie jest usuwany.
+                bool viaClone = false;
                 if (CloneMap.TryResolvePending(db, br.ObjectId, annotHandle, out string resolved))
                 {
                     if (string.IsNullOrEmpty(resolved)) return;
                     annotHandle = resolved;
+                    viaClone = true;
                 }
 
                 using var tr = db.TransactionManager.StartTransaction();
@@ -1066,6 +1068,12 @@ namespace BricsCadRc.Core
                 var handle = new Handle(hVal);
                 if (!db.TryGetObjectId(handle, out ObjectId annotId)
                     || annotId.IsNull || !annotId.IsValid || annotId.IsErased)
+                { tr.Commit(); return; }
+
+                // Back-link [16] opisu (e7b600d): opis usuwany tylko, gdy należy do TEGO rozkładu — kopia rozkładu
+                // bez opisu wskazuje opis oryginału. Opis-klon z paczki ma jeszcze [16] oryginału (przepięcie
+                // dopiero w CommandEnded) — wtedy bez sprawdzania.
+                if (!viaClone && !BarEraseCascade.AnnotBelongsTo(tr, annotId, br.Handle.Value.ToString("X8")))
                 { tr.Commit(); return; }
 
                 var annotBr = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
@@ -1106,6 +1114,8 @@ namespace BricsCadRc.Core
 
             if (!erasing) return;
             if (dbObject is not Teigha.DatabaseServices.Polyline pline) return;
+            // UNDO samo odtwarza / usuwa etykietę i rozkłady — bez kaskady (P2, jak e7b600d)
+            if (dbObject.IsUndoing) return;
 
             BarEraseCascade.Run(pline);
         }
@@ -1128,6 +1138,8 @@ namespace BricsCadRc.Core
 
             if (!erasing) return;
             if (!(dbObject is BlockReference br)) return;
+            // UNDO samo odtwarza / usuwa etykietę i rozkłady — bez kaskady (P2, jak e7b600d)
+            if (dbObject.IsUndoing) return;
             if (BarEntity.KindOf(br) != BarKind.Block) return;
 
             BarEraseCascade.Run(br);
@@ -1226,8 +1238,10 @@ namespace BricsCadRc.Core
                                 null, out long aHVal))
                         {
                             var aHandle = new Handle(aHVal);
+                            // Back-link [16]: opis tylko tego rozkładu (nie opis oryginału wskazywany przez kopię)
                             if (db.TryGetObjectId(aHandle, out ObjectId aId)
-                                && !aId.IsNull && !aId.IsErased)
+                                && !aId.IsNull && !aId.IsErased
+                                && AnnotBelongsTo(tr, aId, oid.Handle.Value.ToString("X8")))
                             {
                                 var annotBr = tr.GetObject(aId, OpenMode.ForWrite) as BlockReference;
                                 annotBr?.Erase(true);
@@ -1241,6 +1255,30 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
             catch (System.Exception ex) { Log.Error("BarEraseCascade.Run", ex); }
+        }
+
+        /// <summary>
+        /// Czy opis rozkładu (RC_BAR_ANNOT) wolno usunąć razem z rozkładem distHandle. Opis jest „cudzy” (false) TYLKO,
+        /// gdy jego back-link [16] wskazuje ŻYWY rozkład tej bazy, inny niż usuwany, którego [11] wskazuje z powrotem ten
+        /// opis (para dwustronna — np. kopia rozkładu skopiowana bez opisu ma [11] → opis oryginału). W każdym innym
+        /// przypadku (brak / pusty [16], [16] = usuwany rozkład, [16] → rozkład usunięty / nieistniejący / bez pary —
+        /// np. stare -ARRAY sprzed 3b, gdzie opis-kopia ma [16] → oryginał) — true, usuwany jak dawniej.
+        /// </summary>
+        internal static bool AnnotBelongsTo(Transaction tr, ObjectId annotId, string distHandle)
+        {
+            var annotBr = tr.GetObject(annotId, OpenMode.ForRead) as BlockReference;
+            if (annotBr == null) return true;
+            var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
+            if (annotData == null || string.IsNullOrEmpty(annotData.SourceBlockHandle)) return true;
+            if (XLink.Same(annotData.SourceBlockHandle, distHandle)) return true;
+
+            var db = annotBr.Database;
+            if (db == null || !XLink.TryParse(annotData.SourceBlockHandle, out long h) || h == 0) return true;
+            if (!db.TryGetObjectId(new Handle(h), out ObjectId otherId) || otherId.IsNull || otherId.IsErased) return true;
+            var other = tr.GetObject(otherId, OpenMode.ForRead) as BlockReference;
+            var otherData = other != null ? BarBlockEngine.ReadXData(other) : null;
+            if (otherData == null) return true;
+            return !XLink.Same(otherData.AnnotHandle, annotBr.Handle.Value.ToString("X8"));
         }
     }
 
@@ -1280,7 +1318,7 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotBlockEraseOverrule.Erase", logEx); }
         }
 
         public new void SetCustomFilter()

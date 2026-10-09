@@ -14,6 +14,14 @@ namespace BricsCadRc.Core
     ///   • obrys ZEWNĘTRZNY — dół (B1/B2) i UB 03 w nibie,
     ///   • obrys WEWNĘTRZNY (uskok) — góra (T1/T2) i UB 01/02 (pręty górne nie mieszczą się w nibie).
     /// Użytkownik może wskazać którykolwiek z obu obrysów — Detect zwraca oba.
+    /// Otwartą linię uskoku (np. z GA) domyka wcześniej NibAutoClose (POPRAWKI_WZORCA 23); Detect jej nie widzi.
+    /// UWAGA: zmiana kryteriów tu (Within, Build, Clean, MinNibWidth / MaxNibWidth) → zmiana w NibLoopBuilder.LooksLikeNib
+    /// (replika używana przy domykaniu — inaczej automat zapisze pętlę, której Detect nie uzna, i ją wycofa).
+    /// Osiowość (POPRAWKI_WZORCA 25): obie polilinie (obrys i linia uskoku) są przed analizą prostowane
+    /// <see cref="GeometryHelper.SquaredOrSame"/> (tolerancja 4 mm, surowe wierzchołki — jak obrys płyty w AutoRebar),
+    /// więc krawędź z szumem ≤ 4 mm jest osiowa, a <c>OuterCoord</c> / <c>InnerCoord</c> / <c>Outer</c> / <c>Inner</c> są
+    /// współrzędnymi wyprostowanymi (spójnymi z obrysem obliczeń AutoRebar). Obrys idealnie osiowy (≤ 1e-3) — te same
+    /// wartości (bit w bit jak przed poprawką).
     /// </summary>
     public static class NibDetector
     {
@@ -55,7 +63,7 @@ namespace BricsCadRc.Core
                 using var tr = db.TransactionManager.StartOpenCloseTransaction();
                 if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline slab)) return null;
                 if (!GeometryHelper.IsEffectivelyClosed(slab)) return null;
-                var p = Clean(GeometryHelper.GetPolylineVertices(slab));
+                var p = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(slab)));
                 if (p.Count < 3) return null;
                 var pb = Box(p);
 
@@ -66,7 +74,7 @@ namespace BricsCadRc.Core
                     if (oid.IsErased || oid == slabId) continue;
                     if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl) || pl.NumberOfVertices < 3) continue;
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
-                    var q = Clean(GeometryHelper.GetPolylineVertices(pl));
+                    var q = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
                     if (q.Count < 3) continue;
                     var qb = Box(q);
 

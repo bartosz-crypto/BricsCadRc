@@ -73,11 +73,27 @@ namespace BricsCadRc.Core
                     nameof(paramValues));
 
             double raw = _lengthFormula(paramValues, diameter);
-            // BS 8666:2020 kl. 7.2 — długość całkowita w górę do 25 mm. W4g (P7): także prosty 00 (A bez zmian);
-            // dla 00 tolerancja 1e-9 kroku — długość z obrysu (np. 3500.0000000004) nie skacze o 25 mm.
-            if (Code == "00") return Math.Ceiling(raw / 25.0 - 1e-9) * 25.0;
-            return Math.Ceiling(raw / 25.0) * 25.0;
+            // W5: długość nieokreślona (NaN / nieskończona) → wyjątek = „brak długości” u wywołujących (nie liczba w BBS)
+            if (double.IsNaN(raw) || double.IsInfinity(raw))
+                throw new InvalidBarLengthException(Code, raw);
+            // BS 8666:2020 kl. 7.2 — długość całkowita w górę do 25 mm. W4g (P7): także prosty 00 (A bez zmian).
+            // W5: tolerancja 1e-9 kroku dla WSZYSTKICH kodów — szum double (np. 12: 625.0000000000001 przy 0.43R,
+            // 00: długość z obrysu 3500.0000000004) nie podnosi długości o 25 mm.
+            double len = Math.Ceiling(raw / 25.0 - 1e-9) * 25.0;
+            // W5: długość zerowa / ujemna (wymiary zerowe lub za małe) → wyjątek = „brak długości”
+            if (len <= 0) throw new InvalidBarLengthException(Code, raw);
+            return len;
         }
+
+        /// <summary>
+        /// W5: komunikat dla długości ≤ 0 / nieokreślonej (bez prefiksu i znaku nowej linii) — wyjątek
+        /// InvalidBarLengthException i ostrzeżenie BarShapeValidation.
+        /// </summary>
+        public static string InvalidLengthMessage(string code, double raw)
+            => double.IsNaN(raw) || double.IsInfinity(raw)
+                ? "długość pręta wg wzoru kształtu " + code + " nieokreślona — sprawdź wymiary albo nadpisz długość."
+                : "długość pręta wg wzoru kształtu " + code + " = " + raw.ToString("F0", CultureInfo.InvariantCulture)
+                  + " mm (≤ 0) — sprawdź wymiary (zerowe lub za małe) albo nadpisz długość.";
 
         /// <summary>
         /// Minimalny promień gięcia wg BS 8666:2020 Table 2 (B500): 6→12, 8→16, 10→20, 12→24, 16→32, 20→70,
@@ -163,6 +179,7 @@ namespace BricsCadRc.Core
                 case "14": case "29": case "31": case "47": case "51":
                 case "56": case "63": case "64": case "75":
                 case "00":   // W4g (runda 1, uwaga 2): 00 w górę do 25 mm — stare TL = A ≠ wielokrotność 25
+                case "27": case "28":   // W5: −0.5r − d (dawniej −0.5r − 2d) — stare TL krótsze o d (po zaokrągleniu 0–50 mm)
                     return true;
                 default:
                     return Math.Abs(d - 25.0) < 1e-9 && code != "00" && code != "99";
@@ -355,5 +372,21 @@ namespace BricsCadRc.Core
             else Set("D", len * Math.Sin(t));
             return r;
         }
+    }
+
+    /// <summary>
+    /// W5: długość cięcia wg wzoru kształtu ≤ 0 albo nieokreślona (NaN / nieskończona). Wywołujący traktują ją jak
+    /// każdy błąd długości: pozycja BBS / zestawienia „brak długości”, w dialogach puste pole, TotalLength bez zmian.
+    /// </summary>
+    public sealed class InvalidBarLengthException : InvalidOperationException
+    {
+        public InvalidBarLengthException(string code, double raw)
+            : base(BarShape.InvalidLengthMessage(code, raw))
+        {
+            RawLength = raw;
+        }
+
+        /// <summary>Wynik wzoru przed zaokrągleniem [mm].</summary>
+        public double RawLength { get; }
     }
 }

@@ -61,6 +61,8 @@ namespace BricsCadRc.BrxSmokeTests
         {
             _w4Mode = false;   // PlanCW4Tests.cs — tryb W4 włącza SetModeW4
             _f3Mode = false;   // PlanCStage3fTests.cs — tryb 3f włącza SetModeF3
+            _portMode = false; // PlanCPortTests.cs — tryb PORT włącza SetModePort
+            _hbMode = false;   // PlanCHolbrookTests.cs — tryb HB włącza SetModeHb
             _w2Mode = w2;
             ResultsFile = w2 ? "planc-w2-results.txt" : "planc-w1-results.txt";
             Prefix = w2 ? "[RC W2]" : "[RC W1]";

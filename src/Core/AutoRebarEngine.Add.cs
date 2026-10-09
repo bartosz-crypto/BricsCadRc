@@ -52,6 +52,9 @@ namespace BricsCadRc.Core
                 if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline pl)) return res;
                 verts = GeometryHelper.GetPolylineVertices(pl);
                 slabBox = GeometryHelper.PolylineBbox(pl);
+                // POPRAWKI 25: obrys prawie osiowy (≤ 4 mm) — obliczenia na kopii wyprostowanej; idealny — bez zmian
+                var sq = GeometryHelper.SquaredOrSame(verts);
+                if (!ReferenceEquals(sq, verts)) { verts = sq; slabBox = GeometryHelper.VerticesBbox(verts); }
                 slabTag = CurrentSlabTagFor(pl);
                 var ga = pl.GetXDataForApplication(GaImportEngine.XApp)?.AsArray();
                 if (ga != null && ga.Length > 1) slabPlot = ga[1].Value as string;
@@ -87,7 +90,7 @@ namespace BricsCadRc.Core
                         var cands = maps.Where(m => m.Code == code && m.Slab.HasValue
                             && Math.Abs(m.Slab.Value.MaxPoint.X - m.Slab.Value.MinPoint.X - sw) < 10
                             && Math.Abs(m.Slab.Value.MaxPoint.Y - m.Slab.Value.MinPoint.Y - sh) < 10).ToList();
-                        var map = cands.FirstOrDefault(m => slabPlot != null && Norm(m.Plot).StartsWith(Norm(slabPlot)))
+                        var map = cands.FirstOrDefault(m => slabPlot != null && PlotLabelRules.MapPlotMatches(m.Plot, slabPlot))
                                   ?? cands.FirstOrDefault();
                         if (map == null)
                         {
@@ -132,7 +135,7 @@ namespace BricsCadRc.Core
                         var cands = maps.Where(m => m.Code == code && m.Slab.HasValue
                             && Math.Abs(m.Slab.Value.MaxPoint.X - m.Slab.Value.MinPoint.X - sw) < 10
                             && Math.Abs(m.Slab.Value.MaxPoint.Y - m.Slab.Value.MinPoint.Y - sh) < 10).ToList();
-                        var map = cands.FirstOrDefault(m => slabPlot != null && Norm(m.Plot).StartsWith(Norm(slabPlot)))
+                        var map = cands.FirstOrDefault(m => slabPlot != null && PlotLabelRules.MapPlotMatches(m.Plot, slabPlot))
                                   ?? cands.FirstOrDefault();
                         if (map == null)
                         {
@@ -159,8 +162,6 @@ namespace BricsCadRc.Core
             ed.WriteMessage("\n");
             return res;
         }
-
-        private static string Norm(string s) => System.Text.RegularExpressions.Regex.Replace((s ?? "").ToUpperInvariant(), @"\s+", " ").Trim();
 
         // ------------------------------------------------------------------
         //  Odczyt map (XData RC_MAP [PLOT, mapa])
@@ -333,7 +334,8 @@ namespace BricsCadRc.Core
                     if (b == null || b.Diameter != dia || (b.ShapeCode ?? "00") != "00") continue;
                     int nr = SingleBarEngine.ExtractPosNr(b.Mark);
                     if (nr <= 0 || nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
-                    if (Math.Abs(b.LengthA - len) < 1.0) { tr.Commit(); return (be.Entity.ObjectId, b); }
+                    // Id czytane PRZED Commit — po zamknięciu transakcji encja nie jest już otwarta (eNotOpenForRead)
+                    if (Math.Abs(b.LengthA - len) < 1.0) { var foundId = be.Entity.ObjectId; tr.Commit(); return (foundId, b); }
                 }
                 tr.Commit();
             }
@@ -614,7 +616,7 @@ namespace BricsCadRc.Core
                     var x = dim.GetXDataForApplication(XAddDimApp)?.AsArray();
                     if (x == null || x.Length < 3) continue;
                     if ((x[2].Value as string) != code) continue;
-                    string tag = x[1].Value as string;
+                    string tag = XLink.Read(x[1]);   // tekst 1000 (zapis) albo 1005 (kopia przepięta przez CloneRemap, K5)
                     bool mine = !string.IsNullOrEmpty(tag) && slabTag != null
                         ? SameHandle(tag, slabTag)
                         : GeometryHelper.IsPointInsidePolygon(verts, new Point2d(dim.TextPosition.X, dim.TextPosition.Y));

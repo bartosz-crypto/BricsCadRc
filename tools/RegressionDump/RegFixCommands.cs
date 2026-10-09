@@ -68,6 +68,10 @@ namespace RegressionDump
             new FixCase { Id = "F6",  Index = 20 },   // A bez etykiety, B z etykietą 40 mm nad A; COPY A, B, etykiety
             new FixCase { Id = "F5c", Index = 21 },   // COPY 44, RC_EDIT_BAR oryginału
             new FixCase { Id = "F3f", Index = 22 },   // MIRROR N zestawu (geometria opisu po normalizacji — 0-POPRAWKI p.1)
+            // Przeniesienie zmian kolegi (docs/PLAN_PRZENIESIENIA_2026-10-09.md)
+            new FixCase { Id = "F12", Index = 23 },   // K6 (#12): _.STRETCH końca 00 do 20 mm (< 50) — pręt sprzed STRETCH
+            new FixCase { Id = "F14", Index = 24 },   // K7 (B3 ADD, D1): płyta L — B3 ADD w narożniku wklęsłym (wzorzec: brak metody)
+            new FixCase { Id = "F3g", Index = 25 },   // K5 (3c): B1 na płycie, COPY płyty z rozkładami (+20000 w X), B1 ponownie na oryginale
         };
 
         /// <summary>Plik -WBLOCK przypadku F3e (ścieżka bez spacji — skrypt); usuwany w RC_REG_FIX_SETUP.</summary>
@@ -174,6 +178,42 @@ namespace RegressionDump
                 c.Bar = PlaceBarWithLabel(db, 12, RingShapeCode, 300, 0, 0, NextPos(db), new Point3d(0, c.Y0, 0), withLabel: false);
                 return BarMark(db, c.Bar);
             });
+
+            // K6 (#12): zestaw pod _.STRETCH końca w reg.scr
+            FixStep("F12.setup", () => SetupStraight(db, Fx("F12"), 3000, label: true, dist: true));
+            // K7 (B3 ADD): płyta L w pasie (Y0 ± 4000), narożnik wklęsły (6000, Y0); Bar = obrys płyty
+            FixStep("F14.setup", () =>
+            {
+                var c = Fx("F14");
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayer(db, tr, SlabLayer, 7);
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                    var pl = new Polyline(6);
+                    var pts = new[] { (0.0, -4000.0), (12000.0, -4000.0), (12000.0, 0.0), (6000.0, 0.0), (6000.0, 4000.0), (0.0, 4000.0) };
+                    for (int i = 0; i < pts.Length; i++) pl.AddVertexAt(i, new Point2d(pts[i].Item1, c.Y0 + pts[i].Item2), 0, 0, 0);
+                    pl.Closed = true;
+                    pl.Layer = SlabLayer;
+                    c.Bar = ms.AppendEntity(pl);
+                    tr.AddNewlyCreatedDBObject(pl, true);
+                    tr.Commit();
+                }
+                return "OK";
+            });
+            // K5 (3c): płyta 12000×8000 w pasie (Y0 ± 4000) + AutoRebar B1; Bar = obrys płyty
+            FixStep("F3g.setup", () =>
+            {
+                var c = Fx("F3g");
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayer(db, tr, SlabLayer, 7);
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                    c.Bar = AddRect(ms, tr, 0, c.Y0 - SlabH / 2, SlabW, c.Y0 + SlabH / 2, SlabLayer);
+                    tr.Commit();
+                }
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                return Call("AutoRebarEngine", "GenerateLayer", doc, c.Bar, "rebar_bottom", "X", "B1", 10, 200.0, 40.0, true);
+            });
         }
 
         [CommandMethod("RC_REG_FIX_CHECK", CommandFlags.Modal)]
@@ -203,6 +243,22 @@ namespace RegressionDump
                     Set(b, "TotalLength", 3333.0);
                 });
                 return "OK";
+            });
+            // K5 (3c): ponowne B1 na ORYGINALE po COPY płyty z rozkładami (reg.scr) — wzorzec kasuje rozkłady kopii
+            FixStep("F3g.regen", () =>
+            {
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                return Call("AutoRebarEngine", "GenerateLayer", doc, Fx("F3g").Bar, "rebar_bottom", "X", "B1", 10, 200.0, 40.0, true);
+            });
+            // K7 (B3 ADD, decyzja D1): na końcu — nowy szablon H10 L=1250 nie przesuwa numeracji innych przypadków.
+            // Wzorzec aba0ed1 nie ma GenerateB3Corners → wynik „brak B3 ADD” bez wyjątku (różnica oczekiwana 14).
+            FixStep("F14.b3", () =>
+            {
+                if (PT("AutoRebarEngine").GetMethod("GenerateB3Corners",
+                        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic) == null)
+                    return "brak B3 ADD (wtyczka bez GenerateB3Corners)";
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                return Call("AutoRebarEngine", "GenerateB3Corners", doc, Fx("F14").Bar);
             });
         }
 

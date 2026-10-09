@@ -11,7 +11,7 @@ namespace BricsCadRc.Core
 {
     /// <summary>
     /// RC_PRZYGOTUJ_GA — przygotowanie rysunku RC (plik „default”) z rysunku GA:
-    ///   • płyty w pliku GA: opis „PLOT …” (SD-Text) wewnątrz obrysu SD-PILED-RAFT,
+    ///   • płyty w pliku GA: opis „PLOT …” / „GARAGE …” (SD-Text, `PlotLabelRules.IsPlotLabel`) wewnątrz obrysu SD-PILED-RAFT,
     ///   • kopiowane tylko: obrys + linia uskoku (SD-PILED-RAFT, także door threshold i linie stopni),
     ///     pale (koła SD-Pile), teksty SD-Text poza „NIB TOC=…” (opisy belek itp. zostają),
     ///     podpisy pali (SD-Pile Text*) — TYLKO na rzucie górnym,
@@ -84,9 +84,9 @@ namespace BricsCadRc.Core
                         }
                         else if (layer.Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (e is MText mt && IsPlotLabel(FirstLine(mt)))
+                            if (e is MText mt && PlotLabelRules.IsPlotLabel(FirstLine(mt)))
                                 labels.Add((id, FirstLine(mt), mt.Location));
-                            else if (e is DBText dt && IsPlotLabel(dt.TextString))
+                            else if (e is DBText dt && PlotLabelRules.IsPlotLabel(dt.TextString))
                                 labels.Add((id, dt.TextString.Trim(), dt.Position));
                             else if (e is Polyline bp && bp.NumberOfVertices >= 4 && GeometryHelper.IsEffectivelyClosed(bp))
                                 boxes.Add((id, Ext(GeometryHelper.GetPolylineVertices(bp))));
@@ -125,8 +125,10 @@ namespace BricsCadRc.Core
                 }
                 if (src.Plots.Count == 0)
                     throw new InvalidOperationException(
-                        $"W pliku nie znaleziono płyt (opis „PLOT …” na SD-Text wewnątrz zamkniętego obrysu {SlabLayer}).");
-                src.Plots = src.Plots.OrderBy(p => p.Label, StringComparer.OrdinalIgnoreCase).ToList();
+                        $"W pliku nie znaleziono płyt (opis „PLOT …” / „GARAGE …” na SD-Text wewnątrz zamkniętego obrysu {SlabLayer}).");
+                // Najpierw płyty PLOT, potem garaże (domyślnie wybierany pierwszy PLOT, nie GARAGE)
+                src.Plots = src.Plots.OrderBy(p => p.Label.TrimStart().StartsWith("GARAGE", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                                     .ThenBy(p => p.Label, StringComparer.OrdinalIgnoreCase).ToList();
                 return src;
             }
             catch
@@ -143,6 +145,8 @@ namespace BricsCadRc.Core
         public sealed class Result
         {
             public int Bottom, Top, Joined;
+            /// <summary>Rzuty, w których automat domknął otwartą linię uskoku (NibAutoClose).</summary>
+            public int NibClosed;
         }
 
         public static Result Import(Document doc, Source src, GaPlot plot, List<string> warnings)
@@ -201,9 +205,9 @@ namespace BricsCadRc.Core
                 var dT = dB + new Vector3d(w + PlanGap, 0, 0);
 
                 // 3. Kopie
-                res.Bottom = CloneInto(db, src, common, dB, plot, "B", warnings, ref res.Joined);
+                res.Bottom = CloneInto(db, src, common, dB, plot, "B", warnings, ref res.Joined, ref res.NibClosed);
                 var topIds = new List<ObjectId>(common); topIds.AddRange(pileLabels);
-                res.Top = CloneInto(db, src, topIds, dT, plot, "T", warnings, ref res.Joined);
+                res.Top = CloneInto(db, src, topIds, dT, plot, "T", warnings, ref res.Joined, ref res.NibClosed);
 
                 // 4. Tytuł górny pod rzutem górnym (ten sam poziom co dolny), ramki szablonów po bokach
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -248,7 +252,7 @@ namespace BricsCadRc.Core
         }
 
         private static int CloneInto(Database db, Source src, List<ObjectId> ids, Vector3d d, GaPlot plot,
-                                     string view, List<string> warnings, ref int joined)
+                                     string view, List<string> warnings, ref int joined, ref int nibClosed)
         {
             var col = new ObjectIdCollection(ids.ToArray());
             var idMap = new IdMapping();
@@ -256,8 +260,9 @@ namespace BricsCadRc.Core
             src.Db.WblockCloneObjects(col, msId, idMap, DuplicateRecordCloning.Ignore, false);
 
             int n = 0;
-            ObjectId label = ObjectId.Null, box = ObjectId.Null;
+            ObjectId label = ObjectId.Null, box = ObjectId.Null, outline = ObjectId.Null;
             var openPl = new List<ObjectId>();
+            var nibPieces = new List<ObjectId>();   // kawałki linii uskoku (Polyline / Line / Arc na SlabLayer)
             var textClones = new List<ObjectId>();
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -275,17 +280,46 @@ namespace BricsCadRc.Core
                     else if (e is MText && (e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         textClones.Add(e.ObjectId);
                     else if (pair.Key == plot.LabelBoxId) box = e.ObjectId;
-                    else if (e is Polyline pl && (e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase)
-                             && !GeometryHelper.IsEffectivelyClosed(pl))
-                        openPl.Add(e.ObjectId);
+                    else if (pair.Key == plot.OutlineId) outline = e.ObjectId;
+                    else if ((e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (e is Polyline pl && !GeometryHelper.IsEffectivelyClosed(pl)) openPl.Add(e.ObjectId);
+                        if (e is Polyline || e is Line || e is Arc) nibPieces.Add(e.ObjectId);
+                    }
                 }
 
                 // Opis płyty: tylko nr plotu, SSL i grubość; ramka dopasowana do tekstu
                 if (!label.IsNull) label = RebuildLabel(tr, msId, label, box, textClones, plot.Label, view, warnings);
-
-                // Otwarte kawałki obrysu/uskoku tworzące pętlę → jedna zamknięta polilinia (NibDetector)
-                joined += JoinLoops(tr, msId, openPl, plot.Label, view);
                 tr.Commit();
+            }
+
+            // Nib: NAJPIERW automat domykania otwartej linii uskoku krawędzią obrysu (NibAutoClose; tylko gdy płyta nie ma
+            // zamkniętego nibu), DOPIERO POTEM JoinLoops na pozostałych kawałkach — inaczej JoinLoops skleja linię uskoku
+            // z linią strefy 760 mm w zamknięty pas, którego NibDetector nie uznaje (PLOT 319; POPRAWKI_WZORCA 23).
+            if (!outline.IsNull)
+            {
+                var msgs = new List<string>();
+                try
+                {
+                    if (NibAutoClose.TryClose(db, outline, nibPieces, e => Tag(e, plot.Label, view), msgs)) nibClosed++;
+                    else foreach (var m in msgs) warnings.Add($"{m} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.Nib", ex);
+                    warnings.Add($"Nib: błąd domykania linii uskoku — {ex.Message} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                }
+            }
+
+            // Otwarte kawałki obrysu/uskoku tworzące pętlę → jedna zamknięta polilinia (NibDetector)
+            openPl.RemoveAll(id => id.IsErased);
+            if (openPl.Count > 0)
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    joined += JoinLoops(tr, msId, openPl, plot.Label, view);
+                    tr.Commit();
+                }
             }
             return n;
         }
@@ -554,8 +588,6 @@ namespace BricsCadRc.Core
             }
             catch (System.Exception ex) { Log.Error("GaImport.ExtOf", ex); return null; }
         }
-
-        private static bool IsPlotLabel(string s) => Regex.IsMatch((s ?? "").Trim(), @"^PLOTS?\s+\S", RegexOptions.IgnoreCase);
 
         private static string FirstLine(MText mt) => TextLines(mt).FirstOrDefault() ?? "";
 

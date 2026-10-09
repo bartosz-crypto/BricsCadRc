@@ -29,7 +29,7 @@ namespace BricsCadRc.Core
                 },
                 d =>
                 {
-                    try { d.Database.ObjectAppended -= OnObjectAppended; } catch { }
+                    try { d.Database.ObjectAppended -= OnObjectAppended; } catch (System.Exception logEx) { Log.Error("BarCopyWatcher.Register", logEx); }
                     d.CommandEnded     -= OnCommandEnded;
                     d.CommandCancelled -= OnCommandCancelled;
                 });
@@ -133,6 +133,9 @@ namespace BricsCadRc.Core
                 }
 
                 bool isCopyLike = IsCopyLikeCommand(cmd) || deferredCopyLike;
+                LastSameNumberCopyMessages = new List<string>();
+                // e7b600d (b): nowe pręty zapamiętane przed krokiem 5 (RemapCopiedBarLabels zawęża _newBars)
+                var copiedBars = isCopyLike ? new List<ObjectId>(_newBars) : null;
 
                 // 2) Mapa klonowania tej komendy (W2, docs/PLAN_POPRAWKI_W1_W2.md 4.4)
                 var batches = CloneMap.Take(db);
@@ -153,6 +156,9 @@ namespace BricsCadRc.Core
                     if (isCopyLike && _newBars.Count > 0)
                         RemapCopiedBarLabels(db, mapped);
                 }
+
+                // 7) Komunikat o kopiach pręta z tym samym numerem pozycji (e7b600d (b)) — tylko odczyt
+                if (isCopyLike && copiedBars.Count > 0) ReportSameNumberCopies(doc, db, copiedBars);
             }
             catch (System.Exception ex) { Log.Error($"BarCopyWatcher.HandleCommandFinish {cmdRaw}", ex); }
             finally
@@ -389,6 +395,42 @@ namespace BricsCadRc.Core
             }
             if (!blk.Entity.IsWriteEnabled) blk.Entity.UpgradeOpen();
             blk.Write(bar);
+        }
+
+        /// <summary>Komunikaty ostatniej komendy najwyższego poziomu (ReportSameNumberCopies) — do testów BRX.</summary>
+        internal static List<string> LastSameNumberCopyMessages { get; private set; } = new List<string>();
+
+        /// <summary>
+        /// e7b600d (b): kopia pręta o identycznych wymiarach ma ten sam numer pozycji co istniejący pręt (jeden numer =
+        /// jeden kształt) — komunikat w linii poleceń, że kopia liczy się do tej samej pozycji. Polilinie i pręty-bloki
+        /// (<see cref="BarEntity"/>), tylko ten rysunek, bez prętów bez numeru, usunięte (MIRROR z usunięciem) pomijane.
+        /// Tylko odczyt.
+        /// </summary>
+        private static void ReportSameNumberCopies(Document doc, Database db, List<ObjectId> copiedBars)
+        {
+            try
+            {
+                var copySet = new HashSet<ObjectId>(copiedBars.Where(id => !id.IsNull && id.Database == db && !id.IsErased));
+                if (copySet.Count == 0) return;
+                var copies = new List<BarData>();
+                var others = new List<BarData>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+                    {
+                        var bar = be.Read();
+                        if (bar == null) continue;
+                        (copySet.Contains(be.Entity.ObjectId) ? copies : others).Add(bar);
+                    }
+                    tr.Commit();
+                }
+                var msgs = IdenticalBarText.SameNumberCopyMessages(copies, others, b => b.Mark,
+                    b => SingleBarEngine.ExtractPosNr(b.Mark), PositionReconciler.SameShape);
+                LastSameNumberCopyMessages = msgs;
+                foreach (var m in msgs) doc?.Editor?.WriteMessage("\n" + m);
+                if (msgs.Count > 0) doc?.Editor?.WriteMessage("\n");
+            }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.ReportSameNumberCopies", ex); }
         }
 
         private static bool TryGetArrowTip(MLeader ml, out Point3d tip)
