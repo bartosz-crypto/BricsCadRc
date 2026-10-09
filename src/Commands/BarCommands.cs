@@ -39,6 +39,7 @@ namespace BricsCadRc.Commands
             if (Application.ShowModalWindow(elevDlg) != true) return;
             var barData = elevDlg.Result;
             if (barData == null) return;
+            WarnDefaultAngle(ed, barData, null);   // W4d (0-POPRAWKI p.5): brak wymiarów kąta → kąt domyślny
 
             // Krok 3 — punkt wstawienia
             var ptOpts   = new PromptPointOptions("\nClick insertion point for bar: ");
@@ -68,10 +69,12 @@ namespace BricsCadRc.Commands
             Point3d barCenter;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var pline = tr.GetObject(barId, OpenMode.ForRead) as Teigha.DatabaseServices.Polyline;
-                barCenter = pline != null
-                    ? pline.GetPointAtParameter(pline.EndParam / 2.0)
-                    : insertPt;
+                var barEnt = tr.GetObject(barId, OpenMode.ForRead) as Entity;
+                if (barEnt is Teigha.DatabaseServices.Polyline pline)
+                    barCenter = pline.GetPointAtParameter(pline.EndParam / 2.0);
+                else
+                    // Plan C, etap 3c: pręt-blok — punkt obrysu w połowie parametru (jak polilinia)
+                    barCenter = BarEntity.From(barEnt, BarKinds.Block)?.MidPoint(tr) ?? insertPt;
                 tr.Commit();
             }
 
@@ -80,9 +83,16 @@ namespace BricsCadRc.Commands
             List<Point3d> axisPts = new List<Point3d>();
             using (var trAxis = db.TransactionManager.StartTransaction())
             {
-                var pline = trAxis.GetObject(barId, OpenMode.ForRead) as Polyline;
-                if (pline != null)
+                var barEnt = trAxis.GetObject(barId, OpenMode.ForRead) as Entity;
+                if (barEnt is Polyline pline)
                     axisPts = SingleBarEngine.GetAxisPointsFromOutline(pline, barData.ShapeCode);
+                else if (BarEntity.From(barEnt, BarKinds.Block) is BarEntity be && be.Entity is BlockReference br)
+                {
+                    // Plan C, etap 3c: oś pręta-bloku z parametrów; pierścień (W4c: 75) — wierzchołki obrysu (jak GetAxisPointsFromOutline)
+                    axisPts = BarFrameRules.IsRingShape(barData.ShapeCode)
+                        ? be.OutlineVertices(trAxis).ToList()
+                        : SingleBarBlock.AxisPointsWcs(br, barData);
+                }
                 trAxis.Commit();
             }
 
@@ -112,7 +122,7 @@ namespace BricsCadRc.Commands
                 {
                     var barEnt = tr.GetObject(barId, OpenMode.ForWrite) as Entity;
                     barData.LabelHandle = labelId.Handle.ToString();
-                    SingleBarEngine.WriteXData(barEnt, barData);
+                    BarXData.Write(barEnt, barData);
                     tr.Commit();
                 }
             }
@@ -130,21 +140,28 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed  = doc.Editor;
             var db  = doc.Database;
-            // --- Krok 1: Wybierz pret (polilinia RC_SINGLE_BAR lub BlockReference RC_BAR_BLOCK) ---
+            // --- Krok 1: Wybierz pret (polilinia RC_SINGLE_BAR lub pręt-blok RC_SINGLE_BAR [14]=2) ---
             var selOpts = new PromptEntityOptions("\nSelect bar to distribute (RC_BAR): ");
             selOpts.SetRejectMessage("\nNot a reinforcement bar.");
             selOpts.AddAllowedClass(typeof(Polyline), true);
+            selOpts.AddAllowedClass(typeof(BlockReference), true);
             var selResult = ed.GetEntity(selOpts);
             if (selResult.Status != PromptStatus.OK) return;
 
             BarData sourceBar = null;
+            bool    testBarWithoutNumber = false;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var ent = (Entity)tr.GetObject(selResult.ObjectId, OpenMode.ForRead);
-                sourceBar = SingleBarEngine.ReadBarXData(ent);
-                // Odczytaj kąt z geometrii polilinii (uwzględnia ROTATE)
+                var ent    = (Entity)tr.GetObject(selResult.ObjectId, OpenMode.ForRead);
+                var barEnt = BarEntity.From(ent, BarKinds.Polyline | BarKinds.Block | BarKinds.Other);
+                sourceBar  = barEnt?.Read();
+                // Odczytaj kąt z geometrii polilinii (uwzględnia ROTATE); dla bloku nie liczymy (Angle i tak = 0 niżej)
                 if (sourceBar != null && ent is Polyline barPline)
                     sourceBar.Angle = SingleBarEngine.GetBarAngle(barPline);
+                // Pręt-blok bez numeru pozycji (np. pręt testowy H12-T) — nie rozkładamy
+                if (sourceBar != null && barEnt.Kind == BarKind.Block
+                    && SingleBarEngine.ExtractPosNr(sourceBar.Mark) <= 0)
+                    testBarWithoutNumber = true;
                 tr.Commit();
             }
             // Zapisz handle polilinii pręta — potrzebny do resetu etykiety przy usunięciu rozkładu
@@ -154,6 +171,11 @@ namespace BricsCadRc.Commands
             if (sourceBar == null)
             {
                 ed.WriteMessage("\nSelected entity has no RC bar data. Use RC_BAR command to create bars.\n");
+                return;
+            }
+            if (testBarWithoutNumber)
+            {
+                ed.WriteMessage("\n[RC] Pręt testowy bez numeru pozycji.\n");
                 return;
             }
 
@@ -898,6 +920,8 @@ namespace BricsCadRc.Commands
 
             switch (code)
             {
+                // Pierścień (W4c: 75, BS 8666:2020) — średnica A
+                case "75":
                 // Linki zamknięte — bok A (szerokość)
                 case "51": case "63":
                 case "34": case "35": case "36":
@@ -932,7 +956,7 @@ namespace BricsCadRc.Commands
         // ----------------------------------------------------------------
 
         internal static double GetViewLengthManual(
-            Editor ed, Database db, ObjectId polyId, BarData bar)
+            Editor ed, Database db, ObjectId barId, BarData bar)
         {
             while (true)
             {
@@ -950,30 +974,24 @@ namespace BricsCadRc.Commands
                 int    segIdx = -1;
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    var pl = tr.GetObject(polyId, OpenMode.ForRead) as Polyline;
-                    if (pl != null && pl.NumberOfVertices >= 2)
+                    var verts = GetBarOutlineVertices(tr, barId);
+                    if (verts.Count >= 2)
                     {
                         double minDist = double.MaxValue;
-                        int    nv      = pl.NumberOfVertices;
+                        int    nv      = verts.Count;
                         for (int i = 0; i < nv - 1; i++)
                         {
-                            Point2d a2 = pl.GetPoint2dAt(i);
-                            Point2d b2 = pl.GetPoint2dAt(i + 1);
+                            Point3d a3 = verts[i];
+                            Point3d b3 = verts[i + 1];
                             double d = DistPointToSegment(
                                 clickedPt,
-                                new Point3d(a2.X, a2.Y, 0),
-                                new Point3d(b2.X, b2.Y, 0));
+                                new Point3d(a3.X, a3.Y, 0),
+                                new Point3d(b3.X, b3.Y, 0));
                             if (d < minDist) { minDist = d; segIdx = i; }
                         }
 
                         if (minDist <= 100.0)
-                        {
-                            Point2d sa = pl.GetPoint2dAt(segIdx);
-                            Point2d sb = pl.GetPoint2dAt(segIdx + 1);
-                            double dx  = sb.X - sa.X;
-                            double dy  = sb.Y - sa.Y;
-                            segLen = Math.Sqrt(dx * dx + dy * dy);
-                        }
+                            segLen = ManualSegmentLength(verts, segIdx, bar);
                     }
                     tr.Commit();
                 }
@@ -988,6 +1006,56 @@ namespace BricsCadRc.Commands
                 bar.ViewSegmentIndex = segIdx;
                 return segLen;
             }
+        }
+
+        /// <summary>
+        /// Długość rozkładu Manual dla odcinka segIdx obrysu pręta (wierzchołek segIdx → segIdx+1) — wspólne dla
+        /// RC_DISTRIBUTION i RC_EDIT_DISTRIBUTION (GetViewLengthManual). Plan W4, 0-POPRAWKI p.1 i W4d (runda 1, uwaga 1):
+        /// długość z obrysu wzorcowego tego samego odcinka (BarFrameRules.LegacySegmentLength — obrys historyczny albo kształt
+        /// bez zmiany układu ramion: geometria sprzed W4; obrys W4d kształtu ze zmienionym układem ramion: geometria W4d).
+        /// Różnica &lt; 1e-6 albo brak odpowiednika → długość zmierzona (bit w bit jak dotąd).
+        /// </summary>
+        internal static double ManualSegmentLength(IReadOnlyList<Point3d> verts, int segIdx, BarData bar)
+        {
+            Point3d sa = verts[segIdx];
+            Point3d sb = verts[segIdx + 1];
+            double dx  = sb.X - sa.X;
+            double dy  = sb.Y - sa.Y;
+            double segLen = Math.Sqrt(dx * dx + dy * dy);
+            if (bar != null && !string.IsNullOrEmpty(bar.ShapeCode))
+            {
+                try
+                {
+                    var xy = verts.Select(v => (v.X, v.Y)).ToList();
+                    double? reference = BarFrameRules.LegacySegmentLength(xy, segIdx, bar.ShapeCode, bar.ParamValues, bar.Diameter,
+                                                                          bar.GeometryW4d);
+                    if (reference.HasValue && Math.Abs(reference.Value - segLen) >= 1e-6) segLen = reference.Value;
+                }
+                catch (System.Exception ex) { Log.Error("BarCommands.ManualSegmentLength", ex); }
+            }
+            return segLen;
+        }
+
+        /// <summary>
+        /// Wierzchołki obrysu pręta dla GetViewLengthManual: polilinia albo pręt-blok v2 (BarEntity.OutlineVertices).
+        /// Polilinia bez RC_SINGLE_BAR — jak dotąd (dawny filtr: każda Polyline), te same wierzchołki GetPoint2dAt.
+        /// </summary>
+        private static IReadOnlyList<Point3d> GetBarOutlineVertices(Transaction tr, ObjectId barId)
+        {
+            var ent    = tr.GetObject(barId, OpenMode.ForRead) as Entity;
+            var barEnt = BarEntity.From(ent, BarKinds.Polyline | BarKinds.Block);
+            if (barEnt != null) return barEnt.OutlineVertices(tr);
+
+            var result = new List<Point3d>();
+            if (ent is Polyline pl)
+            {
+                for (int i = 0; i < pl.NumberOfVertices; i++)
+                {
+                    var p = pl.GetPoint2dAt(i);
+                    result.Add(new Point3d(p.X, p.Y, 0));
+                }
+            }
+            return result;
         }
 
         private static double DistPointToSegment(Point3d p, Point3d a, Point3d b)
@@ -1098,12 +1166,15 @@ namespace BricsCadRc.Commands
             try
             {
                 var curve = barEnt as Curve;
-                newTip = curve != null
-                    ? curve.GetClosestPointTo(currentTip, false)
-                    : currentTip;
+                if (curve != null)
+                    newTip = curve.GetClosestPointTo(currentTip, false);
+                else
+                    // Plan C, etap 3d: pręt-blok v2 — najbliższy punkt obrysu w WCS
+                    newTip = BarEntity.From(barEnt, BarKinds.Block)?.ClosestPoint(tr, currentTip) ?? currentTip;
             }
-            catch
+            catch (System.Exception ex)
             {
+                Log.Error("BarCommands.FixLabel.ClosestPoint", ex);
                 ed.WriteMessage("\nNie można wyznaczyć punktu na pręcie\n");
                 tr.Commit();
                 return;
@@ -1127,6 +1198,7 @@ namespace BricsCadRc.Commands
             var selOpts = new PromptEntityOptions("\nSelect bar polyline to update (RC_BAR): ");
             selOpts.SetRejectMessage("\nNot a polyline — select a bar created with RC_BAR.");
             selOpts.AddAllowedClass(typeof(Polyline), true);
+            selOpts.AddAllowedClass(typeof(BlockReference), true);   // Plan C, etap 3d: pręt-blok v2
             var selResult = ed.GetEntity(selOpts);
             if (selResult.Status != PromptStatus.OK) return;
 
@@ -1137,7 +1209,16 @@ namespace BricsCadRc.Commands
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var pline = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Polyline;
+                var selEnt = tr.GetObject(selResult.ObjectId, OpenMode.ForRead) as Entity;
+                if (selEnt is BlockReference)
+                {
+                    bool isBarBlock = BarEntity.From(selEnt, BarKinds.Block) != null;
+                    tr.Commit();
+                    if (isBarBlock) UpdateBarBlock(doc, selResult.ObjectId);
+                    else ed.WriteMessage("\nNo RC bar data on selected block.\n");
+                    return;
+                }
+                var pline = selEnt as Polyline;
                 if (pline == null) { ed.WriteMessage("\nNot a polyline.\n"); tr.Commit(); return; }
 
                 bar = SingleBarEngine.ReadBarXData(pline);
@@ -1181,34 +1262,105 @@ namespace BricsCadRc.Commands
 
             ed.WriteMessage($"\n[RC_UPDATE_BAR] Mark={bar.Mark}  old={oldLength:F0} mm  new={newLength:F0} mm\n");
 
-            // Zaktualizuj XData na głównej polilinii
+            // Poprawka #1: zapis, przebudowa, numer, rozkłady i etykieta w BarGeometryWatcher.Suppress() — zmiana obrysu
+            // z RebuildCompanions nie wraca w CommandEnded jako grip na końcu pręta.
+            int updated;
+            BarGeometryWatcher.IgnoreThisCommand(primaryId);
+            using (BarGeometryWatcher.Suppress())
+            {
+                // Zaktualizuj XData na głównej polilinii
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var pline = tr.GetObject(primaryId, OpenMode.ForWrite) as Polyline;
+                    bar.LengthA = newLength;
+                    // Poprawka #7: TotalLength wg kształtu po zmianie A (wzorzec zostawiał starą); nadpisana — bez zmian
+                    if (!bar.LengthOverridden)
+                    {
+                        try { bar.TotalLength = BarLengthRules.TotalLengthFor(bar.ShapeCode, bar.ParamValues, bar.Diameter); }
+                        catch (System.Exception ex) { Log.Error("BarCommands.UpdateBar.TotalLength", ex); }
+                    }
+                    else
+                    {
+                        ed.WriteMessage("\n" + BarLengthRules.OverriddenTotalLengthWarning(bar.Mark, bar.TotalLength) + "\n");
+                    }
+                    BarXData.Write(pline, bar);
+                    tr.Commit();
+                }
+
+                // Przebuduj towarzyszące encje (poly2 + łuki końcowe)
+                SingleBarEngine.RebuildCompanions(db, primaryId, bar);
+
+                // Numer pozycji: ten sam numer z innymi wymiarami na innym pręcie → nowy numer
+                int    oldPosNr   = SingleBarEngine.ExtractPosNr(bar.Mark);
+                string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, primaryId);
+                if (renumbered != null)
+                {
+                    ed.WriteMessage($"[RC_UPDATE_BAR] Pozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.\n");
+                    bar.Mark = renumbered;
+                }
+
+                // Rozkłady tego pręta (po SourceBarHandle; stare bez powiązania — po numerze)
+                updated = PositionReconciler.PropagateToDistributions(
+                    db, primaryId, bar, legacyPosNr: renumbered != null ? 0 : oldPosNr);
+                AnnotationEngine.UpdateBarLabelCount(db, primaryId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
+            }
+
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); }
+            catch (System.Exception ex) { Log.Error("BarCommands.UpdateBar.Regen", ex); }
+            ed.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {oldLength:F0} → {newLength:F0} mm\n");
+        }
+
+        /// <summary>
+        /// RC_UPDATE_BAR dla pręta-bloku v2 (Plan C, etap 3d): długość z XData (bez zmian), skala → (±1, ±1, 1)
+        /// ze znakiem, punkt wstawienia (axis[0]) bez zmian, SingleBarBlock.Rebuild z XData (copy-on-write);
+        /// potem numer pozycji, rozkłady i etykieta jak dla polilinii. regen = false — bez REGEN (testy).
+        /// </summary>
+        internal static void UpdateBarBlock(Document doc, ObjectId barId, bool regen = true)
+        {
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            BarData bar;
+            string  oldScale, newScale;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var pline = tr.GetObject(primaryId, OpenMode.ForWrite) as Polyline;
-                bar.LengthA = newLength;
-                SingleBarEngine.WriteXData(pline, bar);
+                var be = BarEntity.Open(tr, barId, OpenMode.ForWrite, BarKinds.Block);
+                bar = be?.Read();
+                if (bar == null || !(be.Entity is BlockReference br))
+                {
+                    ed?.WriteMessage("\nNo RC bar data on selected block.\n");
+                    tr.Commit();
+                    return;
+                }
+                oldScale = SingleBarBlock.ScaleText(br.ScaleFactors);
+                SingleBarBlock.RepairScale(tr, br, bar);
+                newScale = SingleBarBlock.ScaleText(br.ScaleFactors);
                 tr.Commit();
             }
 
-            // Przebuduj towarzyszące encje (poly2 + łuki końcowe)
-            SingleBarEngine.RebuildCompanions(db, primaryId, bar);
+            ed?.WriteMessage($"\n[RC_UPDATE_BAR] Mark={bar.Mark}  skala {oldScale} → {newScale}  " +
+                             $"długość z danych pręta: {bar.LengthA:F0} mm\n");
 
             // Numer pozycji: ten sam numer z innymi wymiarami na innym pręcie → nowy numer
             int    oldPosNr   = SingleBarEngine.ExtractPosNr(bar.Mark);
-            string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, primaryId);
+            string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, barId);
             if (renumbered != null)
             {
-                ed.WriteMessage($"[RC_UPDATE_BAR] Pozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.\n");
+                ed?.WriteMessage($"[RC_UPDATE_BAR] Pozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.\n");
                 bar.Mark = renumbered;
             }
 
             // Rozkłady tego pręta (po SourceBarHandle; stare bez powiązania — po numerze)
             int updated = PositionReconciler.PropagateToDistributions(
-                db, primaryId, bar, legacyPosNr: renumbered != null ? 0 : oldPosNr);
-            AnnotationEngine.UpdateBarLabelCount(db, primaryId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
+                db, barId, bar, legacyPosNr: renumbered != null ? 0 : oldPosNr);
+            AnnotationEngine.UpdateBarLabelCount(db, barId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
 
-            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
-            ed.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {oldLength:F0} → {newLength:F0} mm\n");
+            if (regen)
+            {
+                try { doc.SendStringToExecute("REGEN\n", true, false, false); }
+                catch (System.Exception ex) { Log.Error("BarCommands.UpdateBarBlock.Regen", ex); }
+            }
+            ed?.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {bar.LengthA:F0} mm\n");
         }
 
         // ================================================================
@@ -1226,27 +1378,40 @@ namespace BricsCadRc.Commands
             var selOpts = new PromptEntityOptions("\nWybierz pręt do edycji: ");
             selOpts.SetRejectMessage("\nTo nie jest pręt RC.");
             selOpts.AddAllowedClass(typeof(Polyline), false);
+            selOpts.AddAllowedClass(typeof(BlockReference), false);   // Plan C, etap 3d: pręt-blok v2
             var selRes = ed.GetEntity(selOpts);
             if (selRes.Status != PromptStatus.OK) return;
 
             BarData  bar    = null;
             ObjectId editId = selRes.ObjectId;
+            bool     testBarWithoutNumber = false;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var pline = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as Polyline;
-                if (pline == null) { tr.Abort(); return; }
-
-                bar = SingleBarEngine.ReadBarXData(pline);
-                if (bar == null)
+                var selEnt = tr.GetObject(selRes.ObjectId, OpenMode.ForRead) as Entity;
+                if (selEnt is BlockReference)
                 {
-                    // Może to być towarzysząca poly — szukaj głównej przez RC_BAR_LINK
-                    var primaryId = SingleBarEngine.ResolvePrimaryId(pline);
-                    if (!primaryId.IsNull)
+                    // Pręt-blok v2 (inny blok → brak danych pręta). Pręt testowy bez numeru (H12-T) — nie edytujemy:
+                    // numer z dialogu dałby użytkownikowi numerowany pręt-blok przed krokiem 3f (0-POPRAWKI p.1).
+                    bar = BarEntity.From(selEnt, BarKinds.Block)?.Read();
+                    testBarWithoutNumber = bar != null && SingleBarEngine.ExtractPosNr(bar.Mark) <= 0;
+                }
+                else
+                {
+                    var pline = selEnt as Polyline;
+                    if (pline == null) { tr.Abort(); return; }
+
+                    bar = SingleBarEngine.ReadBarXData(pline);
+                    if (bar == null)
                     {
-                        editId = primaryId;
-                        var primary = tr.GetObject(primaryId, OpenMode.ForRead) as Polyline;
-                        if (primary != null) bar = SingleBarEngine.ReadBarXData(primary);
+                        // Może to być towarzysząca poly — szukaj głównej przez RC_BAR_LINK
+                        var primaryId = SingleBarEngine.ResolvePrimaryId(pline);
+                        if (!primaryId.IsNull)
+                        {
+                            editId = primaryId;
+                            var primary = tr.GetObject(primaryId, OpenMode.ForRead) as Polyline;
+                            if (primary != null) bar = SingleBarEngine.ReadBarXData(primary);
+                        }
                     }
                 }
                 tr.Commit();
@@ -1257,98 +1422,40 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage("\nNie znaleziono danych pręta.");
                 return;
             }
+            if (testBarWithoutNumber)
+            {
+                ed.WriteMessage("\n[RC] Pręt testowy bez numeru pozycji.\n");
+                return;
+            }
+
+            // Plan W4c: stary pierścień „44” — w programie kształt 75 (BS 8666:2020); zapis utrwali 75
+            if (bar.LegacyRing44)
+                ed.WriteMessage($"\n[RC] Pręt {bar.Mark}: stary kształt 44 (pierścień) = 75 wg BS 8666:2020 — B to zakład; sprawdź B przed zapisem.\n");
 
             // Krok 2 — otwórz dialog z aktualnymi wartościami
             var dlg = new BarElevationDialog();
             dlg.LoadExisting(bar);
             if (Application.ShowModalWindow(dlg) != true) return;
             var updated = dlg.Result;
+            WarnDefaultAngle(ed, updated, bar.Mark);   // W4d (0-POPRAWKI p.5): np. stary pręt 15 bez D → kąt domyślny 45°
 
-            // Zachowaj niezmienne pola z oryginału
-            // Przebuduj Mark z nową średnicą i posNr z dialogu — format H{dia}-{posNr}
-            string posNrStr = dlg.ResultPosNr;
-            updated.Mark    = BarData.FormatMark(updated.Diameter, int.Parse(posNrStr), 0, 1);
-            updated.LayerCode   = bar.LayerCode;
-            updated.Position    = bar.Position;
-            updated.Direction   = bar.Direction;
-            updated.LabelHandle = bar.LabelHandle;
+            // Krok 3–4 (Plan C, etap 3d): logika po dialogu w BarEditApply.Apply — kolejność kroków bez zmian;
+            // polilinia jak dotąd, pręt-blok przez SingleBarBlock.Rebuild (copy-on-write).
+            if (!BarEditApply.Apply(db, ed, editId, bar, updated, dlg.ResultPosNr)) return;
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); }
+            catch (System.Exception ex) { Log.Error("BarCommands.EditBar.Regen", ex); }
+        }
 
-            // Krok 3 — zapisz XData i przebuduj geometrię
-            using (var tr2 = db.TransactionManager.StartTransaction())
-            {
-                var plineRw = tr2.GetObject(editId, OpenMode.ForWrite) as Polyline;
-                if (plineRw == null) { tr2.Abort(); return; }
-                SingleBarEngine.WriteXData(plineRw, updated);
-                tr2.Commit();
-            }
-
-            // Krok 3a — numer pozycji zostawiony bez zmian, ale wymiary zmienione, a ten sam numer
-            // ma inny pręt (np. kopia) → ten pręt dostaje numer pasującej pozycji albo nowy.
-            if (int.Parse(posNrStr) == SingleBarEngine.ExtractPosNr(bar.Mark)
-                && !PositionReconciler.SameShape(bar, updated))
-            {
-                string renumbered = PositionReconciler.ReconcileAfterGeometryChange(db, editId);
-                if (renumbered != null)
-                {
-                    ed.WriteMessage($"\nPozycja {bar.Mark} jest używana przez pręt o innych wymiarach → nowa pozycja {renumbered}.");
-                    updated.Mark = renumbered;
-                }
-            }
-
-            SingleBarEngine.RebuildCompanions(db, editId, updated);
-
-            // Krok 3b — napraw grot strzałki etykiety pręta (geometria się zmieniła)
-            using (var trFix = db.TransactionManager.StartTransaction())
-            {
-                var plineFix = trFix.GetObject(editId, OpenMode.ForRead) as Polyline;
-                if (plineFix != null && !string.IsNullOrEmpty(updated.LabelHandle))
-                {
-                    if (long.TryParse(updated.LabelHandle,
-                            System.Globalization.NumberStyles.HexNumber,
-                            null, out long lblHVal))
-                    {
-                        var lblHandle = new Handle(lblHVal);
-                        if (db.TryGetObjectId(lblHandle, out ObjectId lblId)
-                            && !lblId.IsNull && !lblId.IsErased)
-                        {
-                            var ml = trFix.GetObject(lblId, OpenMode.ForWrite) as MLeader;
-                            if (ml != null)
-                            {
-                                try
-                                {
-                                    var leaderIdxs = ml.GetLeaderIndexes();
-                                    if (leaderIdxs != null && leaderIdxs.Count > 0)
-                                    {
-                                        int li       = (int)leaderIdxs[0];
-                                        var lineIdxs = ml.GetLeaderLineIndexes(li);
-                                        if (lineIdxs != null && lineIdxs.Count > 0)
-                                        {
-                                            int lni        = (int)lineIdxs[0];
-                                            var currentTip = ml.GetFirstVertex(lni);
-                                            var newTip     = plineFix.GetClosestPointTo(currentTip, false);
-                                            ml.SetFirstVertex(lni, newTip);
-                                        }
-                                    }
-                                }
-                                catch { /* nie przerywaj jeśli MLeader nie ma leaderów */ }
-                            }
-                        }
-                    }
-                }
-                trFix.Commit();
-            }
-
-            // Krok 3c — zaktualizuj etykietę pręta (MLeader) z poprawnym count ze wszystkich rozkładów
-            AnnotationEngine.UpdateBarLabelCount(db,
-                editId.Handle.Value.ToString("X8"), markOverride: updated.Mark);
-
-            // Krok 4 — propaguj zmiany (Mark, Diameter, LengthA) do powiązanych rozkładów.
-            // Szukamy po SourceBarHandle (nie po posNr) — handle pręta nie zmienia się gdy user
-            // zmienia posNr lub diameter, więc zawsze znajdziemy właściwe rozkłady.
-            PositionReconciler.PropagateToDistributions(db, editId, updated);
-
-            ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
-            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+        /// <summary>
+        /// W4d (0-POPRAWKI p.5): ostrzeżenie w linii poleceń, gdy kąt skosu kształtu (14, 15, 24, 46) przyjęto domyślnie,
+        /// bo brak wymiarów kąta (puste / 0 w dialogu, stary pręt).
+        /// </summary>
+        private static void WarnDefaultAngle(Editor ed, BarData bar, string mark)
+        {
+            if (bar == null) return;
+            string w = ShapeCodeLibrary.Get(bar.ShapeCode)?.DefaultAngleWarning(bar.ParamValues);
+            if (w == null) return;
+            ed.WriteMessage("\n[RC] " + (string.IsNullOrEmpty(mark) ? "" : "Pręt " + mark + ": ") + w + "\n");
         }
 
         // ================================================================
@@ -1365,9 +1472,10 @@ namespace BricsCadRc.Commands
             ed.WriteMessage("\n[RC_SCHEDULE] Budowanie zestawienia prętów...\n");
 
             List<BarScheduleEntry> entries;
+            var warnings = new List<string>();
             try
             {
-                entries = BarScheduleEngine.BuildSchedule(db);
+                entries = BarScheduleEngine.BuildSchedule(db, warnings);
             }
             catch (System.Exception ex)
             {
@@ -1382,6 +1490,8 @@ namespace BricsCadRc.Commands
             }
 
             ed.WriteMessage($"\n[RC_SCHEDULE] Znaleziono {entries.Count} pozycji.\n");
+            foreach (var w in warnings)
+                ed.WriteMessage($"\n[RC_SCHEDULE] UWAGA: {w}\n");
 
             var dlg = new BarScheduleDialog(entries);
             Application.ShowModelessWindow(dlg);

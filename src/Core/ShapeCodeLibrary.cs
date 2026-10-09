@@ -37,13 +37,15 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,20 40,20 40,30 15,30\"/>"),
                 (p, d) => p[0] + 0.57 * p[1] + p[2] - 1.6 * d));
 
+            // W4b: BS 8666:2020 A + (C) (dawniej 2005: A + C − 4d). W4d: A skośne, C poziome wstecz, kąt z B i D (D dopisane)
             Add(new BarShape("14", "Hook 45°",
-                new[] { "A", "B", "C" },
+                new[] { "A", "B", "C", "D" },
                 Svg("<polyline points=\"5,35 5,10 45,5\"/>"),
-                (p, d) => p[0] + p[2] - 4 * d));
+                (p, d) => p[0] + p[2]));
 
+            // W4d: A skośne, C poziome, kąt z B i D (D dopisane)
             Add(new BarShape("15", "Hook 135°",
-                new[] { "A", "B", "C" },
+                new[] { "A", "B", "C", "D" },
                 Svg("<polyline points=\"5,35 5,10 50,10 40,25\"/>"),
                 (p, d) => p[0] + p[2]));
 
@@ -65,8 +67,9 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,5 5,20 35,20 35,35 55,35\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - r - 2 * d; }));
 
+            // W4d: A poziome, B skos, C pion; kąt z D (rzut pionowy B) i E (rzut poziomy B) — D, E dopisane
             Add(new BarShape("24", "Crank",
-                new[] { "A", "B", "C" },
+                new[] { "A", "B", "C", "D", "E" },
                 Svg("<polyline points=\"5,15 25,15 35,25 55,25\"/>"),
                 (p, d) => p[0] + p[1] + p[2]));
 
@@ -91,16 +94,17 @@ namespace BricsCadRc.Core
                 Svg("<polyline points=\"5,30 5,10 35,10 55,20\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - 2 * d; }));
 
+            // W4b: BS 8666:2020 A + B + (C)
             Add(new BarShape("29", "Hook variant 29",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,15 35,15 45,5\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 0.5 * r - 2 * d; }));
+                (p, d) => p[0] + p[1] + p[2]));
 
-            // ── 31 S-kształt (3 nogi, A+B+C-1.5r-3d) ────────────────────────
+            // ── 31 (W4b: BS 8666:2020 A+B+C+(D)−1.5r−3d; D dopisane na końcu parametrów) ──
             Add(new BarShape("31", "S-bar",
-                new[] { "A", "B", "C" },
+                new[] { "A", "B", "C", "D" },
                 Svg("<polyline points=\"5,35 5,25 20,25 20,15 35,15 35,5 55,5\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] - 1.5 * r - 3 * d; }));
+                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] - 1.5 * r - 3 * d; }));
 
             // ── Rodzina 4-nożna (A+B+C+D-1.5r-3d) ───────────────────────────
             Add(new BarShape("32", "4-leg bar",
@@ -135,56 +139,71 @@ namespace BricsCadRc.Core
                 Svg("<polygon points=\"10,32 10,8 50,8 50,32\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2 * r - 4 * d; }));
 
-            // ── 44 Okrąg (A+B+C+D+E-2r-4d) ──────────────────────────────────
-            Add(new BarShape("44", "Circle / ring",
+            // ── 44 „Kapelusz” (W4c, BS 8666:2020; A+B+C+D+E−2r−4d). Dawniej pierścień — dziś 75 ──
+            Add(new BarShape("44", "Hat",
                 new[] { "A", "B", "C", "D", "E" },
-                Svg("<circle cx=\"30\" cy=\"20\" r=\"15\"/>"),
+                Svg("<polyline points=\"3,12 18,12 18,32 42,32 42,12 57,12\"/>"),
                 (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2 * r - 4 * d; }));
 
-            // ── 46 Zamknięty prostokąt variant (A+2B+C+E) ────────────────────
+            // ── 46 (A+2B+C+E). W4d: A–B skos–C–B skos–E, kąt z D (wysokość skosu) — D dopisane ZA E ──
             Add(new BarShape("46", "Closed rectangle variant",
-                new[] { "A", "B", "C", "E" },
+                new[] { "A", "B", "C", "E", "D" },
                 Svg("<rect x=\"8\" y=\"6\" width=\"44\" height=\"28\"/>"),
                 (p, d) => p[0] + 2 * p[1] + p[2] + p[3]));
 
-            // ── 47 Zamknięty trójkąt (2A+B+MAX(21d,240)) ─────────────────────
+            // ── 47 (W4b: BS 8666:2020 2A+B+2(C)+2q−3r−6d; C dopisane; C = 0 albo q N/A → brak długości) ──
             Add(new BarShape("47", "Closed triangle",
-                new[] { "A", "B" },
+                new[] { "A", "B", "C" },
                 Svg("<polygon points=\"30,5 55,35 5,35\"/>"),
-                (p, d) => 2 * p[0] + p[1] + Math.Max(21 * d, 240)));
+                (p, d) =>
+                {
+                    if (p[2] <= 0)
+                        throw new InvalidOperationException("Kształt 47 wymaga wymiaru C (BS 8666:2020) — podaj C albo nadpisz długość.");
+                    double q = BarShape.HookDiameterQ(d);
+                    var r = BarShape.MinBendRadius(d);
+                    return 2 * p[0] + p[1] + 2 * p[2] + 2 * q - 3 * r - 6 * d;
+                }));
 
-            // ── 51 Strzemię zamknięte (2(A+B+C)-2.5r-5d; C=0→MAX(16d,160)) ──
+            // ── 51 (W4b: BS 8666:2020 — C = 0: 2A+2B+max(16d,160); inaczej 2(A+B+C)−2.5r−5d) ──
             Add(new BarShape("51", "Closed stirrup",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,20 15,20 15,10 35,10 35,20 45,20 45,35\"/>"),
-                (p, d) => { double hook51 = p[2] > 0 ? p[2] : Math.Max(16 * d, 160);
-                             double r51    = BarShape.MinBendRadius(d);
-                             return 2 * (p[0] + p[1] + hook51) - 2.5 * r51 - 5 * d; }));
+                (p, d) =>
+                {
+                    if (p[2] <= 0) return 2 * p[0] + 2 * p[1] + BarShape.Code51MinExtra(d);
+                    double r51 = BarShape.MinBendRadius(d);
+                    return 2 * (p[0] + p[1] + p[2]) - 2.5 * r51 - 5 * d;
+                }));
 
-            // ── 63 Strzemię zamknięte (2(A+B+C)-2.5r-5d; C=0→MAX(14d,150)) ─
+            // ── 63 (W4b: BS 8666:2020 — C = 0: d ≤ 16 2A+3B+max(14d,140), d ≥ 20 2A+3B+13d;
+            //        inaczej 2A+3B+2C−3r−6d) ─────────────────────────────────────────────────
             Add(new BarShape("63", "Closed stirrup 63",
                 new[] { "A", "B", "C" },
                 Svg("<polyline points=\"5,35 5,20 15,20 15,10 45,10 45,20 55,20 55,35\"/>"),
-                (p, d) => { double hook63 = p[2] > 0 ? p[2] : Math.Max(14 * d, 150);
-                             double r63    = BarShape.MinBendRadius(d);
-                             return 2 * p[0] + 3 * p[1] + 2 * hook63 - 3 * r63 - 6 * d; }));
+                (p, d) =>
+                {
+                    if (p[2] <= 0) return 2 * p[0] + 3 * p[1] + BarShape.Code63MinExtra(d);
+                    double r63 = BarShape.MinBendRadius(d);
+                    return 2 * p[0] + 3 * p[1] + 2 * p[2] - 3 * r63 - 6 * d;
+                }));
 
-            // ── 6-nożne (A+B+C+D+E-2.5r-5d) ─────────────────────────────────
+            // ── 56 (W4b: BS 8666:2020 A+B+C+D+2(E)−1.5r−3d) ─────────────────
             Add(new BarShape("56", "6-leg bar",
                 new[] { "A", "B", "C", "D", "E" },
                 Svg("<polyline points=\"5,35 5,22 15,22 15,10 25,10 25,22 35,22 35,10 45,10 45,22 55,22\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2.5 * r - 5 * d; }));
+                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + 2 * p[4] - 1.5 * r - 3 * d; }));
 
+            // ── 64 (W4b: BS 8666:2020 A+B+C+2D+E+(F)−3r−6d — wymiar F poza rekordem pręta → brak długości) ──
             Add(new BarShape("64", "6-leg bar variant",
                 new[] { "A", "B", "C", "D", "E" },
                 Svg("<polyline points=\"5,35 5,20 15,20 15,8 30,8 40,20 50,20 50,35\"/>"),
-                (p, d) => { var r = BarShape.MinBendRadius(d); return p[0] + p[1] + p[2] + p[3] + p[4] - 2.5 * r - 5 * d; }));
+                (p, d) => throw new InvalidOperationException("Kształt 64 wymaga wymiaru F (BS 8666:2020) — nadpisz długość.")));
 
-            // ── 75 Helisa (π(A-d)+B) ──────────────────────────────────────────
-            Add(new BarShape("75", "Helix",
-                new[] { "A", "B" },   // A=średnica, B=n*P (całkowity skok spirali)
-                Svg("<path d=\"M10,35 C10,5 30,5 30,20 C30,35 50,35 50,5\" fill=\"none\"/>"),
-                (p, d) => Math.PI * (p[0] - d) + p[1]));
+            // ── 75 Pierścień (W4c, BS 8666:2020: π(A−d)+B+25; A = średnica, B = zakład). Helisa = 77 (nieobsługiwana) ──
+            Add(new BarShape("75", "Ring (lap B)",
+                new[] { "A", "B" },
+                Svg("<circle cx=\"30\" cy=\"20\" r=\"15\"/><line x1=\"30\" y1=\"5\" x2=\"42\" y2=\"5\"/>"),
+                (p, d) => Math.PI * (p[0] - d) + p[1] + 25));   // W4b: BS 8666:2020 π(A−d)+B+25
 
             // ── 98 Kształt niestandardowy (A+2B+C+D-2r-4d) ──────────────────
             Add(new BarShape("98", "Special – drawing required",
@@ -229,8 +248,21 @@ namespace BricsCadRc.Core
         // Żeby ukryć shape code, usuń go z tej listy (wpis w _shapes zostaje, pręt nadal działa).
         private static readonly string[] _pickableCodes = new[]
         {
-            "00", "11", "13", "15", "21", "33", "44", "46", "51", "63"
+            "00", "11", "13", "15", "21", "33", "44", "46", "51", "63", "75"   // W4c: 44 = kapelusz, 75 = pierścień
         };
+
+        /// <summary>
+        /// Wartości A–E (5 pól) ograniczone do parametrów kształtu: pola spoza definicji kształtu → 0 (np. pierścień 75
+        /// zmigrowany z „44” ma tylko A, B — stare C–E nie trafiają do zestawienia). Nieznany kształt → wszystkie pola.
+        /// Tylko do wyświetlania / zestawień — XData bez zmian (Plan W4, runda 1, uwaga 4).
+        /// </summary>
+        public static double[] ShapeParamValues(string code, double[] paramValues)
+        {
+            var r = new double[5];
+            int n = Get(code)?.Parameters?.Length ?? 5;
+            for (int i = 0; i < 5 && i < n && paramValues != null && i < paramValues.Length; i++) r[i] = paramValues[i];
+            return r;
+        }
 
         /// <summary>Sprawdza czy podany kod istnieje w rejestrze.</summary>
         public static bool Contains(string code) =>

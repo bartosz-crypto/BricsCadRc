@@ -14,7 +14,7 @@ namespace BricsCadRc.App
     /// </summary>
     public static class RibbonBuilder
     {
-        private const string TabId = "RC_SLAB_TAB";
+        private const string TabId = "NA_SMART_RC_TAB";
 
         public static void Build()
         {
@@ -22,7 +22,7 @@ namespace BricsCadRc.App
             if (ribbon == null) return;
             if (ribbon.FindTab(TabId) != null) return;   // np. po ponownym NETLOAD
 
-            var tab = new RibbonTab { Title = "RC SLAB", Id = TabId };
+            var tab = new RibbonTab { Title = "NA SMART RC", Id = TabId };
 
             // 1. Setup — przygotowanie rysunku
             tab.Panels.Add(Panel("Setup", "RC_PANEL_SETUP",
@@ -53,7 +53,10 @@ namespace BricsCadRc.App
             // 3. Bars — ręczne pręty
             tab.Panels.Add(Panel("Bars", "RC_PANEL_BAR",
                 Large("New Bar", "RC_BAR", "new_bar", "Create a single bar (shape code BS 8666) in elevation."),
-                Large("Distribution", "RC_DISTRIBUTION", "distribution", "Distribute the selected bar on the plan.")));
+                Large("Distribution", "RC_DISTRIBUTION", "distribution", "Distribute the selected bar on the plan."),
+                Column(
+                    Small("Bar Format", "RC_BAR_FORMAT", "new_bar",
+                        "Format of new bars: Polyline (default; drawings for the old plugin) or Block (end grip / STRETCH of a straight bar changes its length, mark, distributions and label)."))));
 
             // 4. Edit — kolumny małych przycisków
             tab.Panels.Add(Panel("Edit", "RC_PANEL_EDIT",

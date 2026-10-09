@@ -8,9 +8,9 @@ namespace BricsCadRc.Core
     /// Powiązania między obiektami (pręt ↔ rozkład ↔ annotacja ↔ etykieta) zapisywane w XData
     /// jako PRAWDZIWE handle (DXF 1005), a nie zwykły tekst (1000).
     ///
-    /// BricsCAD sam przemapowuje 1005 przy COPY / MIRROR / ARRAY / PASTECLIP / INSERT / WBLOCK,
-    /// jeśli obiekt docelowy jest kopiowany razem — więc kopia pręta z etykietą wskazuje na
-    /// SWOJĄ etykietę, a nie na etykietę oryginału.
+    /// BricsCAD V25 przy COPY / MIRROR / ARRAY NIE przemapowuje 1005 (klony wskazują oryginały — spike W2-0);
+    /// przy wstawianiu (PASTECLIP, INSERT) tłumaczy odwołania do obiektów wstawianych razem, pozostałe zeruje.
+    /// Powiązania kopii przepina mapa klonowania (CloneMap / CloneRemap, W2).
     ///
     /// Odczyt przyjmuje oba formaty (stare rysunki mają 1000) i zawsze zwraca handle
     /// znormalizowany do "X8" (np. "0011093E"), bo tak porównuje reszta kodu.

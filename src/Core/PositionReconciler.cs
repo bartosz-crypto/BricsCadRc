@@ -34,8 +34,9 @@ namespace BricsCadRc.Core
 
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
-                var pl = tr.GetObject(barId, OpenMode.ForRead) as Polyline;
-                me = pl != null ? SingleBarEngine.ReadBarXData(pl) : null;
+                // Pręt: polilinia albo pręt-blok v2 (Plan C)
+                var meBar = BarEntity.Open(tr, barId, OpenMode.ForRead, BarKinds.Polyline | BarKinds.Block);
+                me = meBar != null ? meBar.Read() : null;
                 if (me == null) return null;
 
                 int myNr = SingleBarEngine.ExtractPosNr(me.Mark);
@@ -47,9 +48,11 @@ namespace BricsCadRc.Core
                 foreach (ObjectId oid in ms)
                 {
                     if (oid == barId || oid.IsErased) continue;
-                    if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline other)) continue;
-                    if (other.GetXDataForApplication(SingleBarEngine.XAppName) == null) continue;
-                    var ob = SingleBarEngine.ReadBarXData(other);
+                    // Inne pręty: polilinie i pręty-bloki v2 (numer zajęty przez blok = konflikt)
+                    var other = BarEntity.From(tr.GetObject(oid, OpenMode.ForRead) as Entity,
+                                               BarKinds.Polyline | BarKinds.Block);
+                    if (other == null) continue;
+                    var ob = other.Read();
                     if (ob == null) continue;
 
                     int nr = SingleBarEngine.ExtractPosNr(ob.Mark);
@@ -98,11 +101,12 @@ namespace BricsCadRc.Core
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var pl = tr.GetObject(barId, OpenMode.ForWrite) as Polyline;
-                var bar = pl != null ? SingleBarEngine.ReadBarXData(pl) : null;
+                // Zapis przez BarEntity — dla pręta-bloku zachowuje [14] = 2
+                var be = BarEntity.Open(tr, barId, OpenMode.ForWrite, BarKinds.Polyline | BarKinds.Block);
+                var bar = be != null ? be.Read() : null;
                 if (bar == null) { tr.Abort(); return null; }
                 bar.Mark = newMark;
-                SingleBarEngine.WriteXData(pl, bar);
+                be.Write(bar);
                 tr.Commit();
             }
             return newMark;
@@ -170,8 +174,14 @@ namespace BricsCadRc.Core
             if (a.Diameter != b.Diameter) return false;
             if (!string.Equals(a.ShapeCode ?? "00", b.ShapeCode ?? "00", StringComparison.OrdinalIgnoreCase))
                 return false;
-            return Near(a.LengthA, b.LengthA) && Near(a.LengthB, b.LengthB) && Near(a.LengthC, b.LengthC)
-                && Near(a.LengthD, b.LengthD) && Near(a.LengthE, b.LengthE);
+            // Plan W4c: tylko wymiary kształtu (Take(Parameters.Length)) — np. pierścień 75 zmigrowany z „44” może mieć
+            // w polach C–E stare wartości bez znaczenia. Nieznany kształt → wszystkie pola A–E (jak dotąd).
+            var shape = ShapeCodeLibrary.Get(a.ShapeCode ?? "00");
+            int n = shape?.Parameters?.Length ?? 5;
+            double[] pa = a.ParamValues, pb = b.ParamValues;
+            for (int i = 0; i < n && i < pa.Length; i++)
+                if (!Near(pa[i], pb[i])) return false;
+            return true;
         }
 
         private static bool Near(double x, double y) => Math.Abs(x - y) < LenTol;

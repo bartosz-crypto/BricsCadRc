@@ -1626,23 +1626,21 @@ namespace BricsCadRc.Core
             Database db, Transaction tr, Extents3d rebarBbox, int diameter)
         {
             var result = new List<(ObjectId, BarData)>();
-            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            var ms = (BlockTableRecord)tr.GetObject(
-                bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-            foreach (ObjectId oid in ms)
+            // Plan C, etap 3b: polilinie i pręty-bloki, kolejność przestrzeni modelu jak dotąd
+            foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
             {
-                if (oid.IsErased) continue;
-                if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                var bar = SingleBarEngine.ReadBarXData(pl);
+                var bar = be.Read();
                 if (bar == null) continue;
+                // Pręt bez numeru pozycji (np. testowy H12-T) nie jest szablonem ani nie zajmuje miejsca w strefie
+                if (SingleBarEngine.ExtractPosNr(bar.Mark) <= 0) continue;
                 if (bar.Diameter != diameter) continue;
                 // Tylko pręty proste — gięty pręt o tej samej długości A nie może być szablonem B1/B2
                 if ((bar.ShapeCode ?? "00") != "00") continue;
-                var insPt = pl.GetPoint3dAt(0);
-                if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
+                var insPt = be.FirstOutlineVertex(tr);
+                if (insPt == null || !GeometryHelper.IsInsideBbox(insPt.Value, rebarBbox)) continue;
                 // Etap 1E: usunięto filter InferDirectionFromPolyline — B1/B2 share template pool.
                 // Match po diameter + length (downstream), Direction irrelevant for elev template.
-                result.Add((oid, bar));
+                result.Add((be.Entity.ObjectId, bar));
             }
             return result;
         }
@@ -1751,14 +1749,12 @@ namespace BricsCadRc.Core
         {
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId oid in ms)
+                // Plan C, etap 3b: polilinie i pręty-bloki
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
-                    if (oid.IsErased) continue;
-                    if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                    var bar = SingleBarEngine.ReadBarXData(pl);
-                    if (bar != null && bar.Diameter == diameter
+                    var bar = be.Read();
+                    if (bar == null || SingleBarEngine.ExtractPosNr(bar.Mark) <= 0) continue;
+                    if (bar.Diameter == diameter
                         && (bar.ShapeCode == "21" || bar.ShapeCode == "13")
                         && SingleBarEngine.ExtractPosNr(bar.Mark) == posNr)
                     {
@@ -1776,20 +1772,19 @@ namespace BricsCadRc.Core
             Database db, Transaction tr, Extents3d rebarBbox, int diameter)
         {
             var result = new List<(ObjectId, BarData)>();
-            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-            foreach (ObjectId oid in ms)
+            // Plan C, etap 3b: polilinie i pręty-bloki, kolejność przestrzeni modelu jak dotąd
+            foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
             {
-                if (oid.IsErased) continue;
-                if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                var bar = SingleBarEngine.ReadBarXData(pl);
+                var bar = be.Read();
                 if (bar == null) continue;
+                // Pręt bez numeru pozycji nie jest szablonem ani nie zajmuje miejsca w strefie
+                if (SingleBarEngine.ExtractPosNr(bar.Mark) <= 0) continue;
                 // Etap 2 Faza B: UB B1 + UB B2 share template pool (shape "21" OR "13" dla 225mm).
                 if (bar.ShapeCode != "21" && bar.ShapeCode != "13") continue;
                 if (bar.Diameter != diameter) continue;
-                var insPt = pl.GetPoint3dAt(0);
-                if (!GeometryHelper.IsInsideBbox(insPt, rebarBbox)) continue;
-                result.Add((oid, bar));
+                var insPt = be.FirstOutlineVertex(tr);
+                if (insPt == null || !GeometryHelper.IsInsideBbox(insPt.Value, rebarBbox)) continue;
+                result.Add((be.Entity.ObjectId, bar));
             }
             return result;
         }
@@ -1912,7 +1907,7 @@ namespace BricsCadRc.Core
                     if (barEnt != null)
                     {
                         elevBar.LabelHandle = labelId.Handle.ToString();
-                        SingleBarEngine.WriteXData(barEnt, elevBar);
+                        BarXData.Write(barEnt, elevBar);
                     }
                     trLbl.Commit();
                 }
@@ -1954,7 +1949,15 @@ namespace BricsCadRc.Core
             Point3d arrowTip;
             using (var trTip = db.TransactionManager.StartTransaction())
             {
-                arrowTip = SingleBarEngine.GetBarArrowTip(barId, elevBar, textPt, trTip);
+                // W4e (runda poprawek 1, uwaga 6 / D38): tekst nad środkiem RZECZYWISTEGO obrysu (wymiary zewnętrzne — obrys 21
+                // zaczyna się d/2 przed punktem wstawienia osi), a grot — najbliższy punkt obrysu liczony od punktu przesuniętego
+                // o 0,001 mm w stronę początku pręta: przy symetrycznym U grot zostaje na lewym ramieniu (jak wzorzec),
+                // bez przeskoku na drugie ramię.
+                var tplVerts = BarEntity.From(trTip.GetObject(barId, OpenMode.ForRead) as Entity, BarKinds.Polyline | BarKinds.Block)
+                                        ?.OutlineVertices(trTip);
+                if (tplVerts != null && tplVerts.Count > 0)
+                    textPt = new Point3d((tplVerts.Min(v => v.X) + tplVerts.Max(v => v.X)) / 2.0, textPt.Y, 0);
+                arrowTip = SingleBarEngine.GetBarArrowTip(barId, elevBar, new Point3d(textPt.X - 1e-3, textPt.Y, 0), trTip);
                 trTip.Commit();
             }
             ObjectId labelId = SingleBarEngine.PlaceBarLabel(db, arrowTip, textPt, elevBar.Mark, barId);
@@ -1967,7 +1970,7 @@ namespace BricsCadRc.Core
                     if (barEnt != null)
                     {
                         elevBar.LabelHandle = labelId.Handle.ToString();
-                        SingleBarEngine.WriteXData(barEnt, elevBar);
+                        BarXData.Write(barEnt, elevBar);
                     }
                     trLbl.Commit();
                 }
@@ -2849,15 +2852,14 @@ namespace BricsCadRc.Core
         {
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
-                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
-                foreach (ObjectId oid in ms)
+                // Plan C, etap 3b: polilinie i pręty-bloki (numer ≥ 04, więc pręty bez numeru odpadają niżej)
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
-                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                    var b = SingleBarEngine.ReadBarXData(pl);
+                    var b = be.Read();
                     if (b == null || b.Diameter != diameter || (b.ShapeCode ?? "00") != "00") continue;
                     int nr = SingleBarEngine.ExtractPosNr(b.Mark);
-                    if (nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
-                    if (Math.Abs(b.LengthA - length) < 1.0) return (oid, b);
+                    if (nr <= 0 || nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
+                    if (Math.Abs(b.LengthA - length) < 1.0) return (be.Entity.ObjectId, b);
                 }
             }
             return CreateNewTemplate(db, zone, tplCount++, diameter, length, layerCode);
@@ -2952,13 +2954,14 @@ namespace BricsCadRc.Core
             (ObjectId id, BarData bar) tpl = (ObjectId.Null, null);
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
-                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
-                foreach (ObjectId oid in ms)
+                // Plan C, etap 3b: polilinie i pręty-bloki; pręt bez numeru pozycji pomijany
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
-                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                    var b = SingleBarEngine.ReadBarXData(pl);
-                    if (b == null || SingleBarEngine.ExtractPosNr(b.Mark) != ub.PosNr || b.ShapeCode != ub.Shape) continue;
-                    if (Math.Abs(b.LengthA - ub.A) < 1 && Math.Abs(b.LengthB - ub.B) < 1) { tpl = (oid, b); break; }
+                    var b = be.Read();
+                    if (b == null) continue;
+                    int nr = SingleBarEngine.ExtractPosNr(b.Mark);
+                    if (nr <= 0 || nr != ub.PosNr || b.ShapeCode != ub.Shape) continue;
+                    if (Math.Abs(b.LengthA - ub.A) < 1 && Math.Abs(b.LengthB - ub.B) < 1) { tpl = (be.Entity.ObjectId, b); break; }
                 }
             }
             if (tpl.id.IsNull)

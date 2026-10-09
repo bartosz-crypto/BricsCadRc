@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
@@ -42,6 +43,7 @@ namespace BricsCadRc.Core
             _newAnnots.Clear();
             _newBars.Clear();
             _newLabels.Clear();
+            _deferredCopyLike.Clear();
             _registered = false;
         }
 
@@ -63,6 +65,13 @@ namespace BricsCadRc.Core
                 var br = e.DBObject as BlockReference;
                 if (br == null) return;
 
+                // Plan C, etap 3e: pręt-blok v2 (RC_SINGLE_BAR [14] = 2) — jak pręt-polilinia (przed IsBarBlock)
+                if (BarEntity.KindOf(br) == BarKind.Block)
+                {
+                    _newBars.Add(br.ObjectId);
+                    return;
+                }
+
                 if (BarBlockEngine.IsBarBlock(br))
                 {
                     _newBlocks.Add(br.ObjectId);
@@ -75,6 +84,18 @@ namespace BricsCadRc.Core
             catch (System.Exception ex) { Log.Error("BarCopyWatcher.OnObjectAppended", ex); }
         }
 
+        // Rysunki, w których zakończyła się ZAGNIEŻDŻONA komenda kopiowania — kwalifikacja przechodzi na komendę nadrzędną
+        private static readonly HashSet<Database> _deferredCopyLike = new HashSet<Database>();
+
+        /// <summary>Komendy kopiowania (biała lista EnsureUniqueBtr i normalizacji par). W2 (3b): także -ARRAY.</summary>
+        private static bool IsCopyLikeCommand(string cmdRaw)
+        {
+            string cmd = (cmdRaw ?? "").Trim().TrimStart('\'').ToUpperInvariant();
+            return cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
+                || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
+                || cmd == "PASTEORIG" || cmd == "MIRROR" || cmd.TrimStart('-').StartsWith("ARRAY");
+        }
+
         private static void OnCommandEnded(object sender, CommandEventArgs e)
             => HandleCommandFinish(sender as Document, e.GlobalCommandName);
 
@@ -83,21 +104,54 @@ namespace BricsCadRc.Core
 
         private static void HandleCommandFinish(Document doc, string cmdRaw)
         {
+            // W2 (0-POPRAWKI p.5): komenda widoku / przezroczysta albo zagnieżdżona (np. 'ZOOM w trakcie COPY) —
+            // bez przepinania i bez czyszczenia: paczki CloneMap i zbiory nowych obiektów zostają do końca komendy nadrzędnej.
+            // Zagnieżdżona komenda kopiowania (np. COPY / MIRROR wywołane z komendy nadrzędnej) — czynności komend
+            // kopiowania (unikalne BTR, normalizacja par) wykonywane po zakończeniu komendy nadrzędnej.
+            try
+            {
+                if (doc != null && (SingleBarGripOverrule.IsViewOrTransparentCommand(cmdRaw)
+                                    || SingleBarGripOverrule.OtherCommandInProgress(doc, cmdRaw ?? "", out _)))
+                {
+                    if (doc.Database != null && IsCopyLikeCommand(cmdRaw)) _deferredCopyLike.Add(doc.Database);
+                    return;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.HandleCommandFinish.Nested", ex); }
+
             try
             {
                 string cmd = (cmdRaw ?? "").ToUpperInvariant();
-                bool isCopyLike =
-                       cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
-                    || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
-                    || cmd == "PASTEORIG" || cmd == "MIRROR" || cmd.StartsWith("ARRAY");
+                var db = doc?.Database;
+                bool deferredCopyLike = db != null && _deferredCopyLike.Remove(db);
 
-                if (isCopyLike && doc?.Database != null && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
+                // 1) Po U/UNDO/REDO nic nie przepinamy (każda zmiana kasuje REDO) — paczki odrzucone
+                if (DocumentWatch.IsUndoCommand(cmd))
                 {
-                    RemapCopiedPairs(doc.Database);
+                    CloneMap.Forget(db);
+                    return;
                 }
-                if (isCopyLike && doc?.Database != null && _newBars.Count > 0)
+
+                bool isCopyLike = IsCopyLikeCommand(cmd) || deferredCopyLike;
+
+                // 2) Mapa klonowania tej komendy (W2, docs/PLAN_POPRAWKI_W1_W2.md 4.4)
+                var batches = CloneMap.Take(db);
+                if (db == null) return;
+
+                var mapped = new HashSet<ObjectId>();
+                using (CloneMap.Suppress())   // DeepCloneObjects w EnsureUniqueBtr nie tworzy paczek
                 {
-                    RemapCopiedBarLabels(doc.Database);
+                    // 3) Własne BTR kopii: rozkłady, opisy, pręty-bloki *U (biała lista komend kopiowania — jak dotąd)
+                    if (isCopyLike) EnsureUniqueBtrs(db);
+
+                    // 4) Przepięcie z mapy — po każdej komendzie, która sklonowała obiekty (pyt. 5)
+                    if (batches.Count > 0) mapped = CloneRemap.Apply(db, batches, isCopyLike);
+
+                    // 5) i 6) Heurystyki — tylko zapas dla obiektów spoza mapy
+                    if (isCopyLike && (_newBlocks.Count > 0 || _newAnnots.Count > 0))
+                        RemapCopiedPairs(db, mapped);
+                    if (isCopyLike && _newBars.Count > 0)
+                        RemapCopiedBarLabels(db, mapped);
                 }
             }
             catch (System.Exception ex) { Log.Error($"BarCopyWatcher.HandleCommandFinish {cmdRaw}", ex); }
@@ -114,16 +168,17 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// Naprawia powiązanie pręt ↔ etykieta po COPY / PASTE / MIRROR / ARRAY.
-        /// Handle 1005 BricsCAD przemapowuje sam, ale pręty i etykiety zapisane starszą wersją
-        /// (tekst 1000) po skopiowaniu nadal wskazują na ORYGINAŁ — wtedy kopia pręta nie zmienia
-        /// swojej etykiety (np. nowy numer pozycji po zmianie długości).
+        /// Naprawia powiązanie pręt ↔ etykieta po COPY / PASTE / MIRROR / ARRAY (heurystyka wzorca).
+        /// BricsCAD V25 przy COPY / MIRROR / ARRAY NIE przemapowuje 1005 (spike W2-0) — kopie wskazują ORYGINAŁ;
+        /// od W2 przepina je mapa klonowania (CloneRemap), ta metoda jest zapasem dla obiektów spoza mapy.
         /// Parowanie: grot etykiety leży na pręcie. Kopia pręta bez etykiety → powiązanie czyszczone.
+        /// W2: pręty i etykiety przepięte z mapy klonowania (mapped) są pomijane — heurystyka tylko jako zapas.
         /// </summary>
-        private static void RemapCopiedBarLabels(Database db)
+        private static void RemapCopiedBarLabels(Database db, HashSet<ObjectId> mapped)
         {
-            _newBars.RemoveWhere(id => id.Database != db || id.IsErased);
-            _newLabels.RemoveWhere(id => id.Database != db || id.IsErased);
+            _newBars.RemoveWhere(id => id.Database != db || id.IsErased || mapped.Contains(id));
+            _newLabels.RemoveWhere(id => id.Database != db || id.IsErased || mapped.Contains(id));
+            if (_newBars.Count == 0) return;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -137,10 +192,98 @@ namespace BricsCadRc.Core
                 }
                 var usedLabels = new HashSet<ObjectId>();
 
+                // Plan C, etap 3e (poprawka): gdy wśród kopii są pręty-bloki —
+                // 1) PRZED parowaniem geometrycznym rezerwacja etykiet z poprawnym dwustronnym powiązaniem
+                //    (pręt [13] → MLeader, back-link MLeadera → ten pręt) — nie mogą trafić do innego pręta;
+                // 2) parowanie po POCHODZENIU, nie po odległości: BricsCAD przy COPY nie przemapowuje 1005 (sprawdzone:
+                //    [13] i [18] kopii wskazują oryginał), więc kopia pręta C ma [13] = etykieta oryginału L_X, a kopia
+                //    etykiety — back-link = oryginalny pręt X. Źródło C: X = back-link(L_X), spójne, gdy X.[13] = L_X.
+                //    Kandydaci dla C: tylko kopie etykiet z tego zbioru z back-linkiem = X. Brak / niespójne źródło →
+                //    C bez etykiety (czyste [13]), nigdy etykieta innego źródła. Odległość grota (< 50 mm) rozdziela
+                //    tylko kilka kopii tego samego źródła (ARRAY, COPY wielokrotne); remis (< 1e-6) → bez przypisania.
+                // Zbiór samych polilinii — bez zmian (parowanie w kolejności prętów, wynik bit w bit jak wzorzec aba0ed1).
+                bool anyBlockBar = false;
+                foreach (var bid in _newBars)
+                    if (BarEntity.KindOf(tr.GetObject(bid, OpenMode.ForRead) as Entity) == BarKind.Block) { anyBlockBar = true; break; }
+                Dictionary<ObjectId, ObjectId> assigned = null;
+                if (anyBlockBar)
+                {
+                    var linked = new HashSet<ObjectId>();
+                    foreach (var bid in _newBars)
+                    {
+                        var rb = BarEntity.From(tr.GetObject(bid, OpenMode.ForRead) as Entity, BarKinds.Polyline | BarKinds.Block)?.Read();
+                        if (rb == null) continue;
+                        if (TryGetObjectId(db, rb.LabelHandle, out var rl) && !rl.IsErased
+                            && tr.GetObject(rl, OpenMode.ForRead) is MLeader rml
+                            && XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(rml), bid.Handle.Value.ToString("X8")))
+                        {
+                            usedLabels.Add(rl);
+                            linked.Add(bid);
+                        }
+                    }
+
+                    // Kopie etykiet według źródła (back-link = oryginalny pręt)
+                    var labelsBySrc = new Dictionary<string, List<ObjectId>>(System.StringComparer.Ordinal);
+                    foreach (var kv in labelTips)
+                    {
+                        if (usedLabels.Contains(kv.Key)) continue;
+                        if (!(tr.GetObject(kv.Key, OpenMode.ForRead) is MLeader lm)) continue;
+                        string src = XLink.Norm(SingleBarEngine.ReadBarHandleFromLabel(lm));
+                        if (src.Length == 0) continue;
+                        if (!labelsBySrc.TryGetValue(src, out var lst)) labelsBySrc[src] = lst = new List<ObjectId>();
+                        lst.Add(kv.Key);
+                    }
+
+                    var pairs = new List<(double d, ObjectId bar, ObjectId label)>();
+                    foreach (var bid in _newBars)
+                    {
+                        if (linked.Contains(bid)) continue;
+                        var pent = tr.GetObject(bid, OpenMode.ForRead) as Entity;
+                        var pbe  = BarEntity.From(pent, BarKinds.Polyline | BarKinds.Block);
+                        var rb   = pbe?.Read();
+                        if (rb == null) continue;
+                        string src = SourceOfCopy(tr, db, rb.LabelHandle);
+                        if (src == null || !labelsBySrc.TryGetValue(src, out var cands)) continue;
+                        var ppl  = pent as Polyline;
+                        var pblk = ppl == null ? pbe : null;
+                        foreach (var lid in cands)
+                        {
+                            double? pd = TipDistance(tr, ppl, pblk, labelTips[lid]);
+                            if (pd.HasValue && pd.Value < 50.0) pairs.Add((pd.Value, bid, lid));
+                        }
+                    }
+
+                    // Najbliższe pary pierwsze, każdy pręt i każda etykieta najwyżej raz; remis dla tego samego
+                    // pręta albo etykiety → bez przypisania (nie rozstrzygamy kolejnością)
+                    assigned = new Dictionary<ObjectId, ObjectId>();
+                    var takenBars   = new HashSet<ObjectId>();
+                    var takenLabels = new HashSet<ObjectId>();
+                    var sorted = pairs.OrderBy(x => x.d).ToList();
+                    foreach (var p in sorted)
+                    {
+                        if (takenBars.Contains(p.bar) || takenLabels.Contains(p.label)) continue;
+                        bool tie = sorted.Any(q => (q.bar != p.bar || q.label != p.label)
+                                                   && (q.bar == p.bar || q.label == p.label)
+                                                   && !takenBars.Contains(q.bar) && !takenLabels.Contains(q.label)
+                                                   && System.Math.Abs(q.d - p.d) < 1e-6);
+                        takenBars.Add(p.bar);
+                        takenLabels.Add(p.label);
+                        if (tie)
+                        {
+                            Log.Info($"BarCopyWatcher: niejednoznaczne parowanie pręt {p.bar.Handle} – etykieta {p.label.Handle} (remis odległości) — bez przypisania.");
+                            continue;
+                        }
+                        assigned[p.bar] = p.label;
+                    }
+                }
+
                 foreach (var bid in _newBars)
                 {
-                    var pl  = tr.GetObject(bid, OpenMode.ForRead) as Polyline;
-                    var bar = pl != null ? SingleBarEngine.ReadBarXData(pl) : null;
+                    var ent = tr.GetObject(bid, OpenMode.ForRead) as Entity;
+                    var pl  = ent as Polyline;
+                    // Plan C, etap 3e: pręt-blok v2 przez BarEntity (polilinia jak dotąd)
+                    var blk = pl == null ? BarEntity.From(ent, BarKinds.Block) : null;
+                    var bar = pl != null ? SingleBarEngine.ReadBarXData(pl) : blk?.Read();
                     if (bar == null) continue;
                     string myHex = bid.Handle.Value.ToString("X8");
 
@@ -156,21 +299,38 @@ namespace BricsCadRc.Core
                     // Szukaj nowej etykiety, której grot leży na tym pręcie
                     ObjectId best = ObjectId.Null;
                     double bestD = 50.0;   // mm
+                    if (assigned != null)
+                        best = assigned.TryGetValue(bid, out var asg) ? asg : ObjectId.Null;   // pręty-bloki w zbiorze: parowanie globalne
+                    else   // zbiór samych polilinii — jak wzorzec (pierwsza w kolejności prętów)
                     foreach (var kv in labelTips)
                     {
                         if (usedLabels.Contains(kv.Key)) continue;
                         double d;
-                        try { d = pl.GetClosestPointTo(kv.Value, false).DistanceTo(kv.Value); }
-                        catch { continue; }
+                        try
+                        {
+                            if (pl != null)
+                                d = pl.GetClosestPointTo(kv.Value, false).DistanceTo(kv.Value);
+                            else
+                            {
+                                var cp = blk.ClosestPoint(tr, kv.Value);
+                                if (!cp.HasValue) continue;
+                                d = cp.Value.DistanceTo(kv.Value);
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Log.Error("BarCopyWatcher.RemapCopiedBarLabels.ClosestPoint", ex);
+                            continue;
+                        }
                         if (d < bestD) { bestD = d; best = kv.Key; }
                     }
 
-                    pl.UpgradeOpen();
+                    if (pl != null) pl.UpgradeOpen();
                     if (!best.IsNull)
                     {
                         usedLabels.Add(best);
                         bar.LabelHandle = best.Handle.Value.ToString("X8");
-                        SingleBarEngine.WriteXData(pl, bar);
+                        WriteBar(pl, blk, bar);
 
                         var ml = (MLeader)tr.GetObject(best, OpenMode.ForWrite);
                         ml.XData = new ResultBuffer(
@@ -181,11 +341,54 @@ namespace BricsCadRc.Core
                     {
                         // Pręt skopiowany bez etykiety — nie może wskazywać na etykietę oryginału
                         bar.LabelHandle = "";
-                        SingleBarEngine.WriteXData(pl, bar);
+                        WriteBar(pl, blk, bar);
                     }
                 }
                 tr.Commit();
             }
+        }
+
+        /// <summary>
+        /// Źródło kopii pręta (Plan C, etap 3e): [13] kopii = etykieta oryginału L_X, X = back-link(L_X).
+        /// Spójne, gdy X istnieje, jest prętem i jego [13] wskazuje L_X. Zwraca X („X8”) albo null.
+        /// </summary>
+        private static string SourceOfCopy(Transaction tr, Database db, string labelHandle)
+        {
+            if (!TryGetObjectId(db, labelHandle, out var lx) || lx.IsNull || lx.IsErased) return null;
+            if (!(tr.GetObject(lx, OpenMode.ForRead) is MLeader ml)) return null;
+            string x = XLink.Norm(SingleBarEngine.ReadBarHandleFromLabel(ml));
+            if (x.Length == 0 || !TryGetObjectId(db, x, out var xid) || xid.IsNull || xid.IsErased) return null;
+            var xb = BarEntity.From(tr.GetObject(xid, OpenMode.ForRead) as Entity, BarKinds.Polyline | BarKinds.Block)?.Read();
+            if (xb == null || !XLink.Same(xb.LabelHandle, lx.Handle.Value.ToString("X8"))) return null;
+            return x;
+        }
+
+        /// <summary>Odległość grota od obrysu pręta (polilinia albo pręt-blok w WCS); null przy braku obrysu / błędzie.</summary>
+        private static double? TipDistance(Transaction tr, Polyline pl, BarEntity blk, Point3d tip)
+        {
+            try
+            {
+                if (pl != null) return pl.GetClosestPointTo(tip, false).DistanceTo(tip);
+                var cp = blk?.ClosestPoint(tr, tip);
+                return cp.HasValue ? cp.Value.DistanceTo(tip) : (double?)null;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarCopyWatcher.TipDistance", ex);
+                return null;
+            }
+        }
+
+        /// <summary>Zapis rekordu pręta: polilinia — BarXData.Write (jak dotąd); pręt-blok — BarEntity.Write ([14] = 2).</summary>
+        private static void WriteBar(Polyline pl, BarEntity blk, BarData bar)
+        {
+            if (pl != null)
+            {
+                BarXData.Write(pl, bar);
+                return;
+            }
+            if (!blk.Entity.IsWriteEnabled) blk.Entity.UpgradeOpen();
+            blk.Write(bar);
         }
 
         private static bool TryGetArrowTip(MLeader ml, out Point3d tip)
@@ -200,21 +403,27 @@ namespace BricsCadRc.Core
                 tip = ml.GetFirstVertex((int)lni[0]);
                 return true;
             }
-            catch { return false; }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarCopyWatcher.TryGetArrowTip", ex);
+                return false;
+            }
         }
 
-        private static void RemapCopiedPairs(Database db)
+        /// <summary>
+        /// Własne BTR kopii (krok 3 planu 4.4, przed przepięciem): rozkłady i opisy (jak dawny krok 1 RemapCopiedPairs)
+        /// oraz pręty-bloki z BTR *U (Plan C, etap 3e — klon zachowuje Explodable). Nazwane BTR prętów testowych etapu 1
+        /// (RC_BAR_TEST_nnn) — bez zmian: wspólny BTR do pierwszej edycji, potem copy-on-write w SingleBarBlock.
+        /// </summary>
+        private static void EnsureUniqueBtrs(Database db)
         {
             // Tylko obiekty z rysunku, w którym zakończyła się komenda
             _newBlocks.RemoveWhere(id => id.Database != db);
             _newAnnots.RemoveWhere(id => id.Database != db);
-
-            // p298+p303: relink'owane pary do normalize + rebuild po commit
-            var rebuildPairs = new List<(ObjectId annotId, ObjectId blockId)>();
+            if (_newBlocks.Count == 0 && _newAnnots.Count == 0 && _newBars.Count == 0) return;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Krok 1: zapewnij niezależne BTR dla każdej skopiowanej pary
                 foreach (var id in _newBlocks)
                 {
                     if (id.IsNull || id.IsErased) continue;
@@ -231,17 +440,46 @@ namespace BricsCadRc.Core
                     if (!AnnotationEngine.IsAnnotation(brAnnot)) continue;
                     EnsureUniqueBtr(tr, db, brAnnot);
                 }
+                foreach (var bid in _newBars)
+                {
+                    if (bid.IsNull || bid.IsErased || bid.Database != db) continue;
+                    if (!(tr.GetObject(bid, OpenMode.ForRead) is BlockReference bbr)) continue;
+                    if (BarEntity.KindOf(bbr) != BarKind.Block) continue;
+                    if (!(tr.GetObject(bbr.BlockTableRecord, OpenMode.ForRead) is BlockTableRecord bbtr) || !bbtr.IsAnonymous) continue;
+                    EnsureUniqueBtr(tr, db, bbr);
+                }
+                tr.Commit();
+            }
+        }
 
+        /// <summary>
+        /// Heurystyczne przepięcie par rozkład ↔ opis (wzorzec). W2: tylko rozkłady spoza mapy klonowania (mapped) —
+        /// pary z mapy przepina CloneRemap (z tą samą normalizacją i przebudową opisu, NormalizeAndRebuildPair).
+        /// </summary>
+        private static void RemapCopiedPairs(Database db, HashSet<ObjectId> mapped)
+        {
+            // Tylko obiekty z rysunku, w którym zakończyła się komenda
+            _newBlocks.RemoveWhere(id => id.Database != db);
+            _newAnnots.RemoveWhere(id => id.Database != db);
+
+            // p298+p303: relink'owane pary do normalize + rebuild po commit
+            var rebuildPairs = new List<(ObjectId annotId, ObjectId blockId)>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Krok 1 (własne BTR) — EnsureUniqueBtrs, przed przepięciem z mapy.
                 // Krok 2: remap AnnotHandle <-> SourceBlockHandle między kopiami
                 foreach (var newBlockId in _newBlocks)
                 {
                     if (newBlockId.IsNull || newBlockId.IsErased) continue;
+                    if (mapped.Contains(newBlockId)) continue;   // W2: przepięty z mapy
 
                     var newBlock = tr.GetObject(newBlockId, OpenMode.ForRead) as BlockReference;
                     if (newBlock == null) continue;
 
                     BarData newBlockData = null;
-                    try { newBlockData = BarBlockEngine.ReadXData(newBlock); } catch { }
+                    try { newBlockData = BarBlockEngine.ReadXData(newBlock); }
+                    catch (System.Exception ex) { Log.Error("BarCopyWatcher.RemapCopiedPairs.ReadXData", ex); }
                     if (newBlockData == null) continue;
 
                     // Bug B fix: każda kopia rozkładu zwiększa count source bara
@@ -251,7 +489,7 @@ namespace BricsCadRc.Core
                     string oldAnnotHandleStr = newBlockData.AnnotHandle;
                     if (string.IsNullOrEmpty(oldAnnotHandleStr)) continue;
 
-                    if (!TryGetObjectId(db, oldAnnotHandleStr, out var oldAnnotId)) continue;
+                    if (!TryGetObjectId(db, oldAnnotHandleStr, out var oldAnnotId) || oldAnnotId.IsErased) continue;
 
                     // Jeśli wskazywana annotacja jest już nowa — link jest aktualny, pomijamy
                     if (_newAnnots.Contains(oldAnnotId)) continue;
@@ -261,7 +499,8 @@ namespace BricsCadRc.Core
                     if (oldAnnot == null) continue;
 
                     BarData oldAnnotData = null;
-                    try { oldAnnotData = AnnotationEngine.ReadAnnotXData(oldAnnot); } catch { }
+                    try { oldAnnotData = AnnotationEngine.ReadAnnotXData(oldAnnot); }
+                    catch (System.Exception ex) { Log.Error("BarCopyWatcher.RemapCopiedPairs.ReadAnnot", ex); }
                     if (oldAnnotData == null) continue;
 
                     string oldBlockHandleStr = (oldAnnotData.SourceBlockHandle ?? "").ToUpperInvariant();
@@ -277,7 +516,8 @@ namespace BricsCadRc.Core
                         if (newAnnot == null) continue;
 
                         BarData newAnnotData = null;
-                        try { newAnnotData = AnnotationEngine.ReadAnnotXData(newAnnot); } catch { }
+                        try { newAnnotData = AnnotationEngine.ReadAnnotXData(newAnnot); }
+                        catch (System.Exception ex) { Log.Error("BarCopyWatcher.RemapCopiedPairs.ReadNewAnnot", ex); }
                         if (newAnnotData == null) continue;
 
                         string sbh = (newAnnotData.SourceBlockHandle ?? "").ToUpperInvariant();
@@ -318,58 +558,65 @@ namespace BricsCadRc.Core
 
             // p298+p303: normalize det=-1 -> det=+1, rebuild dist line per pair
             foreach (var (annotId, blockId) in rebuildPairs)
+                NormalizeAndRebuildPair(db, annotId, blockId);
+        }
+
+        /// <summary>
+        /// Końcowa normalizacja i przebudowa pary rozkład ↔ opis (p298+p303): odbicie (det = −1) → skala +1, przebudowa
+        /// linii rozkładu w BTR opisu. Wspólna dla heurystyki (RemapCopiedPairs) i pary z mapy (CloneRemap, 0-POPRAWKI p.1).
+        /// </summary>
+        internal static void NormalizeAndRebuildPair(Database db, ObjectId annotId, ObjectId blockId)
+        {
+            try
             {
-                try
+                // Krok A: normalize ScaleFactors jeśli mirror (det=-1)
+                using (var trNorm = db.TransactionManager.StartTransaction())
                 {
-                    // Krok A: normalize ScaleFactors jeśli mirror (det=-1)
-                    using (var trNorm = db.TransactionManager.StartTransaction())
+                    var blk = trNorm.GetObject(blockId, OpenMode.ForWrite) as BlockReference;
+                    var ann = trNorm.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+
+                    bool blkNeedsNorm = blk != null && (blk.ScaleFactors.X < 0 || blk.ScaleFactors.Y < 0
+                        || System.Math.Abs(System.Math.Abs(blk.Rotation) - System.Math.PI) < 1e-3);
+                    if (blkNeedsNorm)
                     {
-                        var blk = trNorm.GetObject(blockId, OpenMode.ForWrite) as BlockReference;
-                        var ann = trNorm.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
-
-                        bool blkNeedsNorm = blk != null && (blk.ScaleFactors.X < 0 || blk.ScaleFactors.Y < 0
-                            || System.Math.Abs(System.Math.Abs(blk.Rotation) - System.Math.PI) < 1e-3);
-                        if (blkNeedsNorm)
-                        {
-                            Point3d vMin;
-                            try   { vMin = blk.GeometricExtents.MinPoint; }
-                            catch { vMin = blk.Position; }
-                            blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
-                            blk.Rotation     = 0.0;
-                            blk.Position     = vMin;
-                        }
-
-                        bool annNeedsNorm = ann != null && (ann.ScaleFactors.X < 0 || ann.ScaleFactors.Y < 0
-                            || System.Math.Abs(System.Math.Abs(ann.Rotation) - System.Math.PI) < 1e-3);
-                        if (annNeedsNorm)
-                        {
-                            Point3d aVMin;
-                            try   { aVMin = ann.GeometricExtents.MinPoint; }
-                            catch { aVMin = ann.Position; }
-                            ann.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
-                            ann.Rotation     = 0.0;
-                            ann.Position     = aVMin;
-                        }
-
-                        trNorm.Commit();
+                        Point3d vMin;
+                        try   { vMin = blk.GeometricExtents.MinPoint; }
+                        catch { vMin = blk.Position; }
+                        blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+                        blk.Rotation     = 0.0;
+                        blk.Position     = vMin;
                     }
 
-                    // Krok B: rebuild annot BTR (RebuildDistLineInBtr otwiera własną transakcję)
-                    using (var trReb = db.TransactionManager.StartTransaction())
+                    bool annNeedsNorm = ann != null && (ann.ScaleFactors.X < 0 || ann.ScaleFactors.Y < 0
+                        || System.Math.Abs(System.Math.Abs(ann.Rotation) - System.Math.PI) < 1e-3);
+                    if (annNeedsNorm)
                     {
-                        var blk = trReb.GetObject(blockId, OpenMode.ForRead) as BlockReference;
-                        var ann = trReb.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
-                        if (blk != null && ann != null)
-                        {
-                            var barData = BarBlockEngine.ReadXData(blk);
-                            if (barData != null)
-                                AnnotationEngine.RebuildDistLineInBtr(ann, barData, db, blk.Position);
-                        }
-                        trReb.Commit();
+                        Point3d aVMin;
+                        try   { aVMin = ann.GeometricExtents.MinPoint; }
+                        catch { aVMin = ann.Position; }
+                        ann.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+                        ann.Rotation     = 0.0;
+                        ann.Position     = aVMin;
                     }
+
+                    trNorm.Commit();
                 }
-                catch { }
+
+                // Krok B: rebuild annot BTR (RebuildDistLineInBtr otwiera własną transakcję)
+                using (var trReb = db.TransactionManager.StartTransaction())
+                {
+                    var blk = trReb.GetObject(blockId, OpenMode.ForRead) as BlockReference;
+                    var ann = trReb.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                    if (blk != null && ann != null)
+                    {
+                        var barData = BarBlockEngine.ReadXData(blk);
+                        if (barData != null)
+                            AnnotationEngine.RebuildDistLineInBtr(ann, barData, db, blk.Position);
+                    }
+                    trReb.Commit();
+                }
             }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.NormalizeAndRebuildPair", ex); }
         }
 
         private static void EnsureUniqueBtr(Transaction tr, Database db, BlockReference br)
@@ -421,7 +668,11 @@ namespace BricsCadRc.Core
                 long h = Convert.ToInt64(handleStr, 16);
                 return db.TryGetObjectId(new Handle(h), out id);
             }
-            catch { return false; }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarCopyWatcher.TryGetObjectId", ex);
+                return false;
+            }
         }
 
         /// <summary>

@@ -190,33 +190,17 @@ namespace BricsCadRc.Core
                     && SingleBarEngine.ReadBarXData(ent) is BarData sb && sb.LengthA > 0)
                 {
                     double d = sb.Diameter > 0 ? sb.Diameter : 10;
+                    // W4e (poprawka #13): GetLocalPoints przelicza wymiary zewnętrzne BS 8666 na oś (BarDimensionRules.ToAxis —
+                    // ramiona − d/2, wymiar poprzeczny U / spinki − d, łuk osi r + d/2) — dawne AxisParams usunięte (bez
+                    // podwójnego odejmowania); obrys pręta w widoku ma dokładnie wymiary z rysunku (UB 225: B = 140 po zewnętrznej).
                     var pts = BarGeometryBuilder.GetLocalPoints(sb.ShapeCode ?? "00",
-                        AxisParams(sb.ShapeCode, new[] { sb.LengthA, sb.LengthB, sb.LengthC, sb.LengthD, sb.LengthE }, d), d);
+                        new[] { sb.LengthA, sb.LengthB, sb.LengthC, sb.LengthD, sb.LengthE }, d);
                     if (pts != null && pts.Count >= 2) res = (pts, sb.ShapeCode ?? "00");
                 }
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.SourceShape", ex); }
             cache[handle] = res;
             return res;
-        }
-
-        /// <summary>
-        /// Wymiary BS 8666 są zewnętrzne (UB 225: B = 225 − 40 − 35 − 5 − 5 = 140 po zewnętrznej pręta) — do rysowania osi pręta
-        /// w przekroju: ramiona − d/2, wymiar poprzeczny U / spinki − d. Wtedy obrys pręta ma dokładnie wymiary z rysunku.
-        /// </summary>
-        private static double[] AxisParams(string code, double[] p, double d)
-        {
-            var a = (double[])p.Clone();
-            switch (code ?? "00")
-            {
-                case "13": case "21": case "22":
-                    a[0] = Math.Max(1, a[0] - d / 2); a[1] = Math.Max(1, a[1] - d); a[2] = Math.Max(0, a[2] - d / 2);
-                    break;
-                case "11": case "12":
-                    a[0] = Math.Max(1, a[0] - d / 2); a[1] = Math.Max(1, a[1] - d / 2);
-                    break;
-            }
-            return a;
         }
 
         private static string Flat(string t) => System.Text.RegularExpressions.Regex.Replace(t ?? "", @"\s+", " ").Trim();

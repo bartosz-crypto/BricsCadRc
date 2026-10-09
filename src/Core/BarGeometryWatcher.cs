@@ -54,6 +54,7 @@ namespace BricsCadRc.Core
                     d.Database.ObjectModified        += OnObjectModified;
                     d.CommandEnded                   += OnCommandEnded;
                     d.CommandCancelled               += OnCommandCancelled;
+                    d.CommandFailed                  += OnCommandFailed;
                 },
                 d =>
                 {
@@ -65,6 +66,7 @@ namespace BricsCadRc.Core
                     catch { }
                     d.CommandEnded     -= OnCommandEnded;
                     d.CommandCancelled -= OnCommandCancelled;
+                    d.CommandFailed    -= OnCommandFailed;
                 });
             _active = true;
         }
@@ -75,6 +77,65 @@ namespace BricsCadRc.Core
             DocumentWatch.Unsubscribe("BarGeometryWatcher");
             _active = false;
             ResetCommandState();
+            _ignoredThisCommand.Clear();
+        }
+
+        /// <summary>
+        /// Poprawka #1 (docs/POPRAWKI_WZORCA.md): wyciszenie watchera na czas zmian pręta wykonywanych przez komendę
+        /// wtyczki (RC_EDIT_BAR → BarEditApply.Apply, RC_UPDATE_BAR, RC_BAR_END). Zmiana obrysu z RebuildCompanions nie trafia
+        /// do kolejki, więc w CommandEnded nie jest brana za grip na końcu pręta (wzorzec doliczał przyrost drugi raz:
+        /// 3000 → 3500 → 4000). Zwiększa licznik reentrancji (_rebuildDepth); Dispose zmniejsza go dokładnie raz.
+        /// Używać WYŁĄCZNIE w using. Grip / STRETCH użytkownika nie są wyciszane.
+        /// </summary>
+        internal static IDisposable Suppress() => new SuppressScope();
+
+        private sealed class SuppressScope : IDisposable
+        {
+            private bool _disposed;
+            public SuppressScope() { _rebuildDepth++; }
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _rebuildDepth--;
+            }
+        }
+
+        // Poprawka #1 (plan awaryjny W1b): pręty przebudowane w tej komendzie przez wtyczkę (BarEditApply, RC_UPDATE_BAR)
+        // — pomijane w CommandEnded także wtedy, gdy trafiły do kolejki WCZEŚNIEJ w tej samej komendzie (np. pręt utworzony
+        // i opisany w tej komendzie, potem Apply): obrys sprzed komendy nie odpowiada już danym → fałszywy „grip na końcu”.
+        // Czyszczone przy KAŻDYM końcu komendy najwyższego poziomu: CommandEnded / CommandCancelled / CommandFailed
+        // (nieudana RC_EDIT_BAR nie może wyciszyć następnego STRETCH); koniec komendy zagnieżdżonej / przezroczystej
+        // ('ZOOM w trakcie RC_EDIT_BAR) zbioru nie czyści.
+        private static readonly HashSet<ObjectId> _ignoredThisCommand = new HashSet<ObjectId>();
+
+        /// <summary>Pręt zmieniony przez komendę wtyczki — watcher go pomija w CommandEnded tej komendy (poprawka #1).</summary>
+        internal static void IgnoreThisCommand(ObjectId id)
+        {
+            if (!id.IsNull) _ignoredThisCommand.Add(id);
+        }
+
+        /// <summary>Koniec komendy najwyższego poziomu (po jej zakończeniu nie trwa inna komenda w dokumencie).</summary>
+        private static bool IsTopLevelEnd(object sender, CommandEventArgs e)
+        {
+            if (!(sender is Document doc)) return true;
+            string cmd = e?.GlobalCommandName ?? "";
+            return !SingleBarGripOverrule.IsViewOrTransparentCommand(cmd)
+                && !SingleBarGripOverrule.OtherCommandInProgress(doc, cmd, out _);
+        }
+
+        /// <summary>Czyści zbiór pomijanych prętów, gdy kończy się komenda najwyższego poziomu.</summary>
+        private static void ClearIgnoredIfTopLevel(object sender, CommandEventArgs e)
+        {
+            try
+            {
+                if (IsTopLevelEnd(sender, e)) _ignoredThisCommand.Clear();
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarGeometryWatcher.ClearIgnoredIfTopLevel", ex);
+                _ignoredThisCommand.Clear();
+            }
         }
 
         private static void ResetCommandState()
@@ -135,7 +196,20 @@ namespace BricsCadRc.Core
         }
 
         private static void OnCommandCancelled(object sender, CommandEventArgs e)
-            => ResetCommandState();
+        {
+            ResetCommandState();
+            ClearIgnoredIfTopLevel(sender, e);
+        }
+
+        /// <summary>
+        /// Komenda zakończona błędem (np. wyjątek w RC_EDIT_BAR po IgnoreThisCommand) — jak anulowanie: stan komendy
+        /// czyszczony, żeby następny STRETCH / grip pręta nie był pominięty ani liczony od nieaktualnego obrysu.
+        /// </summary>
+        private static void OnCommandFailed(object sender, CommandEventArgs e)
+        {
+            ResetCommandState();
+            ClearIgnoredIfTopLevel(sender, e);
+        }
 
         // ----------------------------------------------------------------
         // Grip na końcu pręta
@@ -153,7 +227,7 @@ namespace BricsCadRc.Core
             result = null; newAxisStart = Point3d.Origin; why = null;
             string shapeCode = bar.ShapeCode ?? "00";
             int total = pl.NumberOfVertices;
-            if (shapeCode == "44" || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
+            if (BarFrameRules.IsRingShape(shapeCode) || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
             int n = total / 2;
 
             var moved = new List<int>();
@@ -179,7 +253,12 @@ namespace BricsCadRc.Core
             if (Math.Abs(delta) < 0.5) return false;
 
             var shape = ShapeCodeLibrary.Get(shapeCode) ?? ShapeCodeLibrary.Get("00");
-            int k = FindEndParam(shape, bar.ParamValues, bar.Diameter, atStart, delta);
+            // W4h runda 2 (wariant b): 14 / 15 z kątem z samego B — wydłużenie A przy STAŁYM kącie: szukamy na kopii z D = A·cos θ
+            // (kąt z B i D nie zależy od A); po znalezieniu A zapisujemy też to D (koniec C — jak dotąd, bez D)
+            var fixedSlope = shape.WithFixedSlope(bar.ParamValues);
+            int k = fixedSlope != null ? FindEndParam(shape, fixedSlope, bar.Diameter, atStart, delta) : -1;
+            bool writeD = k >= 0 && shape.Parameters[k] == "A";
+            if (!writeD) k = FindEndParam(shape, bar.ParamValues, bar.Diameter, atStart, delta);
             if (k < 0)
             {
                 why = $"Pręt {bar.Mark} (kształt {shapeCode}): tego końca nie da się zmienić gripem — użyj RC_EDIT_BAR.";
@@ -195,6 +274,7 @@ namespace BricsCadRc.Core
 
             result = bar;   // świeży odczyt XData — można zmieniać
             SetParam(result, k, newVal);
+            if (writeD) SetParam(result, shape.IndexOf("D"), shape.Value(fixedSlope, "D"));   // W4h: kąt zostaje
             if (!result.LengthOverridden)
             {
                 try
@@ -258,16 +338,19 @@ namespace BricsCadRc.Core
             }
         }
 
-        /// <summary>Zapis nowych wymiarów, odbudowa obrysu od nowego początku osi, numeracja, rozkłady, etykieta.</summary>
+        /// <summary>
+        /// Zapis nowych wymiarów, odbudowa obrysu od nowego początku osi, numeracja, rozkłady, etykieta.
+        /// preFrame — rama pręta sprzed komendy (poprawka #4: obrót i odbicie zachowane; wzorzec przebudowywał poziomo).
+        /// </summary>
         private static void ApplyEndStretch(Document doc, Database db, ObjectId oid, string oldMark,
-                                            BarData stretched, Point3d axisStart)
+                                            BarData stretched, Point3d axisStart, BarFrame preFrame)
         {
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                if (tr.GetObject(oid, OpenMode.ForWrite) is Polyline pl) SingleBarEngine.WriteXData(pl, stretched);
+                if (tr.GetObject(oid, OpenMode.ForWrite) is Polyline pl) BarXData.Write(pl, stretched);
                 tr.Commit();
             }
-            SingleBarEngine.RebuildCompanions(db, oid, stretched, axisStart);
+            SingleBarEngine.RebuildCompanions(db, oid, stretched, axisStart, preFrame);
 
             int oldPosNr = SingleBarEngine.ExtractPosNr(oldMark);
             string newMark = PositionReconciler.ReconcileAfterGeometryChange(db, oid);
@@ -409,13 +492,15 @@ namespace BricsCadRc.Core
             if (doc?.Database == null || _pending.Count == 0 || DocumentWatch.IsUndoCommand(e.GlobalCommandName))
             {
                 ResetCommandState();
+                ClearIgnoredIfTopLevel(sender, e);
                 return;
             }
             var db = doc.Database;
 
             var toProcess = new List<ObjectId>();
             foreach (var id in _pending)
-                if (id.Database == db) toProcess.Add(id);
+                if (id.Database == db && !_ignoredThisCommand.Contains(id)) toProcess.Add(id);
+            ClearIgnoredIfTopLevel(sender, e);
             var preAxisStart = new Dictionary<ObjectId, Point3d>(_preAxisStart);
             var preOutline   = new Dictionary<ObjectId, List<Point3d>>(_preOutline);
             _pending.Clear();
@@ -464,11 +549,17 @@ namespace BricsCadRc.Core
                         string why = null;
                         BarData stretched = null;
                         Point3d newAxisStart = Point3d.Origin;
-                        if (preOutline.TryGetValue(oid, out var pre)
+                        preOutline.TryGetValue(oid, out var pre);
+                        // Poprawka #4: rama pręta sprzed komendy — liczona PRZED TryEndStretch (ten zmienia bar)
+                        var preFrame = pre != null ? SingleBarEngine.FrameFromOutline(pre, bar) : BarFrame.Identity;
+                        if (pre != null
                             && TryEndStretch(pline, bar, pre, out stretched, out newAxisStart, out why))
                         {
+                            // Poprawka #7: nadpisana długość całkowita zostaje — ostrzeżenie (jak RC_UPDATE_BAR)
+                            if (stretched.LengthOverridden)
+                                doc.Editor?.WriteMessage("\n" + BarLengthRules.OverriddenTotalLengthWarning(stretched.Mark, stretched.TotalLength) + "\n");
                             tr.Commit();
-                            ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart);
+                            ApplyEndStretch(doc, db, oid, mark, stretched, newAxisStart, preFrame);
                             continue;
                         }
                         if (why != null) doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
@@ -504,12 +595,14 @@ namespace BricsCadRc.Core
                             // Plan B: wycofujemy ruch przez regenerację outline z istniejących parametrów XData.
                             // Outline "odskakuje" do stanu sprzed grip move. Zmiana parametrów bar-a tylko
                             // przez dialog RC_EDIT_BAR.
+                            // Poprawka #4: rama z bieżącego obrysu (ROTATE / MIRROR zostają), przy zepsutym — sprzed komendy.
+                            var frameB = SingleBarEngine.FrameFromOutline(SingleBarEngine.OutlinePoints(pline), bar, pre);
                             tr.Commit();
 
                             try
                             {
                                 _rebuildDepth++;
-                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                                SingleBarEngine.RebuildCompanions(db, oid, bar, null, frameB);
                             }
                             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions", ex); }
                             finally
@@ -524,11 +617,13 @@ namespace BricsCadRc.Core
                         // Jeśli struktura jest walidna (stretch wzdłuż osi z zachowaniem diameter) → akceptuj nową długość.
                         if (!IsValidStraightBarOutline(pline, bar.Diameter))
                         {
+                            // Poprawka #4: zepsuty obrys → kierunek i odbicie sprzed komendy (axis[0] bieżący, jak wzorzec)
+                            var frame00 = SingleBarEngine.FrameFromOutline(SingleBarEngine.OutlinePoints(pline), bar, pre);
                             tr.Commit();
                             try
                             {
                                 _rebuildDepth++;
-                                SingleBarEngine.RebuildCompanions(db, oid, bar);
+                                SingleBarEngine.RebuildCompanions(db, oid, bar, null, frame00);
                             }
                             catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions(invalid outline)", ex); }
                             finally
@@ -555,7 +650,17 @@ namespace BricsCadRc.Core
                             if (bar != null)
                             {
                                 bar.LengthA = newLength;
-                                SingleBarEngine.WriteXData(pline, bar);
+                                // Poprawka #7: TotalLength wg kształtu (wzorzec zostawiał starą); nadpisana — bez zmian
+                                if (!bar.LengthOverridden)
+                                {
+                                    try { bar.TotalLength = BarLengthRules.TotalLengthFor(bar.ShapeCode, bar.ParamValues, bar.Diameter); }
+                                    catch (System.Exception ex) { Log.Error("BarGeometryWatcher.ProcessPending.TotalLength", ex); }
+                                }
+                                else
+                                {
+                                    doc.Editor?.WriteMessage("\n" + BarLengthRules.OverriddenTotalLengthWarning(bar.Mark, bar.TotalLength) + "\n");
+                                }
+                                BarXData.Write(pline, bar);
                             }
                         }
                         tr.Commit();

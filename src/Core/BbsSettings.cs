@@ -4,7 +4,7 @@ using System.IO;
 namespace BricsCadRc.Core
 {
     /// <summary>
-    /// Ustawienia BBS zapamiętywane między sesjami: %APPDATA%\BricsCadRc\bbs.txt
+    /// Ustawienia BBS zapamiętywane między sesjami: %APPDATA%\NaSmartRc\bbs.txt
     /// (linie „klucz=wartość”). Pusty szablon = wbudowany default-bbs.xls.
     /// </summary>
     public static class BbsSettings
@@ -13,7 +13,11 @@ namespace BricsCadRc.Core
         private static string _templatePath = "";
 
         private static string FilePath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BricsCadRc", "bbs.txt");
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), App.ProductInfo.FolderName, "bbs.txt");
+
+        // Ustawienia starej wtyczki BricsCadRc — czytane, gdy NA Smart RC nie ma jeszcze własnych.
+        private static string LegacyFilePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), App.ProductInfo.LegacyFolderName, "bbs.txt");
 
         public static string TemplatePath
         {
@@ -34,8 +38,10 @@ namespace BricsCadRc.Core
             _loaded = true;
             try
             {
-                if (!File.Exists(FilePath)) return;
-                foreach (var line in File.ReadAllLines(FilePath))
+                string path = File.Exists(FilePath) ? FilePath
+                            : File.Exists(LegacyFilePath) ? LegacyFilePath : null;
+                if (path == null) return;
+                foreach (var line in File.ReadAllLines(path))
                 {
                     int eq = line.IndexOf('=');
                     if (eq <= 0) continue;

@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     x:Class="BricsCadRc.Dialogs.BarElevationDialog"
     Title="Reinforcement – Elevation"
-    Width="400" Height="480"
+    Width="400" Height="480" SizeToContent="Height"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterScreen"
     Background="#F0F0F0">
@@ -55,10 +55,12 @@
             <RowDefinition Height="Auto"/>   <!-- 18: Param D -->
             <RowDefinition Height="6"/>
             <RowDefinition Height="Auto"/>   <!-- 20: Param E -->
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>   <!-- 22: W4h: kąt ramienia skośnego (14, 15, 24, 46) -->
             <RowDefinition Height="10"/>
-            <RowDefinition Height="Auto"/>   <!-- 22: Total length -->
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>   <!-- 24: Buttons -->
+            <RowDefinition Height="Auto"/>   <!-- 24: Total length -->
+            <RowDefinition Height="*"/>      <!-- 25: W4f: ostrzeżenia BS 8666 -->
+            <RowDefinition Height="Auto"/>   <!-- 26: Buttons -->
         </Grid.RowDefinitions>
 
         <!-- Naglowek -->
@@ -182,8 +184,20 @@
                        TextChanged="ParamBox_TextChanged"/>
         </Grid>
 
+        <!-- W4h: kąt ramienia skośnego — opcjonalny; wpisany → program liczy wymiary kąta (co 5 mm) -->
+        <Grid Grid.Row="22" x:Name="RowAngle" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Kąt [°] (opcjonalnie):"/>
+            <TextBox   Grid.Column="1" x:Name="AngleBox" Text=""
+                       ToolTip="Kąt ramienia skośnego od poziomu (0–90°). Po wpisaniu wymiary kąta są liczone automatycznie (zaokrąglenie 5 mm)."
+                       TextChanged="AngleBox_TextChanged"/>
+        </Grid>
+
         <!-- Total length -->
-        <Grid Grid.Row="22">
+        <Grid Grid.Row="24">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="140"/>
                 <ColumnDefinition Width="*"/>
@@ -200,8 +214,12 @@
                        Unchecked="OverrideCheck_Changed"/>
         </Grid>
 
+        <!-- W4f: ostrzeżenia BS 8666:2020 (BarShapeValidation) — nie blokują OK -->
+        <TextBlock Grid.Row="25" x:Name="WarningText" Foreground="#B04A00" TextWrapping="Wrap"
+                   VerticalAlignment="Top" Margin="0,8,0,0" FontSize="11" Visibility="Collapsed"/>
+
         <!-- Przyciski -->
-        <StackPanel Grid.Row="24" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="26" Orientation="Horizontal" HorizontalAlignment="Right"
                     FlowDirection="RightToLeft" Margin="0,8,0,0">
             <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
             <Button Content="OK" Click="OK_Click"

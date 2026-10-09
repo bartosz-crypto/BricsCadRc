@@ -1029,6 +1029,9 @@ namespace BricsCadRc.Core
 
             if (!erasing) return;
             if (!(dbObject is BlockReference br)) return;
+            // W2: usunięcie przez UNDO (np. cofnięcie COPY) — powiązane obiekty odtwarza samo UNDO; kaskada po
+            // odtworzonym (starym) [11] usuwała opis ORYGINAŁU
+            if (dbObject.IsUndoing) return;
 
             var db = br.Database;
             if (db == null) return;
@@ -1046,6 +1049,15 @@ namespace BricsCadRc.Core
                 string annotHandle = ReadAnnotHandle(br);
                 if (string.IsNullOrEmpty(annotHandle)) return;
 
+                // W2 (D8): rozkład sklonowany w trwającej komendzie (np. kopia cofnięta „_U” w COPY) ma jeszcze
+                // nieprzepięte [11] → opis ORYGINAŁU. Powiązanie tłumaczone przez paczkę klonowania; opis spoza
+                // klonowania nie jest usuwany.
+                if (CloneMap.TryResolvePending(db, br.ObjectId, annotHandle, out string resolved))
+                {
+                    if (string.IsNullOrEmpty(resolved)) return;
+                    annotHandle = resolved;
+                }
+
                 using var tr = db.TransactionManager.StartTransaction();
 
                 if (!long.TryParse(annotHandle, NumberStyles.HexNumber, null, out long hVal))
@@ -1062,7 +1074,7 @@ namespace BricsCadRc.Core
                 annotBr.Erase(true);
                 tr.Commit();
             }
-            catch { /* nie przerywaj głównego usuwania */ }
+            catch (System.Exception ex) { Log.Error("BarBlockEraseOverrule.Erase", ex); }   // nie przerywaj głównego usuwania
         }
 
         public new void SetCustomFilter()
@@ -1095,50 +1107,97 @@ namespace BricsCadRc.Core
             if (!erasing) return;
             if (dbObject is not Teigha.DatabaseServices.Polyline pline) return;
 
+            BarEraseCascade.Run(pline);
+        }
+
+        public new void SetCustomFilter()
+        {
+            this.SetXDataFilter("RC_SINGLE_BAR");
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // SingleBarBlockEraseOverrule — usunięcie pręta-bloku (RC_SINGLE_BAR [14]=2, Plan C)
+    // uruchamia tę samą kaskadę co polilinia pręta. Nazwa inna niż BarBlockEraseOverrule (rozkłady).
+    // ----------------------------------------------------------------
+    internal class SingleBarBlockEraseOverrule : ObjectOverrule
+    {
+        public override void Erase(DBObject dbObject, bool erasing)
+        {
+            base.Erase(dbObject, erasing);
+
+            if (!erasing) return;
+            if (!(dbObject is BlockReference br)) return;
+            if (BarEntity.KindOf(br) != BarKind.Block) return;
+
+            BarEraseCascade.Run(br);
+        }
+
+        public new void SetCustomFilter()
+        {
+            this.SetXDataFilter("RC_SINGLE_BAR");
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // BarEraseCascade — kaskada usuwania pręta (treść dawnego BarPolylineEraseOverrule.Erase):
+    // etykieta MLeader (z back-linkiem), rozkłady RC_BAR_BLOCK wskazujące na pręt i ich opisy.
+    // Poprawka #2 (docs/POPRAWKI_WZORCA.md, W1c): pręt bez LabelHandle też usuwa swoje rozkłady i opisy
+    // (wzorzec aba0ed1 kończył kaskadę przy pustym LabelHandle — rozkłady zostawały bez pręta). EXPLODE = ERASE.
+    // ----------------------------------------------------------------
+    internal static class BarEraseCascade
+    {
+        /// <summary>Wołane z Erase overrule'a (erasing == true) dla polilinii albo bloku pręta.</summary>
+        public static void Run(Entity pline)
+        {
             var db = pline.Database;
             if (db == null) return;
 
             // Odczytaj LabelHandle z XData RC_SINGLE_BAR
             var bar = SingleBarEngine.ReadBarXData(pline);
-            if (bar == null || string.IsNullOrEmpty(bar.LabelHandle)) return;
+            if (bar == null) return;
 
             try
             {
                 using var tr = db.TransactionManager.StartTransaction();
 
-                // Obsługuj zarówno hex jak i decimal format handle
-                ObjectId lblId = ObjectId.Null;
-                if (long.TryParse(bar.LabelHandle,
-                        System.Globalization.NumberStyles.HexNumber,
-                        null, out long hValHex))
+                // Etykieta — tylko gdy pręt ma LabelHandle (back-link sprawdzany jak dotąd)
+                if (!string.IsNullOrEmpty(bar.LabelHandle))
                 {
-                    var h = new Handle(hValHex);
-                    if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
-                        lblId = id;
-                }
-                if (lblId.IsNull && long.TryParse(bar.LabelHandle,
-                        System.Globalization.NumberStyles.Integer,
-                        null, out long hValDec))
-                {
-                    var h = new Handle(hValDec);
-                    if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
-                        lblId = id;
-                }
-
-                // Etap 3: erase MLeader warunkowo — mógł być już skasowany przez BricsCAD
-                // w multi-select scenario (MLeader erased first, przed RC_SINGLE_BAR overrule).
-                // Cascade do distributions wykonuje się zawsze.
-                if (!lblId.IsNull)
-                {
-                    // Kasuj etykietę tylko jeśli naprawdę należy do TEGO pręta (back-link w XData
-                    // MLeadera). Kopia pręta skopiowana bez etykiety wskazuje na etykietę oryginału —
-                    // wcześniej jej usunięcie kasowało etykietę oryginału.
-                    var ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader;
-                    if (ml != null && XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml),
-                                                 pline.Handle.Value.ToString("X8")))
+                    // Obsługuj zarówno hex jak i decimal format handle
+                    ObjectId lblId = ObjectId.Null;
+                    if (long.TryParse(bar.LabelHandle,
+                            System.Globalization.NumberStyles.HexNumber,
+                            null, out long hValHex))
                     {
-                        ml.UpgradeOpen();
-                        ml.Erase(true);
+                        var h = new Handle(hValHex);
+                        if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
+                            lblId = id;
+                    }
+                    if (lblId.IsNull && long.TryParse(bar.LabelHandle,
+                            System.Globalization.NumberStyles.Integer,
+                            null, out long hValDec))
+                    {
+                        var h = new Handle(hValDec);
+                        if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
+                            lblId = id;
+                    }
+
+                    // Etap 3: erase MLeader warunkowo — mógł być już skasowany przez BricsCAD
+                    // w multi-select scenario (MLeader erased first, przed RC_SINGLE_BAR overrule).
+                    // Cascade do distributions wykonuje się zawsze.
+                    if (!lblId.IsNull)
+                    {
+                        // Kasuj etykietę tylko jeśli naprawdę należy do TEGO pręta (back-link w XData
+                        // MLeadera). Kopia pręta skopiowana bez etykiety wskazuje na etykietę oryginału —
+                        // wcześniej jej usunięcie kasowało etykietę oryginału.
+                        var ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader;
+                        if (ml != null && XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml),
+                                                     pline.Handle.Value.ToString("X8")))
+                        {
+                            ml.UpgradeOpen();
+                            ml.Erase(true);
+                        }
                     }
                 }
 
@@ -1157,6 +1216,9 @@ namespace BricsCadRc.Core
                     // Sprawdź czy SourceBarHandle wskazuje na ten pręt
                     if (XLink.Same(barBlock.SourceBarHandle, plineHandle))
                     {
+                        // W2 (plan 4.5): rozkład sklonowany w tej komendzie razem ze swoim prętem — należy do klonu
+                        // pręta (przepięcie [18] w CommandEnded), nie jest usuwany razem ze źródłem
+                        if (CloneMap.IsPendingCloneRetarget(db, oid, barBlock.SourceBarHandle)) continue;
                         // Usuń też powiązaną annotację (RC_BAR_ANNOT)
                         if (!string.IsNullOrEmpty(barBlock.AnnotHandle)
                             && long.TryParse(barBlock.AnnotHandle,
@@ -1178,12 +1240,7 @@ namespace BricsCadRc.Core
 
                 tr.Commit();
             }
-            catch { }
-        }
-
-        public new void SetCustomFilter()
-        {
-            this.SetXDataFilter("RC_SINGLE_BAR");
+            catch (System.Exception ex) { Log.Error("BarEraseCascade.Run", ex); }
         }
     }
 
@@ -1275,6 +1332,7 @@ namespace BricsCadRc.Core
         private static BarBlockTransformOverrule    _barBlockTransform;
         private static BarBlockEraseOverrule        _barBlockErase;
         private static BarPolylineEraseOverrule     _barPolylineErase;
+        private static SingleBarBlockEraseOverrule  _singleBarBlockErase;
         private static AnnotBlockEraseOverrule      _annotBlockErase;
 
         public static void Register()
@@ -1300,6 +1358,9 @@ namespace BricsCadRc.Core
                 _barPolylineErase,
                 false);
             _barPolylineErase.SetCustomFilter();
+            _singleBarBlockErase = new SingleBarBlockEraseOverrule();
+            Overrule.AddOverrule(cls, _singleBarBlockErase, false);
+            _singleBarBlockErase.SetCustomFilter();
             Overrule.Overruling = true;
         }
 
@@ -1315,12 +1376,14 @@ namespace BricsCadRc.Core
             Overrule.RemoveOverrule(
                 RXObject.GetClass(typeof(Teigha.DatabaseServices.Polyline)),
                 _barPolylineErase);
+            Overrule.RemoveOverrule(cls, _singleBarBlockErase);
             _barBlockErase.Dispose();     _barBlockErase     = null;
             _annotBlockErase.Dispose();   _annotBlockErase   = null;
             _barBlockTransform.Dispose(); _barBlockTransform = null;
             _transform.Dispose();         _transform         = null;
             _grip.Dispose();              _grip              = null;
             _barPolylineErase.Dispose();  _barPolylineErase  = null;
+            _singleBarBlockErase.Dispose(); _singleBarBlockErase = null;
         }
     }
 }

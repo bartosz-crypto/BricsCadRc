@@ -111,7 +111,7 @@ namespace BricsCadRc.Commands
                             if (barEnt != null)
                             {
                                 elevBar.LabelHandle = labelId.Handle.ToString();
-                                SingleBarEngine.WriteXData(barEnt, elevBar);
+                                BarXData.Write(barEnt, elevBar);
                             }
                             trLbl.Commit();
                         }

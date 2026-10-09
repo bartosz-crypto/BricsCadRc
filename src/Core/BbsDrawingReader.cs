@@ -51,7 +51,9 @@ namespace BricsCadRc.Core
                 foreach (ObjectId id in ms)
                 {
                     if (id.IsErased) continue;
-                    if (!(tr.GetObject(id, OpenMode.ForRead) is Entity ent) || ent is BlockReference) continue;
+                    if (!(tr.GetObject(id, OpenMode.ForRead) is Entity ent)) continue;
+                    // Rozkłady i inne bloki pomijamy; pręt-blok (RC_SINGLE_BAR [14] = 2, Plan C) jest pozycją
+                    if (ent is BlockReference && BarEntity.KindOf(ent) != BarKind.Block) continue;
                     BarData bar;
                     try { bar = SingleBarEngine.ReadBarXData(ent); }
                     catch (Exception ex) { Log.Error("BbsDrawingReader.ReadBarXData", ex); continue; }
@@ -111,6 +113,16 @@ namespace BricsCadRc.Core
                 }
                 var row = BuildRow(bar, pos, out string warn);
                 if (warn != null) res.Warnings.Add(warn);
+                // Plan W4f: walidacja minimów BS 8666:2020 (tylko ostrzeżenia; ta sama pozycja z tymi samymi wymiarami — raz)
+                try
+                {
+                    foreach (var v in BarShapeValidation.Check(row.ShapeCode, bar.ParamValues, bar.Diameter))
+                    {
+                        string msg = $"Pozycja {pos:00} (kształt {row.ShapeCode}): {v}";
+                        if (!res.Warnings.Contains(msg)) res.Warnings.Add(msg);
+                    }
+                }
+                catch (Exception ex) { Log.Error("BbsDrawingReader.Validation", ex); }
                 row.NoEach = count;
                 string sig = Signature(row);
                 if (!groups.TryGetValue(pos, out var list)) groups[pos] = list = new List<Group>();
@@ -202,17 +214,37 @@ namespace BricsCadRc.Core
                 try
                 {
                     row.Length = shape.CalculateTotalLength(vals.Take(shape.Parameters.Length).ToArray(), bar.Diameter);
+                    // Plan W4b — bezpiecznik (tylko odczyt): długość z formuły BS 8666:2020 ≠ zapisanej w rysunku
+                    // (rysunek sprzed zmiany formuł) → ostrzeżenie; BBS liczy wg 2020 (P6). Tylko kształty, których formuła
+                    // zmieniła się w W4b (BarShape.FormulaChangedIn2020) — zapisane TL innych kształtów bywa nieaktualne od
+                    // zawsze (np. UB z AutoRebar: TL = A) i nie wynika ze zmiany normy (decyzja D17). Stary pierścień 44
+                    // ma osobne ostrzeżenie (W4c).
+                    // W4g (runda 1, uwaga 2): także 00 (stare TL = A, np. 3010 → 3025)
+                    if (!bar.LegacyRing44
+                        && BarShape.StoredLengthDiffers(row.ShapeCode, bar.Diameter, bar.LengthOverridden, bar.TotalLength, row.Length))
+                        warning = $"Pozycja {pos:00} (kształt {row.ShapeCode}): długość wg BS 8666:2020 = "
+                                + row.Length.ToString("F0", CultureInfo.InvariantCulture) + " mm, w rysunku "
+                                + bar.TotalLength.ToString("F0", CultureInfo.InvariantCulture) + " — sprawdź.";
                 }
                 catch (Exception ex)
                 {
                     Log.Error("BbsDrawingReader.Length", ex);
-                    warning = $"Pozycja {pos:00}: nie udało się policzyć długości ({ex.Message}).";
+                    warning = $"Pozycja {pos:00} (kształt {row.ShapeCode}): brak długości — {ex.Message}";
                     row.Note = "brak długości";
                 }
             }
+            // Plan W4c: stary pierścień „44” liczony jako 75 (BS 8666:2020, B = zakład) — ostrzeżenie (P2)
+            if (bar.LegacyRing44)
+            {
+                warning = (warning != null ? warning + " " : "")
+                        + $"Pozycja {pos:00}: stary kształt 44 (pierścień) liczony jako 75 wg BS 8666:2020 — B = zakład, sprawdź.";
+                row.Note = AppendNote(row.Note, "44→75");
+            }
             if (bar.Diameter <= 0 || BarData.GetLinearMass(bar.Diameter) <= 0)
             {
-                warning = $"Pozycja {pos:00}: nietypowa średnica {bar.Diameter} — masa nie zostanie policzona w arkuszu.";
+                // W4b: nie gubić wcześniejszego ostrzeżenia (bezpiecznik długości / brak długości)
+                warning = (warning != null ? warning + " " : "")
+                        + $"Pozycja {pos:00}: nietypowa średnica {bar.Diameter} — masa nie zostanie policzona w arkuszu.";
                 row.Note = AppendNote(row.Note, "średnica?");
             }
             return row;

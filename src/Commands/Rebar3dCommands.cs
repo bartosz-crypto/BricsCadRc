@@ -450,9 +450,10 @@ namespace BricsCadRc.Commands
             {
                 if (XLink.TryParse(bar.SourceBarHandle, out long hv) && hv != 0
                     && db.TryGetObjectId(new Handle(hv), out var sid) && !sid.IsErased
-                    && tr.GetObject(sid, OpenMode.ForRead) is Polyline pl)
+                    && BarEntity.From(tr.GetObject(sid, OpenMode.ForRead) as Entity,
+                                      BarKinds.Polyline | BarKinds.Block) is BarEntity src)   // polilinia albo pręt-blok v2
                 {
-                    var tpl = SingleBarEngine.ReadBarXData(pl);
+                    var tpl = src.Read();
                     if (tpl != null && tpl.LengthB > 0) return tpl.LengthB;
                 }
             }

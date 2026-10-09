@@ -138,17 +138,14 @@ namespace BricsCadRc.Core
                 var summaryPolylineHandles = new HashSet<long>();
                 var toErase = new HashSet<long>();
 
-                foreach (ObjectId oid in ms)
+                // Plan C, etap 3b: pręt-polilinia albo pręt-blok (501/502 mają numer > 0)
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
-                    if (oid.IsErased) continue;
-                    var ent = tr.GetObject(oid, OpenMode.ForRead) as Entity;
-                    if (!(ent is Polyline pl)) continue;
-
-                    var sxd = SingleBarEngine.ReadBarXData(pl);
+                    var sxd = be.Read();
                     if (sxd == null || !IsSummaryMark(sxd.Mark)) continue;
 
-                    summaryPolylineHandles.Add(pl.Handle.Value);
-                    toErase.Add(pl.Handle.Value);
+                    summaryPolylineHandles.Add(be.Entity.Handle.Value);
+                    toErase.Add(be.Entity.Handle.Value);
 
                     if (!string.IsNullOrEmpty(sxd.LabelHandle)
                         && long.TryParse(sxd.LabelHandle,

@@ -151,16 +151,31 @@ namespace BricsCadRc.Core
             var polyId = SingleBarEngine.HandleToObjectId(db, handleStr);
             if (polyId.IsNull || polyId.IsErased) return;
 
-            var pline = tr.GetObject(polyId, OpenMode.ForRead) as Polyline;
-            if (pline == null) return;
+            var barObj = tr.GetObject(polyId, OpenMode.ForRead);
+            var pline  = barObj as Polyline;
+            // Plan C, etap 3d: pręt-blok v2 — obrys z BTR w WCS (polilinia jak dotąd)
+            var barBlk = pline == null ? BarEntity.From(barObj as Entity, BarKinds.Block) : null;
+            if (pline == null && barBlk == null) return;
 
             // Pobierz grot (first vertex leader line 0)
             Teigha.Geometry.Point3d arrowPt;
             try { arrowPt = ml.GetFirstVertex(0); }
-            catch { return; }
+            catch (System.Exception ex)
+            {
+                Log.Error("RcMLeaderOverrule.SnapArrowToBar.GetFirstVertex", ex);
+                return;
+            }
 
             // Oblicz najbliższy punkt na polilinii (BRX uwzględnia łuki i segmenty)
-            var closest = pline.GetClosestPointTo(arrowPt, false);
+            Teigha.Geometry.Point3d closest;
+            if (pline != null)
+                closest = pline.GetClosestPointTo(arrowPt, false);
+            else
+            {
+                var cp = barBlk.ClosestPoint(tr, arrowPt);
+                if (!cp.HasValue) return;
+                closest = cp.Value;
+            }
 
             // Sprawdź tolerancję (przez MLeaderSnapGeometry — spójne z testami)
             var arrowG   = new MLeaderSnapGeometry.Point3(arrowPt.X,  arrowPt.Y,  arrowPt.Z);

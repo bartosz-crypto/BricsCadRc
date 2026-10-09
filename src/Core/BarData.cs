@@ -59,6 +59,18 @@ namespace BricsCadRc.Core
         /// <summary>True gdy użytkownik ręcznie nadpisał obliczoną długość całkowitą.</summary>
         public bool LengthOverridden { get; set; }
 
+        /// <summary>
+        /// Plan W4c: rekord „44” bez znacznika ShapeStd = 2020 (stary pierścień) — w pamięci ShapeCode = 75 (pierścień
+        /// wg BS 8666:2020). NIE zapisywane; pierwszy zapis utrwala „75” (migracja leniwa, UNDO cofa).
+        /// </summary>
+        public bool LegacyRing44 { get; set; }
+
+        /// <summary>
+        /// W4d (runda 2): rekord ma znacznik [15] ≥ 2021 — obrys zbudowany geometrią W4d (pole niezapisywane przez nagłówek;
+        /// znacznik pisze BarXData.MarkW4dGeometry). Używane do długości rozkładu Manual (BarFrameRules.LegacySegmentLength).
+        /// </summary>
+        public bool GeometryW4d { get; set; }
+
         /// <summary>Pozycja: "BOT" lub "TOP"</summary>
         public string Position { get; set; } = "BOT";
 

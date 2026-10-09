@@ -137,12 +137,27 @@
                 <TextBox   Grid.Column="1" x:Name="ParamE" TextChanged="ParamBox_TextChanged"/>
             </Grid>
 
+            <!-- W4h: kąt ramienia skośnego (14, 15, 24, 46) — opcjonalny; wpisany → wymiary kąta liczone (co 5 mm) -->
+            <Grid x:Name="RowAngle" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Kąt [°] (opcjonalnie):"/>
+                <TextBox   Grid.Column="1" x:Name="AngleBox" TextChanged="AngleBox_TextChanged"
+                           ToolTip="Kąt ramienia skośnego od poziomu (0–90°). Po wpisaniu wymiary kąta są liczone automatycznie (zaokrąglenie 5 mm)."/>
+            </Grid>
+
             <!-- Długość całkowita -->
             <TextBlock x:Name="TotalLengthLabel"
                        Text="Total length: –"
                        FontWeight="SemiBold" FontSize="12"
                        Foreground="#1E5FA8"
                        Margin="0,10,0,0"/>
+
+            <!-- W4f: ostrzeżenia BS 8666:2020 (BarShapeValidation) — nie blokują OK -->
+            <TextBlock x:Name="WarningText" Foreground="#B04A00" TextWrapping="Wrap"
+                       Margin="0,6,0,0" FontSize="11" Visibility="Collapsed"/>
         </StackPanel>
 
         <!-- Przyciski -->

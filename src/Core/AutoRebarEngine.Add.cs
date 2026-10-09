@@ -326,15 +326,14 @@ namespace BricsCadRc.Core
         {
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
-                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
-                foreach (ObjectId oid in ms)
+                // Plan C, etap 3b: polilinie i pręty-bloki (numer ≥ 04, więc pręty bez numeru odpadają)
+                foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
-                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
-                    var b = SingleBarEngine.ReadBarXData(pl);
+                    var b = be.Read();
                     if (b == null || b.Diameter != dia || (b.ShapeCode ?? "00") != "00") continue;
                     int nr = SingleBarEngine.ExtractPosNr(b.Mark);
-                    if (nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
-                    if (Math.Abs(b.LengthA - len) < 1.0) { tr.Commit(); return (oid, b); }
+                    if (nr <= 0 || nr < PositionCounter.FirstAutoNumber || nr >= PositionCounter.TopSeriesStart) continue;
+                    if (Math.Abs(b.LengthA - len) < 1.0) { tr.Commit(); return (be.Entity.ObjectId, b); }
                 }
                 tr.Commit();
             }

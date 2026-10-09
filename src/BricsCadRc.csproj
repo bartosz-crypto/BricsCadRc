@@ -3,7 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
-    <AssemblyName>BricsCadRc</AssemblyName>
+    <!-- NA Smart RC: inna nazwa DLL niż stara wtyczka BricsCadRc, żeby obie mogły być zainstalowane obok siebie -->
+    <AssemblyName>NaSmartRc</AssemblyName>
     <RootNamespace>BricsCadRc</RootNamespace>
     <Nullable>disable</Nullable>
     <LangVersion>9.0</LangVersion>
@@ -39,6 +40,11 @@
     <EmbeddedResource Include="Resources\default-bbs.xls" LogicalName="BricsCadRc.default-bbs.xls" />
     <!-- Ikony wstazki (32 i 16 px) -->
     <EmbeddedResource Include="Resources\Icons\*.png" LogicalName="BricsCadRc.Icons.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plan C etap 2: testy dymne (tools/BrxSmokeTests) mogą używać typów internal -->
+    <InternalsVisibleTo Include="BrxSmokeTests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,10 +1,13 @@
 using System;
 using System.IO;
 
+// Kompilowany także w tests (net8.0, Nullable enable) — kontekst nullable jak we wtyczce (wyłączony).
+#nullable disable
+
 namespace BricsCadRc.Core
 {
     /// <summary>
-    /// Prosty log do pliku: %LOCALAPPDATA%\BricsCadRc\log.txt
+    /// Prosty log do pliku: %LOCALAPPDATA%\NaSmartRc\log.txt
     /// Zamiast pustych catch {} — błąd nie przerywa pracy, ale zostaje ślad do diagnozy.
     /// Plik jest rotowany (log.old.txt) po przekroczeniu ~1 MB.
     /// </summary>
@@ -15,7 +18,7 @@ namespace BricsCadRc.Core
 
         public static string FilePath { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BricsCadRc", "log.txt");
+            App.ProductInfo.FolderName, "log.txt");
 
         public static void Info(string message) => Write("INFO ", message, null);
 

@@ -454,6 +454,8 @@ namespace BricsCadRc.Commands
             }
             else
             {
+                // Poprawka #1: zapis XData pręta-polilinii bez reakcji watchera geometrii w CommandEnded
+                using (BarGeometryWatcher.Suppress())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     var poly = tr.GetObject(targetId, OpenMode.ForWrite) as Polyline;
@@ -462,7 +464,7 @@ namespace BricsCadRc.Commands
                         barData.SymbolType      = dlg.SymbolType;
                         barData.SymbolSide      = dlg.SymbolSide;
                         barData.SymbolDirection = dlg.SymbolDirection;
-                        SingleBarEngine.WriteXData(poly, barData);
+                        BarXData.Write(poly, barData);
                     }
                     tr.Commit();
                 }

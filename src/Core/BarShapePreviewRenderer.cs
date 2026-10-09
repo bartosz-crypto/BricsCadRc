@@ -13,10 +13,12 @@ namespace BricsCadRc.Core
     /// </summary>
     public static class BarShapePreviewRenderer
     {
-        // Shape codes renderowane jako Polygon (IsClosed) zamiast Polyline
+        // Kształty zamknięte / zachodzące wg BS 8666:2020 (W4d; dawniej 34, 35, 36, 41, 46, 47 — niezgodne z normą).
+        // Polygon tylko, gdy oś wraca do punktu startu (75); pozostałe (końce w różnych punktach) — Polyline, bez odcinka
+        // domykającego.
         private static readonly HashSet<string> _closedCodes =
             new HashSet<string>(StringComparer.Ordinal)
-            { "34", "35", "36", "41", "44", "46", "47" };
+            { "33", "51", "52", "56", "63", "64", "75" };   // W4c: 75 = pierścień, 44 = kapelusz (otwarty)
 
         // Domyślne parametry podglądu indeksowane liczbą parametrów (0–5)
         private static readonly double[][] _defaultSample =
@@ -30,13 +32,13 @@ namespace BricsCadRc.Core
         };
 
         // Nadpisania dla kształtów, których BarGeometryBuilder oczekuje
-        // innych parametrów niż ShapeCodeLibrary (np. spirala)
+        // innych parametrów niż ShapeCodeLibrary (W4c: 75 = pierścień {A,B} — bez nadpisania).
+        // W4d: 33 „bieżnia” (A długość, B średnica półkoli, C zakład) i 51 (A wysokość, B szerokość, C hak) — proporcje normy
         private static readonly Dictionary<string, double[]> _sampleOverrides =
             new Dictionary<string, double[]>(StringComparer.Ordinal)
             {
-                // 75: BarGeometryBuilder używa A=diam, B=nTurns, C=pitch
-                // (ShapeCodeLibrary ma ["A","B"] gdzie B=n×P, ale geometria nie zmieniała się)
-                { "75", new[] { 100.0, 3.0, 30.0 } }
+                { "33", new[] { 200.0, 60.0, 80.0 } },
+                { "51", new[] { 80.0, 100.0, 25.0 } },
             };
 
         /// <summary>Średnica używana wyłącznie do obliczeń geometrii w podglądzie.</summary>
@@ -108,8 +110,12 @@ namespace BricsCadRc.Core
                         offsetY + (maxY - p.Y) * scale));
 
                 // ── Kształt zamknięty → Polygon; otwarty → Polyline ───────────
+                // W4d: Polygon tylko, gdy oś wraca do startu (inaczej Polygon dorysowałby odcinek końce → start)
+                var p0 = pts[0];
+                var pn = pts[pts.Count - 1];
+                bool returnsToStart = Math.Abs(p0.X - pn.X) < 1e-6 && Math.Abs(p0.Y - pn.Y) < 1e-6;
                 Shape rendered;
-                if (_closedCodes.Contains(barShape.Code))
+                if (_closedCodes.Contains(barShape.Code) && returnsToStart)
                 {
                     var pg = new Polygon { Points = wpfPts, Fill = Brushes.Transparent };
                     // Usuń duplikat punktu zamknięcia (last == first po aproksymacji łuków)

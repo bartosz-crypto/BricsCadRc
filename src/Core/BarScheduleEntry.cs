@@ -33,7 +33,10 @@ namespace BricsCadRc.Core
         /// <summary>Wymiar E [mm] — 0 jeśli nie dotyczy</summary>
         public double E { get; set; }
 
-        /// <summary>Obliczona długość cięcia jednego pręta [mm] wg BS 8666</summary>
+        /// <summary>
+        /// Obliczona długość cięcia jednego pręta [mm] wg BS 8666. NaN = długości nie da się policzyć (Plan W4: np. 47 bez C,
+        /// 64 bez F) — wiersz „brak długości”, masa 0.
+        /// </summary>
         public double CuttingLength { get; set; }
 
         /// <summary>Łączna liczba prętów (suma ze wszystkich rozkładów)</summary>
@@ -43,7 +46,7 @@ namespace BricsCadRc.Core
         public double LinearMass { get; set; }
 
         /// <summary>Łączna masa zestawu [kg] = TotalCount × CuttingLength/1000 × LinearMass</summary>
-        public double TotalMassKg => TotalCount * (CuttingLength / 1000.0) * LinearMass;
+        public double TotalMassKg => double.IsNaN(CuttingLength) ? 0 : TotalCount * (CuttingLength / 1000.0) * LinearMass;
 
         public string NoOfMembers { get; set; } = "1";
         public string TypeAndSize => $"H{Diameter}";
@@ -65,7 +68,7 @@ namespace BricsCadRc.Core
         public string ColE => E > 0 ? ((int)E).ToString() : "";
 
         /// <summary>Kolumna wyświetlana — długość cięcia [mm]</summary>
-        public string ColLength => ((int)CuttingLength).ToString();
+        public string ColLength => double.IsNaN(CuttingLength) ? "brak długości" : ((int)CuttingLength).ToString();
 
         /// <summary>Kolumna wyświetlana — masa [kg], 2 miejsca dziesiętne</summary>
         public string ColMass => TotalMassKg.ToString("F2");

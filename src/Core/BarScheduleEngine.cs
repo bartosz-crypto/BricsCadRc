@@ -39,7 +39,13 @@ namespace BricsCadRc.Core
         // Krok 2: iteruje RC_BAR_BLOCK — sumuje EffectiveCount (honoruje CountDisplay override).
         // Krok 3: fallback — pręt bez rozkładów zlicza siebie jako 1.
         // ----------------------------------------------------------------
-        public static List<BarScheduleEntry> BuildSchedule(Database db)
+        public static List<BarScheduleEntry> BuildSchedule(Database db) => BuildSchedule(db, null);
+
+        /// <summary>
+        /// Jak BuildSchedule; warnings (opcjonalnie) zbiera ostrzeżenia pozycji (Plan W4, 0-POPRAWKI p.4): błąd
+        /// długości pojedynczej pozycji (47 bez C, 64 bez F, d = 50 przy q) → wiersz „brak długości”, komenda działa dalej.
+        /// </summary>
+        public static List<BarScheduleEntry> BuildSchedule(Database db, List<string> warnings)
         {
             // Słownik: Handle polilinii (hex) → entry
             var byHandle = new Dictionary<string, BarScheduleEntry>(StringComparer.OrdinalIgnoreCase);
@@ -64,13 +70,29 @@ namespace BricsCadRc.Core
                     string handle = ent.Handle.Value.ToString("X8");
 
                     // Ręcznie nadpisana długość (dialog RC_BAR) ma pierwszeństwo nad formułą.
-                    double cutLen = bar.LengthOverridden && bar.TotalLength > 0
-                        ? bar.TotalLength
-                        : CalcCuttingLength(
-                            bar.ShapeCode, bar.Diameter,
-                            bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE);
+                    double cutLen;
+                    if (bar.LengthOverridden && bar.TotalLength > 0)
+                        cutLen = bar.TotalLength;
+                    else
+                    {
+                        try
+                        {
+                            cutLen = CalcCuttingLength(
+                                bar.ShapeCode, bar.Diameter,
+                                bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            // Plan W4 (0-POPRAWKI p.4): wiersz bez długości + ostrzeżenie, reszta zestawienia dalej
+                            Log.Error("BarScheduleEngine.CalcCuttingLength", ex);
+                            cutLen = double.NaN;   // wiersz „brak długości”, masa 0
+                            warnings?.Add($"Pozycja {bar.Mark} (kształt {bar.ShapeCode}): brak długości — {ex.Message}");
+                        }
+                    }
 
                     string posNr = ExtractPosNrStr(bar.Mark);
+                    // Plan W4 (runda 1, uwaga 4): wymiary tylko z definicji kształtu (pierścień 75 z „44” — bez C–E)
+                    var dims = ShapeCodeLibrary.ShapeParamValues(bar.ShapeCode ?? "00", bar.ParamValues);
 
                     var entry = new BarScheduleEntry
                     {
@@ -78,11 +100,11 @@ namespace BricsCadRc.Core
                         Mark          = bar.Mark,
                         ShapeCode     = bar.ShapeCode ?? "00",
                         Diameter      = bar.Diameter,
-                        A             = bar.LengthA,
-                        B             = bar.LengthB,
-                        C             = bar.LengthC,
-                        D             = bar.LengthD,
-                        E             = bar.LengthE,
+                        A             = dims[0],
+                        B             = dims[1],
+                        C             = dims[2],
+                        D             = dims[3],
+                        E             = dims[4],
                         CuttingLength = cutLen,
                         TotalCount    = 0,
                         LinearMass    = BarData.GetLinearMass(bar.Diameter)

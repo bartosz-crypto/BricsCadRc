@@ -1822,9 +1822,10 @@ namespace BricsCadRc.Core
 
                 using var tr = db.TransactionManager.StartTransaction();
 
-                var srcPline = tr.GetObject(srcId, OpenMode.ForRead)
-                    as Teigha.DatabaseServices.Polyline;
-                var srcBar = srcPline != null ? SingleBarEngine.ReadBarXData(srcPline) : null;
+                // Pręt: polilinia albo pręt-blok v2 (Plan C)
+                var srcEnt = BarEntity.From(tr.GetObject(srcId, OpenMode.ForRead) as Entity,
+                                            BarKinds.Polyline | BarKinds.Block);
+                var srcBar = srcEnt != null ? srcEnt.Read() : null;
                 if (srcBar == null || string.IsNullOrEmpty(srcBar.LabelHandle))
                 { tr.Commit(); return; }
 
