@@ -5,7 +5,14 @@ obj/
 
 # Testowe/lokalne buildy
 bin_*/
+bin-staging/
 *.pdb
 
 # Ustawienia lokalne Claude Code (per użytkownik)
 .claude/settings.local.json
+
+# Artefakty testów / recenzji
+bin-staging-review/
+/DELAY.png
+/REGEN.dwg
+tools/BrxSmokeTests/REGEN.dwg
