@@ -1739,7 +1739,7 @@ namespace BricsCadRc.Core
                         if (db.TryGetObjectId(new Handle(h), out ObjectId aid))
                             annotId = aid;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.TagWithSlab", logEx); }
                 }
                 result.Add((oid, annotId));
             }
@@ -1823,7 +1823,7 @@ namespace BricsCadRc.Core
                         if (db.TryGetObjectId(new Handle(h), out ObjectId aid))
                             annotId = aid;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.IsExistingPosNrUB", logEx); }
                 }
                 result.Add((oid, annotId));
             }
@@ -1855,7 +1855,7 @@ namespace BricsCadRc.Core
                             ent?.Erase();
                         }
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AutoRebar.EraseOldDistributions", logEx); }
                 }
                 tr.Commit();
             }
@@ -3060,7 +3060,7 @@ namespace BricsCadRc.Core
                     else if (obj is DBText dt) txt = dt.TextString;
                     else if (obj is MLeader ml && ml.ContentType == ContentType.MTextContent) txt = ml.MText?.Contents;
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("AutoRebar.NextDetailNumber", logEx); }
                 if (string.IsNullOrEmpty(txt)) continue;
                 foreach (System.Text.RegularExpressions.Match m in rx.Matches(txt))
                     if (int.TryParse(m.Groups[1].Value, out int n) && n > max) max = n;

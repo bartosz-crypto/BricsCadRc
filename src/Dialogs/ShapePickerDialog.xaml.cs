@@ -332,7 +332,7 @@ namespace BricsCadRc.Dialogs
                     canvas.Children.Add(shape);
                 }
             }
-            catch { /* niepoprawny SVG – pusty canvas */ }
+            catch (System.Exception logEx) { Log.Error("ShapePickerDialog.SvgToVisual", logEx); /* niepoprawny SVG – pusty canvas */ }
 
             return Wrap(canvas);
         }

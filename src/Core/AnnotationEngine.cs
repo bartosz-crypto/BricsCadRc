@@ -447,7 +447,7 @@ namespace BricsCadRc.Core
             BuildMLeaderInBtr(tr, btr, db, bar, pts);
             WriteAnnotXData(brRw, bar);
             tr.Commit();
-            try { brRw.RecordGraphicsModified(true); } catch { }
+            try { brRw.RecordGraphicsModified(true); } catch (System.Exception logEx) { Log.Error("AnnotationEngine.SetElbowExtension", logEx); }
         }
 
         private static List<Point3d> ApplyElbow(BarData bar, List<Point3d> pts, Vector3d offset)
@@ -1526,7 +1526,7 @@ namespace BricsCadRc.Core
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("AnnotationEngine.SyncAnnotation", logEx); }
             }
 
             updatedBar.Angle = annotBr.Rotation;   // geometria leadera/tekstu zależy od obrotu bloku annotacji
@@ -1558,7 +1558,7 @@ namespace BricsCadRc.Core
             WriteAnnotXData(annotBr, updatedBar);
 
             tr.Commit();
-            try { annotBr.RecordGraphicsModified(true); } catch { }
+            try { annotBr.RecordGraphicsModified(true); } catch (System.Exception logEx) { Log.Error("AnnotationEngine.SyncAnnotation", logEx); }
         }
 
         // ----------------------------------------------------------------
@@ -1652,7 +1652,7 @@ namespace BricsCadRc.Core
                 if (db.TryGetObjectId(h, out ObjectId id) && !id.IsNull && !id.IsErased)
                     return id;
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotationEngine.FindAnnotationIdByHandle", logEx); }
             return ObjectId.Null;
         }
 
@@ -1885,7 +1885,7 @@ namespace BricsCadRc.Core
 
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotationEngine.UpdateBarLabelCount", logEx); }
         }
 
         // ----------------------------------------------------------------

@@ -76,7 +76,7 @@ namespace BricsCadRc.Commands
 
                 BarBlockHighlightManager.RefreshOutlineForBlock(blockRefId);
 
-                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
             }
 
             // Zachowaj oryginalne wartości do ewentualnego przywrócenia
@@ -118,7 +118,7 @@ namespace BricsCadRc.Commands
                     var docF = Application.DocumentManager.MdiActiveDocument;
                     docF?.Editor.SetImpliedSelection(new ObjectId[0]);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
             }
 
             if (!confirmed)
@@ -187,7 +187,7 @@ namespace BricsCadRc.Commands
                 BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
                     bar.Spacing, bar.Count, baseMark, blockRefId);
 
-                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+                try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
                 return;
             }
 
@@ -338,7 +338,7 @@ namespace BricsCadRc.Commands
                                         drawer.UpdatePreview(leaderWcsPts, ev.Context.ComputedPoint);
                                         Application.UpdateScreen();
                                     }
-                                    catch { }
+                                    catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
                                 };
                                 ed.PointMonitor += monitor;
 
@@ -387,7 +387,7 @@ namespace BricsCadRc.Commands
                 }
             }
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
         }
 
         // ----------------------------------------------------------------
@@ -452,7 +452,7 @@ namespace BricsCadRc.Commands
             BarBlockEngine.RebuildBarEndStyle(db, targetId,
                 dlg.SymbolType, dlg.SymbolSide, dlg.SymbolDirection);
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.BarEnd", logEx); }
             ed.WriteMessage("\n[RC] Symbol końca pręta zaktualizowany.");
         }
 
@@ -602,7 +602,7 @@ namespace BricsCadRc.Commands
                     }
                     trShow.Commit();
                 }
-                catch { /* fallback true */ }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); /* fallback true */ }
             }
 
             var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing,
@@ -625,7 +625,7 @@ namespace BricsCadRc.Commands
                             BarBlockEngine.RebuildVisibility(
                                 db, prevBlockId, BarVisibilityMode.All, "");
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
                 }
 
                 // User klika pręty — widzi wszystkie, toggle'uje wybrane
@@ -734,7 +734,7 @@ namespace BricsCadRc.Commands
                     if (db.TryGetObjectId(new Handle(hVal), out ObjectId barBlockId) && !barBlockId.IsNull)
                         BarBlockEngine.RebuildVisibility(db, barBlockId, dlg.ResultVisibility, safeIndices);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
             }
 
             // Przebuduj annotację (kółka na dist line) z nową widocznością
@@ -836,7 +836,7 @@ namespace BricsCadRc.Commands
                 else trArm.Commit();
             }
 
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
         }
 
         private static string SelectVisibleBarsManually(
@@ -1048,7 +1048,7 @@ namespace BricsCadRc.Commands
                     barData.SymbolSide      ?? "Right",
                     barData.SymbolDirection ?? "Up");
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("EditCommands.RcScaleAnnot", logEx); }
 
             // 4c. Przebuduj anotację (BuildH/V używają Scaled(...) dla tekstu/dotów/strzałek)
             AnnotationEngine.SyncAnnotation(db, barData);

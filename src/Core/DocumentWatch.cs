@@ -70,8 +70,8 @@ namespace BricsCadRc.Core
         private static void Unhook()
         {
             if (!_hooked) return;
-            try { Application.DocumentManager.DocumentCreated       -= OnDocumentCreated;       } catch { }
-            try { Application.DocumentManager.DocumentToBeDestroyed -= OnDocumentToBeDestroyed; } catch { }
+            try { Application.DocumentManager.DocumentCreated       -= OnDocumentCreated;       } catch (System.Exception logEx) { Log.Error("DocumentWatch.Unhook", logEx); }
+            try { Application.DocumentManager.DocumentToBeDestroyed -= OnDocumentToBeDestroyed; } catch (System.Exception logEx) { Log.Error("DocumentWatch.Unhook", logEx); }
             _hooked = false;
         }
 

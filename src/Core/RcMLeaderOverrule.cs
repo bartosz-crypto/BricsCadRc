@@ -48,7 +48,7 @@ namespace BricsCadRc.Core
                 },
                 d =>
                 {
-                    try { d.Database.ObjectModified -= inst.OnObjectModified; } catch { }
+                    try { d.Database.ObjectModified -= inst.OnObjectModified; } catch (System.Exception logEx) { Log.Error("RcMLeaderOverrule.Register", logEx); }
                     d.CommandEnded     -= inst.OnCommandEnded;
                     d.CommandCancelled -= inst.OnCommandCancelled;
                 });

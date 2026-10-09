@@ -44,7 +44,7 @@ namespace BricsCadRc.Core
                         d.Database.ObjectUnappended -= OnObjectAppended;
                         d.Database.ObjectReappended -= OnObjectAppended;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.Register", logEx); }
                 });
             // Transienty należą do aktywnego widoku — przy przełączeniu rysunku usuń je,
             // inaczej zostają "duchy" obrysu.
@@ -55,7 +55,7 @@ namespace BricsCadRc.Core
         public static void Unregister()
         {
             DocumentWatch.Unsubscribe("BarBlockHighlightManager");
-            try { Application.DocumentManager.DocumentToBeDeactivated -= OnDocumentToBeDeactivated; } catch { }
+            try { Application.DocumentManager.DocumentToBeDeactivated -= OnDocumentToBeDeactivated; } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.Unregister", logEx); }
             if (_idleHooked) { Application.Idle -= OnIdle; _idleHooked = false; }
             _dirty.Clear();
             ClearTransients();
@@ -108,7 +108,7 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.OnSelectionChanged", logEx); }
         }
 
         // ── Odświeżanie obrysu ODROCZONE do Application.Idle ─────────────────
@@ -230,8 +230,8 @@ namespace BricsCadRc.Core
         {
             if (_transientsByBlock.TryGetValue(blockId, out var d))
             {
-                try { TransientManager.CurrentTransientManager.EraseTransient(d, new IntegerCollection()); } catch { }
-                try { d.Dispose(); } catch { }
+                try { TransientManager.CurrentTransientManager.EraseTransient(d, new IntegerCollection()); } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.HideOutlineFor", logEx); }
+                try { d.Dispose(); } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.HideOutlineFor", logEx); }
                 _transientsByBlock.Remove(blockId);
             }
         }
@@ -247,8 +247,8 @@ namespace BricsCadRc.Core
         {
             if (_transientsByBlock.TryGetValue(blockId, out var old))
             {
-                try { TransientManager.CurrentTransientManager.EraseTransient(old, new IntegerCollection()); } catch { }
-                try { old.Dispose(); } catch { }
+                try { TransientManager.CurrentTransientManager.EraseTransient(old, new IntegerCollection()); } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.RefreshOutlineFor", logEx); }
+                try { old.Dispose(); } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.RefreshOutlineFor", logEx); }
                 _transientsByBlock.Remove(blockId);
             }
 
@@ -360,8 +360,8 @@ namespace BricsCadRc.Core
             var vpIds = new IntegerCollection();
             foreach (var ent in _transientsByBlock.Values)
             {
-                try { tm.EraseTransient(ent, vpIds); } catch { }
-                try { ent.Dispose(); }                  catch { }
+                try { tm.EraseTransient(ent, vpIds); } catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.ClearTransients", logEx); }
+                try { ent.Dispose(); }                  catch (System.Exception logEx) { Log.Error("BarBlockHighlightManager.ClearTransients", logEx); }
             }
             _transientsByBlock.Clear();
             _btrToBlock.Clear();

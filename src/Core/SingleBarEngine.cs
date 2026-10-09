@@ -75,7 +75,7 @@ namespace BricsCadRc.Core
                             $"\nRC_BAR: shape code '{bar.ShapeCode}' not yet implemented – " +
                             $"drawing as straight line.\n");
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("SingleBarEngine.PlaceBar", logEx); }
             }
 
             var shape    = ShapeCodeLibrary.Get(bar.ShapeCode) ?? ShapeCodeLibrary.Get("00");
@@ -464,8 +464,6 @@ namespace BricsCadRc.Core
         // direction: dla FLOW 1 zawsze (1,0,0) — poziomy pręt w widoku elewacji
         // ----------------------------------------------------------------
 
-        private static readonly HashSet<string> _closedShapes =
-            new HashSet<string> { "34", "35", "46", "47" };
 
         public static List<Entity> BuildVisualEntities(
             BarShape shape, double[] paramValues, double diameter,
@@ -730,7 +728,7 @@ namespace BricsCadRc.Core
                         $"\nRC_BAR: shape code '{bar.ShapeCode}' not yet implemented – " +
                         $"drawing as straight line (shape 00).\n");
                 }
-                catch { /* poza kontekstem dokumentu */ }
+                catch (System.Exception logEx) { Log.Error("SingleBarEngine.GetShapePoints", logEx); /* poza kontekstem dokumentu */ }
             }
 
             double[] paramValues = { bar.LengthA, bar.LengthB, bar.LengthC, bar.LengthD, bar.LengthE };

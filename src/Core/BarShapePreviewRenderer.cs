@@ -146,7 +146,7 @@ namespace BricsCadRc.Core
 
                 canvas.Children.Add(rendered);
             }
-            catch { /* niepoprawna geometria → pusty canvas */ }
+            catch (System.Exception logEx) { Log.Error("BarShapePreviewRenderer.Render", logEx); /* niepoprawna geometria → pusty canvas */ }
 
             return canvas;
         }

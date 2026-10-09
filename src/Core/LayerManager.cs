@@ -118,7 +118,7 @@ namespace BricsCadRc.Core
                     string path = FindSupportFile(db, fileName);
                     if (path == null) continue;
                     try { db.LoadLineTypeFile("CENTER", path); break; }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("LayerManager.EnsureLinetype", logEx); }
                 }
             }
             // Fallback 2: nic — CONTINUOUS bedzie uzyte przez AnnotationEngine

@@ -19,7 +19,24 @@ namespace BricsCadRc.Core
 
         public static void Info(string message) => Write("INFO ", message, null);
 
-        public static void Error(string where, System.Exception ex) => Write("ERROR", where, ex);
+        /// <summary>
+        /// Błąd z miejscem wystąpienia. Ten sam błąd (miejsce + typ wyjątku) zapisywany najwyżej raz na 60 s —
+        /// wyjątki w podglądach / jigach / zdarzeniach nie zapychają pliku.
+        /// </summary>
+        public static void Error(string where, System.Exception ex)
+        {
+            string key = where + "|" + ex?.GetType().FullName;
+            var now = DateTime.Now;
+            lock (_lock)
+            {
+                if (_lastByKey.TryGetValue(key, out var last) && (now - last).TotalSeconds < 60) return;
+                _lastByKey[key] = now;
+            }
+            Write("ERROR", where, ex);
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, DateTime> _lastByKey =
+            new System.Collections.Generic.Dictionary<string, DateTime>();
 
         private static void Write(string level, string message, System.Exception ex)
         {

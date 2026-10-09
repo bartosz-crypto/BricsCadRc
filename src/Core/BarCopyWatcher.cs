@@ -388,7 +388,7 @@ namespace BricsCadRc.Core
                     if (newBlock == null) continue;
 
                     BarData newBlockData = null;
-                    try { newBlockData = BarBlockEngine.ReadXData(newBlock); } catch { }
+                    try { newBlockData = BarBlockEngine.ReadXData(newBlock); } catch (System.Exception logEx) { Log.Error("BarCopyWatcher.RemapCopiedPairs", logEx); }
                     if (newBlockData == null) continue;
 
                     // Bug B fix: każda kopia rozkładu zwiększa count source bara
@@ -408,7 +408,7 @@ namespace BricsCadRc.Core
                     if (oldAnnot == null) continue;
 
                     BarData oldAnnotData = null;
-                    try { oldAnnotData = AnnotationEngine.ReadAnnotXData(oldAnnot); } catch { }
+                    try { oldAnnotData = AnnotationEngine.ReadAnnotXData(oldAnnot); } catch (System.Exception logEx) { Log.Error("BarCopyWatcher.RemapCopiedPairs", logEx); }
                     if (oldAnnotData == null) continue;
 
                     string oldBlockHandleStr = (oldAnnotData.SourceBlockHandle ?? "").ToUpperInvariant();
@@ -424,7 +424,7 @@ namespace BricsCadRc.Core
                         if (newAnnot == null) continue;
 
                         BarData newAnnotData = null;
-                        try { newAnnotData = AnnotationEngine.ReadAnnotXData(newAnnot); } catch { }
+                        try { newAnnotData = AnnotationEngine.ReadAnnotXData(newAnnot); } catch (System.Exception logEx) { Log.Error("BarCopyWatcher.RemapCopiedPairs", logEx); }
                         if (newAnnotData == null) continue;
 
                         string sbh = (newAnnotData.SourceBlockHandle ?? "").ToUpperInvariant();
@@ -515,7 +515,7 @@ namespace BricsCadRc.Core
                         trReb.Commit();
                     }
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("BarCopyWatcher.RemapCopiedPairs", logEx); }
             }
         }
 

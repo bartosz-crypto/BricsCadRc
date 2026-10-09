@@ -67,7 +67,7 @@ namespace BricsCadRc.Core
                         d.Database.ObjectOpenedForModify -= OnObjectOpenedForModify;
                         d.Database.ObjectModified        -= OnObjectModified;
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("BarGeometryWatcher.Register", logEx); }
                     d.CommandEnded     -= OnCommandEnded;
                     d.CommandCancelled -= OnCommandCancelled;
                 });

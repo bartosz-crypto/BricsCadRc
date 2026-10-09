@@ -441,7 +441,7 @@ namespace BricsCadRc.Commands
                 db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
 
             ed.WriteMessage($"\n[RC SLAB] Distribution created: {sourceBar.Count} bars  {sourceBar.Mark}");
-            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("BarCommands.Distribution", logEx); }
         }
 
         /// <summary>
@@ -662,7 +662,7 @@ namespace BricsCadRc.Commands
                                     drawer.UpdatePreview(previewPrefix.Concat(leaderWcsPts).ToList(), ev.Context.ComputedPoint);
                                     Application.UpdateScreen();
                                 }
-                                catch { }
+                                catch (System.Exception logEx) { Log.Error("BarCommands.RunAnnotationFlow", logEx); }
                             };
                             ed.PointMonitor += monitor;
 
@@ -858,7 +858,7 @@ namespace BricsCadRc.Commands
                     if (yc >= y1Bound) break;
                 }
             }
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawFlipPreview", logEx); }
         }
 
         private static void DrawBarPreview(bool horizontal,
@@ -888,7 +888,7 @@ namespace BricsCadRc.Commands
                     if (xc >= x1) break;
                 }
             }
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawBarPreview", logEx); }
         }
 
         private static void AddPreviewLine(TransientManager tm, IntegerCollection vpIds,
@@ -910,7 +910,7 @@ namespace BricsCadRc.Commands
             var vpIds = new IntegerCollection();
             foreach (var line in transients)
             {
-                try { tm.EraseTransient(line, vpIds); line.Dispose(); } catch { }
+                try { tm.EraseTransient(line, vpIds); line.Dispose(); } catch (System.Exception logEx) { Log.Error("BarCommands.ClearBarPreview", logEx); }
             }
             transients.Clear();
         }
@@ -1247,7 +1247,7 @@ namespace BricsCadRc.Commands
             AnnotationEngine.UpdateBarLabelCount(db, primaryId.Handle.Value.ToString("X8"), markOverride: bar.Mark);
             BarGeometryWatcher.Forget(primaryId);   // zmiany już rozpropagowane — watcher nie liczy ich drugi raz
 
-            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch (System.Exception logEx) { Log.Error("BarCommands.UpdateBar", logEx); }
             ed.WriteMessage($"[RC_UPDATE_BAR] Gotowe: {updated} rozkład(y). LengthA: {oldLength:F0} → {newLength:F0} mm\n");
         }
 
@@ -1380,7 +1380,7 @@ namespace BricsCadRc.Commands
                                         }
                                     }
                                 }
-                                catch { /* nie przerywaj jeśli MLeader nie ma leaderów */ }
+                                catch (System.Exception logEx) { Log.Error("BarCommands.EditBar", logEx); /* nie przerywaj jeśli MLeader nie ma leaderów */ }
                             }
                         }
                     }
@@ -1400,7 +1400,7 @@ namespace BricsCadRc.Commands
             BarGeometryWatcher.Forget(editId);
 
             ed.WriteMessage($"\nPręt {updated.Mark} zaktualizowany. Shape: {updated.ShapeCode}\n");
-            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch { }
+            try { doc.SendStringToExecute("REGEN\n", true, false, false); } catch (System.Exception logEx) { Log.Error("BarCommands.EditBar", logEx); }
         }
 
         // ================================================================

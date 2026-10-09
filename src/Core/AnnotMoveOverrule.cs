@@ -69,8 +69,8 @@ namespace BricsCadRc.Core
             var vpIds = new IntegerCollection();
             foreach (var e in _gripTransients)
             {
-                try { tm.EraseTransient(e, vpIds); } catch { }
-                try { e.Dispose(); } catch { }
+                try { tm.EraseTransient(e, vpIds); } catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.ClearGripTransients", logEx); }
+                try { e.Dispose(); } catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.ClearGripTransients", logEx); }
             }
             _gripTransients.Clear();
         }
@@ -392,7 +392,7 @@ namespace BricsCadRc.Core
                             }
                         }
                     }
-                    catch { }
+                    catch (System.Exception logEx) { Log.Error("AnnotGripOverrule.GetGripPoints", logEx); }
                 }
 
                 Point3d localGrip0 = (barAnnot.Direction == "X")
@@ -852,7 +852,7 @@ namespace BricsCadRc.Core
                 if (freshBarData != null)
                     AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db, blockPos);
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotTransformOverrule.TransformBy", logEx); }
         }
     }
 
@@ -927,11 +927,11 @@ namespace BricsCadRc.Core
                     if (freshBarData != null)
                         AnnotationEngine.RebuildDistLineInBtr(annotBr, freshBarData, db, br.Position);
                 }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("BarBlockTransformOverrule.TransformBy", logEx); }
 
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockTransformOverrule.TransformBy", logEx); }
         }
 
         public new void SetCustomFilter()
@@ -1239,7 +1239,7 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("AnnotBlockEraseOverrule.Erase", logEx); }
         }
 
         public new void SetCustomFilter()

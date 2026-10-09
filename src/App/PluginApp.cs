@@ -13,7 +13,7 @@ namespace BricsCadRc.App
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             string built = "?";
-            try { built = System.IO.File.GetLastWriteTime(typeof(PluginApp).Assembly.Location).ToString("yyyy-MM-dd HH:mm"); } catch { }
+            try { built = System.IO.File.GetLastWriteTime(typeof(PluginApp).Assembly.Location).ToString("yyyy-MM-dd HH:mm"); } catch (System.Exception logEx) { Log.Error("PluginApp.Initialize", logEx); }
             doc?.Editor.WriteMessage($"\n[RC SLAB] Plugin zaladowany. Build: {built}\n");
 
             // PICKSTYLE=1 — zaznaczanie calych grup przy kliknieciu na czlon grupy.

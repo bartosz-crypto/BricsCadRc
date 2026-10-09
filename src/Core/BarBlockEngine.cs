@@ -1030,7 +1030,7 @@ namespace BricsCadRc.Core
 
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockEngine.LinkAnnotation", logEx); }
         }
 
         /// <summary>
@@ -1052,7 +1052,7 @@ namespace BricsCadRc.Core
                 WriteXData(ent, bar);
                 tr.Commit();
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockEngine.StoreLabelHandles", logEx); }
         }
 
         public static bool IsBarBlock(Entity entity)
@@ -1070,7 +1070,7 @@ namespace BricsCadRc.Core
                         return !oid.IsErased && oid.IsValid;
                 }
             }
-            catch { }
+            catch (System.Exception logEx) { Log.Error("BarBlockEngine.IsAnnotAlive", logEx); }
             return false;
         }
 

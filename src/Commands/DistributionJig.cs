@@ -5,6 +5,7 @@ using Bricscad.EditorInput;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 using Teigha.GraphicsInterface;
+using BricsCadRc.Core;
 
 namespace BricsCadRc.Commands
 {
@@ -128,7 +129,7 @@ namespace BricsCadRc.Commands
                 }
             }
 
-            try { Application.UpdateScreen(); } catch { }
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("DistributionJig.RefreshTransients", logEx); }
         }
 
         private void AddTransientLine(TransientManager tm, IntegerCollection vpIds,
@@ -155,7 +156,7 @@ namespace BricsCadRc.Commands
             foreach (var line in _transients)
             {
                 try { tm.EraseTransient(line, vpIds); line.Dispose(); }
-                catch { }
+                catch (System.Exception logEx) { Log.Error("DistributionJig.ClearTransients", logEx); }
             }
             _transients.Clear();
         }
