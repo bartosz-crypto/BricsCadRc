@@ -216,6 +216,15 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   przez użytkownika; podgląd ramek w jigu; punkt = lewy górny róg ramki T1. NIE na obrys płyty.
 - XData RC_MAP [PLOT, mapa]; ponowny import tej samej płyty zastępuje poprzedni.
 
+## 4c'. Import analizy razem (RC_IMPORT_ANALYSIS, wstążka „Import Analysis”)
+- Jedno okno z dwoma plikami: mapy (…reinf_maps.dxf/dwg) i raport przebicia (report_punching.xlsx), każdy z polem
+  wyboru (np. same mapy); po wskazaniu jednego drugi szukany w tym samym folderze. Odznaczony plik nie kasuje
+  zapamiętanego. Na wstążce zastępuje przycisk „Reinf. Maps” (komenda RC_IMPORT_MAP zostaje).
+- Mapy wklejane od razu (`MapImportCommands.RunImport`: wybór płyty, ramki). Pliki i płyta zapisywane w rysunku
+  (`AnalysisStore`, NOD „RC_ANALYSIS”: [mapy, raport, PLOT]).
+- RC_PUNCHING_AUTO (Punching) tylko detaluje: gdy w rysunku jest raport z Import Analysis — bez pytania o plik
+  i o płytę (`RunPunching` z zapamiętaną płytą); inaczej jak dawniej wybór xlsx. RC_IMPORT_MAP działa dalej osobno.
+
 ## 4d. Przygotowanie rysunku RC z GA (RC_PRZYGOTUJ_GA)
 - W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” na SD-Text wewnątrz
   zamkniętego obrysu SD-PILED-RAFT; obrys zewnętrzny = największy zawierający opis).

@@ -186,9 +186,20 @@ namespace BricsCadRc.Commands
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            var ed = doc.Editor;
-            var db = doc.Database;
-            const string T = "[RC PUNCHING]";
+
+            // Raport wczytany przez Import Analysis (RC_IMPORT_ANALYSIS) — tylko detalowanie, bez wyboru pliku i płyty
+            if (AnalysisStore.TryLoad(doc.Database, out _, out string storedReport, out string storedPlot)
+                && !string.IsNullOrEmpty(storedReport))
+            {
+                if (System.IO.File.Exists(storedReport))
+                {
+                    doc.Editor.WriteMessage($"\n[RC PUNCHING] Raport z Import Analysis: {System.IO.Path.GetFileName(storedReport)}" +
+                        (string.IsNullOrEmpty(storedPlot) ? "" : $", płyta {storedPlot}") + ".");
+                    RunPunching(doc, storedReport, string.IsNullOrEmpty(storedPlot) ? null : storedPlot);
+                    return;
+                }
+                doc.Editor.WriteMessage($"\n[RC PUNCHING] Nie ma pliku raportu z Import Analysis ({storedReport}) — wskaż raport.");
+            }
 
             var fd = new OpenFileDialog
             {
@@ -196,15 +207,36 @@ namespace BricsCadRc.Commands
                 Filter = "Excel (*.xlsx)|*.xlsx"
             };
             if (fd.ShowDialog() != true) return;
+            RunPunching(doc, fd.FileName);
+        }
 
+        private static string NormPlot(string s)
+            => System.Text.RegularExpressions.Regex.Replace((s ?? "").ToUpperInvariant(), @"\s+", " ").Trim();
+
+        /// <summary>
+        /// Przebicie z raportu xlsx (tagi PH, szablony detali, pręty 501/502). <paramref name="plotLabel"/> —
+        /// płyta wybrana już wcześniej (np. przy imporcie map w RC_IMPORT_ANALYSIS): brana bez pytania, gdy jest
+        /// w raporcie; inaczej zwykły wybór z listy.
+        /// </summary>
+        internal static void RunPunching(Document doc, string reportPath, string plotLabel = null)
+        {
+            var ed = doc.Editor;
+            var db = doc.Database;
+            const string T = "[RC PUNCHING]";
             try
             {
                 var warnings = new List<string>();
-                var plots = PunchingReport.Read(fd.FileName, warnings);
+                var plots = PunchingReport.Read(reportPath, warnings);
                 ed.WriteMessage($"\n{T} Raport: {plots.Count} płyt, {plots.Sum(p => p.Piles.Count)} pali.");
 
                 var res = PunchingAutoEngine.Analyze(db, plots, (choices, def) =>
                 {
+                    if (!string.IsNullOrEmpty(plotLabel))
+                    {
+                        int hit = choices.FindIndex(c => NormPlot(c.Label) == NormPlot(plotLabel));
+                        if (hit >= 0) return hit;
+                        ed.WriteMessage($"\n{T} Płyty {plotLabel} z map nie ma w raporcie przebicia — wybierz płytę z listy.");
+                    }
                     if (choices.Count == 1) return 0;
                     var dlg = new PunchingPlotPickerDialog(choices.Select(c => c.ToString()).ToList(), def);
                     return Application.ShowModalWindow(dlg) == true ? dlg.SelectedIndex : -1;

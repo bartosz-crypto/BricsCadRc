@@ -22,9 +22,6 @@ namespace BricsCadRc.Commands
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            var ed = doc.Editor;
-            var db = doc.Database;
-            const string T = "[RC MAPY]";
 
             var fd = new OpenFileDialog
             {
@@ -32,12 +29,28 @@ namespace BricsCadRc.Commands
                 Filter = "CAD (*.dxf;*.dwg)|*.dxf;*.dwg"
             };
             if (fd.ShowDialog() != true) return;
+            RunImport(doc, fd.FileName);
+        }
 
+        /// <summary>
+        /// Import map z pliku: wybór płyty, podgląd ramek, wklejenie. Zwraca etykietę wklejonej płyty
+        /// („PLOT 6-8”) albo null (anulowano / błąd). Używane też przez RC_IMPORT_ANALYSIS.
+        /// </summary>
+        internal static string RunImport(Document doc, string path)
+        {
+            var ed = doc.Editor;
+            var db = doc.Database;
+            const string T = "[RC MAPY]";
             var warnings = new List<string>();
             MapImportEngine.Source src = null;
             try
             {
-                src = MapImportEngine.ReadSource(fd.FileName, warnings);
+                src = MapImportEngine.ReadSource(path, warnings);
+                if (src.Plots.Count == 0)
+                {
+                    ed.WriteMessage($"\n{T} W pliku map nie ma płyt (PH-SLAB-HEADER „PLOT …”).\n");
+                    return null;
+                }
 
                 // 1. Płyta
                 int def = MapImportEngine.GuessPlot(db, src.Plots);
@@ -47,7 +60,7 @@ namespace BricsCadRc.Commands
                     var dlg = new PunchingPlotPickerDialog(src.Plots.Select(p => p.ToString()).ToList(), Math.Max(0, def),
                         "Mapy zbrojenia — wybierz płytę (PLOT)",
                         def >= 0 ? "Płyty z pliku map. Podświetlona: nazwa płyty jest na rysunku." : "Płyty z pliku map.");
-                    if (Application.ShowModalWindow(dlg) != true) return;
+                    if (Application.ShowModalWindow(dlg) != true) return null;
                     k = dlg.SelectedIndex;
                 }
                 var plot = src.Plots[k];
@@ -57,13 +70,13 @@ namespace BricsCadRc.Commands
                 if (frames.Count == 0)
                 {
                     ed.WriteMessage($"\n{T} {plot.Label}: brak map T1/T2/B1/B2.\n");
-                    return;
+                    return plot.Label;
                 }
                 var jig = new MapInsertJig(frames, MapImportEngine.ReferencePoint(plot));
                 PromptResult jr;
                 try { jr = ed.Drag(jig); }
                 finally { jig.ClearTransients(); }
-                if (jr.Status != PromptStatus.OK) return;
+                if (jr.Status != PromptStatus.OK) return null;
 
                 // 3. Wklejenie
                 var counts = MapImportEngine.Import(doc, src, plot, jig.InsertPoint, warnings);
@@ -72,11 +85,13 @@ namespace BricsCadRc.Commands
                     ". Ponowny import tej płyty zastąpi te mapy.");
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");
+                return plot.Label;
             }
             catch (System.Exception ex)
             {
                 Log.Error("RC_IMPORT_MAP", ex);
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+                return null;
             }
             finally
             {
