@@ -16,6 +16,13 @@ namespace BricsCadRc.Core
         private static readonly HashSet<ObjectId> _newLabels = new HashSet<ObjectId>();
         private static bool _registered;
 
+        // Mapy klonowania bieżącej komendy (oryginał handle → klon), osobno dla każdej operacji klonowania
+        // (COPY wielokrotne / ARRAY = kilka operacji, ten sam oryginał ma wtedy kilka klonów).
+        // BricsCAD NIE przemapowuje sam handle 1005 w XData przy COPY/MIRROR/ARRAY (sprawdzone testem) —
+        // robimy to po komendzie według tej mapy.
+        private static readonly List<Dictionary<long, ObjectId>> _cloneGroups = new List<Dictionary<long, ObjectId>>();
+        private static bool _finishing;
+
         public static void Register()
         {
             if (_registered) return;
@@ -23,12 +30,18 @@ namespace BricsCadRc.Core
                 d =>
                 {
                     d.Database.ObjectAppended += OnObjectAppended;
+                    d.Database.BeginDeepCloneTranslation += OnBeginDeepCloneTranslation;
                     d.CommandEnded            += OnCommandEnded;
                     d.CommandCancelled        += OnCommandCancelled;
                 },
                 d =>
                 {
-                    try { d.Database.ObjectAppended -= OnObjectAppended; } catch { }
+                    try
+                    {
+                        d.Database.ObjectAppended -= OnObjectAppended;
+                        d.Database.BeginDeepCloneTranslation -= OnBeginDeepCloneTranslation;
+                    }
+                    catch (System.Exception ex) { Log.Error("BarCopyWatcher.Unsubscribe", ex); }
                     d.CommandEnded     -= OnCommandEnded;
                     d.CommandCancelled -= OnCommandCancelled;
                 });
@@ -42,7 +55,89 @@ namespace BricsCadRc.Core
             _newAnnots.Clear();
             _newBars.Clear();
             _newLabels.Clear();
+            _cloneGroups.Clear();
             _registered = false;
+        }
+
+        /// <summary>Zapamiętuje mapę oryginał → klon z każdej operacji klonowania w tym samym rysunku.</summary>
+        private static void OnBeginDeepCloneTranslation(object sender, IdMappingEventArgs e)
+        {
+            if (_finishing) return;   // własne klonowanie (EnsureUniqueBtr) w trakcie obsługi końca komendy
+            try
+            {
+                var map = new Dictionary<long, ObjectId>();
+                foreach (IdPair p in e.IdMapping)
+                {
+                    if (!p.IsCloned || p.Key.IsNull || p.Value.IsNull) continue;
+                    if (p.Key.Database != p.Value.Database) continue;   // wklejenie z innego rysunku — nie tutaj
+                    map[p.Key.Handle.Value] = p.Value;
+                }
+                if (map.Count > 0) _cloneGroups.Add(map);
+            }
+            catch (System.Exception ex) { Log.Error("BarCopyWatcher.OnBeginDeepCloneTranslation", ex); }
+        }
+
+        /// <summary>
+        /// Po klonowaniu: w XData klonów (aplikacje RC_*) handle 1005 wskazujące obiekt sklonowany W TEJ SAMEJ
+        /// operacji → handle jego klonu. Obiekt skopiowany bez partnera wskazuje dalej oryginał
+        /// (np. rozkład skopiowany bez pręta liczy się do oryginalnego pręta).
+        /// </summary>
+        private static void RemapByCloneMap(Database db)
+        {
+            var touchedBars = new List<ObjectId>();
+            var labelBars = new HashSet<string>();
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var group in _cloneGroups)
+                {
+                    foreach (var cloneId in group.Values)
+                    {
+                        if (cloneId.IsNull || cloneId.IsErased || cloneId.Database != db) continue;
+                        DBObject obj;
+                        try { obj = tr.GetObject(cloneId, OpenMode.ForRead); } catch { continue; }
+                        var rb = obj?.XData;
+                        if (rb == null) continue;
+                        var arr = rb.AsArray();
+                        rb.Dispose();
+                        bool rcApp = false, mod = false;
+                        for (int i = 0; i < arr.Length; i++)
+                        {
+                            if (arr[i].TypeCode == (int)DxfCode.ExtendedDataRegAppName)
+                            {
+                                rcApp = (arr[i].Value as string ?? "").StartsWith("RC_", StringComparison.OrdinalIgnoreCase);
+                                continue;
+                            }
+                            if (!rcApp || arr[i].TypeCode != (int)DxfCode.ExtendedDataHandle) continue;
+                            if (!XLink.TryParse(XLink.Read(arr[i]), out long h)) continue;
+                            if (!group.TryGetValue(h, out var mapped)) continue;
+                            arr[i] = XLink.Write(mapped.Handle.Value.ToString("X8"));
+                            mod = true;
+                        }
+                        if (!mod) continue;
+                        obj.UpgradeOpen();
+                        obj.XData = new ResultBuffer(arr);
+                        if (obj is Polyline) touchedBars.Add(cloneId);
+                        if (obj is BlockReference br && BarBlockEngine.IsBarBlock(br))
+                        {
+                            var bd = BarBlockEngine.ReadXData(br);
+                            if (!string.IsNullOrEmpty(bd?.SourceBarHandle)) labelBars.Add(bd.SourceBarHandle);
+                        }
+                    }
+                    // liczniki etykiet: oryginały prętów, których rozkłady były kopiowane, i ich kopie
+                    foreach (var kv in group)
+                        if (kv.Value.Database == db && !kv.Value.IsErased
+                            && tr.GetObject(kv.Value, OpenMode.ForRead) is Polyline pl
+                            && SingleBarEngine.ReadBarXData(pl) != null)
+                        {
+                            labelBars.Add(kv.Key.ToString("X8"));
+                            labelBars.Add(kv.Value.Handle.Value.ToString("X8"));
+                        }
+                }
+                tr.Commit();
+            }
+            // zapis XData kopii pręta to nie edycja geometrii — watcher nie może go przebudowywać
+            foreach (var id in touchedBars) BarGeometryWatcher.Forget(id);
+            foreach (var h in labelBars) PendingLabelUpdates.Add(db, h);
         }
 
         private static void OnObjectAppended(object sender, ObjectEventArgs e)
@@ -85,7 +180,14 @@ namespace BricsCadRc.Core
         {
             try
             {
-                string cmd = (cmdRaw ?? "").ToUpperInvariant();
+                _finishing = true;
+                // „-ARRAY”, „_COPY” itp. — nazwa bez prefiksów
+                string cmd = (cmdRaw ?? "").ToUpperInvariant().TrimStart('-', '_', '.');
+
+                // Powiązania kopii według mapy klonowania (pręt, etykieta, rozkład, opis, płyta)
+                if (doc?.Database != null && _cloneGroups.Count > 0 && !DocumentWatch.IsUndoCommand(cmdRaw))
+                    RemapByCloneMap(doc.Database);
+
                 bool isCopyLike =
                        cmd == "COPY" || cmd == "COPYCLIP" || cmd == "PASTECLIP"
                     || cmd == "PASTE" || cmd == "PASTEBLOCK" || cmd == "PASTESPEC"
@@ -111,6 +213,8 @@ namespace BricsCadRc.Core
                 _newAnnots.Clear();
                 _newBars.Clear();
                 _newLabels.Clear();
+                _cloneGroups.Clear();
+                _finishing = false;
             }
         }
 

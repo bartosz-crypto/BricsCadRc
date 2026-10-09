@@ -24,14 +24,19 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 ```
 
 ### Zasady powiązań (obowiązkowe)
-- Zapis wyłącznie `XLink.Write(hex)` → DXF **1005** (prawdziwy handle). BricsCAD sam przemapowuje
-  1005 przy COPY/MIRROR/ARRAY/PASTE/INSERT, gdy obie strony są kopiowane razem.
+- Zapis wyłącznie `XLink.Write(hex)` → DXF **1005** (prawdziwy handle). **BricsCAD NIE przemapowuje 1005
+  w XData przy COPY/MIRROR/ARRAY** (sprawdzone testem w V25 — kopia rozkładu wskazywała oryginalny pręt).
+  Robi to `BarCopyWatcher`: zdarzenie `Database.BeginDeepCloneTranslation` daje mapę oryginał → klon
+  (osobno dla każdej operacji klonowania, np. kolejnych wstawień COPY), a po komendzie handle 1005
+  w aplikacjach RC_* klonów są przepinane na klony obiektów skopiowanych w tej samej operacji.
+  Obiekt skopiowany bez partnera wskazuje dalej oryginał (np. rozkład bez pręta → oryginalny pręt).
 - Odczyt wyłącznie `XLink.Read(tv)` — akceptuje 1005 i stary tekst 1000, zwraca „X8”.
 - Porównanie wyłącznie `XLink.Same(a, b)` (nie `string.Equals`).
 - Przed modyfikacją/usunięciem/przeliczeniem etykiety sprawdź **back-link** (etykieta wskazuje
   na ten pręt). Kopia bez etykiety nie może ruszać etykiety oryginału.
-- Stare rysunki (1000): po COPY `BarCopyWatcher.RemapCopiedBarLabels` paruje kopię pręta z kopią
-  etykiety (grot etykiety leży na pręcie); `RemapCopiedPairs` robi to samo dla rozkład ↔ opis.
+- Zabezpieczenie (stare rysunki 1000, wklejanie z innego rysunku): po COPY `BarCopyWatcher.RemapCopiedBarLabels`
+  paruje kopię pręta z kopią etykiety (grot etykiety leży na pręcie); `RemapCopiedPairs` robi to samo dla
+  rozkład ↔ opis. Przy poprawnych back-linkach (po mapie klonowania) obie ścieżki nic nie robią.
 
 ### Schematy XData (indeksy pozycyjne — NIE przestawiać, nowe pola tylko na końcu)
 - `RC_SINGLE_BAR`: [1]Mark [2]Diameter [3]ShapeCode [4]A [5]B [6]C [7]LayerCode [8]Position
