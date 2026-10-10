@@ -14,7 +14,8 @@ namespace BricsCadRc.Dialogs
     public class BeamDialog : Window
     {
         private readonly BeamParams _p;
-        private readonly TextBox _h, _w, _nibW, _nibH, _sDia, _sSp, _bDia, _bCnt, _tDia, _tCnt, _uDia, _shape, _lap, _max;
+        private readonly TextBox _h, _w, _nibW, _nibH, _sDia, _sSp, _bDia, _bCnt, _tDia, _tCnt, _uDia, _shape, _lap, _max,
+                                 _sideDia, _sideSp, _nibTop, _nibBot;
         private readonly ComboBox _topMode;
         private readonly CheckBox _generate;
 
@@ -66,6 +67,10 @@ namespace BricsCadRc.Dialogs
             _tDia = Field("Pręty górą: średnica H", I(_p.TopDia));
             _tCnt = Field("Pręty górą: liczba", I(_p.TopCount));
             _uDia = Field("U-bary na końcach: średnica H", I(_p.UBarDia), "kształt 21, 2 na warstwę");
+            _sideDia = Field("Pręty boczne: średnica H", I(_p.SideDia), "0 = brak; na obu bokach, do potwierdzenia");
+            _sideSp  = Field("Pręty boczne: rozstaw pionowy [mm]", F(_p.SideSpacing), "liczba = ceil(światło / rozstaw) − 1");
+            _nibTop  = Field("Nib: pręt górą, średnica H", I(_p.NibTopDia), "naroże spinki UB 03; 0 = brak");
+            _nibBot  = Field("Nib: pręt dołem, średnica H", I(_p.NibBottomDia), "naroże nibu; 0 = brak");
             _lap  = Field("Zakład [mm]", F(_p.Lap), "domyślne 800, do potwierdzenia");
             _max  = Field("Maks. długość pręta [mm]", F(_p.MaxLength));
             root.Children.Add(grid);
@@ -81,7 +86,7 @@ namespace BricsCadRc.Dialogs
 
             _generate = new CheckBox
             {
-                Content = "Generuj pręty belki (strzemiona, pręty podłużne, pręty L, U-bary; poprzednie pręty tej belki zostaną zastąpione)",
+                Content = "Generuj pręty belki (strzemiona, pręty podłużne, boczne, w nibie, pręty L, U-bary; poprzednie pręty tej belki zostaną zastąpione)",
                 IsChecked = true, Margin = new Thickness(0, 8, 0, 0)
             };
             root.Children.Add(_generate);
@@ -89,7 +94,8 @@ namespace BricsCadRc.Dialogs
             var lines = new List<string>(info ?? new List<string>())
             {
                 "Wartości domyślne (do potwierdzenia): zakład 800, max 6000, strzemię 51 pod obiema warstwami T, H10 co 200.",
-                "Narożniki L / złącza T: pręty L kształt 11 (ramiona z zakładem); końce (krawędź i wewnętrzny): U-bary kształt 21 — domyślne, do potwierdzenia."
+                "Narożniki L / złącza T: pręty L kształt 11 (ramiona z zakładem); końce (krawędź i wewnętrzny): U-bary kształt 21 — domyślne, do potwierdzenia.",
+                "Pręty boczne (H10 co 200 w pionie) i pręty w nibie (górą H10, dołem H16) — proste, kończą się na licu kwadratu narożnika / przed U-barami z otuliną (bez zagięć) — do potwierdzenia."
             };
             root.Children.Add(new TextBox
             {
@@ -128,6 +134,17 @@ namespace BricsCadRc.Dialogs
             if (!Num(_uDia, "Średnica U-barów", 8, 40, out double ud)) return;
             if (!Num(_lap, "Zakład", 200, 3000, out double lap)) return;
             if (!Num(_max, "Maks. długość", 1000, 12000, out double max)) return;
+            bool Dia(TextBox tb, string name, out double v)
+            {
+                if (NumberParser.TryParseDouble(tb.Text, out v) && (v == 0 || (v >= 6 && v <= 40))) return true;
+                MessageBox.Show(this, $"{name}: podaj 0 (brak) albo średnicę 6–40.", "Belka", MessageBoxButton.OK, MessageBoxImage.Warning);
+                tb.Focus();
+                return false;
+            }
+            if (!Dia(_sideDia, "Średnica prętów bocznych", out double sdd)) return;
+            if (!Num(_sideSp, "Rozstaw prętów bocznych", 100, 400, out double sds)) return;
+            if (!Dia(_nibTop, "Średnica pręta w nibie górą", out double ntd)) return;
+            if (!Dia(_nibBot, "Średnica pręta w nibie dołem", out double nbd)) return;
             if (lap >= max) { MessageBox.Show(this, "Zakład musi być krótszy niż maks. długość pręta.", "Belka"); return; }
             string shape = (_shape.Text ?? "").Trim();
             if (shape.Length == 0) shape = "51";
@@ -137,6 +154,7 @@ namespace BricsCadRc.Dialogs
             r.StirrupDia = (int)sd; r.StirrupSpacing = ss; r.StirrupShape = shape;
             r.BottomDia = (int)bd; r.BottomCount = (int)bc; r.TopDia = (int)td; r.TopCount = (int)tc; r.UBarDia = (int)ud;
             r.Lap = lap; r.MaxLength = max; r.StirrupTopLayers = _topMode.SelectedIndex == 1 ? 1 : 2;
+            r.SideDia = (int)sdd; r.SideSpacing = sds; r.NibTopDia = (int)ntd; r.NibBottomDia = (int)nbd;
             Result = r;
             Generate = _generate.IsChecked == true;
             DialogResult = true;

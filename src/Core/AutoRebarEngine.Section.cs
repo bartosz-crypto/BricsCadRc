@@ -102,6 +102,8 @@ namespace BricsCadRc.Core
                 var outlines = new List<Polyline>();
                 var texts = new List<(Point2d p, string t)>();
                 var beamZones = new List<List<Point2d>>();   // strefy belek (RC-BEAM): teksty „450THK” to nie grubość płyty
+                // strefy belek z rekordem RC_BEAM (plan belek E5): handle, wierzchołki, punkt wewnątrz, parametry
+                var zoneRecs = new List<(string handle, List<Point2d> verts, Point2d inside, BeamParams p)>();
                 foreach (ObjectId oid in ms)
                 {
                     if (oid.IsErased) continue;
@@ -110,14 +112,19 @@ namespace BricsCadRc.Core
                     {
                         var bar = BarBlockEngine.ReadXData(br);
                         if (bar == null || Math.Abs(br.Rotation) > 1e-6 || Math.Abs(bar.Angle) > 1e-6) continue;
-                        // Pręty belki (BB / BT / BL) — przekrój z belką dopiero w E5 (plan belek); dziś pomijane
-                        if (BeamGeometry.IsBeamCode(bar.LayerCode)) continue;
+                        // Pręty belki (BB / BT / BL, E5): do planera tylko jako pręty belki (rodzaj Beam — w pasie belki przeciętym
+                        // linią cięcia), bez wpływu na poziomy siatki płyty (dB1 / dT1) i UB płyty
                         dists.Add((br, bar));
                     }
                     else if (obj is Polyline pl && oid != outerId && GeometryHelper.IsEffectivelyClosed(pl))
                     {
                         outlines.Add(pl);
                         if (BeamStore.IsBeamLayer(pl.Layer)) beamZones.Add(GeometryHelper.GetPolylineVertices(pl));
+                        if (BeamStore.IsZone(pl) && BeamStore.Read(pl) is BeamParams bp)
+                        {
+                            try { zoneRecs.Add((XLink.Norm(pl.Handle.ToString()), GeometryHelper.GetPolylineVertices(pl), BeamStore.Centroid(pl), bp)); }
+                            catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.Beam", ex); }
+                        }
                     }
                     else if (obj is MText mt)
                         texts.Add((new Point2d(mt.Location.X, mt.Location.Y), string.Join("\n", GaImportEngine.TextLines(mt))));
@@ -148,10 +155,11 @@ namespace BricsCadRc.Core
                         bool inside = tag != null ? SameHandle(tag, handle) : GeometryHelper.IsPointInsidePolygon(poly, pos);
                         if (!inside) continue;
                         string pos2 = SectionPlanner.PosNrOf(bar.Mark);
+                        bool beamBar = BeamGeometry.IsBeamCode(bar.LayerCode);
                         inp.Dists.Add(new SectionPlanner.Dist
                         {
                             Mark = bar.Mark ?? "", PosNr = pos2, LayerCode = string.IsNullOrEmpty(bar.LayerCode) ? "B1" : bar.LayerCode,
-                            Kind = SectionPlanner.KindOf(bar.Mark, pos2, NibUBPosNr),
+                            Kind = beamBar ? SectionPlanner.DistKind.Beam : SectionPlanner.KindOf(bar.Mark, pos2, NibUBPosNr),
                             AlongX = !string.Equals(bar.Direction, "Y", StringComparison.OrdinalIgnoreCase),
                             X0 = pos.X - delta.X, Y0 = pos.Y - delta.Y,
                             LengthA = bar.LengthA, BarsSpan = bar.BarsSpan, Count = Math.Max(1, bar.Count),
@@ -168,11 +176,48 @@ namespace BricsCadRc.Core
                             last.ShapeCode = shape.Value.code;
                             last.SourceDims = shape.Value.dims;
                         }
+                        if (beamBar)
+                        {
+                            // belka (E5): skos rozkładu prętów L; U-bar (21) — drugie ramię o B − d dalej w stronę symbolu zagięcia
+                            // (pręty X: „Up” = +Y; pręty Y: „Up” = −X — jak BeamBent)
+                            var last = inp.Dists[inp.Dists.Count - 1];
+                            last.SkewStart = bar.SkewStart; last.SkewEnd = bar.SkewEnd;
+                            // E4b: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok
+                            if (bar.LayerCode == BeamGeometry.CodeSide && bar.Count > 0)
+                                last.Layers = Math.Max(1, bar.EffectiveCount / bar.Count);
+                            if (last.ShapeCode == "21" && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
+                            {
+                                bool up = !string.Equals(bar.SymbolDirection, "Down", StringComparison.OrdinalIgnoreCase);
+                                int sgn = last.AlongX ? (up ? 1 : -1) : (up ? -1 : 1);
+                                last.PairOffset = sgn * (last.SourceDims[1] - last.Diameter);
+                            }
+                        }
                         nDist++;
                         break;
                     }
                 }
                 ctx.Views = views.Select(v => v.delta).ToList();
+
+                // Belki (E5): strefy RC_BEAM rzutów tej płyty (punkt wewnątrz strefy w rzucie), przesunięte do rzutu wskazanego,
+                // bez duplikatów (ta sama strefa na rzucie dolnym i górnym — pierwszeństwo rzutu wskazanego) → pasy na linii cięcia
+                var placed = new List<List<Point2d>>();
+                foreach (var (delta, _, poly) in views)
+                    foreach (var z in zoneRecs)
+                    {
+                        if (!GeometryHelper.IsPointInsidePolygon(poly, z.inside)) continue;
+                        var zv = z.verts.Select(v => new Point2d(v.X - delta.X, v.Y - delta.Y)).ToList();
+                        if (placed.Any(o => o.Count == zv.Count && zv.All(v => o.Any(w => w.GetDistanceTo(v) < 1.0)))) continue;
+                        placed.Add(zv);
+                        var p = z.p;
+                        foreach (var (a, b) in SectionPlanner.CutIntervals(zv.Select(v => (v.X, v.Y)).ToList(), inp.CutAlongX, inp.CutCoord))
+                            inp.Beams.Add(new SectionPlanner.BeamBand
+                            {
+                                Handle = z.handle, S0 = a, S1 = b, Height = p.Height, NibWidth = p.NibWidth, NibHeight = p.NibHeight,
+                                Cover = BeamCoverSide, StirrupDia = p.StirrupDia,
+                                StirrupA = BeamGeometry.StirrupHeight(p.Height, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia),
+                                Params = BeamParamsText(p)
+                            });
+                    }
 
                 // Pale z innych rzutów (gdy na wskazanym ich nie ma)
                 if (inp.Piles.Count == 0)
@@ -194,7 +239,8 @@ namespace BricsCadRc.Core
                 }
 
                 ctx.Info.Add($"Rzuty płyty: {views.Count}, rozkłady: {nDist}, nib: {(nib != null ? nib.Edges.Count + " krawędzi" : "brak")}, " +
-                             $"otwory: {inp.Holes.Count}, pale: {inp.Piles.Count}.");
+                             $"otwory: {inp.Holes.Count}, pale: {inp.Piles.Count}" +
+                             (inp.Beams.Count > 0 ? $", belki na linii cięcia: {inp.Beams.Count}." : "."));
                 if (ctx.ThicknessSource == null) ctx.Info.Add("Nie znaleziono grubości płyty w opisie (… THK SLAB) — przyjęto 225.");
                 if (ctx.SslSource == null) ctx.Info.Add("Nie znaleziono SSL w opisie płyty.");
             }
@@ -227,6 +273,12 @@ namespace BricsCadRc.Core
             cache[handle] = res;
             return res;
         }
+
+        /// <summary>Parametry belki do odcisku przekroju (składnik BEAM — bez wpływu na rysunek; InvariantCulture).</summary>
+        private static string BeamParamsText(BeamParams p)
+            => string.Format(CultureInfo.InvariantCulture, "W{0:0.#}|L{1}@{2:0.#}|B{3}x{4}|T{5}x{6}|U{7}|S{8}|LAP{9:0.#}|MAX{10:0.#}|TL{11}",
+                             p.Width, p.StirrupDia, p.StirrupSpacing, p.BottomCount, p.BottomDia, p.TopCount, p.TopDia, p.UBarDia,
+                             p.StirrupShape ?? "", p.Lap, p.MaxLength, p.StirrupTopLayers);
 
         private static string Flat(string t) => System.Text.RegularExpressions.Regex.Replace(t ?? "", @"\s+", " ").Trim();
 
@@ -392,11 +444,12 @@ namespace BricsCadRc.Core
                 {
                     Tag("PILE", "PILE#" + idx++);
                     double l = p.U - p.Width / 2, rr = p.U + p.Width / 2;
+                    double pb = double.IsNaN(p.Base) ? -T : p.Base;   // spód betonu nad palem (belka E5: −H; bez belki = −T)
                     Add(Ln(l, p.Top, rr, p.Top, SectionPileLayer, "DASHED", 3));
-                    Add(Ln(l, -T, l, p.Top, SectionPileLayer, "DASHED", 3));
-                    Add(Ln(rr, -T, rr, p.Top, SectionPileLayer, "DASHED", 3));
-                    Add(Ln(l, -T, l, p.Bottom, SectionPileLayer));
-                    Add(Ln(rr, -T, rr, p.Bottom, SectionPileLayer));
+                    Add(Ln(l, pb, l, p.Top, SectionPileLayer, "DASHED", 3));
+                    Add(Ln(rr, pb, rr, p.Top, SectionPileLayer, "DASHED", 3));
+                    Add(Ln(l, pb, l, p.Bottom, SectionPileLayer));
+                    Add(Ln(rr, pb, rr, p.Bottom, SectionPileLayer));
                     const double bulge = 0.426;
                     var low = new Polyline { Layer = SectionPileLayer };
                     low.AddVertexAt(0, new Point2d(ox + l, oy + p.Bottom), bulge, 0, 0);
@@ -465,6 +518,9 @@ namespace BricsCadRc.Core
                     Add(arrowM);
                 }
                 foreach (var p in r.Piles) minV = Math.Min(minV, p.Bottom - 110);
+                // belka (E5): spód belki i wymiary pod nią (bez belki — beton i wymiary nie schodzą poniżej −T: bez zmian)
+                foreach (var sg in r.Segments) foreach (var q in sg.Polygon) minV = Math.Min(minV, q.V);
+                foreach (var dm in r.Dims) minV = Math.Min(minV, dm.Vertical ? Math.Min(dm.V1, dm.V2) : dm.LineV - 2 * SectionPlanner.TextHeight);
 
                 // Poziom SSL
                 if (r.SslMark.HasValue && !string.IsNullOrEmpty(r.SslText))

@@ -14,7 +14,9 @@ namespace BricsCadRc.Core
     ///     [1] FormatVersion (Int16) [2] H [3] szerokość [4] szer. nibu [5] wys. nibu (Real) [6] obrys płyty (1005, XLink)
     ///     [7] Ø strzemion (Int16) [8] rozstaw strzemion (Real) [9] Ø dołem [10] liczba dołem [11] Ø górą [12] liczba górą
     ///     [13] Ø U-barów (Int16) [14] kod strzemienia (tekst) [15] zakład [16] maks. długość (Real)
-    ///     [17] góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16).
+    ///     [17] góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16)
+    ///     [18] Ø prętów bocznych (Int16, 0 = brak) [19] rozstaw pionowy prętów bocznych (Real) [20] Ø pręta w nibie górą
+    ///     [21] Ø pręta w nibie dołem (Int16, 0 = brak) — E4b.
     ///     Nowe pola tylko na końcu; odczyt toleruje krótsze rekordy (brak pola = wartość domyślna BeamParams).
     ///   • Obiekty wygenerowane dla belki (rozkłady RC_BAR_BLOCK) — XData <see cref="TagApp"/> [1] = handle strefy (1005).
     ///     Ponowne generowanie usuwa tylko obiekty tej strefy; kopia samych prętów (CloneRemap → "") — test punktu w strefie.
@@ -59,7 +61,11 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, p.StirrupShape ?? "51"), // [14]
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.Lap),                       // [15]
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.MaxLength),                 // [16]
-                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.StirrupTopLayers)); // [17]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.StirrupTopLayers), // [17]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.SideDia),       // [18] E4b
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.SideSpacing),               // [19]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibTopDia),     // [20]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibBottomDia)); // [21]
 
         /// <summary>Zapis rekordu strefy (RegApp rejestrowany); encja otwarta do zapisu w transakcji tr.</summary>
         public static void Write(Transaction tr, Database db, Entity zone, BeamParams p, string slabHandle)
@@ -93,6 +99,10 @@ namespace BricsCadRc.Core
             p.Lap = D(15, p.Lap);
             p.MaxLength = D(16, p.MaxLength);
             p.StirrupTopLayers = I(17, p.StirrupTopLayers);
+            p.SideDia = I(18, p.SideDia);
+            p.SideSpacing = D(19, p.SideSpacing);
+            p.NibTopDia = I(20, p.NibTopDia);
+            p.NibBottomDia = I(21, p.NibBottomDia);
             return p;
         }
 

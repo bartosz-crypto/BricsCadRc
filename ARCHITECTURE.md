@@ -99,7 +99,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 - `RC_BEAM` (strefa belki, `BeamStore`, plan belek E1): [1]FormatVersion (Int16, 1) [2]H [3]szerokość [4]szer. nibu [5]wys. nibu
   (Real) [6]obrys płyty (1005, XLink) [7]Ø strzemion (Int16) [8]rozstaw strzemion (Real) [9]Ø dołem [10]liczba dołem [11]Ø górą
   [12]liczba górą [13]Ø U-barów (Int16) [14]kod strzemienia (tekst, „51”) [15]zakład [16]maks. długość pręta (Real)
-  [17]góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16). Brak pola = wartość domyślna `BeamParams`.
+  [17]góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16) [18]Ø prętów bocznych (Int16, 0 = brak) [19]rozstaw pionowy
+  prętów bocznych (Real) [20]Ø pręta w nibie górą [21]Ø pręta w nibie dołem (Int16, 0 = brak) — E4b. Brak pola = wartość domyślna `BeamParams`.
 - `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
   punktu w strefie.
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
@@ -369,8 +370,10 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 ## 3. Numeracja pozycji
 - **UB zawsze 01 (UB B1), 02 (UB B2) i 03 (UB w nibie).** Numeracja automatyczna od **04** (jak ASD;
   03 zarezerwowane także w płytach bez nibu).
-- Pręty belki (sekcja 4i): dół (BB) i strzemiona (BL) — seria dolna `NextAuto` (≥ 04), góra (BT) — seria górna `NextAutoTop` (101+);
-  identyczny pręt (kształt, Ø, wymiary, seria) → istniejąca pozycja.
+- Pręty belki (sekcja 4i): dół (BB), strzemiona (BL), pręty boczne (BS) i w nibie (BN) — seria dolna `NextAuto` (≥ 04), góra (BT) —
+  seria górna `NextAutoTop` (101+); identyczny pręt (kształt, Ø, wymiary, seria) → istniejąca pozycja — także pręt siatki (np. pręt
+  boczny H10 L5500 = B1 H10 L5500 siatki, pręt w nibie H16 L5500 = BB H16 L5500 — wspólny numer; BTR rozkładu siatki dostaje wtedy
+  sufiks unikalnej nazwy).
 - `PositionCounter.NextAuto(db, used)` = max(licznik w rysunku, max użyty < 500) + 1, min. 4,
   pomija zajęte. Seria **501+** (przebicie) nie podbija licznika.
 - Jeden numer = jeden kształt pręta. Pręt, któremu zmieniono wymiary, a jego numer ma inny pręt
@@ -395,12 +398,15 @@ Ogólne:
 - **Rozkład z jednym prętem: opis bez rozstawu** (np. `1 H12-01 UB`, nie `1 H12-01-200 UB`) — `ApplySingleBarMark`.
 - **Pręty podłużne belki: opis bez rozstawu także dla > 1 pręta** (`4 H16-05 BEAM B`, `4 H16-103 BEAM T`; `ShowSpacing = false`) —
   parametr `noSpacingMark` w `GenerateDistributionWithLeaderAtOffset`; strzemiona z rozstawem nominalnym (`52 H10-07-200 LINKS`).
-- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona); pręty L i U-bary
+- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona), **BS** (pręty
+  boczne, E4b), **BN** (pręty wzdłuż nibu belki, E4b); pręty L i U-bary
   belki (E4) — te same kody BB / BT (rozróżnienie po kształcie [12] rozkładu: 11 / 21), bez nowych kodów. Kody belek
   NIE zaczynają się od „B1/B2/T1/T2”: skany siatki (`ScanOldDistributions`, `EraseOldDistributions`, `FindBottomView`, UB, ADD) porównują
   kod dokładnie, więc prętów belki nie widzą. Gałęzie `StartsWith("B"/"T")` przejrzane: `BuildBarData` — BT = TOP; `CutBarPositionsAtHole`
-  — bez kodów belek; `SectionPlanner` / `PrepareSection` — pręty belek pomijane (przekrój z belką = E5); `ResolveRepresentativeCollisions`
-  — pręty belek pomijane; `GenerateLayer` / `CreateNewTemplate` / model 3D — tylko kody siatki. Warstwa CAD: BT → RC-SLAB-TOP-01, BB / BL → RC-SLAB-BOT-01.
+  — bez kodów belek; `SectionPlanner` / `PrepareSection` — pręty belek jako rodzaj `Beam` (tylko w pasie belki przeciętym linią cięcia;
+  poziomy siatki dB1 / dT1 liczone wyłącznie z B1 / T1 — sekcja 4g); `ResolveRepresentativeCollisions` — pręty belek pomijane
+  (`IsBeamCode`); `GenerateLayer` / `CreateNewTemplate` / model 3D — tylko kody siatki. Warstwa CAD: BT → RC-SLAB-TOP-01, BB / BL / BS / BN →
+  RC-SLAB-BOT-01 (`BuildBarData`: kod na „B” poza BT = BOT).
 
 Dół (B1/B2, Ø10):
 - Zakład 400–650 mm, preferowany **450–550**.
@@ -585,7 +591,32 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
 - Wskazanie: obrys płyty (rzut dolny albo górny), 2 punkty linii cięcia (pozioma / pionowa wg dłuższej składowej),
   strona patrzenia, okno parametrów (`SectionDialog`), punkt wstawienia = lewy górny narożnik płyty (poziom SSL).
-- Belki: rozkłady belek (BB / BT / BL) i teksty w strefach RC-BEAM (grubość płyty) są w `PrepareSection` pomijane — przekrój z belką = E5.
+- **Belki (plan belek E5; wartości domyślne do potwierdzenia przez Bartka):** `PrepareSection` czyta strefy RC_BEAM rzutów płyty (punkt
+  wewnątrz strefy w rzucie, przesunięcie do rzutu wskazanego, bez duplikatów dół / góra — pierwszeństwo rzutu wskazanego) i tnie je linią
+  cięcia (`SectionPlanner.CutIntervals`) → `Input.Beams` (`BeamBand`: pas [S0, S1] wzdłuż cięcia, H, nib, otulina 40, Ø strzemion, A strzemienia
+  ze wzoru, parametry rekordu). Rozkłady BB / BT / BL / BS / BN → `Dist` rodzaju **`Beam`** (skos prętów L, drugie ramię U-bara 21 —
+  `PairOffset` = ±(B − d) w stronę symbolu zagięcia, pręty boczne — `Layers` = CountDisplay / Count); teksty w strefach („450THK”) nie są
+  grubością płyty. **Pusta lista `Beams` = wynik planera bit w bit** (5 złotych przypadków bez zmian, `Version` = 1 bez podbicia).
+  Planer: odcinek betonu z pasem belki dostaje profil `Segment.Prof` (przedziały u: płyta −T…0, nib płyty — wierzch vNibTop, trzon belki
+  −H…0, nib belki −H…−H + NibH między licem pasu a krawędzią odcinka, gdy krawędź ≤ 260 mm — `BeamNibMaxGap`) i obrys z profilu (urwanie —
+  zygzak na lokalnej wysokości); `InConcrete`, spód lokalny (`LocalBottom` — bez belki dokładnie −T), opisy pod spodem belki, pal pod belką
+  (`Pile.Base`), tytuł poniżej spodu i wymiarów belki. Pręty belki tylko w pasie (kropki / pręty w widoku poza pasem — pomijane, bez
+  wpływu na odcisk): strzemię 51 na otulinie 40 od spodu i lic, wysokość zewnętrzna A z rozkładu BL w pasie (inaczej wzór 1b.1), dół (BB)
+  na strzemieniu, góra (BT) pod jego górnym ramieniem, ramiona prętów giętych 11 / 21 w zakładzie „piętrowo” (dół nad, góra pod prętem
+  prostym), pręty boczne (BS) równo między osiami dołu i góry (Layers poziomów, przy ramionach strzemienia), pręty w nibie (BN) w narożach
+  spinki UB 03 (dołem: −H + 40 + 10 + d/2, górą: wierzch nibu − 30 − 10 − d/2). **Cięcie prostopadłe do belki** — kropki 4 H16 dół / góra
+  (+ boczne, nib), strzemię 51 w widoku (kształt pręta wzorcowego, haki u góry). **Cięcie wzdłuż belki** — pręty podłużne w widoku (linie na
+  swoich poziomach), strzemiona jako pionowe ramiona (jeden opis pozycji ze strzałką do ramienia środkowego). Kropki belki nie są przesuwane
+  przy ramionach prętów w widoku; opis pręta belki w widoku — trzecie przejście bez warunku „strzałka nie tnie opisów” (pod belką gęsto).
+  Siatka płyty przy belce = to, co jest w rysunku (E2 wstrzymany): pręty siatki proste na swoich poziomach przez belkę (przycięte do betonu),
+  schemat kropek siatki także w belce; UB 03 / T IN NIB w pasie albo nibie belki — poziomy względem spodu belki / wierzchu nibu belki;
+  T IN NIB w trzonie belki (drugi pręt „150 dalej”, za licem) — poziom jak w płycie (bez przesunięcia do nibu belki i nie pod ramieniem UB 03);
+  kropka T IN NIB nachodząca na kropkę pręta belki (BN górą) — odsunięta w poziomie do styku lic (`ResolveTinBeamCollisions`).
+  Pręty BN w przekroju: gdy w pasie / nibie belki jest UB 03 — w narożach spinki wewnątrz U (ramię ∓ (Ø spinki / 2 + d / 2), lica w styku);
+  bez UB 03 — wzór (dołem otulina + 10 + d/2 od spodu, górą wierzch nibu − otulina nibu − 10 − d/2). Rozkład belki jest „użyty” (odcisk) tylko,
+  gdy powstała kropka / pręt.
+  Wymiary: nib belki (szerokość, uskok H − NibH, wysokość nibu) zamiast nibu płyty, H belki (dalej od krawędzi niż łańcuch), szerokość /
+  długość pasa pod belką (`BeamDimBelow` 350); grubość płyty — przy końcu bez belki.
 - Dane z rysunku (`AutoRebarEngine.PrepareSection`): obrys zewnętrzny (NibDetector), niby, otwory (`FindHoles`),
   pale (`FindPiles`), rozkłady RC_BAR_BLOCK ze WSZYSTKICH rzutów tej płyty (polilinie o tym samym kształcie, przesunięte —
   jak `FindBottomView`), grubość i SSL z opisu płyty („SSL=21.925”, „225mm THK SLAB”). Wszystko do poprawy w oknie;
@@ -629,7 +660,11 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
     wejścia (złoty test `SectionPlannerGoldenTests` — 5 wejść, pełny Result bit w bit); starszy przekrój = „aktualny (nowa wersja
     rysowałaby inaczej)” (P2).
   - Odcisk (`SectionFingerprint`): składniki META, VIEWS (zbiór przesunięć rzutów; nowy / usunięty rzut z przesunięciem), CUT (tylko kierunek, strona i długość), LETTER, PARAM, SRC (opis płyty + flagi
-    nadpisania), SEG#i, LVL, DIST:<handle>, PILE:<x,y>; współrzędne względem P1 — punktu cięcia na rzucie wskazanym (nie MinPoint obrysu: STRETCH krawędzi daleko od cięcia bez alarmu, MOVE rzutu ze znacznikami bez alarmu; przesunięcie cięcia względem płyty wyłapują DIST / SEG i skrót wyniku); liczby `Math.Round(x, 1)` „0.0” Invariant (−0 → 0), SHA-256; skrót wyniku
+    nadpisania), SEG#i, LVL, DIST:<handle>, PILE:<x,y>, **BEAM:<handle strefy>** (E5: tylko belka przecięta linią cięcia — `Result.UsedBeams`;
+    pas S0 / S1 względem P1, H, nib, otulina, Ø i A strzemienia, parametry rekordu; DIST prętów belki — dodatkowo skos, drugie ramię, Layers;
+    **brak belek = odcisk bit w bit jak przed E5**, test z odciskami HEAD ecaa083); Compare: zapisany odcisk bez żadnego BEAM, bieżący z belką →
+    zawsze NIEAKTUALNY „belka … nieuwzględniona w przekroju (przekrój sprzed obsługi belek albo belka dodana później)”; zmieniona / usunięta /
+    nowa belka — przyczyna, rozstrzyga skrót wyniku (np. „zmieniona belka 0000610D (H 375 → 450, …)”; same parametry — „bez wpływu na rysunek”); współrzędne względem P1 — punktu cięcia na rzucie wskazanym (nie MinPoint obrysu: STRETCH krawędzi daleko od cięcia bez alarmu, MOVE rzutu ze znacznikami bez alarmu; przesunięcie cięcia względem płyty wyłapują DIST / SEG i skrót wyniku); liczby `Math.Round(x, 1)` „0.0” Invariant (−0 → 0), SHA-256; skrót wyniku
     (ResultDigest, U − UMin) = rozjemca. Werdykt: hash równy → aktualny; VIEWS / CUT / LETTER różne → zawsze NIEAKTUALNY; inne
     różnice (tolerancja 0,15 mm, rozkłady dopasowane po handle, zapasowo po pozycji / warstwie / rodzaju / kierunku i najbliższym
     położeniu) przy równym skrócie wyniku → aktualny („zmiany bez wpływu na rysunek”), przy różnym → NIEAKTUALNY z przyczynami.
@@ -697,8 +732,8 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
 
 ## 4i. Belki / pogrubienia (downstand) — plan docs/PLAN_BELKI_2026-10-10.md
-Status: **E1 + E3 + E4 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika; E5 (RC_SECTION z belką,
-bezpiecznik), E6 (BBS) — do zrobienia. Wartości domyślne = rozstrzygnięcia 1b / 1c planu — **do potwierdzenia przez Bartka**
+Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika. Wartości
+domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do potwierdzenia przez Bartka**
 (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
 - **Siatka płyty (Mesh / B1…T2 / UB / B3 / Add) stref belek NIE widzi** — wynik płyt 319 / 528 / 539 jak wzorzec (testy BRX D319 /
   D528 / D539: zrzut po Prepare GA + Mesh = zrzut wtyczki HEAD; M528: belka, potem Mesh — rozkłady siatki = HEAD z dokładnością
@@ -771,13 +806,40 @@ bezpiecznik), E6 (BBS) — do zrobienia. Wartości domyślne = rozstrzygnięcia 
     koniec bez U-bara (jeden pręt / pręt środkowy), pierwsze strzemię odsunięte za U-bary, pręt dłuższy niż maks., brak H, brak strefy na rzucie górnym.
   - Strefy cięcia przy otworach (`ComputeCutZones`) uwzględniają skos rozkładu (rzeczywisty zasięg prętów L) — tylko ścieżka belki
     (`customizeBar`); siatka płyt bez zmian. Generowanie belki nie ma dziś listy otworów (`_currentHoles` pusta), więc cięć nie ma.
+  - **E4b — pręty boczne i pręty w nibie belki** (wymaganie użytkownika 2026-10-10; domyślne, do potwierdzenia przez Bartka; parametry w oknie
+    RC_BEAM i rekordzie [18]–[21]): **BS** — H10 na obu bokach przy ramionach strzemienia (oś: otulina + strzemię + d/2 od lica), rozstaw
+    pionowy oś–oś ≤ 200, liczba na bok `BeamGeometry.SideBarCount` = ceil(odległość osi prętów dołu i góry / 200) − 1, min. 0 (H 600 → 2,
+    750 → 3, 450 / 375 → 1, 300 → 0); zakres jak pręty proste (`StraightRange`: narożnik L / złącze T — lico kwadratu / własnego zakresu, koniec z U-barami — lico
+    z otuliną 40), bez zagięć; plan `PlanBars` z zakładem tej samej krotności Ø co pręty główne (`LapFor`: 800 / 16 → H10: 500), maks. 6000;
+    jeden rozkład na pręt planu: w rzucie 2 pręty (po jednym na bok), opis / BBS — wszystkie (`CountDisplay` = 2 × liczba na bok, gdy > 1 na bok;
+    zmiana liczby gripem — `RegenerateBarBlock` zachowuje krotność CountDisplay / Count tylko dla kodu BS),
+    opis `2 H10-nn BEAM SIDE`; **BN** — po 1 pręcie wzdłuż nibu belki w narożach spinki UB 03 (Ø 10): górą H10 (`… BEAM NIB T`), dołem H16
+    (`… BEAM NIB B`), oś w poprzek = krawędź płyty − 40 − 10 − d/2 (`BeamGeometry.NibBarLine`; odcinek z licem przy krawędzi ≤ 260 mm), wzdłuż —
+    koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty z otuliną 40, koniec wewnętrzny — do lica belki z otuliną, złącze T — lico
+    własnego zakresu; zakład jak BS (H16: 800, H10: 500). Oba: rzut dolny, seria dolna, znacznik `RC_AUTOREBAR_BEAM`, komunikaty `[RC BEAM]`
+    („pręty boczne H10: n na bok …”, „pręty wzdłuż nibu belki … — domyślne, do potwierdzenia”, „brak UB 03 wzdłuż nibu belki …” — gdy odcinek
+    nie ma UB 03, „pręt BN górą … może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia” — gdy na rzucie górnym jest rozkład T IN NIB
+    równoległy, ≤ 250 w poprzek od osi BN, zakresy nachodzą; „Nib: pręt górą = 0” w oknie RC_BEAM wyłącza BN górą). Interpretacja „brakuje 2 prętów H10 wzdłuż nibu
+    górą oraz dołem w narożu nibu też dajmy H16” (1 + 1 pręt) — **do potwierdzenia**. Kopia samych prętów BN bez strefy (CloneRemap → "") —
+    przynależność z testu punktu w strefie, a BN leżą w nibie (poza strefą) — ograniczenie jak dotąd.
+  - **E5 — RC_SECTION z belką** (sekcja 4g): profil betonu, pręty belki, wymiary, odcisk BEAM; RC_SECTION_CHECK / RC_SECTION_UPDATE (SectionUpdater
+    tą samą drogą) działają z belką.
+  - **E6 — BBS z belką:** pozycje belki w RC_BBS / RC_SCHEDULE / RC_COUNT_BBS jak każdy pręt RC_SINGLE_BAR z rozkładami: BB / BL / BS / BN
+    (< 100) — arkusz dolny, BT (101+) — górny; długość cięcia BS 8666:2020 z jednej funkcji (`BarLengthRules.CuttingLength`: 51 — 2A + 2B +
+    max(16d, 160), 11 — A + B − 0,5r − d, 21 — A + B + C − r − 2d, w górę do 25); sztuki = suma `EffectiveCount` rozkładów (4 pręty bez
+    rozstawu, strzemiona, BS — CountDisplay). Poprawka E6: szablony belki zapisują **TotalLength wg BS 8666:2020** (`FindOrCreateBeamTemplate`;
+    wcześniej TL = 0 → odczyt A → fałszywe ostrzeżenie RC_BBS „długość wg BS 8666:2020 = 1600 mm, w rysunku 200” dla strzemion 51).
 - Ponowne generowanie belki usuwa tylko jej rozkłady (znacznik = strefa; bez znacznika — punkt w strefie); jedna komenda = jedna grupa UNDO.
 - Testy: jednostkowe `BeamGeometryTests` (E4: zamknięcia 319 / 528 / 539 / T, plan warstwy, wymiary prętów L / U-barów, brak krzyżowania,
   pręty w strefie, długości 11 / 21 wg BS 8666:2020, prześwit tyłów U-barów ≥ 20 i strzemię za nimi, skrzyżowanie „+”, ramiona nachodzące,
   jeden pręt — bez U-bara, zagięcia złącza T na rzędach belki ciągłej); BRX `tools/BrxSmokeTests/run-planc-beam.ps1` (najpierw `-Baseline -PluginDll <DLL HEAD>` —
   zrzuty bazowe D526 / D319 / D528 / D539, potem właściwy: Prepare GA 319 / 528-529 / 539, liczby, numery, UNDO / REDO, COPY / MIRROR / ARRAY / PASTECLIP,
   ponowne Prepare GA, UB 03, format Blok i Polilinia, M528 — belka, potem Mesh; E4: pręty L / U-bary, wymiary szablonów, skos, hak w stronę
-  drugiego ramienia, linie w strefie).
+  drugiego ramienia, linie w strefie; E4b / E5 / E6: S528 — RC_SECTION przez belkę 528 prostopadle (profil, kropki dół / góra / boczne / nib,
+  strzemię w widoku, wymiary, opisy, BS / BN na rysunku), S528C — przekrój „sprzed E5” → „belka nieuwzględniona”, H 375 → 450 → „zmieniona
+  belka”, RC_SECTION_UPDATE → aktualne, S539 — przekrój wzdłuż belki 539, S539BBS — RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls, S528PDF /
+  S539PDF — kopie rysunku z layoutami do PDF, `-PdfDir`); jednostkowe `SectionBeamTests` (+ szósty złoty przypadek `beam` w
+  `SectionPlannerGoldenTests`, odciski HEAD bez belek, długości 51 / 11 / 21, E4b).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

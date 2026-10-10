@@ -34,12 +34,16 @@ namespace BricsCadRc.Core
         /// <summary>Średnica siatki górnej płyty (T1 / T2) do wysokości strzemienia (1b.1) — domyślne, do potwierdzenia.</summary>
         public const int BeamSlabTopDia = 12;
         public const double BeamCoverSide = 40, BeamCoverEnd = 40, BeamStirrupEndOffset = 50, BeamStirrupUb03Shift = 100;
+        /// <summary>E4b: średnica spinki UB 03 w nibie (pręty w nibie w jej narożach) — H10 (610-70-610).</summary>
+        public const int BeamNibUbDia = 10;
 
         public sealed class BeamRunResult
         {
             public int Zones, Stirrups, BottomDists, TopDists;
             /// <summary>E4: rozkłady prętów giętych (pręty L narożników / złącz T, U-bary) — dół + góra.</summary>
             public int BentDists;
+            /// <summary>E4b: rozkłady prętów bocznych (BS) i prętów wzdłuż nibu belki (BN).</summary>
+            public int SideDists, NibDists;
             public List<string> Messages = new List<string>();
         }
 
@@ -224,7 +228,7 @@ namespace BricsCadRc.Core
                 _currentHoles = saveHoles ?? new List<HoleBox>();
             }
             Msg($"Belki: {res.Zones} — strzemiona: {res.Stirrups} rozkł., dół: {res.BottomDists}, góra: {res.TopDists}, " +
-                $"pręty L / U-bary: {res.BentDists}.");
+                $"pręty L / U-bary: {res.BentDists}, boczne: {res.SideDists}, w nibie: {res.NibDists}.");
             return res;
         }
 
@@ -372,6 +376,73 @@ namespace BricsCadRc.Core
             if (planT != null)
                 foreach (var run in planT.Bent)
                     if (BeamBent(db, doc.Editor, top, run, top: true, BeamGeometry.CodeTop, ztHandle, delta)) res.BentDists++;
+
+            // ── E4b (wymaganie użytkownika 2026-10-10; domyślne, do potwierdzenia): pręty boczne (BS) na obu bokach przy ramionach
+            //    strzemienia i pręty wzdłuż nibu belki (BN: górą i dołem w narożach spinki UB 03) — rzut dolny, seria dolna; proste,
+            //    bez zagięć: narożnik L / złącze T — lico własnego zakresu, koniec z U-barami — lico z otuliną (jak pręty proste) ──
+            int nSide = p.SideDia > 0 ? BeamGeometry.SideBarCount(A51, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing) : 0;
+            if (p.SideDia > 0)
+                msg($"{name}: pręty boczne H{p.SideDia}: {nSide} na bok (rozstaw pionowy ≤ {p.SideSpacing:F0}; proste — w narożnikach " +
+                    "i na końcach bez zagięć, do potwierdzenia).");
+            if (nSide > 0)
+            {
+                double lapS = BeamGeometry.LapFor(p.Lap, p.BottomDia, p.SideDia);
+                int total = 2 * nSide;
+                for (int i = 0; i < segs.Count; i++)
+                {
+                    var s = segs[i];
+                    var (lo, hi) = BeamGeometry.StraightRange(s, BeamCoverSide);
+                    var (c0, c1) = BeamGeometry.SideBarsAcross(s, p.SideDia, p.StirrupDia, BeamCoverSide);
+                    var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapS);
+                    for (int k = 0; k < plan.Count; k++)
+                    {
+                        double a0 = lo + plan[k].Offset, a1 = a0 + plan[k].Length;
+                        var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.SideDia, shape: "00", a: plan[k].Length, b: 0,
+                                                           code: BeamGeometry.CodeSide);
+                        // dwa pręty w rzucie (po jednym na bok), opis i BBS — wszystkie (CountDisplay = 2 × liczba na bok)
+                        if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, s, a0, a1, c0, c1 - c0, 2, p.SideDia, BeamGeometry.CodeSide,
+                                                                BeamGeometry.SuffixSide, i + k, zbHandle, new Vector2d(),
+                                                                total > 2 ? (Action<BarData>)(bar => bar.CountDisplay = total) : null))
+                            res.SideDists++;
+                    }
+                }
+            }
+            var outl = bottom.Verts.Select(v => (v.X, v.Y)).ToList();
+            int nibRuns = 0;
+            // T IN NIB płyty (rzut górny, przesunięty do układu rzutu dolnego) — BN górą może je dublować (Mesh nie widzi belek, E2 wstrzymany)
+            var tinNib = p.NibTopDia > 0 ? ReadTinNib(db, top ?? bottom, top != null ? delta : new Vector2d()) : null;
+            var noUbMsg = new HashSet<int>();
+            foreach (var (nd, suffix) in new[] { (p.NibTopDia, BeamGeometry.SuffixNibTop), (p.NibBottomDia, BeamGeometry.SuffixNibBottom) })
+            {
+                if (nd <= 0) continue;
+                double lapN = BeamGeometry.LapFor(p.Lap, p.BottomDia, nd);
+                for (int i = 0; i < segs.Count; i++)
+                {
+                    var line = BeamGeometry.NibBarLine(segs[i], outl, nd, BeamNibUbDia, BeamCoverSide);
+                    if (line == null) continue;
+                    var (across, lo, hi) = line.Value;
+                    // położenie w poprzek = naroże spinki UB 03 (otulina + Ø spinki + d/2) — bez UB 03 wzdłuż nibu: komunikat
+                    if (Ub03Along(ub03, segs[i]) == null && noUbMsg.Add(i))
+                        msg($"{name}: odcinek {i + 1} — brak UB 03 wzdłuż nibu belki; pręty BN w położeniu naroży spinki " +
+                            $"(krawędź − {BeamCoverSide:F0} − {BeamNibUbDia} − d/2) — do sprawdzenia.");
+                    if (suffix == BeamGeometry.SuffixNibTop && TinAlong(tinNib, segs[i], across, lo, hi))
+                        msg($"{name}: odcinek {i + 1} — pręt BN górą (H{nd}) może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia " +
+                            "(Nib: pręt górą = 0 w oknie RC_BEAM wyłącza BN górą).");
+                    var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapN);
+                    for (int k = 0; k < plan.Count; k++)
+                    {
+                        double a0 = lo + plan[k].Offset, a1 = a0 + plan[k].Length;
+                        var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: nd, shape: "00", a: plan[k].Length, b: 0,
+                                                           code: BeamGeometry.CodeNib);
+                        if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, segs[i], a0, a1, across, 0, 1, nd, BeamGeometry.CodeNib,
+                                                                suffix, i + k, zbHandle, new Vector2d()))
+                        { res.NibDists++; nibRuns++; }
+                    }
+                }
+            }
+            if (p.NibTopDia > 0 || p.NibBottomDia > 0)
+                msg($"{name}: pręty wzdłuż nibu belki (górą H{p.NibTopDia}, dołem H{p.NibBottomDia} w narożach spinki UB 03): {nibRuns} rozkł. " +
+                    "(na końcach przy krawędzi do lica z otuliną; domyślne, do potwierdzenia).");
         }
 
         /// <summary>
@@ -409,7 +480,8 @@ namespace BricsCadRc.Core
         /// <summary>Rozkład prętów podłużnych odcinka s (a0..a1 wzdłuż osi, count prętów w poprzek od f0 co sp), przesunięty o delta.</summary>
         private static bool BeamLongitudinal(Database db, BeamView view, (ObjectId id, BarData bar) tpl, BeamGeometry.Segment s,
                                              double a0, double a1, double f0, double sp, int count, int d,
-                                             string code, string suffix, int repr, string zoneHandle, Vector2d delta)
+                                             string code, string suffix, int repr, string zoneHandle, Vector2d delta,
+                                             Action<BarData> customize = null)
         {
             double c1 = f0 + Math.Max(0, count - 1) * sp;
             bool barsX = s.AlongX;
@@ -417,7 +489,7 @@ namespace BricsCadRc.Core
             double y0 = barsX ? f0 : a0, y1 = barsX ? c1 : a1;
             return BeamDistribution(db, view, tpl, x0 + delta.X, y0 + delta.Y, x1 + delta.X, y1 + delta.Y, barsX, d, a1 - a0,
                                     count > 1 ? sp : 200, count > 1 ? sp : double.NaN, code, suffix, noSpacing: true,
-                                    shape: null, repr: repr, zoneHandle: zoneHandle);
+                                    shape: null, repr: repr, zoneHandle: zoneHandle, customize: customize);
         }
 
         /// <summary>
@@ -497,6 +569,10 @@ namespace BricsCadRc.Core
             bar.ShapeCode = shape;
             bar.LengthA = a;
             if (shape != "00") { bar.LengthB = b; bar.LengthC = c; }
+            // E6: długość całkowita wg BS 8666:2020 (51: 2A + 2B + max(16d, 160), 11, 21) — bez niej rekord ma TL = 0, odczyt podaje A
+            // i RC_BBS ostrzega „długość wg BS 8666:2020 … w rysunku …” dla strzemion 51 (BBS i tak liczy z formuły)
+            try { bar.TotalLength = BarLengthRules.TotalLengthFor(shape, new[] { a, b, c }, d); }
+            catch (System.Exception ex) { Log.Error("AutoRebar.FindOrCreateBeamTemplate.TotalLength", ex); }
             bar.Mark = BarData.FormatMark(d, posNr, 0, 1);
             // Elewacja szablonu (BarGeometryBuilder): 00 — linia; 51 — od 0 do A w górę; 11 — ramię B w górę; 21 — ramiona A w dół
             // od punktu wstawienia. shift — przesunięcie w dół (góra rysunku pod poprzednim szablonem), topOff — góra nad wstawieniem.
@@ -815,6 +891,56 @@ namespace BricsCadRc.Core
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.ReadUb03", ex); }
             return res;
+        }
+
+        /// <summary>
+        /// Rozkłady T IN NIB rzutu (zwykle górnego) w układzie rzutu dolnego (minus shift): kierunek prętów, zakres wzdłuż (a0..a1)
+        /// i położenia prętów w poprzek. Tylko odczyt.
+        /// </summary>
+        private static List<(bool barsAlongX, double a0, double a1, List<double> pos)> ReadTinNib(Database db, BeamView view, Vector2d shift)
+        {
+            var res = new List<(bool, double, double, List<double>)>();
+            if (view == null) return res;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                string vh = view.OuterId.Handle.ToString();
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || string.IsNullOrEmpty(bar.Mark) || !bar.Mark.TrimEnd().EndsWith(" " + NibTopSuffix)) continue;
+                    if (Math.Abs(br.Rotation) > 1e-6) continue;
+                    string tag = ReadSlabTag(br);
+                    bool mine = tag != null ? SameHandle(tag, vh)
+                                            : GeometryHelper.IsPointInsidePolygon(view.Verts, new Point2d(br.Position.X, br.Position.Y));
+                    if (!mine) continue;
+                    bool x = !string.Equals(bar.Direction, "Y", StringComparison.OrdinalIgnoreCase);
+                    double px = br.Position.X - shift.X, py = br.Position.Y - shift.Y;
+                    double scan0 = x ? py : px, along0 = x ? px : py;
+                    var pos = new List<double>();
+                    for (int i = 0; i < Math.Max(1, bar.Count); i++) pos.Add(scan0 + i * bar.Spacing);
+                    res.Add((x, along0, along0 + bar.LengthA, pos));
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.ReadTinNib", ex); }
+            return res;
+        }
+
+        /// <summary>Czy wzdłuż nibu odcinka (oś BN w poprzek across, zakres lo..hi) leży rozkład T IN NIB (pręty równoległe, ≤ 250 w poprzek, zakresy nachodzą).</summary>
+        private static bool TinAlong(List<(bool barsAlongX, double a0, double a1, List<double> pos)> tin, BeamGeometry.Segment s,
+                                     double across, double lo, double hi)
+        {
+            if (tin == null) return false;
+            foreach (var (barsX, a0, a1, pos) in tin)
+            {
+                if (barsX != s.AlongX) continue;
+                if (Math.Min(a1, hi) - Math.Max(a0, lo) < 1.0) continue;
+                if (pos.Any(v => Math.Abs(v - across) <= 250.0)) return true;
+            }
+            return false;
         }
 
         /// <summary>

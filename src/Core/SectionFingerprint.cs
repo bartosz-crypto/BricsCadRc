@@ -175,6 +175,19 @@ namespace BricsCadRc.Core
                     if (c.ContainsKey(key)) key += "#" + c.Count.ToString(Inv);
                     c[key] = new FieldList().N("R", r).ToString();
                 }
+
+                // Belki (plan belek E5): składnik BEAM:<handle> tylko dla belki przeciętej linią cięcia (brak belek — ten sam
+                // odcisk co przed E5); pas względem P1 (współrzędna wzdłuż cięcia), H, nib, parametry rekordu
+                double ma = inp.CutAlongX ? mx : my;
+                int anonB = 0;
+                foreach (var b in res.UsedBeams)
+                {
+                    string key = "BEAM:" + (string.IsNullOrEmpty(b.Handle) ? "#" + (anonB++).ToString("D3", Inv) : b.Handle);
+                    while (c.ContainsKey(key)) key += "#" + (anonB++).ToString("D3", Inv);
+                    c[key] = new FieldList().N("S0", Math.Min(b.S0, b.S1) - ma).N("S1", Math.Max(b.S0, b.S1) - ma).N("H", b.Height)
+                        .N("NW", b.NibWidth).N("NH", b.NibHeight).N("Cv", b.Cover).S("LD", b.StirrupDia.ToString(Inv)).N("LA", b.StirrupA)
+                        .S("P", b.Params).ToString();
+                }
             }
             return c;
         }
@@ -189,6 +202,9 @@ namespace BricsCadRc.Core
             for (int i = 0; i < 5; i++)
                 f.S(names[i], d.SourceDims != null && i < d.SourceDims.Length ? Num(d.SourceDims[i]) : "-");
             f.S("SL", d.ShapeLocal != null ? ShortHash(string.Join(";", d.ShapeLocal.Select(p => Num(p.X) + "," + Num(p.Y)))) : "-");
+            // belki (E5 / E4b; tylko pręty belki — odcisk innych rozkładów bez zmian): skos, drugie ramię U-bara, poziomy prętów bocznych
+            if (d.Kind == SectionPlanner.DistKind.Beam)
+                f.N("SkS", d.SkewStart).N("SkE", d.SkewEnd).N("Pair", d.PairOffset).S("Lv", d.Layers.ToString(Inv));
             return f.ToString();
         }
 
@@ -285,6 +301,7 @@ namespace BricsCadRc.Core
             CompareLevels(Get(s, "LVL"), Get(c, "LVL"), soft);
             CompareDists(s, c, soft);
             ComparePiles(s, c, soft);
+            CompareBeams(s, c, hard, soft);
 
             if (hard.Count > 0)
             {
@@ -411,6 +428,7 @@ namespace BricsCadRc.Core
             ("Mark", "opis"), ("Lay", "warstwa"), ("Kind", "rodzaj"), ("AX", "kierunek"), ("LenA", "długość"), ("Span", "zakres"),
             ("Cnt", "liczba prętów"), ("Sp", "rozstaw"), ("Nom", "rozstaw nominalny"), ("Dia", "średnica"), ("Shape", "kształt"),
             ("Side", "strona symbolu"), ("SL", "kształt pręta wzorcowego"),
+            ("SkS", "skos (początek)"), ("SkE", "skos (koniec)"), ("Pair", "drugie ramię U-bara"), ("Lv", "liczba prętów bocznych na bok"),
         };
 
         /// <summary>
@@ -476,6 +494,59 @@ namespace BricsCadRc.Core
             }
             foreach (var a in removed) reasons.Add($"usunięty rozkład {DistLabel(Fields(s[a]))} (albo już nie przecina linii cięcia)");
             foreach (var b in added) reasons.Add($"nowy rozkład {DistLabel(Fields(c[b]))} na linii cięcia");
+        }
+
+        // ── belki (plan belek E5) ───────────────────────────────────────
+
+        private static readonly (string Field, string Name)[] BeamNames =
+        {
+            ("S0", "początek pasa"), ("S1", "koniec pasa"), ("H", "H"), ("NW", "szer. nibu"), ("NH", "wys. nibu"), ("Cv", "otulina"),
+            ("LD", "Ø strzemion"), ("LA", "wysokość strzemienia"), ("P", "parametry"),
+        };
+
+        /// <summary>
+        /// Belki: zapisany odcisk bez żadnego składnika BEAM, a bieżący z belką na linii cięcia → NIEAKTUALNY zawsze („belka
+        /// nieuwzględniona” — przekrój narysowany przed E5 albo belka dodana później); inne różnice (zmieniona / usunięta / nowa belka)
+        /// rozstrzyga skrót wyniku. Dopasowanie po handle strefy, zapasowo — najbliższy pas (S0).
+        /// </summary>
+        private static void CompareBeams(SortedDictionary<string, string> s, SortedDictionary<string, string> c, List<string> hard, List<string> soft)
+        {
+            var sk = s.Keys.Where(k => k.StartsWith("BEAM:", StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            var ck = c.Keys.Where(k => k.StartsWith("BEAM:", StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            if (sk.Count == 0 && ck.Count == 0) return;
+            string Name(string k) => "belka " + k.Substring("BEAM:".Length);
+            if (sk.Count == 0)
+            {
+                foreach (var k in ck)
+                {
+                    var f = Fields(c[k]);
+                    hard.Add($"{Name(k)} (H {Disp(F(f, "H"))}) nieuwzględniona w przekroju (przekrój sprzed obsługi belek albo belka dodana później) — RC_SECTION_UPDATE");
+                }
+                return;
+            }
+            var pairs = new List<(string, string)>();
+            foreach (var k in sk.ToList())
+                if (ck.Contains(k) && !k.StartsWith("BEAM:#", StringComparison.Ordinal)) { pairs.Add((k, k)); sk.Remove(k); ck.Remove(k); }
+            foreach (var x in sk.SelectMany(a => ck.Select(b => (a, b, d: Math.Abs(Val(F(Fields(s[a]), "S0")) - Val(F(Fields(c[b]), "S0"))))))
+                                .OrderBy(x => x.d).ThenBy(x => x.a, StringComparer.Ordinal).ToList())
+            {
+                if (!sk.Contains(x.a) || !ck.Contains(x.b)) continue;
+                pairs.Add((x.a, x.b)); sk.Remove(x.a); ck.Remove(x.b);
+            }
+            foreach (var (a, b) in pairs)
+            {
+                var fa = Fields(s[a]); var fb = Fields(c[b]);
+                var diffs = new List<string>();
+                foreach (var (field, name) in BeamNames)
+                {
+                    string x = F(fa, field), y = F(fb, field);
+                    if (x == y || NumEq(x, y)) continue;
+                    diffs.Add(field == "P" ? name : $"{name} {Disp(x)} → {Disp(y)}");
+                }
+                if (diffs.Count > 0) soft.Add($"zmieniona {Name(b)} ({string.Join(", ", diffs)})");
+            }
+            foreach (var a in sk) soft.Add($"usunięta {Name(a)} (albo już nie przecina linii cięcia)");
+            foreach (var b in ck) soft.Add($"nowa {Name(b)} na linii cięcia");
         }
 
         // ── pale ────────────────────────────────────────────────────────

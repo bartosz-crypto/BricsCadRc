@@ -1,6 +1,8 @@
-﻿# BEAM — testy dymne belek / pogrubień (docs/PLAN_BELKI_2026-10-10.md, E1 + E3) w prawdziwym BricsCAD V25:
+﻿# BEAM — testy dymne belek / pogrubień (docs/PLAN_BELKI_2026-10-10.md, E1 + E3 + E4 + E5 + E6) w prawdziwym BricsCAD V25:
 # Prepare GA 319 / 528-529 / 539 (strefa RC-BEAM, H), generowanie prętów belki (strzemiona 51, 4 + 4 H16), numery, UNDO / REDO,
 # COPY / MIRROR / ARRAY / PASTECLIP płyty z belką (CloneRemap), ponowne Prepare GA, przesunięcie strzemion względem UB 03, format Blok.
+# E5 / E6: RC_SECTION przez belkę 528 (prostopadle) i 539 (wzdłuż), RC_SECTION_CHECK / UPDATE, BBS z belką (RC_BBS / RC_SCHEDULE /
+# RC_COUNT_BBS / .xls); kopie rysunku z layoutami do PDF w -PdfDir (zmienna RC_BEAM_PDF_DIR; rysunek testowy NIE jest zapisywany).
 # Zrzuty D526 / D319 porównywane z wtyczką HEAD: najpierw przebieg bazowy
 #   run-planc-beam.ps1 -Baseline -PluginDll <DLL wtyczki HEAD>   (RC_BEAM_DUMP_TAG=head, skrypt planc-beam-base.scr),
 # potem właściwy:  run-planc-beam.ps1 -PluginDll bin-staging\NaSmartRc.dll   (zrzuty „new” porównane z „head”).
@@ -17,6 +19,7 @@ param(
     [int]$QuitGraceSec = 30,
     [string]$PluginDll = '',
     [string]$GaDir = '',
+    [string]$PdfDir = '',
     [switch]$Baseline
 )
 
@@ -52,6 +55,10 @@ if ([string]::IsNullOrWhiteSpace($GaDir)) {
 $env:RC_BEAM_GA = $GaDir
 $env:RC_BEAM_DUMP_TAG = $(if ($Baseline) { 'head' } else { 'new' })
 Write-Host "GA: $GaDir  (zrzuty: $env:RC_BEAM_DUMP_TAG)"
+# E5: kopie rysunku z layoutami „BELKA 528 / 539” (do PDF) — folder -PdfDir, domyślnie katalog wyników
+if ([string]::IsNullOrWhiteSpace($PdfDir)) { $PdfDir = $outDir }
+$env:RC_BEAM_PDF_DIR = $PdfDir
+Write-Host "Kopie do PDF: $PdfDir"
 
 $argList = @('/automation')
 if (Test-Path -LiteralPath $template) {

@@ -35,6 +35,13 @@ namespace BricsCadRc.Core
         public double MaxLength = 6000;
         /// <summary>Góra strzemienia pod: 2 = obiema warstwami T (domyślne, 1b.1), 1 = jedną warstwą T.</summary>
         public int StirrupTopLayers = 2;
+        /// <summary>E4b (wymaganie użytkownika 2026-10-10): pręty boczne na obu bokach belki — średnica (0 = brak) i rozstaw pionowy
+        /// (liczba na bok = ceil(światło między prętami dołu i góry / rozstaw) − 1, min. 0; H 600 → 2). Domyślne, do potwierdzenia.</summary>
+        public int SideDia = 10;
+        public double SideSpacing = 200;
+        /// <summary>E4b: pręty wzdłuż nibu belki w narożach spinki UB 03 — górą i dołem (0 = brak); po 1 pręcie. Domyślne H10 / H16,
+        /// do potwierdzenia przez Bartka.</summary>
+        public int NibTopDia = 10, NibBottomDia = 16;
 
         public BeamParams Clone() => (BeamParams)MemberwiseClone();
     }
@@ -50,15 +57,18 @@ namespace BricsCadRc.Core
     /// </summary>
     public static class BeamGeometry
     {
-        /// <summary>Kody warstw prętów belki (NIE zaczynają się od B1/B2/T1/T2 — EraseOldDistributions płyty ich nie widzi).</summary>
-        public const string CodeBottom = "BB", CodeTop = "BT", CodeLinks = "BL";
+        /// <summary>Kody warstw prętów belki (NIE zaczynają się od B1/B2/T1/T2 — EraseOldDistributions płyty ich nie widzi).
+        /// E4b: BS — pręty boczne, BN — pręty wzdłuż nibu belki (seria dolna, rzut dolny).</summary>
+        public const string CodeBottom = "BB", CodeTop = "BT", CodeLinks = "BL", CodeSide = "BS", CodeNib = "BN";
         /// <summary>Sufiksy opisów: „4 H16-05 BEAM B”, „4 H16-103 BEAM T”, „52 H10-07-200 LINKS”; E4: pręty L narożnika / złącza T
         /// „4 H16-08 BEAM CORNER”, U-bary końca „1 H16-09 BEAM END” (kody warstw jak pręty proste: BB dół, BT góra).</summary>
         public const string SuffixBottom = "BEAM B", SuffixTop = "BEAM T", SuffixLinks = "LINKS";
         public const string SuffixCorner = "BEAM CORNER", SuffixEnd = "BEAM END";
+        /// <summary>E4b: „2 H10-10 BEAM SIDE”, „1 H10-11 BEAM NIB T”, „1 H16-12 BEAM NIB B”.</summary>
+        public const string SuffixSide = "BEAM SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "BEAM NIB B";
 
         public static bool IsBeamCode(string code)
-            => code == CodeBottom || code == CodeTop || code == CodeLinks;
+            => code == CodeBottom || code == CodeTop || code == CodeLinks || code == CodeSide || code == CodeNib;
 
         public const double MinWidth = 150.0, MaxWidth = 1500.0;
         /// <summary>Krawędź osiowa z tolerancją 4 mm (jak obrys płyty — OutlineAxisRules).</summary>
@@ -1014,6 +1024,66 @@ namespace BricsCadRc.Core
             double a = lo + off, b = hi - off;
             if (count <= 1 || b <= a) return ((lo + hi) / 2, 0);
             return (a, (b - a) / (count - 1));
+        }
+
+        // ── E4b: pręty boczne i pręty w nibie belki (domyślne, do potwierdzenia przez Bartka) ──
+
+        /// <summary>
+        /// Liczba prętów bocznych na bok: odległość OSI prętów dołu i góry (wewnątrz strzemienia o wysokości zewnętrznej A:
+        /// A − 2·dLink − (dB + dT)/2) / rozstaw w górę, minus 1, min. 0 — rozstaw oś–oś ≤ spacing (poprawka recenzji; wcześniej
+        /// od światła — H 750: 3 odstępy po ~205). Np. H 600 (A 500): 464 / 200 → 3 − 1 = 2; 750 (A 650): 614 → 3; 450 (A 350): 1;
+        /// 375: 1; 300: 0.
+        /// </summary>
+        public static int SideBarCount(double stirrupA, double dLink, double dBottom, double dTop, double spacing)
+        {
+            if (stirrupA <= 0 || spacing <= 0) return 0;
+            double axes = stirrupA - 2 * dLink - (dBottom + dTop) / 2.0;
+            if (axes <= 0) return 0;
+            return Math.Max(0, (int)Math.Ceiling(axes / spacing - 1e-9) - 1);
+        }
+
+        /// <summary>Osie prętów bocznych w poprzek (przy ramionach strzemienia): otulina + strzemię + d/2 od każdego lica.</summary>
+        public static (double Lo, double Hi) SideBarsAcross(Segment s, double d, double dLink = 10, double cover = 40)
+            => (s.AcrossLo + cover + dLink + d / 2.0, s.AcrossHi - cover - dLink - d / 2.0);
+
+        /// <summary>Zakład pręta o średnicy d przy zakładzie lap prętów głównych średnicy dMain — ta sama krotność średnicy, w górę do 25 (800 / 16 → H10: 500).</summary>
+        public static double LapFor(double lap, int dMain, int d) => dMain > 0 && d > 0 ? Ceil25(lap * d / dMain) : lap;
+
+        /// <summary>
+        /// Pręt wzdłuż nibu belki (E4b): oś w poprzek — w narożu spinki UB 03 (krawędź płyty − otulina − Ø spinki − d/2), zakres wzdłuż —
+        /// koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty na końcu z otuliną, koniec wewnętrzny do lica belki z otuliną,
+        /// złącze T — lico własnego zakresu. Null, gdy odcinek nie ma lica przy krawędzi płyty (nib ≤ EdgeEndMaxGap).
+        /// </summary>
+        public static (double Across, double Lo, double Hi)? NibBarLine(Segment s, IList<(double X, double Y)> outline, double d,
+                                                                       double dUb = 10, double cover = 40)
+        {
+            if (s == null || s.Manual || s.OuterSide == 0 || outline == null || outline.Count < 3) return null;
+            var poly = outline.ToList();
+            double mid = (s.OwnLo + s.OwnHi) / 2;
+            double face = s.OuterSide < 0 ? s.AcrossLo : s.AcrossHi;
+            int sg = s.OuterSide < 0 ? -1 : 1;
+            var p = s.AlongX ? (mid, face) : (face, mid);
+            var v = s.AlongX ? (0.0, (double)sg) : ((double)sg, 0.0);
+            double gap = RayHit(poly, p, v);
+            if (double.IsInfinity(gap) || gap > EdgeEndMaxGap || gap < 1.0) return null;
+            double across = face + sg * gap - sg * (cover + dUb + d / 2.0);
+            double End(bool atLo)
+            {
+                var kind = atLo ? s.LoKind : s.HiKind;
+                double own = atLo ? s.OwnLo : s.OwnHi;
+                int dir = atLo ? -1 : 1;
+                if (kind == EndKind.Edge || kind == EndKind.Corner)
+                {
+                    var q = s.AlongX ? (own, across) : (across, own);
+                    var w = s.AlongX ? ((double)dir, 0.0) : (0.0, (double)dir);
+                    double h = RayHit(poly, q, w);
+                    if (!double.IsInfinity(h)) return own + dir * (h - cover);
+                }
+                if (kind == EndKind.Tee) return own;
+                return (atLo ? s.FaceLo : s.FaceHi) - dir * cover;
+            }
+            double lo = End(true), hi = End(false);
+            return hi - lo > 100 ? (across, lo, hi) : ((double, double, double)?)null;
         }
 
         /// <summary>Wysokość belki z opisu GA („450THK”, „375 THK”; bez „mm” — to grubość płyty); null gdy brak.</summary>

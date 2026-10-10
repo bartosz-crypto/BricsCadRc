@@ -1,6 +1,6 @@
 # Plan: automatyczne zbrojenie belek / pogrubień (downstand) — NA Smart RC
 
-Status: E1 + E3 + E4 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E5–E6 do zrobienia. Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
+Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzymany. Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
 
 ## Status realizacji (2026-10-10, staging — do testów Bartka)
 - **E1 — zrobione:** model (`RC_BEAM` [1]–[17], `RC_AUTOREBAR_BEAM` [1], warstwa `RC-BEAM`; `BeamStore`), czysta `BeamGeometry`
@@ -15,7 +15,35 @@ Status: E1 + E3 + E4 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E5–E6 do z
   (testy jednostkowe 539 / 528 / 319 / T), `AutoRebarEngine.Beam` (BeamBent), BRX `run-planc-beam.ps1` (319: strzemiona 41 / 12,
   539: 13 / 24 / 52, 2 narożniki × 4 pręty L i 4 U-bary na warstwę, 528: 4 U-bary na warstwę, 2 pozycje); kody BB / BT bez zmian.
   Komunikat „E4 w przygotowaniu” usunięty.
-- **E2 — wstrzymany** (siatka przy belce). **E5, E6 — do zrobienia.**
+- **E4b — zrobione** (wymaganie użytkownika 2026-10-10, dołożone przed E5): pręty boczne **BS** H10 na obu bokach przy ramionach strzemienia,
+  rozstaw pionowy ≤ 200, liczba na bok = ceil(odległość osi prętów dołu i góry / 200) − 1, rozstaw oś–oś ≤ 200 (H 600 → 2, 750 → 3, 450 / 375 → 1, 300 → 0), zakres jak
+  pręty proste (bez zagięć: lico kwadratu narożnika / złącza T, przed U-barami lico z otuliną), zakład tej samej krotności Ø (H10: 500), w rzucie
+  2 pręty (po 1 na bok), opis / BBS — wszystkie (CountDisplay); pręty wzdłuż nibu **BN** w narożach spinki UB 03 — górą H10, dołem H16 (po 1),
+  od lica płyty na końcach (nib zawinięty) z otuliną; rzut dolny, seria dolna; parametry w oknie RC_BEAM i rekordzie RC_BEAM [18]–[21]
+  (`BeamGeometry.SideBarCount / SideBarsAcross / LapFor / NibBarLine`). 528: BS 2 rozkłady (1 na bok), BN 4; 539: BS 0, BN obie nogi.
+- **E5 — zrobione:** `SectionPlanner.Input.Beams` (`BeamBand`), profil z belką (spód −H w pasie, nib belki przy spodzie po stronie krawędzi),
+  pręty belki (rodzaj `Beam`: kropki dół / góra / boczne / nib, strzemię 51 w widoku; wzdłuż belki — pręty w widoku, strzemiona jako pionowe
+  ramiona), wymiary (nib belki, H, szerokość), opisy; `PrepareSection` czyta strefy RC_BEAM i rozkłady BB / BT / BL / BS / BN (tylko jako
+  elementy belki); pusta lista = wynik bit w bit (5 złotych przypadków bez zmian, Version 1), szósty złoty przypadek `beam`; odcisk BEAM:<strefa>
+  (brak belek = ten sam hash — test z odciskami HEAD), Compare: „belka … nieuwzględniona” (przekrój sprzed E5) = NIEAKTUALNY zawsze,
+  „zmieniona belka …” rozstrzyga skrót wyniku; RC_SECTION_UPDATE działa (BRX S528C).
+- **E6 — zrobione:** pozycje belki w RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls (BB / BL / BS / BN dół, BT góra; 00 / 11 / 21 / 51; długości
+  cięcia BS 8666:2020; sztuki = suma rozkładów; masa .xls = COUNT — BRX S539BBS). Poprawka: szablony belki z TotalLength wg BS 8666:2020
+  (wcześniej TL = 0 → ostrzeżenie RC_BBS dla strzemion 51).
+- **E2 — wstrzymany** (siatka przy belce).
+- Poprawki po recenzji E4b + E5 + E6 (2026-10-10): BN w przekroju w narożach spinki UB 03 z pasa (wcześniej nachodziły na jej ramiona),
+  bez UB 03 — wzór + komunikat przy generowaniu; T IN NIB w trzonie belki — poziom jak w płycie; T IN NIB nachodzący na BN — odsunięty do styku;
+  liczba prętów bocznych od osi (H 750: 3 na bok, nie 2); CountDisplay BS zachowany po gripie.
+- **Odstępstwo / do decyzji Bartka (2026-10-10): BN górą H10 praktycznie dubluje T IN NIB** (Mesh nie widzi belek, E2 wstrzymany — T IN NIB
+  płyty zostaje przy belce). Dziś: oba są generowane; przy generowaniu belki komunikat `[RC BEAM] … pręt BN górą może dublować T IN NIB wzdłuż
+  tego nibu — do potwierdzenia`; parametr „Nib: pręt górą” = 0 (rekord [20] NibTopDia) wyłącza BN górą. W przekroju drugi pręt T IN NIB
+  („150 dalej” — w trzonie belki między licem a strzemieniem) zostaje na poziomie płyty (wybrano „jak w płycie” zamiast pomijania: pręt jest
+  w rysunku i w BBS), pierwszy (w nibie) odsunięty od BN górą do styku lic.
+- Odstępstwa E5 / E4b (świadome, do potwierdzenia): pręty siatki przy belce w przekroju = to, co jest w rysunku (E2 wstrzymany — przez belkę);
+  przekrój „sprzed E5” i „belka dodana później” — jeden komunikat (nie da się ich odróżnić bez podbicia formatu odcisku, które zmieniłoby hash
+  przekrojów bez belek); pręty identyczne z prętami siatki dostają wspólny numer (np. BS H10 L5500 = B1, BN H16 L5500 = BB) — zasada „identyczny
+  pręt → istniejąca pozycja”; U-bar w przekroju — oba ramiona (drugie z B − d), pręt L — tylko widoczne ramię; opis pręta belki w widoku przy
+  braku miejsca — strzałka może przeciąć inne opisy.
 - Odstępstwa E4 (świadome, do potwierdzenia): pręty L we WSZYSTKICH rzędach warstwy (nie tylko zewnętrznym i wewnętrznym — pręty
   środkowe krzyżowałyby ramiona L w narożniku), identyczne i przesunięte po przekątnej (jedna pozycja na narożnik); pręty proste przy
   narożniku L kończą się na licu kwadratu narożnika (E3: lico zewnętrzne, krzyżowały się), przy złączu T — na bliższym licu belki ciągłej;
@@ -35,6 +63,9 @@ Status: E1 + E3 + E4 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E5–E6 do z
   omijają opisy belek (zasada „opisy nie nachodzą”).
 
 ### Wartości DOMYŚLNE do potwierdzenia przez Bartka
+0. (E4b) Pręty boczne H10, rozstaw pionowy ≤ 200, liczba na bok ceil(odległość osi dołu i góry / 200) − 1; proste, bez zagięć w narożnikach / na końcach;
+   pręty w nibie: górą H10 + dołem H16 (po 1, w narożach spinki UB 03) — interpretacja „brakuje 2 prętów H10 wzdłuż nibu górą oraz dołem
+   w narożu nibu też dajmy H16” do potwierdzenia; zakład prętów H10 = 500 (ta sama krotność Ø co 800 / H16).
 1. Strzemię 51 pod OBIEMA warstwami T: A = H − 35 − 12 − 12 − 40, w dół do 5 (450 → 350, 375 → 275, 300 → 200); opcja „jedną warstwą”.
 2. Strzemiona H10 co 200 (CP przy palach: LINKS H12@200), 50 od lica końca odcinka, przesunięcie 100 względem UB 03.
 3. Zakład H16 = 800 (≈ 50d), w przedziale [800, 1050), maks. 6000, pręty równe (gdy się nie da — ostatni krótszy, osobna pozycja); zakłady dół / góra w tym samym przekroju, wszystkie 4 pręty w jednym przekroju.
@@ -150,6 +181,7 @@ Strzemię 51: B = 600 − 2·40 = 520; 4 H16 w warstwie, osie co ≈ 161; dół 
 - E2: siatka przy belce (wycinanie równoległych, UB) — zmienia wynik tylko płyt z belką; nowy przypadek S-REG F-BEAM + expected-diffs.
 - E3: strzemiona 51 + podłużne 4 + 4 (proste odcinki).
 - E4: narożniki L/T, U-bary, koniec wewnętrzny.
+- E4b: pręty boczne (BS) i pręty wzdłuż nibu (BN) — wymaganie 2026-10-10 (przed E5).
 - E5: RC_SECTION z belką + bezpiecznik.
 - E6: BBS (arkusze), ARCHITECTURE.md 4i.
 
