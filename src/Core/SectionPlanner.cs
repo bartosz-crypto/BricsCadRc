@@ -391,13 +391,8 @@ namespace BricsCadRc.Core
                     b.UbBot = vUbBot(d, d.Diameter) + sh;
                     b.UbTop = vUbTop(d, d.Diameter) + sh;
                     b.UbDia = d.Diameter;
-                    // UB 03 to element płyty (otulina dołem płyty + zapas) — pręt BN dołem liczony od niej; mniejsza otulina niż dolna
-                    // otulina belki (50, decyzja 2026-10-10) → ostrzeżenie (raz)
-                    double ubCover = b.UbBot - b.UbDia / 2.0 + b.H;
-                    string ubMsg = string.Format(CultureInfo.InvariantCulture,
-                        "UB 03 płyty w nibie belki: otulina dołem {0:0} < otulina dolna belki {1:0} — pręt BN dołem liczony od UB 03 " +
-                        "(spinka płyty bez zmian); do sprawdzenia.", ubCover, b.Src.CoverBottom);
-                    if (ubCover < b.Src.CoverBottom - 0.5 && !res.Warnings.Contains(ubMsg)) res.Warnings.Add(ubMsg);
+                    // UB 03 to element płyty (otulina dołem płyty + zapas) — pręt BN dołem liczony od niej. K2 (praktyka biura): bez
+                    // ostrzeżenia o otulinie UB 03 mniejszej niż otulina dolna belki (UB 03 przy belce zawsze — tak rysuje biuro)
                     break;
                 }
             }
@@ -788,7 +783,8 @@ namespace BricsCadRc.Core
                 if (b.LinkA <= 0) b.LinkA = BeamGeometry.StirrupHeight(b.H, coverBottom: b.Src.CoverBottom);   // brak A — wzór 1b.1
             // średnice prętów dołu / góry pasu (poziomy prętów bocznych E4b)
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam && (x.ShapeCode ?? "00") == "00"
-                                                   && (x.LayerCode == BeamGeometry.CodeBottom || x.LayerCode == BeamGeometry.CodeTop)))
+                                                   && (x.LayerCode == BeamGeometry.CodeBottom || x.LayerCode == BeamGeometry.CodeTop
+                                                       || x.LayerCode == BeamGeometry.CodeBoth)))
             {
                 int n = Math.Max(1, d.Count);
                 double q0 = d.AlongX ? d.Y0 : d.X0, a = d.AlongX ? d.X0 : d.Y0;
@@ -797,7 +793,10 @@ namespace BricsCadRc.Core
                     : BandOver(U(a), U(a + d.LengthA));
                 if (hit == null) continue;
                 foreach (var b in bands.Where(x => x.Src == hit.Src))
-                    if (d.LayerCode == BeamGeometry.CodeTop) b.MainDiaT = d.Diameter; else b.MainDiaB = d.Diameter;
+                {
+                    if (d.LayerCode == BeamGeometry.CodeTop || d.LayerCode == BeamGeometry.CodeBoth) b.MainDiaT = d.Diameter;
+                    if (d.LayerCode != BeamGeometry.CodeTop) b.MainDiaB = d.Diameter;
+                }
             }
 
             // poziomy (v) pręta belki w pasie: dół — na strzemieniu, góra — pod jego górnym ramieniem, boczne (E4b) — równo między
@@ -820,14 +819,20 @@ namespace BricsCadRc.Core
                             return new List<double> { IsNibTop(d) ? b.UbTop - b.UbDia / 2.0 - half : b.UbBot + b.UbDia / 2.0 + half };
                         return new List<double> { IsNibTop(d) ? -b.H + b.NibH - inp.CoverNib - BeamNibUbDia - half
                                                               : -b.H + b.Src.CoverBottom + BeamNibUbDia + half };
+                    // K3: pręty podłużne dół = góra jedną pozycją (BM „2x4 … B+T”) — kropki na obu poziomach
+                    case BeamGeometry.CodeBoth: return new List<double> { b.VLinkBot + b.LinkDia + half, b.VLinkTop - b.LinkDia - half };
                     default: return new List<double> { b.VLinkBot + b.LinkDia + half };
                 }
             }
+            // K3: BM — poziom górny (nad połową strzemienia) to warstwa górna
+            bool IsBothTop(BandU b, Dist d, double v) => d.LayerCode == BeamGeometry.CodeBoth && v > (b.VLinkBot + b.VLinkTop) / 2.0;
             // pas belki z nibem (pręty BN leżą w nibie, poza trzonem)
             BandU BandAtNib(double u) => bands.FirstOrDefault(b => u >= b.U0 - b.Nib0 - 1.0 && u <= b.U1 + b.Nib1 + 1.0);
 
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam))
             {
+                // K3: pionowe U-bary belki (BU) — w przekroju dopiero w kroku K6 (kropki dół / góra przesunięte o Ø, w cięciu wzdłuż A–B–A)
+                if (d.LayerCode == BeamGeometry.CodeUBar) continue;
                 bool link = IsLink(d);
                 bool nib = d.LayerCode == BeamGeometry.CodeNib;
                 bool top = d.LayerCode == BeamGeometry.CodeTop || (nib && IsNibTop(d));
@@ -864,7 +869,7 @@ namespace BricsCadRc.Core
                                 foreach (double v in Levels(b, d))
                                 {
                                     if (!inConcrete(u, v)) continue;
-                                    res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = top,
+                                    res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = top || IsBothTop(b, d, v),
                                                            Beam = true, Bent = bent, NomSpacing = NominalSpacing(d) });
                                     MarkUsed(res, d);      // tylko gdy kropka powstała (poza betonem — rozkład nieużyty)
                                 }
@@ -916,7 +921,7 @@ namespace BricsCadRc.Core
                                 if (part.Count >= 2)
                                 {
                                     res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
-                                                               PosNr = d.PosNr, Top = top, Kind = DistKind.Beam });
+                                                               PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam });
                                     MarkUsed(res, d);
                                 }
                         }

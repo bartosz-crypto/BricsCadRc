@@ -185,7 +185,9 @@ namespace BricsCadRc.Core
                             // E4b: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok
                             if (bar.LayerCode == BeamGeometry.CodeSide && bar.Count > 0)
                                 last.Layers = Math.Max(1, bar.EffectiveCount / bar.Count);
-                            if (last.ShapeCode == "21" && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
+                            // K3: pionowe U-bary (BU) — bez drugiego ramienia w poprzek (przekrój U-barów pionowych: krok K6)
+                            if (last.ShapeCode == "21" && bar.LayerCode != BeamGeometry.CodeUBar
+                                && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
                             {
                                 bool up = !string.Equals(bar.SymbolDirection, "Down", StringComparison.OrdinalIgnoreCase);
                                 int sgn = last.AlongX ? (up ? 1 : -1) : (up ? -1 : 1);

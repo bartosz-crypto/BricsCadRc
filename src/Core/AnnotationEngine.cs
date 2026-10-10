@@ -472,7 +472,7 @@ namespace BricsCadRc.Core
             if (IsOblique(bar.Angle))
             {
                 double textLen = bar.TextLen > 0 ? bar.TextLen
-                    : ($"{bar.EffectiveCount} {bar.Mark}").Length * Scaled(DefaultTextHeight, bar) * 0.85;
+                    : ($"{bar.CountText} {bar.Mark}").Length * Scaled(DefaultTextHeight, bar) * 0.85;
                 minArm = textLen + 2 * Scaled(TextArmOffset, bar);
             }
             var res = FollowSkewEnd(pts, startExt, endExt, horizontal, hasSkew, minArm, bar.Angle,
@@ -1061,7 +1061,7 @@ namespace BricsCadRc.Core
             var perpDir = new Vector3d(-Math.Sin(textAngle), Math.Cos(textAngle), 0);
 
             // 4. Tymczasowy DBText żeby zmierzyć textLen
-            string textString = $"{bar.EffectiveCount} {bar.Mark}";
+            string textString = $"{bar.CountText} {bar.Mark}";
             double scaledTextH = Scaled(DefaultTextHeight, bar);
             double textLen;
             {

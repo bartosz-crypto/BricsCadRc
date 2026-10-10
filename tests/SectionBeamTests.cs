@@ -92,8 +92,8 @@ namespace BricsCadRc.Tests
             Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-312));
             Assert.That(r.Dots.Single(d => d.PosNr == "21").V, Is.EqualTo(-275));
             Assert.That(r.Dots.Single(d => d.PosNr == "21").U, Is.EqualTo(55));
-            // UB 03 (element płyty) na otulinie dołem 45 < otulina dolna belki 50 — ostrzeżenie (raz), BN dołem nadal od UB 03
-            Assert.That(r.Warnings.Count(w => w.StartsWith("UB 03 płyty w nibie belki: otulina dołem 45 < otulina dolna belki 50")), Is.EqualTo(1));
+            // UB 03 (element płyty) na otulinie dołem 45 < otulina dolna belki 50 — K2 (praktyka biura): bez ostrzeżenia, BN dołem od UB 03
+            Assert.That(r.Warnings.Any(w => w.StartsWith("UB 03 płyty")), Is.False);
         }
 
         [Test]

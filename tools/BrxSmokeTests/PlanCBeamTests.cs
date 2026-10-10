@@ -1,44 +1,30 @@
-// BEAM — testy dymne belek / pogrubień (docs/PLAN_BELKI_2026-10-10.md, E1 + E3 + E4) w BricsCAD V25.
-// Uruchamiane skryptem planc-beam.scr (run-planc-beam.ps1). Komendy RCSMOKE_BEAM_*. Dostęp do wtyczki wyłącznie refleksją.
-// Dane: GA Holbrook P02 (DXF, tylko odczyt — GaImportEngine.ReadSource czyta do bazy pomocniczej), folder: zmienna RC_BEAM_GA.
+// BEAM — testy dymne belek / pogrubień (docs/PLAN_BELKI_2026-10-10.md E1–E6; K2 + K3 planu praktyki biura
+// docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md) w BricsCAD V25. Uruchamiane skryptem planc-beam.scr (run-planc-beam.ps1). Komendy RCSMOKE_BEAM_*.
+// Dostęp do wtyczki wyłącznie refleksją. Dane: GA Holbrook P02 (DXF, tylko odczyt), folder: zmienna RC_BEAM_GA.
 //
-// D526  Prepare GA 526 (bez stref) → zrzut DrawingDump (pełny, z warstwami) = zrzut wtyczki HEAD (bit w bit).
-// D319  Prepare GA 319 + Mesh (225) → zrzut bez warstwy RC-BEAM = zrzut HEAD (strefy belek nie zmieniają siatki — E2 wstrzymany;
-//       obrys 319 ma skosy — AutoRebar siatki go odrzuca, zostaje B3 ADD). D528 / D539 — to samo na płytach osiowych z belką.
-//       Kroki D* działają też z wtyczką HEAD (przebieg -Baseline, RC_BEAM_DUMP_TAG=head) — porównanie w przebiegu „new”.
-// G319  strefa + H = 450 (oba rzuty, [6] = obrys rzutu), generowanie: lewa noga ze skosem — „detal ręczny” (narożnik z nią bez prętów L),
-//       góra + prawa: narożnik L (pręty L), koniec wewnętrzny prawej nogi — 2 U-bary na warstwę; strzemiona 41 (góra przez kwadrat
-//       narożnika) / 12.
-// Otuliny belki (decyzja użytkownika 2026-10-10): boczna / czołowa 45, dolna 50 (górna 35) — wymiary i poziomy poniżej po zmianie.
-// G539  H = 300, L + L; format Blok (szablony = pręty-bloki): strzemiona 13 / 23 / 52 (lewa noga przez oba kwadraty narożników),
-//       pręty proste: dół 4, góra 4; narożniki L: 2 × 4 pręty L (kształt 11) na warstwę, końce (wewnętrzny + przy krawędzi): 4 U-bary
-//       (kształt 21) na warstwę; wymiary prętów L i U-barów, skos rozkładu prętów L, symbol haka.
-// G528  H = 375, prosta: strzemiona 51 (pierwsze 125 od lica — za tyłami U-barów), dół 2 × 4 H16 L5500, góra 2 × 4 H16 (seria 101+),
-//       U-bary na obu końcach (2 na warstwę i koniec, A = C = 800 / 775 — wewnętrzny o Ø + 20 głębiej, B = 490 / 170 — 2 pozycje
-//       na warstwę), numery ≥ 04 bez 01–03, opisy, znaczniki.
-// G528R ponowne generowanie (osobna komenda) — te same liczby, bez duplikatów, szablony ponownie użyte.
-// G528U po _.UNDO 1 — rozkłady sprzed ponownego generowania; G528D po _.REDO — rozkłady ponownego generowania.
-// G528C po _.COPY rzutu dolnego (+40000 Y): strefa kopii [6] → obrys kopii, znaczniki rozkładów kopii → strefa kopii;
-//       ponowne generowanie oryginału — rozkłady kopii zostają.
-// G528M po _.MIRROR rzutu dolnego: znaczniki odbicia → strefa odbicia.
-// G528A po _-ARRAY rzutu dolnego (1 × 2, +100000 X) i G528P po COPYCLIP + PASTECLIP (200000, 0): znaczniki kopii → strefa kopii,
-//       [6] strefy kopii → obrys kopii (CloneRemap, plan belek 1c).
-// G528GA ponowne Prepare GA 528 — strefy zastąpione (2), pręty belek starych stref usunięte.
-// G528UB Mesh (225) + belka: strzemiona przesunięte względem UB 03 (≥ 90 mm od każdego UB 03).
-// M528  belka → Mesh: Prepare GA 528, pręty belki, potem Mesh (225) — rozkłady siatki (bez RC-BEAM i BB / BT / BL) = zrzut HEAD
-//       528mesh (numery pozycji i odwołania znormalizowane; przenumerowanie i zmiany opisów — informacja).
-// E5 / E6 (RC_SECTION z belką, BBS):
-// S528  528 + Mesh + pręty belki; RC_SECTION A prostopadle do belki: profil (spód −375, nib belki), kropki 4 H16 dół / góra, strzemię 51
-//       w widoku, wymiary H / szerokość, opisy; E4b: pręty boczne BS (1 na bok) i w nibie BN (H10 górą, H16 dołem) — rozkłady i kropki;
-//       RC_SECTION_CHECK — aktualny, składnik BEAM:<strefa> i pręty belki w odcisku.
-// S528PDF kopia rysunku z layoutem „BELKA 528” (rzut dolny + przekrój A) do PDF (RC_BEAM_PDF_DIR).
-// S528C przekrój C „sprzed E5” (planer bez belki) → NIEAKTUALNY „belka … nieuwzględniona”; H strefy 375 → 450 → A NIEAKTUALNY
-//       „zmieniona belka … H 375 → 450”; RC_SECTION_UPDATE (SectionUpdater.Update) A i C → aktualne, spód −450, BEAM w odcisku.
-// S539  539 + Mesh + pręty belki; RC_SECTION B wzdłuż najdłuższego odcinka (oś strefy): pręty dołu / góry w widoku, strzemiona jako pionowe
-//       ramiona, profil −300; CHECK aktualny, UPDATE bez zmian.
-// S539BBS RC_BBS (ReadBars) / RC_SCHEDULE / RC_COUNT_BBS / .xls: pozycje belki (BB / BL dół, BT góra; 00 / 11 / 21 / 51), długości cięcia
-//       BS 8666:2020, sztuki = suma rozkładów, masa .xls = COUNT.
-// S539PDF kopia rysunku z layoutem „BELKA 539” (rzut dolny + przekrój B) do PDF.
+// D526  Prepare GA 526 (bez stref) → zrzut DrawingDump (pełny, z warstwami) = zrzut wtyczki bazowej (bit w bit).
+// D319 / D528 / D539  Prepare GA + Mesh (225) → zrzut bez warstwy RC-BEAM = zrzut bazowy (strefy belek nie zmieniają siatki — E2
+//       wstrzymany). Baza: przebieg -Baseline z DLL HEAD + K1 (K1 zmienia siatkę płyt z nibem zawiniętym — 528 / 539 / 319).
+// K2 / K3 (domyślne, do potwierdzenia przez Bartka): strzemiona H12 51, A = H − 35 − 50 (A1), pierwsze 51 od lica (także przy U-barach),
+//       niezależnie od UB 03; pręty podłużne dół = góra jedną pozycją BM „2x4 H16-nn-150 B+T” (seria dolna, rzut dolny, CountDisplay 8),
+//       zakład 40·Ø (H16 650), koniec pręta prostego 61 od lica; pionowe U-bary BU kształt 21 „4 H16-nn-150 UB” (po 1 w kolumnie):
+//       koniec — A = Ceil25(650 + 90) = 750, B = A strzemienia − 2·12 (528: 265, 539: 190, 319: 340), narożnik L — każda noga
+//       (noga Y: B − 35), złącze T — belka dochodząca; brak prętów L / poziomych U / BT na rzucie górnym; BS (tryb B3) i BN górą — brak
+//       dla 300 / 375 / 450; BN dołem H10.
+// G319  strefa + H = 450; lewa noga ze skosem — „detal ręczny”; góra + prawa: narożnik L (U-bary obu nóg), koniec wewnętrzny prawej nogi.
+// G539  H = 300, L + L; format Blok (szablony = pręty-bloki): strzemię 51 A = 215, B = 510; narożniki L (4 rozkłady U-barów, noga Y
+//       B 155), końce (wewnętrzny + przy krawędzi) U-bary 750 / 190 / 750.
+// G528  H = 375, prosta: strzemiona 52 (pierwsze 51 od lica), BM 5500 + 5250 (2x4), U-bary na obu końcach 750 / 265 / 750, numery 04–99.
+// G528R ponowne generowanie — te same liczby, bez duplikatów, szablony ponownie użyte; G528U / G528D — UNDO / REDO.
+// G528C / G528M / G528A / G528P — COPY / MIRROR / -ARRAY / PASTECLIP rzutu dolnego: znaczniki klonów → strefa klonu (CloneRemap).
+// G528GA ponowne Prepare GA 528 — strefy zastąpione, pręty belek starych stref usunięte.
+// G528UB Mesh (225) + belka: strzemiona niezależnie od UB 03 (K2): pierwsze 51 od lica, rozstaw ≤ 200.
+// M528  belka → Mesh: rozkłady siatki (bez kodów belki) = zrzut bazowy 528mesh (numery i odwołania znormalizowane).
+// S528  RC_SECTION A prostopadle do belki 528: kropki BM dół (−305) i góra (−55), strzemię 51 w widoku (−319 … −41), BN dołem H10.
+// S528C przekrój „sprzed E5” → NIEAKTUALNY; H 375 → 450 → „zmieniona belka”; RC_SECTION_UPDATE → aktualne.
+// S539  RC_SECTION B wzdłuż belki 539: BM w widoku na obu poziomach (−230 / −55), strzemiona (−244 … −41), profil −300.
+// S539BBS RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls: wszystkie pozycje belki w serii dolnej (BM / BU / BL / BN; 00 / 21 / 51).
+// G528V1 rekord RC_BEAM v1 (wersja testowa) → generowanie: komunikat migracji, rekord zapisany jako v2, strzemiona H12.
 
 using System;
 using System.Collections.Generic;
@@ -60,7 +46,7 @@ namespace BricsCadRc.BrxSmokeTests
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         private static string ResultsFile = "planc-beam-results.txt";
         private const string Prefix = "[RC BEAM TEST]";
-        private const string Title = "BEAM — testy dymne belek / pogrubień (E1 + E3 + E4 + E5 + E6)";
+        private const string Title = "BEAM — testy dymne belek / pogrubień (E1–E6, K2 + K3)";
         private const string Slab = "SD-PILED-RAFT";
         private const string Engine = "BricsCadRc.Core.AutoRebarEngine";
         private const string GaType = "BricsCadRc.Core.GaImportEngine";
@@ -74,7 +60,7 @@ namespace BricsCadRc.BrxSmokeTests
         private static readonly List<string> StepsFull = new List<string>
         {
             "SETUP", "D526", "D319", "D528", "D539", "G319", "G539", "G528", "G528R", "G528U", "G528D", "G528C", "G528M", "G528A", "G528P", "G528GA", "G528UB", "M528",
-            "S528", "S528PDF", "S528C", "S539", "S539BBS", "S539PDF",
+            "S528", "S528PDF", "S528C", "S539", "S539BBS", "S539PDF", "G528V1",
         };
         private static readonly List<string> StepsBase = new List<string> { "SETUP", "D526", "D319", "D528", "D539" };
         private static List<string> _expected = StepsFull;
@@ -208,27 +194,29 @@ namespace BricsCadRc.BrxSmokeTests
                     (b, t) = Views(db);
                     return ZoneChecks(db, r, b, t, 450);
                 });
-                Check(step, "generowanie: lewa noga (skos) — detal ręczny; góra + prawa — strzemiona 41 / 12, proste dół 3 / góra 3, narożnik L 1, U-bary 2 na warstwę", () =>
+                Check(step, "K3: lewa noga (skos) — detal ręczny; narożnik L — U-bary obu nóg (noga Y: B − 35), koniec wewnętrzny — U-bar; BM 2x4; strzemiona H12", () =>
                 {
                     var res = GenerateBeams(db, b, t);
                     var msgs = Messages(res);
                     if (!msgs.Any(m => m.Contains("detal ręczny"))) throw new AssertFail("brak komunikatu „detal ręczny”: " + string.Join(" | ", msgs));
-                    if (msgs.Any(m => m.Contains("w przygotowaniu"))) throw new AssertFail("komunikat „E4 w przygotowaniu” nadal jest");
-                    if (!msgs.Any(m => m.Contains("narożnik L z odcinkiem „detal ręczny”"))) throw new AssertFail("brak komunikatu o narożniku z odcinkiem ręcznym");
-                    if (!msgs.Any(m => m.Contains("narożniki L: 1") && m.Contains("końce z U-barami: 1")))
+                    if (!msgs.Any(m => m.Contains("narożniki L: 1") && m.Contains("końce: 1")))
                         throw new AssertFail("komunikat zamknięcia końców: " + string.Join(" | ", msgs.Where(m => m.Contains("zamknięcie"))));
+                    var sb = new StringBuilder();
                     var bl = Dists(db, "BL");
-                    var counts = bl.Select(x => x.count).OrderBy(x => x).ToList();
-                    var sb = new StringBuilder(Seq("strzemiona (liczby)", counts, new[] { 12, 41 }));
-                    foreach (var code in new[] { "BB", "BT" })
-                    {
-                        var all = Dists(db, code);
-                        sb.Append("; ").Append(Int(code + " proste", all.Count(x => x.shape == "00"), 3))
-                          .Append("; ").Append(Int(code + " pręty L", all.Count(x => x.shape == "11"), 1))
-                          .Append("; ").Append(Int(code + " U-bary", all.Count(x => x.shape == "21"), 2));
-                        if (all.Where(x => x.shape == "11").Any(x => x.count != 4)) throw new AssertFail(code + ": pręty L nie w 4 rzędach");
-                    }
-                    return sb.Append("; ").Append(NumberChecks(db)).Append("; ").Append(BentInsideZones(db)).ToString();
+                    sb.Append("strzemiona=").Append(string.Join(",", bl.Select(x => x.count).OrderBy(x => x)));
+                    if (bl.Any(x => !x.mark.StartsWith("H12-") || !x.mark.EndsWith("-200 LINKS"))) throw new AssertFail("opis strzemion: " + string.Join(" | ", bl.Select(x => x.mark)));
+                    var u = Dists(db, "BU");
+                    sb.Append("; ").Append(Int("U-bary (rozkłady)", u.Count, 3));
+                    var tu = Templates(db).Where(x => x.shape == "21").Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}").OrderBy(x => x).ToList();
+                    if (!tu.Any(x => x.EndsWith("/305/" + x.Split('/')[0])) || tu.Count(x => x.Split('/')[1] == "340") < 1)
+                        throw new AssertFail("szablony U-barów (B 340 / noga Y 305): " + string.Join(",", tu));
+                    sb.Append("; szablony U=").Append(string.Join(",", tu));
+                    var l51 = Templates(db).Where(x => x.shape == "51").ToList();
+                    if (l51.Count != 1 || Math.Abs(l51[0].a - 365) > 0.5 || Math.Abs(l51[0].b - 510) > 0.5)
+                        throw new AssertFail("szablon 51: " + string.Join(",", l51.Select(x => $"A={x.a} B={x.b}")));
+                    sb.Append("; ").Append(BothChecks(db)).Append("; ").Append(NoLegacyBeamBars(db)).Append("; ").Append(NumberChecks(db))
+                      .Append("; ").Append(UBarsInsideZones(db));
+                    return sb.ToString();
                 });
             });
         }
@@ -247,7 +235,7 @@ namespace BricsCadRc.BrxSmokeTests
                     (b, t) = Views(db);
                     return ZoneChecks(db, r, b, t, 300);
                 });
-                Check(step, "format Blok: strzemiona 13 / 23 / 52, proste dół 4 / góra 4, szablony = pręty-bloki, strzemię 51 A=190 B=510", () =>
+                Check(step, "format Blok: szablony = pręty-bloki, strzemię 51 A = 215 B = 510 (H12), BM 2x4, bez BT / prętów L", () =>
                 {
                     SetFormat("Block");
                     try { GenerateBeams(db, b, t); }
@@ -256,44 +244,27 @@ namespace BricsCadRc.BrxSmokeTests
                     var tpl = Templates(db);
                     var links = tpl.Where(x => x.shape == "51").ToList();
                     if (links.Count != 1) throw new AssertFail("szablony 51: " + links.Count);
-                    if (Math.Abs(links[0].a - 190) > 0.5 || Math.Abs(links[0].b - 510) > 0.5)
+                    if (Math.Abs(links[0].a - 215) > 0.5 || Math.Abs(links[0].b - 510) > 0.5)
                         throw new AssertFail($"51: A={links[0].a} B={links[0].b}");
                     if (tpl.Any(x => !x.isBlock)) throw new AssertFail("szablon polilinia w formacie Blok: " + string.Join(",", tpl.Where(x => !x.isBlock).Select(x => x.mark)));
-                    return Seq("strzemiona", counts, new[] { 13, 23, 52 })
-                         + "; " + Int("BB proste", Dists(db, "BB").Count(x => x.shape == "00"), 4)
-                         + "; " + Int("BT proste", Dists(db, "BT").Count(x => x.shape == "00"), 4)
+                    return "strzemiona=[" + string.Join(",", counts) + "]; " + BothChecks(db) + "; " + NoLegacyBeamBars(db)
                          + "; szablony=" + string.Join(",", tpl.Select(x => x.mark)) + "; " + NumberChecks(db);
                 });
-                Check(step, "E4: narożniki L (2 × 4 pręty L kształt 11) i U-bary (4 kształt 21, w tym koniec wewnętrzny) na warstwę; wymiary, skos, symbol haka, opisy", () =>
+                Check(step, "K3: U-bary pionowe — 2 narożniki × 2 nogi + 2 końce (6 rozkładów × 4), noga Y B 155, pozostałe B 190, końce 750 / 190 / 750; kółko na zagięciu, linie w strefie", () =>
                 {
-                    var sb = new StringBuilder();
-                    var tpl = Templates(db);
-                    foreach (var code in new[] { "BB", "BT" })
+                    var u = Dists(db, "BU");
+                    var sb = new StringBuilder(Int("U-bary (rozkłady)", u.Count, 6));
+                    foreach (var x in u)
                     {
-                        var all = Dists(db, code);
-                        var L = all.Where(x => x.shape == "11").ToList();
-                        var U = all.Where(x => x.shape == "21").ToList();
-                        sb.Append(Int(code + " pręty L", L.Count, 2)).Append("; ").Append(Int(code + " U-bary", U.Count, 4)).Append("; ");
-                        foreach (var x in L)
-                        {
-                            if (x.count != 4) throw new AssertFail("pręty L: " + x.count + " " + x.mark);
-                            if (!x.mark.EndsWith(" BEAM CORNER")) throw new AssertFail("opis prętów L: " + x.mark);
-                            var v = RawOf(db, x.id, DistApp);
-                            if (Convert.ToString(v[17].Value, Inv) != "Hook") throw new AssertFail("symbol prętów L: " + v[17].Value);
-                            double skew = Math.Abs(Convert.ToDouble(v[25].Value, Inv) - Convert.ToDouble(v[26].Value, Inv));
-                            if (Math.Abs(skew - 474) > 2) throw new AssertFail("skos rozkładu prętów L: " + skew.ToString("0.#", Inv));
-                        }
-                        foreach (var x in U)
-                            if (x.count != 1 || !x.mark.EndsWith(" BEAM END")) throw new AssertFail("U-bar: " + x.count + " " + x.mark);
-                        bool topSer = code == "BT";
-                        var tl = tpl.Where(x => x.shape == "11" && (x.pos >= 101) == topSer).Select(x => $"{x.a:0}/{x.b:0}").OrderBy(x => x).ToList();
-                        var tu = tpl.Where(x => x.shape == "21" && (x.pos >= 101) == topSer).Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}").OrderBy(x => x).ToList();
-                        Seq2(code + " szablony L", tl, new[] { "1375/1350", "1450/1350" });
-                        // 900 / 850 — koniec wewnętrzny (pręt prosty wyśrodkowany), 825 / 800 — koniec przy krawędzi (U-bar wewnętrzny — tył
-                        // o Ø + 20 głębiej, ramię krótsze)
-                        Seq2(code + " szablony U", tu, new[] { "800/170/800", "825/490/825", "850/170/850", "900/490/900" });
+                        if (x.count != 4 || !x.mark.EndsWith("-150 UB") || x.shape != "21") throw new AssertFail("U-bar: " + x.count + " " + x.mark + " " + x.shape);
+                        if (AnnotOf(db, x.id).IsNull) throw new AssertFail("brak opisu " + x.mark);
                     }
-                    return sb.Append(NumberChecks(db)).Append("; ").Append(BentInsideZones(db)).ToString();
+                    var tu = Templates(db).Where(x => x.shape == "21").Select(x => (a: x.a, b: x.b, c: x.c)).ToList();
+                    if (!tu.Any(x => x.b == 155) || !tu.Any(x => x.b == 190)) throw new AssertFail("B U-barów: " + string.Join(",", tu.Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}")));
+                    if (!tu.Any(x => x.a == 750 && x.b == 190 && x.c == 750)) throw new AssertFail("brak U-bara końca 750/190/750: " + string.Join(",", tu.Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}")));
+                    if (tu.Any(x => x.c != x.a)) throw new AssertFail("C ≠ A");
+                    sb.Append("; szablony U=").Append(string.Join(",", tu.Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}").OrderBy(x => x)));
+                    return sb.Append("; ").Append(NumberChecks(db)).Append("; ").Append(UBarsInsideZones(db)).ToString();
                 });
             });
         }
@@ -312,61 +283,51 @@ namespace BricsCadRc.BrxSmokeTests
                     _z528 = Zones(db).FirstOrDefault(z => XLinkOf(db, z, BeamApp, 6) == Hx(_b528));
                     return ZoneChecks(db, r, _b528, _t528, 375);
                 });
-                Check(step, "strzemiona 51 H10 co 200 (LINKS, pierwsze 125 od lica — za tyłami U-barów), dół 2 × 4 H16 L5500 (BEAM B), góra 2 × 4 H16 (BEAM T, 101+), znaczniki", () =>
+                Check(step, "K2 / K3: strzemiona 51 H12 co 200 (52, pierwsze 51 od lica), BM 5500 + 5250 „2x4 H16-nn-150 B+T” (CountDisplay 8), bez BT na rzucie górnym, znaczniki", () =>
                 {
                     GenerateBeams(db, _b528, _t528);
                     var bl = Dists(db, "BL");
-                    var bb = Dists(db, "BB").Where(x => x.shape == "00").ToList(); var bt = Dists(db, "BT").Where(x => x.shape == "00").ToList();
+                    var bm = Dists(db, "BM");
                     var sb = new StringBuilder();
-                    sb.Append(Int("BL", bl.Count, 1)).Append("; ").Append(Int("strzemiona", bl[0].count, 51));
-                    if (!bl[0].mark.EndsWith("-200 LINKS") || !bl[0].mark.StartsWith("H10-")) throw new AssertFail("opis strzemion: " + bl[0].mark);
-                    sb.Append("; ").Append(Int("BB", bb.Count, 2)).Append("; ").Append(Int("BT", bt.Count, 2));
-                    foreach (var x in bb.Concat(bt))
-                    {
-                        if (x.count != 4) throw new AssertFail("liczba prętów " + x.mark + ": " + x.count);
-                        if (Math.Abs(x.length - 5500) > 0.5) throw new AssertFail("długość " + x.mark + ": " + x.length);
-                    }
-                    if (!bb.All(x => x.mark.EndsWith(" BEAM B") && x.mark.StartsWith("H16-") && x.mark.Split(' ')[0].Split('-').Length == 2))
-                        throw new AssertFail("opisy dołu: " + string.Join(" | ", bb.Select(x => x.mark)));
-                    if (!bt.All(x => x.mark.EndsWith(" BEAM T") && x.pos >= 101))
-                        throw new AssertFail("opisy góry: " + string.Join(" | ", bt.Select(x => x.mark)));
-                    var zt = Zones(db).FirstOrDefault(z => XLinkOf(db, z, BeamApp, 6) == Hx(_t528));
-                    foreach (var x in bl.Concat(bb)) Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), Hx(_z528));
-                    foreach (var x in bt) Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), Hx(zt));
-                    foreach (var x in bl.Concat(bb).Concat(bt)) if (AnnotOf(db, x.id).IsNull) throw new AssertFail("brak opisu " + x.mark);
+                    sb.Append(Int("BL", bl.Count, 1)).Append("; ").Append(Int("strzemiona", bl[0].count, 52));
+                    if (!bl[0].mark.EndsWith("-200 LINKS") || !bl[0].mark.StartsWith("H12-")) throw new AssertFail("opis strzemion: " + bl[0].mark);
+                    // pierwsze strzemię 51 od lica (strefa wzdłuż Y)
+                    var zb = Box(Verts(db, _z528));
+                    double y0 = PosOf(db, bl[0].id).Y;
+                    if (Math.Abs(y0 - (zb.y0 + 51)) > 0.6) throw new AssertFail($"pierwsze strzemię {y0 - zb.y0:0.#} od lica (oczekiwano 51)");
+                    sb.Append("; ").Append(Int("BM", bm.Count, 2));
+                    var lens = bm.Select(x => x.length).OrderByDescending(x => x).ToList();
+                    if (Math.Abs(lens[0] - 5500) > 0.5 || Math.Abs(lens[1] - 5250) > 0.5) throw new AssertFail("długości BM: " + string.Join(",", lens));
+                    sb.Append("; ").Append(BothChecks(db));
+                    foreach (var x in bl.Concat(bm)) Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), Hx(_z528));
+                    foreach (var x in bl.Concat(bm)) if (AnnotOf(db, x.id).IsNull) throw new AssertFail("brak opisu " + x.mark);
                     var l51 = Templates(db).Where(x => x.shape == "51").ToList();
-                    if (l51.Count != 1 || Math.Abs(l51[0].a - 265) > 0.5 || Math.Abs(l51[0].b - 510) > 0.5)
+                    if (l51.Count != 1 || Math.Abs(l51[0].a - 290) > 0.5 || Math.Abs(l51[0].b - 510) > 0.5)
                         throw new AssertFail("szablon 51: " + string.Join(",", l51.Select(x => $"{x.mark} A={x.a} B={x.b}")));
                     if (Templates(db).Any(x => x.isBlock)) throw new AssertFail("format Polilinia: szablon jako pręt-blok");
                     _gen1 = new HashSet<long>(AllBeamDists(db).Select(x => x.Handle.Value));
-                    return sb.Append("; ").Append(NumberChecks(db)).Append("; opisy: ")
-                             .Append(string.Join(" | ", bl.Concat(bb).Concat(bt).Select(x => x.count + " " + x.mark))).ToString();
+                    return sb.Append("; ").Append(NoLegacyBeamBars(db)).Append("; ").Append(NumberChecks(db)).Append("; opisy: ")
+                             .Append(string.Join(" | ", bl.Concat(bm).Select(x => AnnotText(db, x.id)))).ToString();
                 });
-                Check(step, "E4: U-bary na obu końcach — 2 na warstwę i koniec (A = C = 800 / 775, B = 490 / 170, 2 pozycje na warstwę), znaczniki, opisy", () =>
+                Check(step, "K3: U-bary pionowe na obu końcach (2 rozkłady × 4, 750 / 265 / 750, „4 H16-nn-150 UB”, kółko na zagięciu przy licu), znaczniki", () =>
                 {
-                    var sb = new StringBuilder();
-                    var zt = Zones(db).FirstOrDefault(z => XLinkOf(db, z, BeamApp, 6) == Hx(_t528));
-                    foreach (var code in new[] { "BB", "BT" })
+                    var u = Dists(db, "BU");
+                    var sb = new StringBuilder(Int("U-bary (rozkłady)", u.Count, 2));
+                    foreach (var x in u)
                     {
-                        var all = Dists(db, code);
-                        var U = all.Where(x => x.shape == "21").ToList();
-                        sb.Append(Int(code + " U-bary", U.Count, 4)).Append("; ").Append(Int(code + " pręty L", all.Count(x => x.shape == "11"), 0)).Append("; ");
-                        var pos = U.Select(x => x.pos).Distinct().ToList();
-                        if (pos.Count != 2) throw new AssertFail(code + ": pozycje U-barów " + string.Join(",", pos));
-                        foreach (var x in U)
-                        {
-                            if (x.count != 1 || !x.mark.EndsWith(" BEAM END")) throw new AssertFail("U-bar: " + x.count + " " + x.mark);
-                            Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), code == "BT" ? Hx(zt) : Hx(_z528));
-                            if (AnnotOf(db, x.id).IsNull) throw new AssertFail("brak opisu " + x.mark);
-                        }
-                        // oba końce: rozkłady U-barów przy dolnym i górnym licu strefy (pręty wzdłuż Y)
-                        var ys = U.Select(x => PosOf(db, x.id).Y).OrderBy(y => y).ToList();
-                        if (ys[3] - ys[0] < 5000) throw new AssertFail(code + ": U-bary tylko przy jednym końcu");
-                        sb.Append(code).Append(" U: ").Append(string.Join(" | ", U.Select(x => x.mark))).Append("; ");
+                        if (x.count != 4 || !x.mark.EndsWith("-150 UB")) throw new AssertFail("U-bar: " + x.count + " " + x.mark);
+                        Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), Hx(_z528));
+                        if (AnnotOf(db, x.id).IsNull) throw new AssertFail("brak opisu " + x.mark);
+                        var v = RawOf(db, x.id, DistApp);
+                        if (Convert.ToString(v[17].Value, Inv) != "Circle") throw new AssertFail("symbol U-bara: " + v[17].Value);
                     }
-                    var tu = Templates(db).Where(x => x.shape == "21").Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}").OrderBy(x => x).ToList();
-                    Seq2("szablony U (dół + góra)", tu, new[] { "775/170/775", "775/170/775", "800/490/800", "800/490/800" });
-                    return sb.Append(NumberChecks(db)).ToString();
+                    if (u.Select(x => x.pos).Distinct().Count() != 1) throw new AssertFail("U-bary obu końców — jedna pozycja: " + string.Join(",", u.Select(x => x.mark)));
+                    var ys = u.Select(x => PosOf(db, x.id).Y).OrderBy(y => y).ToList();
+                    if (ys[1] - ys[0] < 5000) throw new AssertFail("U-bary tylko przy jednym końcu");
+                    var tu = Templates(db).Where(x => x.shape == "21").Select(x => $"{x.a:0}/{x.b:0}/{x.c:0}").ToList();
+                    Seq2("szablony U", tu, new[] { "750/265/750" });
+                    return sb.Append("; U: ").Append(string.Join(" | ", u.Select(x => AnnotText(db, x.id)))).Append("; ").Append(UBarsInsideZones(db))
+                             .Append("; ").Append(NumberChecks(db)).ToString();
                 });
             });
         }
@@ -383,7 +344,7 @@ namespace BricsCadRc.BrxSmokeTests
                 var all = AllBeamDists(db);
                 _gen2 = new HashSet<long>(all.Select(x => x.Handle.Value));
                 if (_gen1.Overlaps(_gen2)) throw new AssertFail("stare rozkłady nie usunięte");
-                return Int("rozkłady belki", all.Count, 19) + "; " + Int("szablony", tpl1, tpl0) + "; " + NumberChecks(db);   // E4b: + 2 BS + 4 BN
+                return Int("rozkłady belki", all.Count, 7) + "; " + Int("szablony", tpl1, tpl0) + "; " + NumberChecks(db);   // K3: BL + 2 BM + 2 BU + 2 BN
             }));
         }
 
@@ -428,7 +389,7 @@ namespace BricsCadRc.BrxSmokeTests
                     if (cb.IsNull) throw new AssertFail("brak obrysu-kopii");
                     Eq("strefa kopii [6]", XLinkOf(db, cz, BeamApp, 6), Hx(cb));
                     cd = AllBeamDists(db).Where(id => PosOf(db, id).Y > 30000).ToList();
-                    if (cd.Count != 13) throw new AssertFail("rozkłady-kopie: " + cd.Count);   // E4b: 7 + 2 BS + 4 BN
+                    if (cd.Count != 7) throw new AssertFail("rozkłady-kopie: " + cd.Count);   // K3: BL + 2 BM + 2 BU + 2 BN
                     foreach (var id in cd) Eq("znacznik kopii " + id.Handle, XLinkOf(db, id, TagApp, 1), Hx(cz));
                     return "kopie=" + cd.Count.ToString(Inv);
                 });
@@ -437,7 +398,7 @@ namespace BricsCadRc.BrxSmokeTests
                     GenerateBeams(db, _b528, _t528);
                     int lost = (cd ?? new List<ObjectId>()).Count(id => id.IsErased);
                     if (lost > 0) throw new AssertFail("usunięto rozkłady kopii: " + lost);
-                    return Int("rozkłady belek razem", AllBeamDists(db).Count, 32);
+                    return Int("rozkłady belek razem", AllBeamDists(db).Count, 14);
                 });
             });
         }
@@ -454,7 +415,7 @@ namespace BricsCadRc.BrxSmokeTests
                          .OrderByDescending(id => Area(db, id)).FirstOrDefault();
                 Eq("strefa odbicia [6]", XLinkOf(db, mz, BeamApp, 6), Hx(mb));
                 var md = AllBeamDists(db).Where(id => PosOf(db, id).X < -20000).ToList();
-                if (md.Count != 13) throw new AssertFail("rozkłady-odbicia: " + md.Count);
+                if (md.Count != 7) throw new AssertFail("rozkłady-odbicia: " + md.Count);
                 foreach (var id in md) Eq("znacznik odbicia " + id.Handle, XLinkOf(db, id, TagApp, 1), Hx(mz));
                 return "odbicia=" + md.Count.ToString(Inv);
             }));
@@ -476,8 +437,8 @@ namespace BricsCadRc.BrxSmokeTests
                 () => CloneRegionChecks(db, x => x > 150000, "wklejenia")));
         }
 
-        /// <summary>Kopia rzutu dolnego 528 w pasie X (ARRAY / PASTECLIP): jedna strefa, [6] → obrys kopii, 13 rozkładów belki (strzemiona,
-        /// 2 proste, 4 U-bary, E4b: 2 boczne, 4 w nibie) → strefa kopii.</summary>
+        /// <summary>Kopia rzutu dolnego 528 w pasie X (ARRAY / PASTECLIP): jedna strefa, [6] → obrys kopii, 7 rozkładów belki (K3: strzemiona,
+        /// 2 BM, 2 BU, 2 BN dołem) → strefa kopii.</summary>
         private static string CloneRegionChecks(Database db, Func<double, bool> inX, string what)
         {
             var zs = Zones(db).Where(z => Verts(db, z).All(p => inX(p.X))).ToList();
@@ -487,7 +448,7 @@ namespace BricsCadRc.BrxSmokeTests
             if (ob.IsNull) throw new AssertFail("brak obrysu " + what);
             Eq("strefa " + what + " [6]", XLinkOf(db, zs[0], BeamApp, 6), Hx(ob));
             var ds = AllBeamDists(db).Where(id => inX(PosOf(db, id).X)).ToList();
-            if (ds.Count != 13) throw new AssertFail($"rozkłady {what}: {ds.Count}");
+            if (ds.Count != 7) throw new AssertFail($"rozkłady {what}: {ds.Count}");
             foreach (var id in ds) Eq("znacznik " + what + " " + id.Handle, XLinkOf(db, id, TagApp, 1), Hx(zs[0]));
             return "kopie=" + ds.Count.ToString(Inv);
         }
@@ -507,38 +468,29 @@ namespace BricsCadRc.BrxSmokeTests
         public void G528UB()
         {
             const string step = "G528UB";
-            Run(step, db => Check(step, "Mesh (225) + belka: strzemiona przesunięte względem UB 03 (≥ 90 mm), rozstaw ≤ 200", () =>
+            Run(step, db => Check(step, "Mesh (225) + belka: strzemiona niezależnie od UB 03 (K2) — pierwsze 51 od lica, rozstaw ≤ 200; UB 03 płyty bez zmian", () =>
             {
                 CleanModelSpace(db);
                 ImportGa("PLOT 528-529");
                 var (b, t) = Views(db);
                 Mesh(b, t, 225);
-                var ub = new List<double>();
-                foreach (var id in Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 2
-                                               && Convert.ToString(v[1].Value, Inv).Contains("-03-") && Convert.ToString(v[1].Value, Inv).EndsWith(" UB")))
-                {
-                    var v = RawOf(db, id, DistApp);
-                    bool x = Convert.ToString(v[6].Value, Inv) != "Y";
-                    var p = PosOf(db, id);
-                    int n = Convert.ToInt32(v[3].Value, Inv); double s = Convert.ToDouble(v[5].Value, Inv);
-                    if (!x) continue;   // lewa krawędź 528: UB 03 = pręty X, położenia wzdłuż Y
-                    for (int i = 0; i < n; i++) ub.Add(p.Y + i * s);
-                }
-                if (ub.Count < 10) throw new AssertFail("UB 03 (pręty X) na rzucie dolnym: " + ub.Count);
-                GenerateBeams(db, b, t);
+                int ub03 = Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 2
+                                       && Convert.ToString(v[1].Value, Inv).Contains("-03-") && Convert.ToString(v[1].Value, Inv).EndsWith(" UB")).Count;
+                if (ub03 == 0) throw new AssertFail("brak UB 03 na rzucie dolnym");
+                var gm = Messages(GenerateBeams(db, b, t));
+                if (gm.Any(m => m.Contains("otulinę dołem"))) throw new AssertFail("ostrzeżenie o otulinie UB 03 (usunięte w K2): " + string.Join(" | ", gm.Where(m => m.Contains("otulin"))));
                 var bl = Dists(db, "BL");
                 if (bl.Count != 1) throw new AssertFail("BL: " + bl.Count);
-                var sp0 = PosOf(db, bl[0].id).Y; var vv = RawOf(db, bl[0].id, DistApp);
+                var vv = RawOf(db, bl[0].id, DistApp);
                 double step0 = Convert.ToDouble(vv[5].Value, Inv);
                 if (step0 > 200.5) throw new AssertFail("rozstaw strzemion " + step0);
-                double minD = double.MaxValue;
-                for (int i = 0; i < bl[0].count; i++)
-                {
-                    double y = sp0 + i * step0;
-                    minD = Math.Min(minD, ub.Where(u => Math.Abs(u - y) < 1000).Select(u => Math.Abs(u - y)).DefaultIfEmpty(1000).Min());
-                }
-                if (minD < 90) throw new AssertFail("strzemię " + minD.ToString("0.#", Inv) + " mm od UB 03");
-                return $"strzemiona={bl[0].count}, rozstaw={step0.ToString("0.#", Inv)}, min. odstęp od UB 03={minD.ToString("0.#", Inv)}; UB03={ub.Count}";
+                var z = Zones(db).First(x => XLinkOf(db, x, BeamApp, 6) == Hx(b));
+                double first = PosOf(db, bl[0].id).Y - Box(Verts(db, z)).y0;
+                if (Math.Abs(first - 51) > 0.6) throw new AssertFail($"pierwsze strzemię {first:0.#} od lica");
+                int ub03After = Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 2
+                                            && Convert.ToString(v[1].Value, Inv).Contains("-03-") && Convert.ToString(v[1].Value, Inv).EndsWith(" UB")).Count;
+                Eq("UB 03 po belce (bez zmian)", ub03After, ub03);
+                return $"strzemiona={bl[0].count}, rozstaw={step0.ToString("0.#", Inv)}, pierwsze {first:0.#} od lica; rozkłady UB 03={ub03}";
             }));
         }
 
@@ -564,7 +516,7 @@ namespace BricsCadRc.BrxSmokeTests
                     File.WriteAllLines(Path.Combine(OutDir, $"beam-dump-528beammesh-{Tag}.txt"), lines, new UTF8Encoding(false));
                     return "rozkłady belki=" + beam.ToString(Inv) + ", rozkłady w zrzucie=" + lines.Count(l => l.Contains("RC_BAR_BLOCK[0]")).ToString(Inv);
                 });
-                Check(step, "rozkłady siatki (bez RC-BEAM i BB / BT / BL) = zrzut HEAD 528mesh (numery pozycji i odwołania znormalizowane)", () =>
+                Check(step, "rozkłady siatki (bez RC-BEAM i kodów belki) = zrzut HEAD 528mesh (numery pozycji i odwołania znormalizowane)", () =>
                 {
                     if (lines == null) throw new AssertFail("brak zrzutu (poprzednia asercja)");
                     string head = Path.Combine(OutDir, "beam-dump-528mesh-head.txt");
@@ -608,7 +560,7 @@ namespace BricsCadRc.BrxSmokeTests
             foreach (var c in chunks)
             {
                 if (!c.Any(l => l.Contains("X " + app + "[0] 1001"))) continue;
-                if (c.Any(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"X " + app + @"\[2\] 1000=""(BB|BT|BL|BS|BN)"""))) continue;
+                if (c.Any(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"X " + app + @"\[2\] 1000=""(BB|BT|BL|BS|BN|BM|BU)"""))) continue;
                 var markLine = c.FirstOrDefault(l => l.Contains("X " + app + "[1] 1000="));
                 int nr = PosNr(markLine ?? "");
                 var norm = c.Select((l, i) =>
@@ -700,7 +652,7 @@ namespace BricsCadRc.BrxSmokeTests
         {
             var res = new Dictionary<int, (string, string, double, double, double, int)>();
             foreach (var id in Ms(db, e => Raw(e, "RC_SINGLE_BAR") is TypedValue[] v && v.Length > 7
-                                           && new[] { "BB", "BT", "BL", "BS", "BN" }.Contains(Convert.ToString(v[7].Value, Inv))))
+                                           && BeamCodes.Contains(Convert.ToString(v[7].Value, Inv))))
             {
                 var v = RawOf(db, id, "RC_SINGLE_BAR");
                 int pos = PosNr(Convert.ToString(v[1].Value, Inv));
@@ -725,8 +677,8 @@ namespace BricsCadRc.BrxSmokeTests
                     (_b528, _t528) = Views(db);
                     Mesh(_b528, _t528, 225);
                     var gm = Messages(GenerateBeams(db, _b528, _t528));
-                    // poprawka recenzji: BN górą przy T IN NIB wzdłuż nibu — komunikat „może dublować T IN NIB”
-                    if (!gm.Any(m => m.Contains("może dublować T IN NIB"))) throw new AssertFail("brak komunikatu BN górą / T IN NIB: " + string.Join(" | ", gm.Where(m => m.Contains("nib"))));
+                    // K2: BN górą = 0 (domyślnie) — bez komunikatu o dublowaniu T IN NIB
+                    if (gm.Any(m => m.Contains("może dublować T IN NIB"))) throw new AssertFail("BN górą przy domyślnych K2: " + string.Join(" | ", gm.Where(m => m.Contains("nib"))));
                     _z528 = Zones(db).FirstOrDefault(z => XLinkOf(db, z, BeamApp, 6) == Hx(_b528));
                     var zb = Box(Verts(db, _z528)); var sb = Box(Verts(db, _b528));
                     if (zb.y1 - zb.y0 < zb.x1 - zb.x0) throw new AssertFail("strefa 528 nie jest wzdłuż Y");
@@ -737,10 +689,9 @@ namespace BricsCadRc.BrxSmokeTests
                     if (beams.Count != 1) throw new AssertFail("pasy belek na linii cięcia: " + beams.Count);
                     return $"pas {Dv(beams[0], "S0"):0.#}..{Dv(beams[0], "S1"):0.#}, H={Dv(beams[0], "Height"):0}, A strzemienia={Dv(beams[0], "StirrupA"):0}";
                 });
-                Check(step, "A: profil (spód −375 w pasie, nib belki −375…−225), kropki 4 H16 dół (−307) i góra (−78), strzemię 51 w widoku, wymiar H 375; E4b: boczne (−192,5, po 1 na bok), w nibie (w narożach UB 03; bez UB 03 dołem −307, górą −270), rozkłady BS / BN", () =>
+                Check(step, "A: profil (spód −375, nib belki −375…−225), kropki BM 4 dół (−305) i 4 góra (−55, warstwa górna), strzemię 51 w widoku (−319…−41), wymiar H 375; BN dołem H10 w narożu UB 03; bez BS / BN górą", () =>
                 {
                     if (plan == null) throw new AssertFail("brak planu");
-                    // pozycje mogą być wspólne (identyczny pręt: BN H16 = BB H16 L5500, BS H10 = B1 siatki) — rozpoznanie po geometrii
                     var sg = L(plan, "Segments").First(x => Prop(x, "Prof") != null);
                     var prof = L(sg, "Prof").Select(p => (ValueTuple<double, double, double, double>)p).ToList();
                     var trz = prof.FirstOrDefault(p => Math.Abs(p.Item3 + 375) < 1e-6 && p.Item4 == 0);
@@ -750,43 +701,31 @@ namespace BricsCadRc.BrxSmokeTests
                     var dots = L(plan, "Dots").Where(d => (bool)Prop(d, "Beam")).ToList();
                     bool In(ValueTuple<double, double, double, double> iv, object d) => Dv(d, "U") >= iv.Item1 - 1 && Dv(d, "U") <= iv.Item2 + 1;
                     List<object> At(double v, ValueTuple<double, double, double, double> iv) => dots.Where(d => In(iv, d) && Math.Abs(Dv(d, "V") - v) < 0.01).ToList();
-                    // BN w narożach spinki UB 03 (poprawka recenzji), gdy UB 03 jest w przekroju: ramiona ± (5 + d/2); bez UB 03 — wzór (−307 / −270)
+                    var bot = At(-305, trz); var top = At(-55, trz);
+                    string Pos(List<object> l) => string.Join(",", l.Select(d => (string)Prop(d, "PosNr")).Distinct());
+                    string All() => string.Join(" ", dots.Select(d => $"{Dv(d, "U"):0.#},{Dv(d, "V"):0.#}"));
+                    if (bot.Count != 4 || top.Count != 4) throw new AssertFail($"kropki dół {bot.Count} (poz. {Pos(bot)}), góra {top.Count} (poz. {Pos(top)}): {All()}");
+                    if (Pos(bot) != Pos(top)) throw new AssertFail($"BM — jedna pozycja dół / góra: {Pos(bot)} / {Pos(top)}");
+                    if (top.Any(d => !(bool)Prop(d, "Top")) || bot.Any(d => (bool)Prop(d, "Top"))) throw new AssertFail("flaga warstwy górnej kropek BM");
                     var ub3 = L(plan, "Bars").FirstOrDefault(b => Convert.ToString(Prop(b, "Kind"), Inv) == "NibUB");
                     var ubP = ub3 == null ? null : ((System.Collections.IEnumerable)Prop(ub3, "Path")).Cast<object>().Select(p => (ValueTuple<double, double>)p).ToList();
-                    double vNb = ubP != null ? ubP.Min(p => p.Item2) + 5 + 8 : -307, vNt = ubP != null ? ubP.Max(p => p.Item2) - 5 - 5 : -270;
-                    var bbD = At(-307, trz); var btD = At(-78, trz); var bsD = At(-192.5, trz); var nbD = At(vNb, nibP); var ntD = At(vNt, nibP);
-                    string Pos(List<object> l) => string.Join(",", l.Select(d => (string)Prop(d, "PosNr")).Distinct());
-                    if (bbD.Count != 4 || btD.Count != 4) throw new AssertFail($"kropki dół {bbD.Count} (poz. {Pos(bbD)}), góra {btD.Count} (poz. {Pos(btD)})");
-                    if (bsD.Count != 2) throw new AssertFail($"kropki boczne {bsD.Count}: " + string.Join(" ", dots.Select(d => $"{Dv(d, "U"):0.#},{Dv(d, "V"):0.#}")));
-                    if (nbD.Count != 1 || ntD.Count != 1) throw new AssertFail($"kropki w nibie (UB 03: {(ubP != null ? "tak" : "nie")}, v {vNb:0.#} / {vNt:0.#}): dołem {nbD.Count}, górą {ntD.Count}: " +
-                                                                               string.Join(" ", dots.Select(d => $"{Dv(d, "U"):0.#},{Dv(d, "V"):0.#}")));
-                    // T IN NIB nie nachodzi na BN górą (odstęp lic ≥ 0)
-                    foreach (var t in L(plan, "Dots").Where(d => (bool)Prop(d, "TinNib")))
-                    {
-                        double du = Dv(t, "U") - Dv(ntD[0], "U"), dv = Dv(t, "V") - Dv(ntD[0], "V");
-                        double need = (Convert.ToDouble(Prop(t, "Diameter"), Inv) + Convert.ToDouble(Prop(ntD[0], "Diameter"), Inv)) / 2.0;
-                        if (Math.Sqrt(du * du + dv * dv) < need - 1e-6) throw new AssertFail($"T IN NIB {Dv(t, "U"):0.#},{Dv(t, "V"):0.#} nachodzi na BN górą {Dv(ntD[0], "U"):0.#},{Dv(ntD[0], "V"):0.#}");
-                    }
+                    double vNb = ubP != null ? ubP.Min(p => p.Item2) + 5 + 5 : -315;
+                    var nbD = At(vNb, nibP);
+                    if (nbD.Count != 1) throw new AssertFail($"BN dołem H10 (v {vNb:0.#}, UB 03: {(ubP != null ? "tak" : "nie")}): {nbD.Count}; {All()}");
                     var links = L(plan, "Bars").Where(b => Convert.ToString(Prop(b, "Kind"), Inv) == "Beam").ToList();
                     if (links.Count != 1) throw new AssertFail("prętów belki w widoku (strzemię): " + links.Count);
                     var lp = ((System.Collections.IEnumerable)Prop(links[0], "Path")).Cast<object>().Select(p => (ValueTuple<double, double>)p).ToList();
                     double vmin = lp.Min(p => p.Item2), vmax = lp.Max(p => p.Item2);
-                    if (Math.Abs(vmin + 320) > 0.01 || Math.Abs(vmax + 65) > 0.01) throw new AssertFail($"strzemię v {vmin:0.#}..{vmax:0.#} (oczekiwano −320..−65)");
+                    if (Math.Abs(vmin + 319) > 0.01 || Math.Abs(vmax + 41) > 0.01) throw new AssertFail($"strzemię v {vmin:0.#}..{vmax:0.#} (oczekiwano −319..−41)");
                     var dims = L(plan, "Dims");
                     if (!dims.Any(d => (bool)Prop(d, "Vertical") && Math.Abs(Math.Abs(Dv(d, "V1") - Dv(d, "V2")) - 375) < 0.01)) throw new AssertFail("brak wymiaru H 375");
-                    if (!dims.Any(d => !(bool)Prop(d, "Vertical") && Math.Abs(Math.Abs(Dv(d, "U1") - Dv(d, "U2")) - 600) < 1.5)) throw new AssertFail("brak wymiaru szerokości 600");
                     var lbl = L(plan, "Labels").Select(l => (string)Prop(l, "Text")).ToList();
-                    foreach (var p in bbD.Concat(btD).Concat(bsD).Concat(nbD).Concat(ntD).Select(d => (string)Prop(d, "PosNr")).Concat(new[] { (string)Prop(links[0], "PosNr") }).Distinct())
-                        if (!lbl.Contains(p)) throw new AssertFail($"brak opisu poz. {p} (dół {Pos(bbD)}, góra {Pos(btD)}, boczne {Pos(bsD)}, nib {Pos(nbD)}/{Pos(ntD)}, strzemię {Prop(links[0], "PosNr")}; opisy: {string.Join(",", lbl.Distinct())})");
-                    // rozkłady E4b na rysunku: BS po 2 pręty (1 na bok), BN górą H10 i dołem H16, znacznik strefy
-                    var bs = Dists(db, "BS"); var bn = Dists(db, "BN");
-                    if (bs.Count == 0 || bs.Any(x => x.count != 2 || !x.mark.EndsWith(" BEAM SIDE") || !x.mark.StartsWith("H10-"))) throw new AssertFail("BS: " + string.Join(" | ", bs.Select(x => x.count + " " + x.mark)));
-                    var nt = bn.Where(x => x.mark.EndsWith(" BEAM NIB T")).ToList(); var nb = bn.Where(x => x.mark.EndsWith(" BEAM NIB B")).ToList();
-                    if (nt.Count == 0 || nb.Count == 0 || nt.Any(x => !x.mark.StartsWith("H10-")) || nb.Any(x => !x.mark.StartsWith("H16-")) || bn.Any(x => x.count != 1))
-                        throw new AssertFail("BN: " + string.Join(" | ", bn.Select(x => x.count + " " + x.mark)));
-                    foreach (var x in bs.Concat(bn)) Eq("znacznik " + x.mark, XLinkOf(db, x.id, TagApp, 1), Hx(_z528));
-                    return $"dół poz. {Pos(bbD)} ×4 −307, góra {Pos(btD)} ×4 −78, boczne {Pos(bsD)} ×2 −192,5, nib dołem {Pos(nbD)} {vNb:0.#} / górą {Pos(ntD)} {vNt:0.#} (UB 03: {(ubP != null ? "tak" : "nie")}), strzemię {Prop(links[0], "PosNr")} −320..−65; " +
-                           $"BS: {string.Join(", ", bs.Select(x => x.count + " " + x.mark))}; BN: {string.Join(", ", bn.Select(x => x.count + " " + x.mark))}";
+                    foreach (var p in bot.Concat(nbD).Select(d => (string)Prop(d, "PosNr")).Concat(new[] { (string)Prop(links[0], "PosNr") }).Distinct())
+                        if (!lbl.Contains(p)) throw new AssertFail($"brak opisu poz. {p}; opisy: {string.Join(",", lbl.Distinct())}");
+                    if (Dists(db, "BS").Count != 0) throw new AssertFail("BS przy H 375 (tryb B3): " + Dists(db, "BS").Count);
+                    var bn = Dists(db, "BN");
+                    if (bn.Count == 0 || bn.Any(x => !x.mark.StartsWith("H10-") || !x.mark.EndsWith(" BEAM NIB B"))) throw new AssertFail("BN: " + string.Join(" | ", bn.Select(x => x.mark)));
+                    return $"BM poz. {Pos(bot)} ×4 −305 / ×4 −55, BN dołem {Pos(nbD)} {vNb:0.#}, strzemię {Prop(links[0], "PosNr")} −319..−41; BN: {string.Join(", ", bn.Select(x => x.mark))}";
                 });
                 Check(step, "RC_SECTION_CHECK: A aktualny; odcisk ma składnik BEAM:<strefa> i pręty belki (DIST Kind:Beam)", () =>
                 {
@@ -916,14 +855,14 @@ namespace BricsCadRc.BrxSmokeTests
                     (ctx, plan) = DrawSection(db, b, p1, p2, look, _tlB, "B");
                     var beams = L(Prop(ctx, "Input"), "Beams");
                     if (beams.Count < 1) throw new AssertFail("brak pasa belki na linii cięcia");
-                    // E4b: H 300 → 0 prętów bocznych; pręty w nibie wzdłuż obu nóg (górą H10, dołem H16)
+                    // K2: H 300 → bez prętów bocznych (B3); pręty w nibie tylko dołem H10 (górą 0)
                     if (Dists(db, "BS").Count != 0) throw new AssertFail("BS przy H 300: " + Dists(db, "BS").Count);
                     var bn = Dists(db, "BN");
-                    if (!bn.Any(x => x.mark.EndsWith(" BEAM NIB T")) || !bn.Any(x => x.mark.EndsWith(" BEAM NIB B"))) throw new AssertFail("BN: " + string.Join(" | ", bn.Select(x => x.mark)));
+                    if (bn.Any(x => x.mark.EndsWith(" BEAM NIB T")) || !bn.Any(x => x.mark.EndsWith(" BEAM NIB B"))) throw new AssertFail("BN: " + string.Join(" | ", bn.Select(x => x.mark)));
                     return $"odcinek {(ax ? "X" : "Y")} {Dv(seg, "FaceLo"):0}..{Dv(seg, "FaceHi"):0} oś {axis:0.#}; pasy: " +
                            string.Join(", ", beams.Select(x => $"{Dv(x, "S0"):0}..{Dv(x, "S1"):0} H={Dv(x, "Height"):0}"));
                 });
-                Check(step, "B: pręty belki w widoku — dół (−232) i góra (−78) liniami, strzemiona 51 jako pionowe ramiona (−245…−65), profil −300", () =>
+                Check(step, "B: pręty belki w widoku — BM liniami dół (−230) i góra (−55, warstwa górna), strzemiona 51 jako pionowe ramiona (−244…−41), profil −300; U-bary BU pominięte (K6)", () =>
                 {
                     if (plan == null) throw new AssertFail("brak planu");
                     var pos = BeamPositions(db);
@@ -935,17 +874,19 @@ namespace BricsCadRc.BrxSmokeTests
                         var pth = P(b);
                         int pnr = int.Parse((string)Prop(b, "PosNr"), Inv);
                         if (!pos.TryGetValue(pnr, out var tp)) throw new AssertFail("pręt w widoku poz. " + pnr + " nie jest pozycją belki");
+                        if (tp.code == "BU") throw new AssertFail("U-bar BU w przekroju przed K6");
                         if (tp.code == "BL")
                         {
-                            if (pth.Count != 2 || Math.Abs(pth[0].U - pth[1].U) > 0.01 || Math.Abs(pth.Min(p => p.V) + 245) > 0.01 || Math.Abs(pth.Max(p => p.V) + 65) > 0.01)
+                            if (pth.Count != 2 || Math.Abs(pth[0].U - pth[1].U) > 0.01 || Math.Abs(pth.Min(p => p.V) + 244) > 0.01 || Math.Abs(pth.Max(p => p.V) + 41) > 0.01)
                                 throw new AssertFail("strzemię " + pnr + ": " + string.Join(" ", pth.Select(p => $"{p.U:0.#},{p.V:0.#}")));
                             nl++;
                         }
-                        else if (tp.shape == "00" && (tp.code == "BB" || tp.code == "BT"))
+                        else if (tp.shape == "00" && tp.code == "BM")
                         {
-                            double v = tp.code == "BT" ? -78 : -232;
-                            if (pth.Any(p => Math.Abs(p.V - v) > 0.01)) throw new AssertFail($"pręt {pnr} ({tp.code}) v={pth[0].V:0.#}, oczekiwano {v}");
-                            if (tp.code == "BT") nt++; else nb++;
+                            bool topL = (bool)Prop(b, "Top");
+                            double v = topL ? -55 : -230;
+                            if (pth.Any(p => Math.Abs(p.V - v) > 0.01)) throw new AssertFail($"pręt {pnr} (BM, góra={topL}) v={pth[0].V:0.#}, oczekiwano {v}");
+                            if (topL) nt++; else nb++;
                         }
                     }
                     if (nb < 1 || nt < 1 || nl < 10) throw new AssertFail($"w widoku: dół {nb}, góra {nt}, strzemiona {nl}");
@@ -953,7 +894,7 @@ namespace BricsCadRc.BrxSmokeTests
                     if (!prof.Any(p => Math.Abs(p.Item3 + 300) < 1e-6 && p.Item4 == 0)) throw new AssertFail("brak trzonu −300: " + string.Join(" ", prof));
                     int lbl = L(plan, "Labels").Count(l => pos.Any(kv => kv.Value.code == "BL" && kv.Key.ToString("00", Inv) == (string)Prop(l, "Text")));
                     if (lbl != 1) throw new AssertFail("opisy strzemion: " + lbl);
-                    return $"dół {nb} linii (−232), góra {nt} (−78), strzemiona {nl} pionowych ramion, opis strzemion 1";
+                    return $"BM: dół {nb} linii (−230), góra {nt} (−55), strzemiona {nl} pionowych ramion, opis strzemion 1";
                 });
                 Check(step, "RC_SECTION_CHECK: B aktualny, BEAM w odcisku; RC_SECTION_UPDATE bez zmian rysunku — nadal aktualny", () =>
                 {
@@ -977,7 +918,7 @@ namespace BricsCadRc.BrxSmokeTests
             {
                 object bbs = null; List<object> rows = null;
                 var pos = BeamPositions(db);
-                Check(step, "RC_BBS (ReadBars): pozycje belki — BB / BL < 100 (dół), BT 101+ (góra), kształty 00 / 11 / 21 / 51, długość cięcia BS 8666:2020, sztuki = suma rozkładów; bez ostrzeżeń „długość wg BS 8666:2020” dla belki", () =>
+                Check(step, "RC_BBS (ReadBars): pozycje belki — wszystkie w serii dolnej (BM / BU / BL / BN), kształty 00 / 21 / 51, długość cięcia BS 8666:2020, sztuki = suma rozkładów (BM: 2 × 4 na rozkład); bez ostrzeżeń „długość wg BS 8666:2020” dla belki", () =>
                 {
                     bbs = Call("BricsCadRc.Core.BbsDrawingReader", "ReadBars", db);
                     rows = L(bbs, "Rows");
@@ -990,7 +931,7 @@ namespace BricsCadRc.BrxSmokeTests
                         if (r.Count != 1) throw new AssertFail($"poz. {kv.Key}: wierszy {r.Count}");
                         var t = kv.Value;
                         bool top = Convert.ToString(Prop(r[0], "Layer"), Inv) == "Top";
-                        if (top != (t.code == "BT")) throw new AssertFail($"poz. {kv.Key} ({t.code}) w warstwie {Prop(r[0], "Layer")}");
+                        if (top) throw new AssertFail($"poz. {kv.Key} ({t.code}) w warstwie {Prop(r[0], "Layer")} — belka w serii dolnej (K3)");
                         double len = Convert.ToDouble(Call("BricsCadRc.Core.BarLengthRules", "CuttingLength", t.shape, (double)t.dia, t.a, t.b, t.c, 0.0, 0.0), Inv);
                         if (Math.Abs(Dv(r[0], "Length") - len) > 0.01) throw new AssertFail($"poz. {kv.Key}: L {Dv(r[0], "Length")} ≠ {len}");
                         int cnt = Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 18 && PosNr(Convert.ToString(v[1].Value, Inv)) == kv.Key)
@@ -1001,7 +942,8 @@ namespace BricsCadRc.BrxSmokeTests
                         shapes.Add(t.shape);
                         sb.Append($"{kv.Key:00} {t.code} {t.shape} H{t.dia} L{len:0} ×{cnt}; ");
                     }
-                    foreach (var s in new[] { "00", "11", "21", "51" }) if (!shapes.Contains(s)) throw new AssertFail("brak kształtu " + s + " wśród pozycji belki");
+                    foreach (var s in new[] { "00", "21", "51" }) if (!shapes.Contains(s)) throw new AssertFail("brak kształtu " + s + " wśród pozycji belki");
+                    if (shapes.Contains("11")) throw new AssertFail("pręty L (11) — usunięte w K3");
                     return sb.ToString();
                 });
                 Check(step, "RC_SCHEDULE (BuildSchedule): pozycje belki — te same sztuki i długości cięcia", () =>
@@ -1048,13 +990,58 @@ namespace BricsCadRc.BrxSmokeTests
                     {
                         var x = xr.Where(r => r.mark == kv.Key).ToList();
                         if (x.Count != 1) throw new AssertFail("arkusz: poz. " + kv.Key + " wierszy " + x.Count);
-                        if (x[0].top != (kv.Value.code == "BT")) throw new AssertFail($"arkusz: poz. {kv.Key} w sekcji {(x[0].top ? "TOP" : "BOTTOM")}");
+                        if (x[0].top) throw new AssertFail($"arkusz: poz. {kv.Key} w sekcji TOP — belka w BOTTOM LAYER (K3)");
                     }
                     double mx = xr.Sum(r => r.total * r.length / 1000.0 * LinearMass(r.dia));
                     var cnt = ((System.Collections.IEnumerable)Call("BricsCadRc.Core.BbsCounter", "CountAll", db, new List<string>())).Cast<object>().ToList();
                     double mc = cnt.Sum(x => Dv(x, "TotalMassKg"));
                     if (Math.Abs(mx - mc) > 0.05) throw new AssertFail($"masa z arkusza {mx:0.00} ≠ RC_COUNT_BBS {mc:0.00}");
                     return $"{Prop(gen, "Message")} wierszy {xr.Count}, masa {mx:0.00} kg = COUNT; plik {xls}";
+                });
+            });
+        }
+
+        [CommandMethod("RCSMOKE_BEAM_G528V1", CommandFlags.Modal)]
+        public void G528V1()
+        {
+            const string step = "G528V1";
+            Run(step, db =>
+            {
+                ObjectId zb = ObjectId.Null, b = ObjectId.Null, t = ObjectId.Null;
+                Check(step, "rekord RC_BEAM v1 (wersja testowa: [1] = 1, 24 pola, strzemiona H10, zakład 800, BS H10, BN H10 / H16) na strefie 528", () =>
+                {
+                    SetFormat("Polyline");
+                    CleanModelSpace(db);
+                    ImportGa("PLOT 528-529");
+                    (b, t) = Views(db);
+                    zb = Zones(db).First(z => XLinkOf(db, z, BeamApp, 6) == Hx(b));
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var e = (Entity)tr.GetObject(zb, OpenMode.ForWrite);
+                        var v = Raw(e, BeamApp).Take(24).ToArray();
+                        v[1] = new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)1);
+                        v[7] = new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)10);
+                        v[15] = new TypedValue((int)DxfCode.ExtendedDataReal, 800.0);
+                        v[18] = new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)10);
+                        v[20] = new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)10);
+                        v[21] = new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)16);
+                        e.XData = new ResultBuffer(v);
+                        tr.Commit();
+                    }
+                    return "długość rekordu " + RawOf(db, zb, BeamApp).Length;
+                });
+                Check(step, "generowanie: komunikat migracji v1, rekord zapisany jako v2 (36 pól, [1] = 2), strzemiona H12, BM, bez BS / BN górą", () =>
+                {
+                    var msgs = Messages(GenerateBeams(db, b, t));
+                    var mig = msgs.FirstOrDefault(m => m.Contains("rekord RC_BEAM v1"));
+                    if (mig == null) throw new AssertFail("brak komunikatu migracji: " + string.Join(" | ", msgs.Take(5)));
+                    var v = RawOf(db, zb, BeamApp);
+                    if (v.Length != 36 || Convert.ToInt32(v[1].Value, Inv) != 2) throw new AssertFail($"rekord po generowaniu: {v.Length} pól, [1] = {v[1].Value}");
+                    if (Convert.ToInt32(v[7].Value, Inv) != 12) throw new AssertFail("Ø strzemion w rekordzie: " + v[7].Value);
+                    var bl = Dists(db, "BL");
+                    if (bl.Count != 1 || !bl[0].mark.StartsWith("H12-")) throw new AssertFail("strzemiona: " + string.Join(",", bl.Select(x => x.mark)));
+                    if (Dists(db, "BS").Count > 0 || Dists(db, "BN").Any(x => x.mark.EndsWith(" BEAM NIB T"))) throw new AssertFail("BS / BN górą po migracji");
+                    return mig.Length > 160 ? mig.Substring(0, 160) + "…" : mig;
                 });
             });
         }
@@ -1310,74 +1297,94 @@ namespace BricsCadRc.BrxSmokeTests
             return $"strefy=2, H={h}, ostrzeżenia belki: " + string.Join(" | ", _lastWarnings.Where(w => w.Contains("[RC BEAM]")));
         }
 
-        /// <summary>Numery pozycji prętów belki: dół / strzemiona 04–99, góra 101–499; żadnego 01–03.</summary>
+        /// <summary>Kody rozkładów belki (K3: BM / BU; stare BB / BT / BS / BN; BL).</summary>
+        private static readonly string[] BeamCodes = { "BB", "BT", "BL", "BS", "BN", "BM", "BU" };
+
+        /// <summary>Numery pozycji prętów belki (K3): wszystkie w serii dolnej 04–99; żadnego 01–03.</summary>
         private static string NumberChecks(Database db)
         {
             var bad = new List<string>();
-            foreach (var code in new[] { "BB", "BL", "BT", "BS", "BN" })
+            foreach (var code in BeamCodes)
                 foreach (var d in Dists(db, code))
-                {
-                    if (d.pos <= 3) bad.Add(d.mark);
-                    if (code == "BT" ? d.pos < 101 || d.pos >= 500 : d.pos < 4 || d.pos >= 100) bad.Add(d.mark);
-                }
+                    if (d.pos < 4 || d.pos >= 100) bad.Add(d.mark);
             if (bad.Count > 0) throw new AssertFail("numery: " + string.Join(", ", bad));
-            return "numery OK";
+            return "numery OK (seria dolna)";
+        }
+
+        /// <summary>K3: BM — opis „2x4 H16-nn-150 B+T”, Count 4, CountDisplay 8; brak BB / BT (dół = góra).</summary>
+        private static string BothChecks(Database db)
+        {
+            var bm = Dists(db, "BM");
+            if (bm.Count == 0) throw new AssertFail("brak rozkładów BM");
+            foreach (var x in bm)
+            {
+                if (x.count != 4 || !x.mark.EndsWith("-150 B+T") || !x.mark.StartsWith("H16-")) throw new AssertFail("BM: " + x.count + " " + x.mark);
+                var v = RawOf(db, x.id, DistApp);
+                if (EffCount(v) != 8) throw new AssertFail("BM CountDisplay: " + EffCount(v));
+                string t = AnnotText(db, x.id);
+                if (!t.StartsWith("2x4 H16-") || !t.EndsWith("-150 B+T")) throw new AssertFail("tekst opisu BM: «" + t + "»");
+            }
+            if (Dists(db, "BB").Count + Dists(db, "BT").Count > 0) throw new AssertFail("BB / BT przy dół = góra");
+            return "BM=" + bm.Count + " («" + AnnotText(db, bm[0].id) + "»)";
+        }
+
+        /// <summary>K3: brak prętów L (11), poziomych U-barów (kody BB / BT z kształtem 21) i rozkładów belki na rzucie górnym.</summary>
+        private static string NoLegacyBeamBars(Database db)
+        {
+            var l = Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 12
+                                && BeamCodes.Contains(Convert.ToString(v[2].Value, Inv)) && Convert.ToString(v[12].Value, Inv) == "11");
+            if (l.Count > 0) throw new AssertFail("pręty L (11): " + l.Count);
+            int bt = Dists(db, "BT").Count;
+            if (bt > 0) throw new AssertFail("BT (dół = góra): " + bt);
+            return "bez prętów L / BT";
+        }
+
+        /// <summary>Tekst opisu rozkładu (DBText w bloku opisu).</summary>
+        private static string AnnotText(Database db, ObjectId dist)
+        {
+            var a = AnnotOf(db, dist);
+            if (a.IsNull) return "";
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var br = (BlockReference)tr.GetObject(a, OpenMode.ForRead);
+                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                foreach (ObjectId cid in btr)
+                    if (tr.GetObject(cid, OpenMode.ForRead) is DBText t) return t.TextString ?? "";
+                tr.Commit();
+            }
+            return "";
         }
 
         /// <summary>
-        /// E4: linie prętów bloku rozkładu prętów L / U-barów leżą w strefie belki (dół — strefa rzutu dolnego, góra — górnego; wystarczy
-        /// dowolna strefa); symbol haka: podstawa w strefie i punkt 100 mm od podstawy w kierunku zagięcia (składowa prostopadła haka)
-        /// też w strefie — hak wskazuje drugie ramię (rząd przy licu: zły kierunek wychodzi poza strefę). Kreska haka rzędu wewnętrznego
-        /// narożnika L może wyjść ~13 mm za wewnętrzny narożnik strefy — jej koniec nie jest sprawdzany. Liczba haków = liczba prętów.
+        /// K3: linie rozkładów pionowych U-barów (BU) leżą w strefie belki rzutu dolnego; kółko na zagięciu — jedno na pręt (kategoria UBar),
+        /// środek kółka bliżej tyłu U (lico końca / narożnika) niż końca ramienia.
         /// </summary>
-        private static string BentInsideZones(Database db)
+        private static string UBarsInsideZones(Database db)
         {
             var zones = Zones(db).Select(z => Verts(db, z)).ToList();
-            int lines = 0, hooks = 0, bars = 0;
-            foreach (var code in new[] { "BB", "BT" })
-                foreach (var x in Dists(db, code).Where(d => d.shape == "11" || d.shape == "21"))
+            int lines = 0, circles = 0, bars = 0;
+            foreach (var x in Dists(db, "BU"))
+            {
+                bars += x.count;
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
-                    bars += x.count;
-                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    var br = (BlockReference)tr.GetObject(x.id, OpenMode.ForRead);
+                    var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                    foreach (ObjectId cid in btr)
                     {
-                        var br = (BlockReference)tr.GetObject(x.id, OpenMode.ForRead);
-                        var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
-                        foreach (ObjectId cid in btr)
-                        {
-                            if (!(tr.GetObject(cid, OpenMode.ForRead) is Line ln)) continue;
-                            var p = ln.StartPoint.TransformBy(br.BlockTransform);
-                            var q = ln.EndPoint.TransformBy(br.BlockTransform);
-                            lines++;
-                            var pts = new[] { p, q };
-                            if (Math.Abs(p.X - q.X) > 1 && Math.Abs(p.Y - q.Y) > 1)
-                            {
-                                hooks++;
-                                // składowa prostopadła haka: oś inna niż oś pręta (pręty wzdłuż X → Y i odwrotnie)
-                                bool barsX = Convert.ToString(RawOf(db, x.id, DistApp)[6].Value, Inv) != "Y";
-                                double sx = barsX ? 0 : Math.Sign(q.X - p.X), sy = barsX ? Math.Sign(q.Y - p.Y) : 0;
-                                pts = new[] { p, new Point3d(p.X + 100 * sx, p.Y + 100 * sy, 0) };
-                            }
-                            foreach (var pt in pts)
-                                if (!zones.Any(z => InPoly(z, pt.X, pt.Y)))
-                                {
-                                    var all = new List<string>();
-                                    foreach (ObjectId c2 in btr)
-                                        if (tr.GetObject(c2, OpenMode.ForRead) is Line l2)
-                                        {
-                                            var a2 = l2.StartPoint.TransformBy(br.BlockTransform); var b2 = l2.EndPoint.TransformBy(br.BlockTransform);
-                                            all.Add($"({a2.X:0.#},{a2.Y:0.#})-({b2.X:0.#},{b2.Y:0.#})");
-                                        }
-                                    var v = RawOf(db, x.id, DistApp);
-                                    var zb = zones.Select(z => $"[{z.Min(w => w.X):0.#}..{z.Max(w => w.X):0.#} × {z.Min(w => w.Y):0.#}..{z.Max(w => w.Y):0.#}]");
-                                    throw new AssertFail($"{x.mark}: punkt linii ({pt.X:0.#}, {pt.Y:0.#}) poza strefą belki; linie: {string.Join(" ", all)}; " +
-                                                         $"dir={v[6].Value} side={v[13].Value} symdir={v[14].Value} skewS={v[26].Value} skewE={v[25].Value}; strefy {string.Join(" ", zb)}");
-                                }
-                        }
-                        tr.Commit();
+                        var o = tr.GetObject(cid, OpenMode.ForRead);
+                        if (o is Circle c) { circles++; continue; }
+                        if (!(o is Line ln)) continue;
+                        lines++;
+                        foreach (var pt in new[] { ln.StartPoint.TransformBy(br.BlockTransform), ln.EndPoint.TransformBy(br.BlockTransform) })
+                            if (!zones.Any(z => InPoly(z, pt.X, pt.Y)))
+                                throw new AssertFail($"{x.mark}: punkt linii ({pt.X:0.#}, {pt.Y:0.#}) poza strefą belki");
                     }
+                    tr.Commit();
                 }
-            if (hooks != bars) throw new AssertFail($"symbole haka: {hooks}, pręty L / U-bary: {bars}");
-            return $"linie prętów L / U-barów w strefie ({lines}, haki {hooks})";
+            }
+            if (circles != bars) throw new AssertFail($"kółka na zagięciu: {circles}, U-bary: {bars}");
+            return $"U-bary w strefie (linie {lines}, kółka {circles})";
         }
 
         private static bool InPoly(List<Point2d> v, double x, double y)
@@ -1409,7 +1416,7 @@ namespace BricsCadRc.BrxSmokeTests
 
         private static List<ObjectId> AllBeamDists(Database db)
             => Ms(db, e => e is BlockReference && Raw(e, DistApp) is TypedValue[] v && v.Length > 2
-                           && new[] { "BB", "BT", "BL", "BS", "BN" }.Contains(Convert.ToString(v[2].Value, Inv)));
+                           && BeamCodes.Contains(Convert.ToString(v[2].Value, Inv)));
 
         private static List<ObjectId> Zones(Database db)
             => Ms(db, e => e is Polyline && Raw(e, BeamApp) != null);
@@ -1418,7 +1425,7 @@ namespace BricsCadRc.BrxSmokeTests
         {
             var res = new List<(string, string, double, double, bool, double, int)>();
             foreach (var id in Ms(db, e => Raw(e, "RC_SINGLE_BAR") is TypedValue[] v && v.Length > 7
-                                           && new[] { "BB", "BT", "BL", "BS", "BN" }.Contains(Convert.ToString(v[7].Value, Inv))))
+                                           && BeamCodes.Contains(Convert.ToString(v[7].Value, Inv))))
             {
                 var v = RawOf(db, id, "RC_SINGLE_BAR");
                 bool isBlock = With(db, id, e => e is BlockReference);

@@ -623,9 +623,10 @@ namespace BricsCadRc.Core
                 : 1;
             if (newCount < 1) newCount = 1;
 
-            // belka (E4b): pręty boczne BS — w rzucie po jednym na bok, CountDisplay = liczba w rzucie × liczba na bok;
-            // po zmianie liczby gripem krotność zostaje (poza BS — jak dotąd: reset)
-            int perDrawn = bar.LayerCode == BeamGeometry.CodeSide && bar.CountDisplay.HasValue && bar.Count > 0
+            // belka: pręty boczne BS (E4b — w rzucie po jednym na bok, CountDisplay = liczba w rzucie × liczba na bok) i pręty
+            // podłużne B+T (BM, K3 — w rzucie jedna warstwa, CountDisplay = 2 × liczba, opis „2x4”); po zmianie liczby gripem
+            // krotność zostaje (pozostałe kody — jak dotąd: reset)
+            int perDrawn = BarLabelRules.KeepsMultiplicity(bar.LayerCode) && bar.CountDisplay.HasValue && bar.Count > 0
                 ? Math.Max(1, bar.CountDisplay.Value / bar.Count) : 1;
 
             bar.Count    = newCount;

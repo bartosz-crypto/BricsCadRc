@@ -1,6 +1,7 @@
 # Plan: automatyczne zbrojenie belek / pogrubień (downstand) — NA Smart RC
 
-Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzymany. Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
+Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzymany. **Kontynuacja: docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md
+(praktyka biura) — K2 + K3 zastępują strzemiona E3, pręty L / poziome U-bary E4 i serię górną BT (status tam); opis E3–E4 poniżej — historyczny.** Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
 
 ## Status realizacji (2026-10-10, staging — do testów Bartka)
 - **E1 — zrobione:** model (`RC_BEAM` [1]–[17], `RC_AUTOREBAR_BEAM` [1], warstwa `RC-BEAM`; `BeamStore`), czysta `BeamGeometry`

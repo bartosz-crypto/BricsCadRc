@@ -72,6 +72,8 @@ namespace RegressionDump
             new FixCase { Id = "F12", Index = 23 },   // K6 (#12): _.STRETCH końca 00 do 20 mm (< 50) — pręt sprzed STRETCH
             new FixCase { Id = "F14", Index = 24 },   // K7 (B3 ADD, D1): płyta L — B3 ADD w narożniku wklęsłym (wzorzec: brak metody)
             new FixCase { Id = "F3g", Index = 25 },   // K5 (3c): B1 na płycie, COPY płyty z rozkładami (+20000 w X), B1 ponownie na oryginale
+            // K1 planu PLAN_BELKI_PRAKTYKA (#29): nib zawinięty — pas 26 pusty (odstęp od F3g na opisy), płyta w pasie 27
+            new FixCase { Id = "F29", Index = 27 },   // płyta 12000×6000, nib 135 wzdłuż prawej krawędzi zawinięty 600 na górnej i dolnej; T2, UB B2
         };
 
         /// <summary>Plik -WBLOCK przypadku F3e (ścieżka bez spacji — skrypt); usuwany w RC_REG_FIX_SETUP.</summary>
@@ -200,6 +202,28 @@ namespace RegressionDump
                 }
                 return "OK";
             });
+            // #29 (K1): płyta 12000×6000 (Y0 ± 3000) + linia uskoku: nib 135 wzdłuż prawej krawędzi, zawinięty 600 mm na górnej
+            // i dolnej krawędzi (jak PLOT 321 / 525); Bar = obrys płyty. Generowanie na końcu RC_REG_FIX_CHECK (numeracja).
+            FixStep("F29.setup", () =>
+            {
+                var c = Fx("F29");
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayer(db, tr, SlabLayer, 7);
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                    c.Bar = AddRect(ms, tr, 0, c.Y0 - 3000, 12000, c.Y0 + 3000, SlabLayer);
+                    var pl = new Polyline(8);
+                    var pts = new[] { (0.0, -3000.0), (11400.0, -3000.0), (11400.0, -2865.0), (11865.0, -2865.0),
+                                      (11865.0, 2865.0), (11400.0, 2865.0), (11400.0, 3000.0), (0.0, 3000.0) };
+                    for (int i = 0; i < pts.Length; i++) pl.AddVertexAt(i, new Point2d(pts[i].Item1, c.Y0 + pts[i].Item2), 0, 0, 0);
+                    pl.Closed = true;
+                    pl.Layer = SlabLayer;
+                    ms.AppendEntity(pl);
+                    tr.AddNewlyCreatedDBObject(pl, true);
+                    tr.Commit();
+                }
+                return "OK";
+            });
             // K5 (3c): płyta 12000×8000 w pasie (Y0 ± 4000) + AutoRebar B1; Bar = obrys płyty
             FixStep("F3g.setup", () =>
             {
@@ -260,6 +284,13 @@ namespace RegressionDump
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 return Call("AutoRebarEngine", "GenerateB3Corners", doc, Fx("F14").Bar);
             });
+            // #29 (K1): nib zawinięty — góra T2 i UB B2 (UB 02 na krawędziach uskoku), bez dołu B2 (liczba prętów dołu z długości;
+            // szablon H10 przesunąłby numer szablonu B3 ADD przypadku F14). Wzorzec: UB 02 / pręty T2 na krótkich krawędziach
+            // uskoku zawinięcia liczone z całej krawędzi zewnętrznej (58 UB co 6,6 mm na 465 mm).
+            FixStep("F29.t2", () => Call("AutoRebarEngine", "GenerateLayer", Application.DocumentManager.MdiActiveDocument,
+                                         Fx("F29").Bar, "rebar_top", "Y", "T2", 12, 200.0, 40.0, true));
+            FixStep("F29.ub2", () => Call("AutoRebarEngine", "GenerateUBLayer", Application.DocumentManager.MdiActiveDocument,
+                                          Fx("F29").Bar, "rebar_bottom", "B2", 225, "Y", 200.0, 40.0, true));
         }
 
         [CommandMethod("RC_REG_DUMP_FIX", CommandFlags.Modal)]

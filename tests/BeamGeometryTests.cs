@@ -429,350 +429,304 @@ namespace BricsCadRc.Tests
             Assert.That(BeamGeometry.ParseNibToc("NIB TOC=43.475"), Is.EqualTo(43.475).Within(1e-12));
         }
 
-        // ── E4: narożniki L, złącza T, U-bary, koniec wewnętrzny ─────────
+        // ── K2 / K3 (praktyka biura C12 / Holbrook — docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md) ──
 
-        /// <summary>Pręty zestawu w rzucie: łamane (ramię widoczne + ramię zagięte) — do sprawdzeń krzyżowania i położenia.</summary>
-        private static List<List<(double X, double Y)>> BarPolylines(BeamGeometry.BentRun r)
+        /// <summary>Plan K3 domyślny: 4 H16, zakład 40·Ø = 650, koniec pręta prostego 61 od lica, przed kwadratem narożnika.</summary>
+        private static BeamGeometry.LayerPlan Plan(BeamGeometry.Result r, bool intoSquare = false)
+            => BeamGeometry.PlanLayer(r, 16, 650, 6000, 45, 61, intoSquare);
+
+        private static List<BeamGeometry.VUBarRun> UBars(BeamGeometry.Result r, BeamGeometry.LayerPlan lp, double stirrupA, List<string> msgs = null,
+                                                         bool intoSquare = false)
+            => BeamGeometry.PlanVerticalUBars(r, lp, 4, 16, 16, stirrupA, 12, 650, 90, 35, 6000, 45, 61, intoSquare, msgs ?? new List<string>());
+
+        [Test]
+        public void K2_StirrupHeight_CoverTop_A1_A2()
         {
-            var res = new List<List<(double X, double Y)>>();
-            for (int i = 0; i < r.Count; i++)
-            {
-                double c = r.Across0 + i * r.Spacing;
-                double s = r.Count > 1 ? r.Start0 + (r.StartN - r.Start0) * i / (r.Count - 1) : r.Start0;
-                double e = s + r.LineLength;
-                double v = r.BendAtStart ? s : e;                       // wierzchołek (zagięcie) na osi pręta
-                double other = r.Kind == "U" ? r.B - r.Dia : r.B - r.Dia / 2.0;   // drugie ramię / tył U (oś)
-                double c2 = c + r.BendDir * other;
-                (double X, double Y) P(double along, double across) => r.AlongX ? (along, across) : (across, along);
-                var pts = new List<(double X, double Y)> { P(r.BendAtStart ? e : s, c), P(v, c), P(v, c2) };
-                if (r.Kind == "U") pts.Add(P(r.BendAtStart ? v + (r.C - r.Dia / 2.0) : v - (r.C - r.Dia / 2.0), c2));
-                res.Add(pts);
-            }
-            return res;
-        }
-
-        private static bool SegmentsCross((double X, double Y) a, (double X, double Y) b, (double X, double Y) c, (double X, double Y) d)
-        {
-            double Cr((double X, double Y) o, (double X, double Y) p, (double X, double Y) q) => (p.X - o.X) * (q.Y - o.Y) - (p.Y - o.Y) * (q.X - o.X);
-            double d1 = Cr(c, d, a), d2 = Cr(c, d, b), d3 = Cr(a, b, c), d4 = Cr(a, b, d);
-            return ((d1 > 1e-6 && d2 < -1e-6) || (d1 < -1e-6 && d2 > 1e-6)) && ((d3 > 1e-6 && d4 < -1e-6) || (d3 < -1e-6 && d4 > 1e-6));
-        }
-
-        private static void AssertNoCrossing(List<List<(double X, double Y)>> bars)
-        {
-            for (int i = 0; i < bars.Count; i++)
-                for (int j = i + 1; j < bars.Count; j++)
-                    for (int a = 0; a + 1 < bars[i].Count; a++)
-                        for (int b = 0; b + 1 < bars[j].Count; b++)
-                            Assert.That(SegmentsCross(bars[i][a], bars[i][a + 1], bars[j][b], bars[j][b + 1]), Is.False,
-                                $"pręty {i} i {j} krzyżują się");
-        }
-
-        private static void AssertInside(List<(double X, double Y)> zone, List<List<(double X, double Y)>> bars)
-        {
-            foreach (var b in bars)
-                foreach (var p in b)
-                    Assert.That(BeamGeometry.Inside(zone, p), Is.True, $"punkt pręta ({p.X:0.#}, {p.Y:0.#}) poza strefą");
-        }
-
-        private static BeamGeometry.LayerPlan Plan(BeamGeometry.Result r) => BeamGeometry.PlanLayer(r, 4, 16, 16, 800, 6000);
-
-        /// <summary>Tyły zagnieżdżonych U-barów jednego końca: prześwit między kolejnymi tyłami ≥ 20 (recenzja E4).</summary>
-        private static void AssertUBarBackGaps(List<BeamGeometry.BentRun> us)
-        {
-            foreach (var g in us.Where(b => b.Kind == "U").GroupBy(b => (b.Seg, b.BendAtStart)))
-            {
-                // oś tyłu U-bara: przy zagięciu na początku linii — Start0, inaczej koniec linii
-                var backs = g.Select(b => b.BendAtStart ? b.Start0 : b.Start0 + b.LineLength).OrderBy(x => x).ToList();
-                int dia = g.First().Dia;
-                for (int i = 1; i < backs.Count; i++)
-                    Assert.That(backs[i] - backs[i - 1] - dia, Is.GreaterThanOrEqualTo(20 - 1e-6), "prześwit między tyłami U-barów");
-            }
+            // A1 (otulina górna 35): Holbrook 450 → 365, 375 → 290, 300 → 215
+            Assert.That(BeamGeometry.StirrupHeightCovers(450), Is.EqualTo(365));
+            Assert.That(BeamGeometry.StirrupHeightCovers(375), Is.EqualTo(290));
+            Assert.That(BeamGeometry.StirrupHeightCovers(300), Is.EqualTo(215));
+            // A2 (otulina górna 50): C12 450 → 350, 600 → 500, 750 → 650
+            Assert.That(BeamGeometry.StirrupHeightCovers(450, BeamGeometry.CoverTopA2), Is.EqualTo(350));
+            Assert.That(BeamGeometry.StirrupHeightCovers(600, BeamGeometry.CoverTopA2), Is.EqualTo(500));
+            Assert.That(BeamGeometry.StirrupHeightCovers(750, BeamGeometry.CoverTopA2), Is.EqualTo(650));
+            Assert.That(BeamGeometry.StirrupFirstOffset(12), Is.EqualTo(51), "pierwsze strzemię: otulina 45 + Ø/2");
         }
 
         [Test]
-        public void E4_Plot539_Closures_LinkRanges_Stirrups()
+        public void K2_Defaults_And_Laps()
         {
-            var r = BeamGeometry.Analyze(Zone539, Outline539);
-            var bottom = r.Segments.Single(s => s.AlongX && s.AcrossLo < 50000);
-            var top = r.Segments.Single(s => s.AlongX && s.AcrossLo > 50000);
-            var left = r.Segments.Single(s => !s.AlongX);
-            Assert.That(r.Joints.Count(j => !j.IsTee), Is.EqualTo(2));
-            Assert.That(top.LoClose, Is.EqualTo(BeamGeometry.Closure.LBar));
-            Assert.That(top.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar), "koniec wewnętrzny zamknięty jak przy krawędzi");
-            Assert.That(left.LoClose, Is.EqualTo(BeamGeometry.Closure.LBar));
-            Assert.That(left.HiClose, Is.EqualTo(BeamGeometry.Closure.LBar));
-            Assert.That(bottom.LoClose, Is.EqualTo(BeamGeometry.Closure.LBar));
-            Assert.That(bottom.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
-            // strzemiona: dłuższa noga (lewa) przez oba kwadraty narożników, pozostałe — zakres własny
-            Assert.That(left.LinkLo, Is.EqualTo(left.FaceLo));
-            Assert.That(left.LinkHi, Is.EqualTo(left.FaceHi));
-            Assert.That(top.LinkLo, Is.EqualTo(top.OwnLo));
-            Assert.That(bottom.LinkLo, Is.EqualTo(bottom.OwnLo));
-            Assert.That(BeamGeometry.StirrupLayout(left.LinkLo, left.LinkHi).Count, Is.EqualTo(52));
-            // koniec Hi z U-barami — pierwsze strzemię 125 od lica (otulina czołowa 45; dolna noga 24 → 23)
-            Assert.That(BeamGeometry.StirrupLayout(top.LinkLo, top.LinkHi, 200, 50, null, 100, 125).Count, Is.EqualTo(13));
-            Assert.That(BeamGeometry.StirrupLayout(bottom.LinkLo, bottom.LinkHi, 200, 50, null, 100, 125).Count, Is.EqualTo(23));
+            var p = new BeamParams();
+            Assert.That(p.StirrupDia, Is.EqualTo(12));
+            Assert.That(p.CoverTop, Is.EqualTo(35));
+            Assert.That(p.SideMode, Is.EqualTo(3));
+            Assert.That(p.NibTopDia, Is.EqualTo(0));
+            Assert.That(p.NibBottomDia, Is.EqualTo(10));
+            Assert.That(p.UsesBothMark, Is.True);
+            // zakład 40·Ø (nota 12 biura): H10 400, H12 500, H16 650
+            Assert.That(p.LapFor(10), Is.EqualTo(400));
+            Assert.That(p.LapFor(12), Is.EqualTo(500));
+            Assert.That(p.LapFor(16), Is.EqualTo(650));
+            Assert.That(p.StraightEndOffsetAuto, Is.EqualTo(61), "otulina 45 + Ø U-bara 16");
+            p.StraightEndOffset = 90;
+            Assert.That(p.StraightEndOffsetAuto, Is.EqualTo(90));
+            p.TopCount = 3;
+            Assert.That(p.UsesBothMark, Is.False, "dół ≠ góra → BB / BT");
         }
 
         [Test]
-        public void E4_Plot539_Plan_LBarsAndUBars()
+        public void K2_SideBarModes_B1_B2_B3()
         {
-            var r = BeamGeometry.Analyze(Zone539, Outline539);
+            var p = new BeamParams();
+            Assert.That(p.SideBarsActive(450), Is.False, "B3: H ≤ 450 — brak");
+            Assert.That(p.SideBarsActive(525), Is.True, "B3: od 525");
+            p.SideMode = 1;
+            Assert.That(p.SideBarsActive(750), Is.False, "B1: nigdy");
+            p.SideMode = 2;
+            Assert.That(p.SideBarsActive(300), Is.True, "B2: zawsze");
+            p.SideDia = 0;
+            Assert.That(p.SideBarsActive(750), Is.False, "Ø 0 = brak");
+        }
+
+        [Test]
+        public void K2_MigrateV1_NewDefaults_GeometryKept_Message()
+        {
+            var v1 = new BeamParams
+            {
+                Height = 375, Width = 600, NibWidth = 160, NibHeight = 150, CoverSide = 45, CoverBottom = 50,
+                StirrupDia = 10, Lap = 800, SideDia = 10, NibTopDia = 10, NibBottomDia = 16
+            };
+            var n = BeamParams.MigrateV1(v1);
+            Assert.That(n.MigratedFromV1, Is.True);
+            Assert.That((n.Height, n.Width, n.NibWidth, n.NibHeight), Is.EqualTo((375.0, 600.0, 160.0, 150.0)));
+            Assert.That(n.StirrupDia, Is.EqualTo(12));
+            Assert.That(n.NibTopDia, Is.EqualTo(0));
+            Assert.That(n.NibBottomDia, Is.EqualTo(10));
+            Assert.That(n.SideMode, Is.EqualTo(3));
+            Assert.That(n.LapFor(16), Is.EqualTo(650));
+            Assert.That(n.MigrationNote, Does.Contain("H10 → H12"));
+            Assert.That(n.MigrationNote, Does.Contain("zakład 800"));
+            Assert.That(n.MigrationNote, Does.Contain("nib górą H10 → brak"));
+            Assert.That(n.MigrationNote, Does.Contain("nib dołem H16 → H10"));
+            Assert.That(n.MigrationNote, Does.Contain("tryb B3"));
+        }
+
+        [Test]
+        public void K3_CountText_2x4()
+        {
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, 8), Is.EqualTo("2x4"));
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, null), Is.EqualTo("4"));
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, 6), Is.EqualTo("6"), "krotność niecałkowita — liczba");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 4), Is.EqualTo("4"), "BS — jak dotąd (opis K4)");
+            Assert.That(BarLabelRules.CountText("B1", 31, null), Is.EqualTo("31"));
+            Assert.That(BarLabelRules.CountText("B1", 31, 33), Is.EqualTo("33"));
+            Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeBoth), Is.True);
+            Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeSide), Is.True);
+            Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeUBar), Is.False);
+        }
+
+        [Test]
+        public void K3_UBarHeights_Holbrook_C12()
+        {
+            // B U-bara = A strzemienia − 2·Ø strzemienia (w dół do 5): Holbrook A1 528 → 265, 319 → 340, 539 → 190; C12 A2 450 → 325,
+            // 600 → 475, 750 → 625
+            var r = BeamGeometry.Analyze(Zone528, Outline528);
             var lp = Plan(r);
-            TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
-            var top = r.Segments.Single(s => s.AlongX && s.AcrossLo > 50000);
-            var left = r.Segments.Single(s => !s.AlongX);
-            var bottom = r.Segments.Single(s => s.AlongX && s.AcrossLo < 50000);
-
-            // pręty proste: góra od kwadratu narożnika (bez otuliny) do lica końca − 45, lewa między kwadratami
-            Assert.That(lp.Straight.Count, Is.EqualTo(4));
-            Assert.That(lp.Straight.Where(x => x.Seg == top).Select(x => x.Length), Is.EqualTo(new[] { 2250.0 }));
-            Assert.That(lp.Straight.Where(x => x.Seg == left).Select(x => x.Length), Is.EqualTo(new[] { 5000.0, 5000.0 }));
-            Assert.That(lp.Straight.Where(x => x.Seg == bottom).Select(x => x.Length), Is.EqualTo(new[] { 4500.0 }));
-            var lefts = lp.Straight.Where(x => x.Seg == left).ToList();
-            Assert.That(lefts[0].Start, Is.EqualTo(left.OwnLo).Within(1e-6));
-            Assert.That(lefts[1].Start + lefts[1].Length, Is.EqualTo(left.OwnHi).Within(1e-6));
-
-            var L = lp.Bent.Where(b => b.Kind == "L").ToList();
-            var U = lp.Bent.Where(b => b.Kind == "U").ToList();
-            Assert.That(L.Count, Is.EqualTo(2));
-            Assert.That(U.Count, Is.EqualTo(4), "2 U-bary × 2 końce (wewnętrzny + przy krawędzi)");
-            Assert.That(lp.Bent.Count, Is.EqualTo(6));
-            foreach (var b in L)
+            foreach (var (h, ct, b) in new[] { (375.0, 35.0, 265.0), (450.0, 35.0, 340.0), (300.0, 35.0, 190.0),
+                                               (450.0, 50.0, 325.0), (600.0, 50.0, 475.0), (750.0, 50.0, 625.0) })
             {
-                Assert.That(b.Shape, Is.EqualTo("11"));
-                Assert.That(b.Count, Is.EqualTo(4), "pręty L we wszystkich rzędach");
-                Assert.That(b.Overlap, Is.GreaterThanOrEqualTo(800 - 1e-6));
-                Assert.That(b.A % 25.0, Is.EqualTo(0).Within(1e-9));
-                Assert.That(b.B % 25.0, Is.EqualTo(0).Within(1e-9));
-                var pl = BarPolylines(b);
-                AssertNoCrossing(pl);
-                AssertInside(Zone539, pl);
+                var us = UBars(r, lp, BeamGeometry.StirrupHeightCovers(h, ct));
+                Assert.That(us.Select(u => u.B).Distinct(), Is.EqualTo(new[] { b }), $"H {h}, otulina górna {ct}");
             }
-            // narożnik górny-lewy: A (wzdłuż X) = 600 − 50 + 84 (pręt prosty wyśrodkowany) + 800 + 8 → 1450; B = 1350
-            var tl = L.Single(b => b.Seg == top);
-            Assert.That((tl.A, tl.B), Is.EqualTo((1450.0, 1350.0)));
-            var bl = L.Single(b => b.Seg == bottom);
-            Assert.That((bl.A, bl.B), Is.EqualTo((1375.0, 1350.0)));      // otulina 45 (wcześniej 1375 × 1375)
-
-            foreach (var b in U)
-            {
-                Assert.That(b.Shape, Is.EqualTo("21"));
-                Assert.That(b.Count, Is.EqualTo(1));
-                Assert.That(b.C, Is.EqualTo(b.A));
-                Assert.That(b.Overlap, Is.GreaterThanOrEqualTo(800 - 1e-6));
-                AssertInside(Zone539, BarPolylines(b));
-            }
-            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 170.0, 170.0, 490.0, 490.0 }));   // otulina 45: 158 + 16 → 170, 474 + 16
-            // koniec wewnętrzny (góra): pręt prosty wyśrodkowany (84 od otuliny) — ramiona dłuższe
-            // (U-bar wewnętrzny — tył o Ø + 20 głębiej, ramię krótsze)
-            Assert.That(U.Where(b => b.Seg == top).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (850.0, 170.0), (900.0, 490.0) }));
-            Assert.That(U.Where(b => b.Seg == bottom).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (800.0, 170.0), (825.0, 490.0) }));
-            AssertUBarBackGaps(U);
-            // U-bary zagnieżdżone nie krzyżują się
-            AssertNoCrossing(U.Where(b => b.Seg == bottom).SelectMany(BarPolylines).ToList());
-            Assert.That(lp.Messages, Is.Empty, string.Join(" | ", lp.Messages));
         }
 
         [Test]
-        public void E4_Plot528_UBarsBothEdgeEnds_StraightUnchanged()
+        public void K3_Plot528_StraightBars_VerticalUBars()
         {
             var r = BeamGeometry.Analyze(Zone528, Outline528);
             var s = r.Segments.Single();
             Assert.That(s.LoClose, Is.EqualTo(BeamGeometry.Closure.UBar));
             Assert.That(s.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
-            Assert.That(BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi).Count, Is.EqualTo(52), "E3 (strzemię 50 od lica)");
-            Assert.That(BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 125, null, 100, 125).Count, Is.EqualTo(51),
-                        "E4: pierwsze strzemię za tyłami U-barów (125 od lica)");
             var lp = Plan(r);
-            Assert.That(lp.Straight.Select(x => x.Length), Is.EqualTo(new[] { 5500.0, 5500.0 }), "bez zmian względem E3");
-            Assert.That(lp.Straight[0].Start, Is.EqualTo(s.FaceLo + 45).Within(1e-6));   // otulina czołowa 45
-            var U = lp.Bent;
-            Assert.That(U.Count, Is.EqualTo(4));
-            Assert.That(U.All(b => b.Kind == "U" && b.Shape == "21" && b.C == b.A));
-            // zewnętrzny 800, wewnętrzny (tył o Ø + 20 głębiej) 775 — zakład ≥ 800
-            Assert.That(U.Select(b => (b.A, b.B)).OrderBy(x => x.B).ThenBy(x => x.A),
-                        Is.EqualTo(new[] { (775.0, 170.0), (775.0, 170.0), (800.0, 490.0), (800.0, 490.0) }));
-            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 170.0, 170.0, 490.0, 490.0 }));
-            Assert.That(U.All(b => b.Overlap >= 800 - 1e-6));
-            // tył U-bara zewnętrznego na otulinie 45 od lica końca, wewnętrzny o Ø 16 + prześwit 20 głębiej
-            var lo = U.Where(b => b.BendAtStart).OrderByDescending(b => b.B).ToList();
-            Assert.That(lo[0].Start0, Is.EqualTo(s.FaceLo + 45 + 8).Within(1e-6));
-            Assert.That(lo[1].Start0, Is.EqualTo(s.FaceLo + 45 + 16 + 20 + 8).Within(1e-6));
-            AssertUBarBackGaps(U);
-            // pierwsze strzemię za tyłami U-barów (prześwit ≥ 20): 4 H16 → 125 od lica (45 + 36 + 16 + 20 + 5 = 122 → 125)
-            double offU = BeamGeometry.StirrupEndOffsetAtUBars(4, 16);
-            Assert.That(offU, Is.EqualTo(125));
-            Assert.That(BeamGeometry.StirrupEndOffsetAtUBars(4, 16, cover: 40), Is.EqualTo(120), "dawna otulina 40");
-            var st = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, offU, null, 100, offU);
-            Assert.That(st.First, Is.EqualTo(s.FaceLo + 125).Within(1e-6));
-            Assert.That(st.First + (st.Count - 1) * st.Step, Is.EqualTo(s.FaceHi - 125).Within(1e-6));
-            double deepestBackInner = lo[1].Start0 + 8;
-            Assert.That(st.First - 5 - deepestBackInner, Is.GreaterThanOrEqualTo(20 - 1e-6), "prześwit tył U-bara — strzemię");
-            AssertInside(Zone528, U.SelectMany(BarPolylines).ToList());
+            TestContext.WriteLine(string.Join(" | ", lp.Straight.Select(x => $"{x.Start:0.#}+{x.Length:0}")) + " || " + string.Join(" | ", lp.Messages));
+            // pręty proste do lica − (otulina 45 + Ø U 16) = 61; zakład ≥ 650 (mniej zakładów: 5500 + 5250 zamiast 3 prętów ręcznie)
+            Assert.That(lp.Straight[0].Start, Is.EqualTo(s.FaceLo + 61).Within(1e-6));
+            var last = lp.Straight.Last();
+            Assert.That(last.Start + last.Length, Is.EqualTo(s.FaceHi - 61).Within(1e-6));
+            Assert.That(lp.Straight.Select(x => x.Length), Is.EqualTo(new[] { 5500.0, 5250.0 }));
+            Assert.That(BeamGeometry.LapsOf(lp.Straight.Select(x => (x.Start, x.Length)).ToList()).All(l => l >= 650 - 1e-6));
+            var us = UBars(r, lp, 290);
+            Assert.That(us.Count, Is.EqualTo(2), "po jednym rozkładzie na koniec");
+            foreach (var u in us)
+            {
+                Assert.That(u.Kind, Is.EqualTo("E"));
+                Assert.That(u.Count, Is.EqualTo(4), "4 U-bary w kolumnach prętów");
+                Assert.That((u.A, u.B, u.C), Is.EqualTo((750.0, 265.0, 750.0)), "A = Ceil25(650 + 90), B = 290 − 24 → 265 (Holbrook 770-265-770)");
+                Assert.That(u.Dropped, Is.False);
+                Assert.That(u.Overlap, Is.GreaterThanOrEqualTo(650 - 1e-6));
+                Assert.That(u.Across0, Is.EqualTo(s.AcrossLo + 65).Within(1e-6), "kolumny prętów: 45 + strzemię H12 + 8");
+                Assert.That(u.Spacing, Is.EqualTo(470.0 / 3).Within(1e-6));
+            }
+            var lo = us.Single(u => u.AtLo);
+            Assert.That(lo.Back, Is.EqualTo(s.FaceLo + 45).Within(1e-6), "tył U na otulinie czołowej 45");
+            Assert.That(lo.LineStart, Is.EqualTo(lo.Back).Within(1e-6));
+            Assert.That(lo.LineLength, Is.EqualTo(750));
+            Assert.That(lo.BendAtStart, Is.True);
+            var hi = us.Single(u => !u.AtLo);
+            Assert.That(hi.Back, Is.EqualTo(s.FaceHi - 45).Within(1e-6));
+            Assert.That(hi.LineStart + hi.LineLength, Is.EqualTo(hi.Back).Within(1e-6));
+            Assert.That(hi.BendAtStart, Is.False);
+            // strzemiona: pierwsze 51 od lica (także przy U-barach), rozstaw ≤ 200: L = 10182.5 → ceil(10080.5 / 200) + 1 = 52
+            // (Holbrook ręcznie 51 na zestaw — pierwsze ok. 250 od lica)
+            var st = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 51, null, 100, 51);
+            Assert.That(st.First, Is.EqualTo(s.FaceLo + 51).Within(1e-6));
+            Assert.That(st.Count, Is.EqualTo(52));
         }
 
         [Test]
-        public void E4_Plot319_CornerWithManualLeg_Unchanged_RightCornerAndInternalEnd()
+        public void K3_Plot539_Corners_LegUBars_DropOnLegY()
+        {
+            var r = BeamGeometry.Analyze(Zone539, Outline539);
+            var top = r.Segments.Single(s => s.AlongX && s.AcrossLo > 50000);
+            var left = r.Segments.Single(s => !s.AlongX);
+            var bottom = r.Segments.Single(s => s.AlongX && s.AcrossLo < 50000);
+            Assert.That(top.LoClose, Is.EqualTo(BeamGeometry.Closure.LBar));
+            Assert.That(top.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
+            Assert.That(left.LoClose, Is.EqualTo(BeamGeometry.Closure.LBar));
+            Assert.That(left.HiClose, Is.EqualTo(BeamGeometry.Closure.LBar));
+            Assert.That(bottom.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
+            var lp = Plan(r);
+            TestContext.WriteLine(string.Join(" | ", lp.Straight.Select(x => $"{(x.Seg.AlongX ? "X" : "Y")} {x.Start:0.#}+{x.Length:0}")) + " || " + string.Join(" | ", lp.Messages));
+            // pręty proste nogi kończą się przed kwadratem narożnika (lico własnego zakresu) — C12, domyślne
+            Assert.That(lp.Bars[left].Lo, Is.GreaterThanOrEqualTo(left.OwnLo - 1e-6));
+            Assert.That(lp.Bars[left].Hi, Is.LessThanOrEqualTo(left.OwnHi + 1e-6));
+            var us = UBars(r, lp, 215);
+            TestContext.WriteLine(string.Join(" | ", us));
+            Assert.That(us.Count, Is.EqualTo(6), "2 narożniki × 2 nogi + 2 końce");
+            Assert.That(us.Count(u => u.Kind == "L"), Is.EqualTo(4));
+            Assert.That(us.Count(u => u.Kind == "E"), Is.EqualTo(2));
+            // noga Y (lewa) — B − 35 (539 ręcznie: 1340-155-1340 przy narożnikach, 800-190-800 na końcach)
+            Assert.That(us.Where(u => u.Seg == left).Select(u => u.B).Distinct(), Is.EqualTo(new[] { 155.0 }));
+            Assert.That(us.Where(u => u.Seg != left).Select(u => u.B).Distinct(), Is.EqualTo(new[] { 190.0 }));
+            // tył U-barów narożnika na licu zewnętrznym narożnika (otulina 45); ramię ≈ szerokość drugiej nogi + zakład
+            var tl = us.Single(u => u.Seg == top && u.AtLo);
+            Assert.That(tl.Back, Is.EqualTo(top.FaceLo + 45).Within(1e-6));
+            Assert.That(tl.A, Is.InRange(1200.0, 1400.0));
+            Assert.That(tl.Overlap, Is.GreaterThanOrEqualTo(650 - 1e-6));
+            foreach (var u in us)
+            {
+                Assert.That(u.C, Is.EqualTo(u.A));
+                Assert.That(u.A % 25.0, Is.EqualTo(0).Within(1e-9));
+                Assert.That(u.Count, Is.EqualTo(4));
+            }
+            Assert.That(us.Where(u => u.Kind == "E").Select(u => u.A).Distinct(), Is.EqualTo(new[] { 750.0 }));
+        }
+
+        [Test]
+        public void K3_IntoSquare_Option_StraightBarsToOuterFace()
+        {
+            var r = BeamGeometry.Analyze(Zone539, Outline539);
+            var left = r.Segments.Single(s => !s.AlongX);
+            var (lo0, hi0) = BeamGeometry.StraightRange(left, 45, 61, intoSquare: false);
+            Assert.That((lo0, hi0), Is.EqualTo((left.OwnLo, left.OwnHi)));
+            var (lo1, hi1) = BeamGeometry.StraightRange(left, 45, 61, intoSquare: true);
+            Assert.That(lo1, Is.EqualTo(left.FaceLo + 61).Within(1e-6));
+            Assert.That(hi1, Is.EqualTo(left.FaceHi - 61).Within(1e-6));
+        }
+
+        [Test]
+        public void K3_Plot319_ManualLeg_NoUBarsAtThatCorner_RightCornerAndInternalEnd()
         {
             var r = BeamGeometry.Analyze(Zone319, Outline319);
             var top = r.Segments.Single(s => s.AlongX);
             var right = r.Segments.Single(s => !s.AlongX && s.AcrossLo > 110000);
-            Assert.That(top.LoClose, Is.EqualTo(BeamGeometry.Closure.None), "narożnik z nogą „detal ręczny” — jak E3");
+            Assert.That(top.LoClose, Is.EqualTo(BeamGeometry.Closure.None), "narożnik z nogą „detal ręczny”");
             Assert.That(top.HiClose, Is.EqualTo(BeamGeometry.Closure.LBar));
             Assert.That(right.LoClose, Is.EqualTo(BeamGeometry.Closure.UBar), "koniec wewnętrzny");
-            Assert.That(right.HiClose, Is.EqualTo(BeamGeometry.Closure.LBar));
-            Assert.That(top.LinkLo, Is.EqualTo(top.OwnLo));
-            Assert.That(top.LinkHi, Is.EqualTo(top.FaceHi), "góra dłuższa — strzemiona przez kwadrat narożnika");
-            Assert.That(BeamGeometry.StirrupLayout(top.LinkLo, top.LinkHi).Count, Is.EqualTo(41));
-            Assert.That(BeamGeometry.StirrupLayout(right.LinkLo, right.LinkHi, 200, 125, null, 100, 50).Count, Is.EqualTo(12));
             var lp = Plan(r);
-            TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
-            Assert.That(lp.Straight.Where(x => x.Seg == top).Select(x => x.Length), Is.EqualTo(new[] { 4500.0, 4500.0 }));
-            Assert.That(lp.Straight.First(x => x.Seg == top).Start, Is.EqualTo(top.FaceLo + 45).Within(1e-6), "lewy koniec jak E3 (otulina 45)");
-            Assert.That(lp.Bent.Count(b => b.Kind == "L"), Is.EqualTo(1));
-            Assert.That(lp.Bent.Count(b => b.Kind == "U"), Is.EqualTo(2));
-            // otulina czołowa 45 (2026-10-10): prawa noga — dostępne 2247.5 < 2250 → pręt prosty 2000 (było 2250), ramiona U-barów /
-            // pręta L dłuższe i nachodzą na siebie (93 mm) — dodatkowy komunikat „krótki odcinek”
-            Assert.That(lp.Messages.Count(m => m.Contains("detal ręczny")), Is.EqualTo(2), string.Join(" | ", lp.Messages));
-            Assert.That(lp.Messages.Count(m => m.Contains("nachodzą na siebie (93 mm")), Is.EqualTo(1));
-            Assert.That(lp.Straight.Where(x => x.Seg == right).Select(x => x.Length), Is.EqualTo(new[] { 2000.0 }));
-            foreach (var b in lp.Bent)
-            {
-                Assert.That(b.Overlap, Is.GreaterThanOrEqualTo(800 - 1e-6));
-                AssertInside(Zone319, BarPolylines(b));
-            }
-            AssertNoCrossing(BarPolylines(lp.Bent.Single(b => b.Kind == "L")));
+            Assert.That(lp.Straight.First(x => x.Seg == top).Start, Is.EqualTo(top.FaceLo + 45).Within(1e-6), "koniec przy odcinku ręcznym: otulina");
+            Assert.That(lp.Messages.Count(m => m.Contains("detal ręczny")), Is.EqualTo(1), string.Join(" | ", lp.Messages));
+            var msgs = new List<string>();
+            var us = UBars(r, lp, 365, msgs);
+            TestContext.WriteLine(string.Join(" | ", us) + " || " + string.Join(" | ", msgs));
+            Assert.That(us.Count, Is.EqualTo(3), "narożnik L (2 nogi) + koniec wewnętrzny prawej nogi");
+            Assert.That(us.All(u => u.Seg != top || !u.AtLo), Is.True, "bez U-barów przy narożniku z odcinkiem ręcznym");
+            Assert.That(us.Single(u => u.Seg == right && !u.AtLo).B, Is.EqualTo(305), "noga Y narożnika: 340 − 35");
+            Assert.That(us.Single(u => u.Seg == right && u.AtLo).B, Is.EqualTo(340), "koniec wewnętrzny — bez obniżenia");
+            Assert.That(us.Single(u => u.Seg == top).B, Is.EqualTo(340));
         }
 
         [Test]
-        public void E4_Tee_LBarsAnchoredInContinuousBeam()
+        public void K3_Tee_ContinuousBeamUntouched_IncomingLikeCornerLeg()
         {
             var zone = P(0, 0, 10000, 0, 10000, 600, 5300, 600, 5300, 5000, 4700, 5000, 4700, 600, 0, 600);
             var r = BeamGeometry.Analyze(zone, null);
             var v = r.Segments.Single(s => !s.AlongX);
             var h = r.Segments.Single(s => s.AlongX);
-            Assert.That(r.Joints.Single().IsTee, Is.True);
-            Assert.That(h.Manual, Is.False, "belka ciągła przez złącze T (przerwa lica wypełniona strefą) — nie detal ręczny");
-            Assert.That(h.OwnLo, Is.EqualTo(0).Within(1e-6));
-            Assert.That(h.OwnHi, Is.EqualTo(10000).Within(1e-6));
+            Assert.That(h.Manual, Is.False, "belka ciągła przez złącze T");
             Assert.That(v.LoClose, Is.EqualTo(BeamGeometry.Closure.Tee));
-            Assert.That(v.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
-            Assert.That(h.LoClose, Is.EqualTo(BeamGeometry.Closure.UBar));
-            Assert.That(h.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
             var lp = Plan(r);
-            TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
-            // pręty belki dochodzącej od lica belki ciągłej (y = 600), bez otuliny
-            Assert.That(BeamGeometry.StraightRange(v).Lo, Is.EqualTo(600).Within(1e-6));
-            Assert.That(BeamGeometry.StraightRange(v).Hi, Is.EqualTo(5000 - 45).Within(1e-6));
-            var T = lp.Bent.Where(b => b.Kind == "T").ToList();
-            Assert.That(T.Count, Is.EqualTo(2));
-            Assert.That(T.Sum(b => b.Count), Is.EqualTo(4));
-            Assert.That(T.Select(b => b.BendDir).OrderBy(x => x), Is.EqualTo(new[] { -1, 1 }));
-            Assert.That(T.All(b => b.Shape == "11" && b.B == 800 && b.A == T[0].A), "jedna pozycja, ramię w belce ciągłej = zakład");
-            Assert.That(T.All(b => b.Overlap >= 800 - 1e-6));
-            var bars = T.SelectMany(BarPolylines).ToList();
-            AssertNoCrossing(bars);
-            AssertInside(zone, bars);
-            // zagięcia w rzędach belki ciągłej (y 63 … 537 — otulina 45)
-            foreach (var b in bars) Assert.That(b[1].Y, Is.InRange(63 - 1e-6, 537 + 1e-6));
-            Assert.That(lp.Bent.Count(b => b.Kind == "U"), Is.EqualTo(6), "3 końce × 2 U-bary");
+            // belka ciągła — pręty bez przerwy przez węzeł; dochodząca — pręty do bliższego lica belki ciągłej (y = 600)
+            Assert.That(lp.Bars[v].Lo, Is.GreaterThanOrEqualTo(600 - 1e-6));
+            Assert.That(lp.Straight.Where(x => x.Seg == h).Min(x => x.Start), Is.EqualTo(61).Within(1e-6));
+            var us = UBars(r, lp, 290);
+            TestContext.WriteLine(string.Join(" | ", us));
+            var t = us.Single(u => u.Kind == "T");
+            Assert.That(t.Seg, Is.SameAs(v));
+            Assert.That(t.Back, Is.EqualTo(45).Within(1e-6), "tył na dalszym licu belki ciągłej (y = 0) z otuliną");
+            Assert.That(t.B, Is.EqualTo(265 - 35), "belka dochodząca — drugi kierunek, B − 35");
+            Assert.That(t.Overlap, Is.GreaterThanOrEqualTo(650 - 1e-6));
+            Assert.That(us.Count(u => u.Kind == "E"), Is.EqualTo(3), "końce: belka ciągła × 2 + dochodząca");
+            Assert.That(us.Any(u => u.Seg == h && u.Kind != "E"), Is.False, "belka ciągła bez U-barów w węźle");
         }
 
         [Test]
-        public void E4_ShortLegL_Manual_NoBentBars()
+        public void K3_ShortSegment_UBarArmsOverlap_Message()
         {
-            var zone = P(0, 0, 5000, 0, 5000, 600, 600, 600, 600, 1200, 0, 1200);
-            var r = BeamGeometry.Analyze(zone, null);
-            var lp = Plan(r);
-            Assert.That(lp.Straight, Is.Empty);
-            Assert.That(lp.Bent, Is.Empty);
-        }
-
-        [Test]
-        public void E4_ShapeLengths_BS8666()
-        {
-            // BS 8666:2020: 11 — A + B − 0.5r − d; 21 — A + B + C − r − 2d (H16: r = 32), w górę do 25 mm
-            Assert.That(BarLengthRules.TotalLengthFor("11", new[] { 1450.0, 1350.0 }, 16), Is.EqualTo(2775));   // 2768
-            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 490.0, 800.0 }, 16), Is.EqualTo(2050));   // 2026 (otulina 45)
-            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 170.0, 800.0 }, 16), Is.EqualTo(1725));   // 1706
-        }
-
-        [Test]
-        public void E4_OddCount_MiddleBarWithoutUBar_Message()
-        {
-            var r = BeamGeometry.Analyze(Zone528, Outline528);
-            var lp = BeamGeometry.PlanLayer(r, 3, 16, 16, 800, 6000);
-            Assert.That(lp.Bent.Count, Is.EqualTo(2), "1 U-bar na koniec");
-            Assert.That(lp.Messages.Count(m => m.Contains("bez U-bara")), Is.EqualTo(2));
-        }
-
-        [Test]
-        public void E4_Crossing_Plus_ManualWithMessage_NoStirrups()
-        {
-            // skrzyżowanie „+”: belka pozioma 0..10000 i pionowa −4000..4600 (szer. 600) — detal ręczny, bez prętów i strzemion
-            var zone = P(0, 0, 4700, 0, 4700, -4000, 5300, -4000, 5300, 0, 10000, 0, 10000, 600, 5300, 600,
-                         5300, 4600, 4700, 4600, 4700, 600, 0, 600);
-            var r = BeamGeometry.Analyze(zone, null);
-            TestContext.WriteLine(string.Join(" | ", r.Segments) + " || " + string.Join(" | ", r.Messages));
-            Assert.That(r.Segments.Count, Is.EqualTo(2));
-            Assert.That(r.Segments.All(s => s.Manual), Is.True);
-            Assert.That(r.Segments.All(s => s.ManualReason.Contains("skrzyżowanie")), Is.True);
-            Assert.That(r.Messages.Count(m => m.Contains("skrzyżowanie") && m.Contains("detal ręczny")), Is.EqualTo(2));
-            var lp = Plan(r);
-            Assert.That(lp.Straight, Is.Empty);
-            Assert.That(lp.Bent, Is.Empty);
-        }
-
-        [Test]
-        public void E4_ShortSegment_ArmsFromBothEndsOverlap_Message()
-        {
-            // odcinek 1700 z U-barami na obu końcach — ramiona (zakład 800) z obu końców nachodzą
-            var r = BeamGeometry.Analyze(P(0, 0, 1700, 0, 1700, 600, 0, 600), null);
+            // odcinek 1550 (szerokość 600 — jedna para lic): ramiona 775 z obu końców (tył 45) nachodzą o 40
+            var r = BeamGeometry.Analyze(P(0, 0, 1550, 0, 1550, 600, 0, 600), null);
             Assert.That(r.Segments.Count, Is.EqualTo(1));
-            var lp = Plan(r);
-            TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
-            Assert.That(lp.Messages.Count(m => m.Contains("z obu końców nachodzą")), Is.EqualTo(1));
-            // długi odcinek (528) — bez ostrzeżenia
-            Assert.That(Plan(BeamGeometry.Analyze(Zone528, Outline528)).Messages.Any(m => m.Contains("nachodzą")), Is.False);
+            var msgs = new List<string>();
+            var us = UBars(r, Plan(r), 290, msgs);
+            TestContext.WriteLine(string.Join(" | ", us) + " || " + string.Join(" | ", msgs));
+            Assert.That(msgs.Count(m => m.Contains("z obu końców nachodzą")), Is.EqualTo(1));
+            var lp528 = Plan(BeamGeometry.Analyze(Zone528, Outline528));
+            var m528 = new List<string>();
+            UBars(BeamGeometry.Analyze(Zone528, Outline528), lp528, 290, m528);
+            Assert.That(m528.Any(m => m.Contains("nachodzą")), Is.False);
         }
 
         [Test]
-        public void E4_OneBar_EndWithoutUBar_Message()
+        public void K3_Manual_And_Crossing_NoUBars()
         {
-            var r = BeamGeometry.Analyze(Zone528, Outline528);
-            var lp = BeamGeometry.PlanLayer(r, 1, 16, 16, 800, 6000);
-            Assert.That(lp.Bent, Is.Empty);
-            Assert.That(lp.Messages.Count(m => m.Contains("bez U-bara")), Is.EqualTo(2));
-            Assert.That(BeamGeometry.StirrupEndOffsetAtUBars(1, 16), Is.EqualTo(50), "bez U-barów — strzemię jak dotąd");
+            var shortL = BeamGeometry.Analyze(P(0, 0, 5000, 0, 5000, 600, 600, 600, 600, 1200, 0, 1200), null);
+            Assert.That(Plan(shortL).Straight, Is.Empty);
+            Assert.That(UBars(shortL, Plan(shortL), 290), Is.Empty);
+            var plus = BeamGeometry.Analyze(P(0, 0, 4700, 0, 4700, -4000, 5300, -4000, 5300, 0, 10000, 0, 10000, 600, 5300, 600,
+                                              5300, 4600, 4700, 4600, 4700, 600, 0, 600), null);
+            Assert.That(plus.Segments.All(s => s.Manual), Is.True);
+            Assert.That(UBars(plus, Plan(plus), 290), Is.Empty);
         }
 
         [Test]
-        public void E4_Tee_BendsOnRowsOfContinuousBeam_RowsAcross()
+        public void K3_ShapeLength_21_BS8666()
         {
-            // belka dochodząca od dołu (Hi koniec w złączu) — zagięcia na osiach prętów belki ciągłej (RowsAcross)
-            var zone = P(0, 5000, 4700, 5000, 4700, 0, 5300, 0, 5300, 5000, 10000, 5000, 10000, 5600, 0, 5600);
-            var r = BeamGeometry.Analyze(zone, null);
-            var a = r.Segments.Single(s => s.AlongX);
-            var rows = BeamGeometry.RowsAcross(a, 4, 16);
-            var T = Plan(r).Bent.Where(b => b.Kind == "T").ToList();
-            Assert.That(T.Count, Is.EqualTo(2));
-            var bends = T.SelectMany(BarPolylines).Select(b => b[1].Y).OrderBy(y => y).ToList();
-            foreach (var y in bends) Assert.That(rows.Any(q => System.Math.Abs(q - y) < 1e-6), Is.True, $"zagięcie y = {y} poza rzędem belki ciągłej");
-            AssertNoCrossing(T.SelectMany(BarPolylines).ToList());
-            AssertInside(zone, T.SelectMany(BarPolylines).ToList());
+            // BS 8666:2020: 21 — A + B + C − r − 2d (H16: r = 32), w górę do 25 mm: 750-265-750 → 1700 (1701 → 1725?) — liczone
+            double l = BarLengthRules.TotalLengthFor("21", new[] { 750.0, 265.0, 750.0 }, 16);
+            Assert.That(l, Is.EqualTo(BeamGeometry.Ceil25(750 + 265 + 750 - 32 - 32)));
         }
 
         [Test]
         public void BeamCodes_DoNotCollideWithSlabCodes()
         {
-            foreach (var c in new[] { BeamGeometry.CodeBottom, BeamGeometry.CodeTop, BeamGeometry.CodeLinks })
+            foreach (var c in new[] { BeamGeometry.CodeBottom, BeamGeometry.CodeTop, BeamGeometry.CodeLinks, BeamGeometry.CodeSide,
+                                      BeamGeometry.CodeNib, BeamGeometry.CodeBoth, BeamGeometry.CodeUBar })
             {
-                Assert.That(BeamGeometry.IsBeamCode(c));
+                Assert.That(BeamGeometry.IsBeamCode(c), c);
                 Assert.That(new[] { "B1", "B2", "T1", "T2", "B3" }.Any(s => c.StartsWith(s)), Is.False);
             }
             Assert.That(BeamGeometry.IsBeamCode("B1"), Is.False);
+            Assert.That(BeamGeometry.IsBeamCode("T2"), Is.False);
         }
     }
 }

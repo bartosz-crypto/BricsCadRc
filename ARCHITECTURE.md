@@ -20,7 +20,7 @@ Stara wtyczka kolegi to `BricsCadRc.dll` (te same komendy i XData); wczytana jes
 | Tytuł przekroju (głowa) | `MText` „SECTION A-A” (AP-TEXT) | `RC_SECTION` + Xrecord `NA_RC_SECTION` | Przekrój RC_SECTION: GUID, litera, obrys, odcisk, lista części (sekcja 4g) |
 | Część przekroju | encje rysunku przekroju i znaczniki na rzutach | `RC_SECTION_PART` | Powiązanie z tytułem, rola, klucz, GUID |
 | Strefa belki / pogrubienia | zamknięta `Polyline` na warstwie `RC-BEAM` (kopia `SD-Thickening-Zone` z GA albo RC_BEAM) | `RC_BEAM` | Parametry belki (H, szerokość, nib, strzemiona, pręty), obrys płyty [6] (sekcja 4i) |
-| Znacznik belki | na rozkładzie belki | `RC_AUTOREBAR_BEAM` | Handle strefy belki, dla której wygenerowano rozkład (kody BB / BT / BL) |
+| Znacznik belki | na rozkładzie belki | `RC_AUTOREBAR_BEAM` | Handle strefy belki, dla której wygenerowano rozkład (kody BM / BU / BB / BT / BL / BS / BN) |
 
 Powiązania:
 ```
@@ -102,6 +102,15 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   [17]góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16) [18]Ø prętów bocznych (Int16, 0 = brak) [19]rozstaw pionowy
   prętów bocznych (Real) [20]Ø pręta w nibie górą [21]Ø pręta w nibie dołem (Int16, 0 = brak) — E4b [22]otulina boczna / czołowa
   [23]otulina dolna (Real; decyzja 2026-10-10: 45 / 50). Brak pola = wartość domyślna `BeamParams` (rekord bez [22] / [23] → 45 / 50).
+  **v2 (K2 planu `docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md`, [1] = 2):** [24]otulina górna strzemienia (Real; A1 35 / A2 50) [25]tryb prętów
+  bocznych (Int16; 1 B1 brak, 2 B2 zawsze, 3 B3 od progu) [26]próg H prętów bocznych (Real, 450) [27]krotność zakładu (Real, 40 —
+  zakład = Ceil25(krotność · Ø): H10 400, H12 500, H16 650) [28]rozstaw nominalny w poprzek w opisie (Real, 150) [29]B+T jedną pozycją
+  (Int16 0 / 1) [30]obniżenie U-barów drugiego kierunku (Real, 35) [31]pręty proste w kwadrat narożnika (Int16 0 / 1; 0 — przed kwadratem)
+  [32]koniec pręta prostego przy U-barze od lica (Real; 0 = auto: otulina + Ø U-bara) [33]strzemiona przy UB 03 +100 (Int16 0 / 1; 0 —
+  niezależnie) [34]strzemiona w kwadracie narożnika (Int16 0 / 1; 1 — dłuższa noga) [35]naddatek ramienia U-bara końca (Real, 90).
+  Od v2: [15] = Ceil25(krotność · Ø dołem) (tylko dla starej wtyczki), [17] nieużywane w generowaniu (zostaje dla RC_SECTION do K6).
+  **Rekord v1** ([1] < 2 — tylko wersje testowe): `BeamStore.Read` → `BeamParams.MigrateV1` W PAMIĘCI (geometria i otuliny bez zmian,
+  parametry zbrojenia = nowe domyślne, komunikat z listą zmian); zapis v2 dopiero przy OK w RC_BEAM albo przy generowaniu (ta sama grupa UNDO).
 - `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
   punktu w strefie.
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
@@ -248,6 +257,11 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   `BbsSettings` — BBS .xls na szablonie Speedeck (`RC_BBS`, sekcja 4e).
 - `PunchingTagEngine` — tagi przebicia (numery 501+).
 - Holbrook (POPRAWKI_WZORCA 24–26, czyste, testy jednostkowe): `MTextParagraphs` — akapity `MText.Contents` (etykieta płyty z nagłówka map = pierwszy akapit; `MText.Text` w BricsCAD skleja akapity), `OutlineAxisRules` — osiowość obrysu płyty z tolerancją **4 mm** (decyzja użytkownika 2026-10-09), AutoRebar liczy na kopii wyprostowanej (`GeometryHelper.SquaredOrSame`; obrys idealny — te same wierzchołki, obrys w rysunku bez zmian); `NibDetector.Detect` i replika `NibLoopBuilder.LooksLikeNib` prostują obie polilinie nibu tak samo przed analizą (współrzędne nibu wyprostowane), RC_SECTION — też; osiowość = odchyłka krawędzi ≤ 4 mm ORAZ rozrzut wspólnej współrzędnej grupy wierzchołków ≤ 4 mm, `BbsCountRules` — RC_COUNT_BBS z wierszy RC_BBS (`BbsDrawingReader.ReadBars`) + stare RC_BAR.
+- `NibStepRules` (POPRAWKI_WZORCA 29, krok K1, bez Teigha, testy `NibStepRulesTests`) — liczba prętów góry / UB 01/02 na krawędzi
+  uskoku (reguła ± 1, wolny koniec nibu zawiniętego), plan pasów (`OwnerOf`, `StripPositions`, `UbPositions` — każdy pręt górny ma swój UB),
+  bezpiecznik rozstawu < 100 mm. Wołane z `AutoRebarEngine.StepEdgeRuleCount` / `PlanNibStepBars`.
+- `BarLabelRules` (krok K3, bez Teigha, testy w `BeamGeometryTests`) — liczba prętów w tekście opisu (`CountText`: zwykle EffectiveCount,
+  belka BM „2x4”), kody z krotnością zachowywaną po gripie (`KeepsMultiplicity`: BM, BS). `BarData.CountText`.
 - `PlotLabelRules` (POPRAWKI_WZORCA 22, bez Teigha, testy `PlotLabelRulesTests`, `PunchingReportParseTests`) — nazwy płyt
   „PLOT …” / „GARAGE …”: opis w GA (`IsPlotLabel`), nagłówek raportu przebicia (`TryParseReportHeader`; PLOT — dawna logika 1:1),
   klucz płyty RC_PH (`IsReportPlotKey`), mapa ↔ płyta w AutoRebar Add (`MapPlotMatches`, POPRAWKI 28: prefiks + granica — następny znak nie cyfra ani „-”). `PunchingReport.Parse` (wiersze arkusza → płyty) wydzielone z `Read`.
@@ -261,7 +275,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   wydruk / PDF / PUBLISH i komunikat przy otwarciu — rejestrowany w `PluginApp`), `SectionUpdater` (RC_SECTION_UPDATE, adopcja).
 - Belki (sekcja 4i): `BeamGeometry` (bez Teigha, testy `tests/BeamGeometryTests.cs` — geometria stref 319 / 528-529 / 539):
   odcinki strefy (`Analyze`: pary lic osiowych → prostokąty → odcinki; końce Edge / Internal / Corner (L) / Tee; skos / zmienna
-  szerokość = „detal ręczny”), `StirrupLayout`, `PlanBars`, wymiary strzemienia 51, `ParseThk`, `HeightFromLevels`, kody BB / BT / BL;
+  szerokość = „detal ręczny”), `StirrupLayout`, `PlanBars`, `PlanLayer` (pręty proste), `PlanVerticalUBars` (K3), wymiary strzemienia 51
+  (`StirrupHeightCovers` — K2), `ParseThk`, `HeightFromLevels`, kody BM / BU / BB / BT / BL / BS / BN;
   `BeamParams` (parametry z wartościami domyślnymi „do potwierdzenia”). `BeamStore` — rekord RC_BEAM, znacznik RC_AUTOREBAR_BEAM,
   warstwa RC-BEAM, wyszukiwanie stref płyty i prętów belki, sprzątanie przy ponownym Prepare GA. `AutoRebarEngine.Beam` — generowanie
   (`GenerateBeams`), RC_BEAM (`PrepareBeamZone`, `CreateZoneFromEdge`, `SaveBeamParams`), rzut partnerski (`FindPartnerView`).
@@ -371,8 +386,9 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 ## 3. Numeracja pozycji
 - **UB zawsze 01 (UB B1), 02 (UB B2) i 03 (UB w nibie).** Numeracja automatyczna od **04** (jak ASD;
   03 zarezerwowane także w płytach bez nibu).
-- Pręty belki (sekcja 4i): dół (BB), strzemiona (BL), pręty boczne (BS) i w nibie (BN) — seria dolna `NextAuto` (≥ 04), góra (BT) —
-  seria górna `NextAutoTop` (101+); identyczny pręt (kształt, Ø, wymiary, seria) → istniejąca pozycja — także pręt siatki (np. pręt
+- Pręty belki (sekcja 4i): **wszystkie w serii dolnej** `NextAuto` (≥ 04) — BM (dół = góra „B+T”), BB / BT (dół ≠ góra), BU (pionowe
+  U-bary), BL (strzemiona), BS, BN — **zmiana zasady na żądanie użytkownika (K3, praktyka biura: w BBS cała belka w BOTTOM LAYER; dawniej BT
+  w serii górnej 101+)**; identyczny pręt (kształt, Ø, wymiary, seria) → istniejąca pozycja — także pręt siatki (np. pręt
   boczny H10 L5500 = B1 H10 L5500 siatki, pręt w nibie H16 L5500 = BB H16 L5500 — wspólny numer; BTR rozkładu siatki dostaje wtedy
   sufiks unikalnej nazwy).
 - `PositionCounter.NextAuto(db, used)` = max(licznik w rysunku, max użyty < 500) + 1, min. 4,
@@ -397,17 +413,22 @@ Ogólne:
 - Opisy rozkładów nie mogą na siebie nachodzić (`PlaceLabel`, odstęp 150 mm); we wszystkich generowaniach tekst nie leży
   na widocznym pręcie, a leader nie biegnie wzdłuż innej linii opisu (≤ 60 mm).
 - **Rozkład z jednym prętem: opis bez rozstawu** (np. `1 H12-01 UB`, nie `1 H12-01-200 UB`) — `ApplySingleBarMark`.
-- **Pręty podłużne belki: opis bez rozstawu także dla > 1 pręta** (`4 H16-05 BEAM B`, `4 H16-103 BEAM T`; `ShowSpacing = false`) —
-  parametr `noSpacingMark` w `GenerateDistributionWithLeaderAtOffset`; strzemiona z rozstawem nominalnym (`52 H10-07-200 LINKS`).
-- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona), **BS** (pręty
-  boczne, E4b), **BN** (pręty wzdłuż nibu belki, E4b); pręty L i U-bary
-  belki (E4) — te same kody BB / BT (rozróżnienie po kształcie [12] rozkładu: 11 / 21), bez nowych kodów. Kody belek
+- **Pręty podłużne belki (K3): opis z rozstawem NOMINALNYM w poprzek** ([28] = 150, geometria — rzeczywisty rozstaw, ostrzeżenie gdy
+  > 175): `2x4 H16-nn-150 B+T` (BM, CountDisplay = 2 · 4 — `BarLabelRules.CountText`), `4 H16-nn-150 B` / `4 H16-nn-150 T` (dół ≠ góra),
+  pionowe U-bary `4 H16-nn-150 UB`; strzemiona z rozstawem nominalnym (`52 H12-nn-200 LINKS`); pręty boczne / w nibie — bez rozstawu
+  (`noSpacingMark`). Tekst liczby we WSZYSTKICH miejscach składania opisu (`AnnotationEngine` — opis i jego długość, `PlaceLabel`
+  w `AutoRebarEngine`, RC_EDIT_LABEL) — `BarData.CountText`; grip rozkładu zachowuje krotność BM / BS.
+- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BM** (dół = góra, jedna pozycja „B+T”, K3), **BB** / **BT**
+  (dół ≠ góra; od K3 oba na rzucie dolnym w serii dolnej), **BU** (pionowe U-bary kształt 21, sufiks „UB” — NIE UB płyty: skany UB płyty
+  porównują kod B1 / B2, `ReadUb03` i `ScanUBTemplates` pomijają kody belki), **BL** (strzemiona), **BS** (pręty boczne, E4b), **BN** (pręty
+  wzdłuż nibu belki, E4b); pręty L i poziome U-bary E4 — usunięte w K3 (stare rozkłady usuwane przy ponownym generowaniu). Kody belek
   NIE zaczynają się od „B1/B2/T1/T2”: skany siatki (`ScanOldDistributions`, `EraseOldDistributions`, `FindBottomView`, UB, ADD) porównują
   kod dokładnie, więc prętów belki nie widzą. Gałęzie `StartsWith("B"/"T")` przejrzane: `BuildBarData` — BT = TOP; `CutBarPositionsAtHole`
   — bez kodów belek; `SectionPlanner` / `PrepareSection` — pręty belek jako rodzaj `Beam` (tylko w pasie belki przeciętym linią cięcia;
   poziomy siatki dB1 / dT1 liczone wyłącznie z B1 / T1 — sekcja 4g); `ResolveRepresentativeCollisions` — pręty belek pomijane
-  (`IsBeamCode`); `GenerateLayer` / `CreateNewTemplate` / model 3D — tylko kody siatki. Warstwa CAD: BT → RC-SLAB-TOP-01, BB / BL / BS / BN →
-  RC-SLAB-BOT-01 (`BuildBarData`: kod na „B” poza BT = BOT).
+  (`IsBeamCode` — obejmuje BM / BU i stare BB / BT / BS / BN); `GenerateLayer` / `CreateNewTemplate` / model 3D — tylko kody siatki. Warstwa
+  CAD: BT → RC-SLAB-TOP-01 (także na rzucie dolnym od K3 — warstwa góry), BM / BU / BB / BL / BS / BN → RC-SLAB-BOT-01 (`BuildBarData`: kod
+  na „B” poza BT = BOT).
 
 Dół (B1/B2, Ø10):
 - Zakład 400–650 mm, preferowany **450–550**.
@@ -463,6 +484,14 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - **UB 01/02 na uskoku = UB 03 krawędzi zewnętrznej ± 1 na każdy koniec**: narożnik wypukły (uskok krótszy) −1,
   wklęsły (uskok dłuższy, np. wcięcie) +1, ta sama długość → ta sama liczba; rozłożone równo na uskoku.
   Przykład: krawędź z nibem po obu stronach (wypukłe) 57 → 55, wcięcie 8 → 10, uskok 1 wypukły + 1 wklęsły 13 → 13.
+  **Wolny koniec (POPRAWKI_WZORCA 29, K1 — błąd wzorca):** koniec krawędzi uskoku leżący wewnątrz zakresu krawędzi zewnętrznej (> 1 mm od jej
+  końców), gdy sąsiednia krawędź linii uskoku w tym wierzchołku NIE jest krawędzią nibu (nib zawinięty 600 mm na sąsiedniej krawędzi, nib
+  w środku krawędzi) — pręty dołu liczone tylko do końca uskoku, bez ± 1 na tym końcu (`NibStepRules`; wzorzec liczył całą krawędź
+  zewnętrzną: 321 — 33 UB na 643 mm). Rozkład UB / prętów góry na uskoku o rozstawie < 100 mm — `*** WARNING ***`.
+  Koniec NIE jest wolny także przy **wierzchołku współliniowym** linii uskoku (w końcu styka się krawędź nibu tej samej orientacji
+  i InnerCoord — `NibDetector` nie scala odcinków; wynik jak wzorzec). **Odsadzka linii uskoku** (zmiana szerokości nibu wzdłuż tej
+  samej krawędzi zewnętrznej): jak wzorzec, chyba że wzorzec daje rozstaw < 100 mm — wtedy koniec przy odsadzce wolny
+  (`NibStepRules.ClassifyEnd` / `RuleCountOnEdges`; pytanie do użytkownika — POPRAWKI 29).
 - **T1/T2 = UB 01/02 — każdy pręt górny ma swój UB** (`PlanNibStepBars`, wspólny dla góry i UB): pas góry bierze
   położenia z krawędzi uskoku na końcu prętów, której zakres najlepiej pasuje do pasa (reguła ± 1 powyżej);
   UB na krawędzi = pręty góry wszystkich pasów dochodzących do niej (długa krawędź przez kilka pasów = suma pasów).
@@ -735,7 +764,31 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
 
 ## 4i. Belki / pogrubienia (downstand) — plan docs/PLAN_BELKI_2026-10-10.md
-Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika. Wartości
+Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika.
+**Praktyka biura (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md): K1 + K2 + K3 zrobione (staging, do testów Bartka)** — opis E3–E4 niżej jest
+HISTORYCZNY tam, gdzie K2 / K3 go zmieniają (strzemiona, pręty podłużne, zamknięcia końców, numeracja):
+- **K2 — strzemiona i rekord v2:** strzemię 51 **H12** co 200, **A = H − otulina górna [24] − otulina dolna** (A1 35 → 450: 365, 375: 290,
+  300: 215; A2 50 → 450: 350), B = szer. − 2 · 45 (510), oba w dół do 5 (`BeamGeometry.StirrupHeightCovers`); **pierwsze (i ostatnie)
+  strzemię w osi otulina + Ø/2 = 51 od lica** zakresu strzemion — także przy U-barach (`StirrupFirstOffset`; usunięte `StirrupEndOffsetAtUBars`
+  / 125); strzemiona **niezależnie od UB 03** (parametr [33]; opcja +100); w kwadracie narożnika L — dłuższa noga ([34]; opcja brak).
+  Zakład 40·Ø ([27]). Pręty boczne — tryb [25] / [26] (B3: H ≤ 450 brak; opis i UB SIDE — K4), BN górą 0, BN dołem H10 (B IN NIB — K5).
+  Bez ostrzeżenia o otulinie UB 03 (generowanie i RC_SECTION; złoty `beam` — zmieniony tylko o tę linię WARN). Okno `BeamDialog`: wszystkie
+  pola v2 (A1 / A2, tryby, krotność zakładu, opcje narożnika). Rekord v1 — migracja w pamięci (sekcja 1).
+- **K3 — pręty podłużne i pionowe U-bary** (`BeamGeometry.PlanLayer` + `PlanVerticalUBars`, `AutoRebarEngine.GenerateOneBeam` /
+  `BeamVerticalUBar`; WSZYSTKO na rzucie dolnym, seria dolna; stare BT na rzucie górnym usuwane przy ponownym generowaniu):
+  - dół = góra (Ø, liczba) i [29] → **BM** jeden rozkład 4 prętów (rysowana jedna warstwa), CountDisplay 8, opis `2x4 H16-nn-150 B+T`;
+    inaczej BB i BT (oba w serii dolnej, komunikat); zakres prętów prostych `StraightRange`: koniec z U-barami — lico ∓ (otulina + Ø U-bara)
+    = 61 ([32]), narożnik L / belka dochodząca złącza T — lico kwadratu / bliższe lico belki ciągłej (przed kwadratem — C12, domyślne; [31] —
+    w kwadrat do lica zewnętrznego ∓ 61), złącze z odcinkiem ręcznym — lico z otuliną 45; plan `PlanBars` z zakładem 650 (528: 5500 + 5250);
+  - **pionowe U-bary BU** kształt 21 na każdym końcu z zamknięciem (koniec przy krawędzi i wewnętrzny, każda noga narożnika L, belka
+    dochodząca złącza T; belka ciągła złącza T — bez przerwy, bez U-barów w węźle): po jednym w kolumnie prętów (4, osie jak pręty podłużne),
+    **B = A strzemienia − 2·Ø strzemienia** (528: 265, 319: 340, 539: 190), noga Y narożnika L i belka dochodząca T — **B − 35** ([30]);
+    tył na otulinie 45 od lica (narożnik — lica zewnętrznego narożnika, T — dalszego lica belki ciągłej); **A = C**: koniec —
+    Ceil25(max(zakład + 90 [35], tył → pręt prosty + zakład)) = 750, narożnik / T — Ceil25(tył → początek prętów prostych nogi + zakład)
+    (539: 1225 / 1300, 319: 1225 / 1325); ramię przycinane do zakresu prętów prostych + komunikat; ramiona z obu końców nachodzą — komunikat;
+    opis `4 H16-nn-150 UB`; w rzucie linia ramienia od tyłu U w głąb belki z **kółkiem na zagięciu** (SymbolType Circle, jak UB płyty);
+  - pręty L (11) i poziome U-bary E4 **usunięte**; RC_SECTION (do K6): BM — kropki na obu poziomach (górne z flagą warstwy górnej), BU —
+    pominięte (przekrój pionowych U-barów — K6), `StirrupA` w odcisku — dawny wzór (K6).
 domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do potwierdzenia przez Bartka**
 (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
 - **Otuliny belki (decyzja użytkownika 2026-10-10 — ustalone):** boczna / czołowa strzemion **45** (40 + odchyłka; boki i czoła belki:
@@ -744,7 +797,8 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   `BeamGeometry.DefaultCoverSide` / `DefaultCoverBottom`), okno RC_BEAM („Otulina boczna / czołowa”, „Otulina dolna”), rekord RC_BEAM [22] / [23];
   rekord bez tych pól (sprzed decyzji) czytany z NOWYMI domyślnymi 45 / 50 (ponowne generowanie belki daje nowe otuliny). Położenie prętów BN
   w poprzek — od spinki UB 03 płyty (`BeamGeometry.NibUbEdgeCover` = 40, element płyty bez zmian); generowanie zgłasza, gdy UB 03 płyty
-  (otulina dołem 45) leży niżej niż otulina dolna belki. 528: strzemię 51 A = 265, B = 510; U-bary 800 / 775 × B 490 / 170.
+  (otulina dołem 45) leży niżej niż otulina dolna belki (od K2 — bez tego komunikatu). E4 (historycznie): 528 strzemię 51 A = 265, B = 510;
+  U-bary 800 / 775 × B 490 / 170; od K2 / K3: A = 290, U-bary pionowe 750 / 265 / 750.
 - **Siatka płyty (Mesh / B1…T2 / UB / B3 / Add) stref belek NIE widzi** — wynik płyt 319 / 528 / 539 jak wzorzec (testy BRX D319 /
   D528 / D539: zrzut po Prepare GA + Mesh = zrzut wtyczki HEAD; M528: belka, potem Mesh — rozkłady siatki = HEAD z dokładnością
   do numerów pozycji, opisy siatki mogą się przesunąć). `NibDetector.Detect` pomija warstwy RC-BEAM i `SD-Thickening-Zone`
@@ -852,7 +906,11 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   strzemię w widoku, wymiary, opisy, BS / BN na rysunku), S528C — przekrój „sprzed E5” → „belka nieuwzględniona”, H 375 → 450 → „zmieniona
   belka”, RC_SECTION_UPDATE → aktualne, S539 — przekrój wzdłuż belki 539, S539BBS — RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls, S528PDF /
   S539PDF — kopie rysunku z layoutami do PDF, `-PdfDir`); jednostkowe `SectionBeamTests` (+ szósty złoty przypadek `beam` w
-  `SectionPlannerGoldenTests`, odciski HEAD bez belek, długości 51 / 11 / 21, E4b).
+  `SectionPlannerGoldenTests`, odciski HEAD bez belek, długości 51 / 11 / 21, E4b). **Od K2 / K3:** asercje G* / S* przepisane (BM 2x4, BU,
+  strzemiona H12 51 od lica, seria dolna, brak prętów L / BT na rzucie górnym, U-bary w strefie i kółka na zagięciu), nowy krok G528V1
+  (rekord v1 → komunikat migracji, zapis v2); przebieg bazowy `-Baseline` z DLL **HEAD + K1** (K1 zmienia siatkę płyt z nibem zawiniętym —
+  zrzuty D319 / D528 / D539); jednostkowe `BeamGeometryTests` K2_* / K3_* (A1 / A2, zakłady, tryby BS, migracja v1, `CountText`, U-bary
+  Holbrook / C12, 528 / 539 / 319 / T / krótki odcinek).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
@@ -880,6 +938,10 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   `tools/BrxSmokeTests/run-planc-w1.ps1`; W2: `run-planc-w2.ps1`, spike zdarzeń klonowania: `run-planc-w2spike.ps1`.
   Przeniesienie zmian kolegi (`docs/PLAN_PRZENIESIENIA_2026-10-09.md`, K3–K6: P16, IDENT, SCRIPT, COPYMSG, P12, P3c):
   `run-planc-port.ps1`; przypadki S-REG F12 / F3g / F14 (expected-diffs 12, 03c, 14, 08d).
+- K1 (nib zawinięty, POPRAWKI 29): `tools/BrxSmokeTests/run-planc-k1.ps1` (najpierw `-Baseline -PluginDll <DLL HEAD>`) — Holbrook 458, 461-462,
+  524, 526, 527, 322, 321, 525: Prepare GA + Mesh, zrzut rozkładów = baza poza T1 / T2 / UB 01 / 02 przy krawędziach z wolnym końcem
+  (`AutoRebarEngine.NibFreeStepEdges` — diagnostyka), bezpiecznik rozstawu ≥ 100, informacyjnie UB / metry góry / masa; S-REG F29
+  (expected-diffs 29).
 - „Plan C” (plan etapów: `docs/PLAN_C.md`): pręt jako BlockReference z własnymi gripami (na razie wariant B: grip na końcu obrysu polilinii
   zmienia odcinek końcowy — `BarGeometryWatcher.TryEndStretch`; ruch w środku pręta jest cofany).
   Etap 1 (próba go / no-go, `docs/PLAN_C_etap1.md`): zaimplementowany `RC_TEST_BARBLOCK`, czeka na testy T0–T16 w BricsCAD.

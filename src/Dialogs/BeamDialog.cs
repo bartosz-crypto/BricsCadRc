@@ -8,97 +8,136 @@ using BricsCadRc.Core;
 namespace BricsCadRc.Dialogs
 {
     /// <summary>
-    /// RC_BEAM — parametry belki / pogrubienia (rekord RC_BEAM). Wartości domyślne = rozstrzygnięcia planu belek
-    /// (docs/PLAN_BELKI_2026-10-10.md 1a / 1b / 1c) — „domyślne, do potwierdzenia”. H z opisu GA („450THK”).
+    /// RC_BEAM — parametry belki / pogrubienia (rekord RC_BEAM v2). Wartości domyślne = praktyka biura (C12 / Holbrook ręczny,
+    /// docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md K2 / K3) — „domyślne, do potwierdzenia”. H z opisu GA („450THK”).
     /// </summary>
     public class BeamDialog : Window
     {
         private readonly BeamParams _p;
-        private readonly TextBox _h, _w, _nibW, _nibH, _sDia, _sSp, _bDia, _bCnt, _tDia, _tCnt, _uDia, _shape, _lap, _max,
-                                 _sideDia, _sideSp, _nibTop, _nibBot, _covSide, _covBot;
-        private readonly ComboBox _topMode;
-        private readonly CheckBox _generate;
+        private readonly TextBox _h, _w, _nibW, _nibH, _sDia, _sSp, _bDia, _bCnt, _tDia, _tCnt, _uDia, _shape, _lapMul, _max,
+                                 _sideDia, _sideSp, _sideThr, _nibTop, _nibBot, _covSide, _covBot, _covTopOther, _across, _uDrop,
+                                 _uExtra, _endOff;
+        private readonly ComboBox _covTop, _sideMode;
+        private readonly CheckBox _generate, _both, _intoSquare, _atUb03, _squareLinks;
 
         /// <summary>Parametry po OK.</summary>
         public BeamParams Result { get; private set; }
-        /// <summary>Po OK: generować pręty belki (strzemiona + pręty podłużne).</summary>
+        /// <summary>Po OK: generować pręty belki.</summary>
         public bool Generate { get; private set; }
 
         public BeamDialog(BeamParams p, string heightSource, IList<string> info)
         {
             _p = p.Clone();
             Title = "Belka / pogrubienie";
-            Width = 520; SizeToContent = SizeToContent.Height;
+            Width = 600; SizeToContent = SizeToContent.Height;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.NoResize;
 
             var root = new StackPanel { Margin = new Thickness(12) };
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             int row = 0;
-            TextBox Field(string label, string value, string hint = null)
+            void Row(string label, UIElement control, string hint = null)
             {
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var l = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 8, 3) };
+                var l = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 2, 8, 2), TextWrapping = TextWrapping.Wrap };
                 Grid.SetRow(l, row); grid.Children.Add(l);
                 var sp = new StackPanel { Orientation = Orientation.Horizontal };
-                var tb = new TextBox { Text = value, Width = 90, Margin = new Thickness(0, 3, 6, 3) };
-                sp.Children.Add(tb);
-                if (hint != null) sp.Children.Add(new TextBlock { Text = hint, Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 190 });
+                sp.Children.Add(control);
+                if (hint != null) sp.Children.Add(new TextBlock { Text = hint, Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 250 });
                 Grid.SetRow(sp, row); Grid.SetColumn(sp, 1); grid.Children.Add(sp);
                 row++;
+            }
+            TextBox Field(string label, string value, string hint = null)
+            {
+                var tb = new TextBox { Text = value, Width = 80, Margin = new Thickness(0, 2, 6, 2) };
+                Row(label, tb, hint);
                 return tb;
+            }
+            CheckBox Check(string label, bool value, string hint = null)
+            {
+                var cb = new CheckBox { IsChecked = value, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 2, 6, 2) };
+                Row(label, cb, hint);
+                return cb;
+            }
+            void Header(string text)
+            {
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var t = new TextBlock { Text = text, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 8, 0, 2) };
+                Grid.SetRow(t, row); Grid.SetColumnSpan(t, 2); grid.Children.Add(t);
+                row++;
             }
             string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
             string I(int v) => v.ToString(CultureInfo.InvariantCulture);
 
+            Header("Geometria i otuliny");
             _h    = Field("Wysokość belki H [mm]", _p.Height > 0 ? F(_p.Height) : "",
                           _p.Height > 0 ? (heightSource ?? "") : "nie znaleziono — wpisz");
             _w    = Field("Szerokość [mm]", F(_p.Width), "z geometrii strefy (informacyjnie)");
             _w.IsReadOnly = true;   // pręty liczone z geometrii odcinków strefy
             _nibW = Field("Nib: szerokość [mm]", F(_p.NibWidth), "domyślne 135");
             _nibH = Field("Nib: wysokość [mm]", F(_p.NibHeight), "domyślne 150");
-            _covSide = Field("Otulina boczna / czołowa [mm]", F(_p.CoverSide), "strzemiona, boki i czoła belki; domyślne 45 (40 + odchyłka)");
-            _covBot  = Field("Otulina dolna [mm]", F(_p.CoverBottom), "spód belki i nibu; domyślne 50 (górna 35 — pod siatką T)");
-            _sDia = Field("Strzemiona: średnica H", I(_p.StirrupDia), "CP przy palach: H12@200");
-            _sSp  = Field("Strzemiona: rozstaw [mm]", F(_p.StirrupSpacing), "domyślne H10 co 200 — decyzja Bartka");
-            _shape = Field("Strzemiona: kod kształtu", _p.StirrupShape ?? "51", "51 (zamknięte)");
-            _bDia = Field("Pręty dołem: średnica H", I(_p.BottomDia));
-            _bCnt = Field("Pręty dołem: liczba", I(_p.BottomCount));
-            _tDia = Field("Pręty górą: średnica H", I(_p.TopDia));
-            _tCnt = Field("Pręty górą: liczba", I(_p.TopCount));
-            _uDia = Field("U-bary na końcach: średnica H", I(_p.UBarDia), "kształt 21, 2 na warstwę");
-            _sideDia = Field("Pręty boczne: średnica H", I(_p.SideDia), "0 = brak; na obu bokach, do potwierdzenia");
-            _sideSp  = Field("Pręty boczne: rozstaw pionowy [mm]", F(_p.SideSpacing), "liczba = ceil(światło / rozstaw) − 1");
-            _nibTop  = Field("Nib: pręt górą, średnica H", I(_p.NibTopDia), "naroże spinki UB 03; 0 = brak");
-            _nibBot  = Field("Nib: pręt dołem, średnica H", I(_p.NibBottomDia), "naroże nibu; 0 = brak");
-            _lap  = Field("Zakład [mm]", F(_p.Lap), "domyślne 800, do potwierdzenia");
-            _max  = Field("Maks. długość pręta [mm]", F(_p.MaxLength));
-            root.Children.Add(grid);
+            _covSide = Field("Otulina boczna / czołowa [mm]", F(_p.CoverSide), "domyślne 45 (40 + odchyłka)");
+            _covBot  = Field("Otulina dolna [mm]", F(_p.CoverBottom), "spód belki i nibu; domyślne 50");
+            _covTop = new ComboBox { Width = 250, Margin = new Thickness(0, 2, 6, 2) };
+            _covTop.Items.Add("A1: otulina górna 35 (A = H − 85; Holbrook)");
+            _covTop.Items.Add("A2: otulina górna 50 (A = H − 100; C12)");
+            _covTop.Items.Add("inna (pole obok)");
+            _covTop.SelectedIndex = System.Math.Abs(_p.CoverTop - BeamGeometry.CoverTopA1) < 0.5 ? 0
+                                  : System.Math.Abs(_p.CoverTop - BeamGeometry.CoverTopA2) < 0.5 ? 1 : 2;
+            Row("Strzemię: otulina górna", _covTop);
+            _covTopOther = Field("   inna otulina górna [mm]", F(_p.CoverTop), "tylko dla „inna”");
 
-            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-            modeRow.Children.Add(new TextBlock { Text = "Góra strzemienia pod:", Width = 210, VerticalAlignment = VerticalAlignment.Center });
-            _topMode = new ComboBox { Width = 250 };
-            _topMode.Items.Add("obiema warstwami siatki górnej (T1 + T2)");
-            _topMode.Items.Add("jedną warstwą siatki górnej (T1)");
-            _topMode.SelectedIndex = _p.StirrupTopLayers >= 2 ? 0 : 1;
-            modeRow.Children.Add(_topMode);
-            root.Children.Add(modeRow);
+            Header("Strzemiona");
+            _sDia = Field("Średnica H", I(_p.StirrupDia), "domyślne H12 (CP: LINKS H12@200)");
+            _sSp  = Field("Rozstaw [mm]", F(_p.StirrupSpacing), "domyślne 200");
+            _shape = Field("Kod kształtu", _p.StirrupShape ?? "51", "51 (zamknięte)");
+            _atUb03 = Check("Położenia UB 03 + 100", _p.StirrupsAtUb03, "domyślnie nie — niezależnie od UB 03, pierwsze 51 od lica");
+            _squareLinks = Check("Strzemiona w kwadracie narożnika L", _p.CornerSquareLinks, "kontynuacja dłuższej nogi (domyślnie tak)");
+
+            Header("Pręty podłużne i pionowe U-bary");
+            _bDia = Field("Dołem: średnica H", I(_p.BottomDia));
+            _bCnt = Field("Dołem: liczba", I(_p.BottomCount));
+            _tDia = Field("Górą: średnica H", I(_p.TopDia));
+            _tCnt = Field("Górą: liczba", I(_p.TopCount));
+            _both = Check("Dół = góra jedną pozycją „2x4 … B+T”", _p.BothOneMark, "inaczej osobno B i T (obie w serii dolnej)");
+            _across = Field("Rozstaw nominalny w opisie [mm]", F(_p.AcrossNominal), "„-150” (ostrzeżenie, gdy rzeczywisty > 175)");
+            _lapMul = Field("Zakład: krotność Ø", F(_p.LapMultiple), "40·Ø → H10 400, H12 500, H16 650");
+            _max  = Field("Maks. długość pręta [mm]", F(_p.MaxLength));
+            _endOff = Field("Koniec pręta prostego od lica [mm]", F(_p.StraightEndOffset), "0 = auto (otulina + Ø U-bara = 61; C12 ≈ 90)");
+            _intoSquare = Check("Pręty proste w kwadrat narożnika", _p.CornerStraightIntoSquare, "domyślnie nie — przed kwadratem (C12)");
+            _uDia = Field("U-bary pionowe: średnica H", I(_p.UBarDia), "kształt 21, po 1 w kolumnie prętów");
+            _uExtra = Field("U-bar końca: A = zakład + [mm]", F(_p.UBarArmExtra), "90 (C12 740, Holbrook 770)");
+            _uDrop = Field("U-bary drugiego kierunku: B − [mm]", F(_p.UBarDrop), "noga Y narożnika / złącze T (35)");
+
+            Header("Pręty boczne i w nibie");
+            _sideMode = new ComboBox { Width = 250, Margin = new Thickness(0, 2, 6, 2) };
+            _sideMode.Items.Add("B1: brak");
+            _sideMode.Items.Add("B2: zawsze");
+            _sideMode.Items.Add("B3: gdy H > próg (domyślne)");
+            _sideMode.SelectedIndex = _p.SideMode == 1 ? 0 : _p.SideMode == 2 ? 1 : 2;
+            Row("Pręty boczne: tryb", _sideMode);
+            _sideThr = Field("Pręty boczne: próg H [mm]", F(_p.SideThreshold), "B3: H ≤ 450 brak, od 525");
+            _sideDia = Field("Pręty boczne: średnica H", I(_p.SideDia), "domyślne H12; 0 = brak");
+            _sideSp  = Field("Pręty boczne: rozstaw pionowy [mm]", F(_p.SideSpacing), "do potwierdzenia (krok K4)");
+            _nibTop  = Field("Nib: pręt górą, średnica H", I(_p.NibTopDia), "0 = brak (domyślnie — T IN NIB płyty)");
+            _nibBot  = Field("Nib: pręt dołem, średnica H", I(_p.NibBottomDia), "domyślne H10 (B IN NIB — krok K5)");
+
+            root.Children.Add(new ScrollViewer { Content = grid, MaxHeight = 620, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
 
             _generate = new CheckBox
             {
-                Content = "Generuj pręty belki (strzemiona, pręty podłużne, boczne, w nibie, pręty L, U-bary; poprzednie pręty tej belki zostaną zastąpione)",
+                Content = "Generuj pręty belki (strzemiona, pręty podłużne, pionowe U-bary, boczne, w nibie; poprzednie pręty tej belki zostaną zastąpione)",
                 IsChecked = true, Margin = new Thickness(0, 8, 0, 0)
             };
             root.Children.Add(_generate);
 
             var lines = new List<string>(info ?? new List<string>())
             {
-                "Wartości domyślne (do potwierdzenia): zakład 800, max 6000, strzemię 51 pod obiema warstwami T, H10 co 200.",
-                "Otuliny (decyzja 2026-10-10): boczna / czołowa 45, dolna 50, górna 35 (pod siatką T).",
-                "Narożniki L / złącza T: pręty L kształt 11 (ramiona z zakładem); końce (krawędź i wewnętrzny): U-bary kształt 21 — domyślne, do potwierdzenia.",
-                "Pręty boczne (H10 co 200 w pionie) i pręty w nibie (górą H10, dołem H16) — proste, kończą się na licu kwadratu narożnika / przed U-barami z otuliną (bez zagięć) — do potwierdzenia."
+                "Wartości domyślne (praktyka biura C12 / Holbrook, do potwierdzenia): strzemiona H12 co 200, A = H − otulina górna − dolna, pierwsze 51 od lica;",
+                "4 + 4 H16 jedną pozycją „2x4 H16-nn-150 B+T” (seria dolna, rzut dolny), zakład 40·Ø; końce, narożniki L i złącza T — pionowe U-bary 4 H16 kształt 21.",
+                "Otuliny (decyzja 2026-10-10): boczna / czołowa 45, dolna 50."
             };
             root.Children.Add(new TextBox
             {
@@ -130,15 +169,21 @@ namespace BricsCadRc.Dialogs
             if (!Num(_nibH, "Wysokość nibu", 0, h, out double nh)) return;
             if (!Num(_covSide, "Otulina boczna / czołowa", 15, 100, out double cs)) return;
             if (!Num(_covBot, "Otulina dolna", 15, 100, out double cb)) return;
+            double ct = _covTop.SelectedIndex == 0 ? BeamGeometry.CoverTopA1 : _covTop.SelectedIndex == 1 ? BeamGeometry.CoverTopA2 : double.NaN;
+            if (double.IsNaN(ct) && !Num(_covTopOther, "Otulina górna strzemienia", 15, 150, out ct)) return;
             if (!Num(_sDia, "Średnica strzemion", 6, 25, out double sd)) return;
             if (!Num(_sSp, "Rozstaw strzemion", 50, 400, out double ss)) return;
             if (!Num(_bDia, "Średnica dołem", 8, 40, out double bd)) return;
             if (!Num(_bCnt, "Liczba dołem", 1, 12, out double bc)) return;
             if (!Num(_tDia, "Średnica górą", 8, 40, out double td)) return;
             if (!Num(_tCnt, "Liczba górą", 1, 12, out double tc)) return;
-            if (!Num(_uDia, "Średnica U-barów", 8, 40, out double ud)) return;
-            if (!Num(_lap, "Zakład", 200, 3000, out double lap)) return;
+            if (!Num(_across, "Rozstaw nominalny w opisie", 50, 400, out double acr)) return;
+            if (!Num(_lapMul, "Krotność zakładu", 10, 100, out double lapMul)) return;
             if (!Num(_max, "Maks. długość", 1000, 12000, out double max)) return;
+            if (!Num(_endOff, "Koniec pręta prostego od lica", 0, 300, out double eo)) return;
+            if (!Num(_uDia, "Średnica U-barów", 8, 40, out double ud)) return;
+            if (!Num(_uExtra, "Naddatek ramienia U-bara", 0, 1000, out double ue)) return;
+            if (!Num(_uDrop, "Obniżenie U-barów drugiego kierunku", 0, 200, out double udr)) return;
             bool Dia(TextBox tb, string name, out double v)
             {
                 if (NumberParser.TryParseDouble(tb.Text, out v) && (v == 0 || (v >= 6 && v <= 40))) return true;
@@ -146,11 +191,14 @@ namespace BricsCadRc.Dialogs
                 tb.Focus();
                 return false;
             }
+            if (!Num(_sideThr, "Próg H prętów bocznych", 0, 3000, out double sthr)) return;
             if (!Dia(_sideDia, "Średnica prętów bocznych", out double sdd)) return;
             if (!Num(_sideSp, "Rozstaw prętów bocznych", 100, 400, out double sds)) return;
             if (!Dia(_nibTop, "Średnica pręta w nibie górą", out double ntd)) return;
             if (!Dia(_nibBot, "Średnica pręta w nibie dołem", out double nbd)) return;
-            if (lap >= max) { MessageBox.Show(this, "Zakład musi być krótszy niż maks. długość pręta.", "Belka"); return; }
+            double lap = BeamGeometry.Ceil25(lapMul * bd);
+            // zakład liczony osobno dla prętów dołem i górą (LapFor) — warunek dla dłuższego
+            if (System.Math.Max(lap, BeamGeometry.Ceil25(lapMul * td)) >= max) { MessageBox.Show(this, "Zakład musi być krótszy niż maks. długość pręta.", "Belka"); return; }
             string shape = (_shape.Text ?? "").Trim();
             if (shape.Length == 0) shape = "51";
 
@@ -158,9 +206,14 @@ namespace BricsCadRc.Dialogs
             r.Height = h; r.Width = w; r.NibWidth = nw; r.NibHeight = nh;
             r.StirrupDia = (int)sd; r.StirrupSpacing = ss; r.StirrupShape = shape;
             r.BottomDia = (int)bd; r.BottomCount = (int)bc; r.TopDia = (int)td; r.TopCount = (int)tc; r.UBarDia = (int)ud;
-            r.Lap = lap; r.MaxLength = max; r.StirrupTopLayers = _topMode.SelectedIndex == 1 ? 1 : 2;
-            r.SideDia = (int)sdd; r.SideSpacing = sds; r.NibTopDia = (int)ntd; r.NibBottomDia = (int)nbd;
-            r.CoverSide = cs; r.CoverBottom = cb;
+            r.LapMultiple = lapMul; r.Lap = lap; r.MaxLength = max;
+            r.SideDia = (int)sdd; r.SideSpacing = sds; r.SideThreshold = sthr; r.SideMode = _sideMode.SelectedIndex + 1;
+            r.NibTopDia = (int)ntd; r.NibBottomDia = (int)nbd;
+            r.CoverSide = cs; r.CoverBottom = cb; r.CoverTop = ct;
+            r.AcrossNominal = acr; r.BothOneMark = _both.IsChecked == true; r.UBarDrop = udr; r.UBarArmExtra = ue;
+            r.StraightEndOffset = eo; r.CornerStraightIntoSquare = _intoSquare.IsChecked == true;
+            r.StirrupsAtUb03 = _atUb03.IsChecked == true; r.CornerSquareLinks = _squareLinks.IsChecked == true;
+            r.MigratedFromV1 = false; r.MigrationNote = null;
             Result = r;
             Generate = _generate.IsChecked == true;
             DialogResult = true;

@@ -35,6 +35,9 @@ namespace BricsCadRc.Core
         /// <summary>Efektywna liczba prętów do wyświetlania — CountDisplay jeśli ustawiony, w przeciwnym razie Count.</summary>
         public int EffectiveCount => CountDisplay ?? Count;
 
+        /// <summary>Liczba prętów w tekście opisu (BarLabelRules.CountText): zwykle EffectiveCount, belka BM — „2x4”.</summary>
+        public string CountText => BarLabelRules.CountText(LayerCode, Count, CountDisplay);
+
         /// <summary>Kod ksztaltu wg BS8666 np. "00", "11", "21"</summary>
         public string ShapeCode { get; set; } = "00";
 

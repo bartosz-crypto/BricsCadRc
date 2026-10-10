@@ -240,8 +240,9 @@ namespace BricsCadRc.Tests
             ["fitshape"] = "ba680f87ce1e77fab8b000de66b9268f110cc429365f5f9d13ec973a6fbe284f",
             // plan belek E5 + E4b (2026-10-10): przekrój przez belkę — zapisany po przejrzeniu zrzutu (profil, kropki, strzemię, boczne, nib, wymiary);
             // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty;
-            // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307, ostrzeżenie o otulinie UB 03
-            ["beam"]     = "644610bd63f9c0af56e08b56a14c0c6490c1af2a5e9d3a097446ddde9d046366",
+            // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
+            // ostrzeżenia o otulinie UB 03 (jedyna różnica względem 644610bd… — sprawdzone: zrzut + dawna linia WARN = dawny skrót)
+            ["beam"]     = "c91b74cce076eb448eda7a576c97af960d0d34d1f694a57e3c679d2f659a67ce",
         };
 
         [TestCaseSource(nameof(Cases))]

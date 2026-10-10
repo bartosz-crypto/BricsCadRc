@@ -386,6 +386,10 @@ namespace BricsCadRc.Core
                         nibForcedSpacing = stepPos.Count > 1 ? (y1 - y0) / (stepPos.Count - 1) : double.NaN;
                         ed.WriteMessage($"\n[AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {stepPos.Count} prętów " +
                                         "góry = UB 01/02 krawędzi uskoku (każdy pręt ma swój UB).\n");
+                        double stepGap = NibStepRules.MinGap(stepPos);
+                        if (stepGap < NibStepRules.MinSaneSpacing)
+                            ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — rozstaw prętów " +
+                                            $"góry {stepGap:F1} mm < {NibStepRules.MinSaneSpacing:F0} mm — sprawdź nib.\n");
                     }
 
                     // X multi-dist plan for this strip
@@ -967,7 +971,12 @@ namespace BricsCadRc.Core
                     bool stepDone = false;
                     if (outerEdges != null)
                     {
-                        int rule = StepEdgeRuleCount(nib, ubBottom, isUBB1, edgeCoord, segLow, segHigh, cover, spacing, out int nOuter);
+                        int rule = StepEdgeRuleCount(nib, ubBottom, isUBB1, edgeCoord, segLow, segHigh, cover, spacing,
+                                                     out int nOuter, out bool freeLo, out bool freeHi);
+                        if (rule > 0 && (freeLo || freeHi))
+                            ed.WriteMessage($"\n[AutoRebar UB] Nib: uskok {edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] — wolny koniec " +
+                                            $"({(freeLo && freeHi ? "oba" : freeLo ? "dolny" : "górny")}; nib zawinięty / w środku krawędzi): " +
+                                            "pręty dołu liczone tylko na długości uskoku.\n");
                         if (rule > 0)
                         {
                             totalCount = rule;
@@ -1005,6 +1014,9 @@ namespace BricsCadRc.Core
 
                     ed.WriteMessage($"\n[AutoRebar UB] Edge={edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] " +
                         $"{parts.Count} pas(y) prętów głównych → {totalCount} UB, rozstaw {uSpacing:F1}mm\n");
+                    if (totalCount > 1 && uSpacing < NibStepRules.MinSaneSpacing)
+                        ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Edge={edgeCoord:F0}: rozstaw UB {uSpacing:F1} mm < " +
+                                        $"{NibStepRules.MinSaneSpacing:F0} mm — sprawdź krawędź (nib zawinięty?).\n");
 
                     try
                     {
@@ -1816,6 +1828,7 @@ namespace BricsCadRc.Core
                 // Etap 2 Faza B: UB B1 + UB B2 share template pool (shape "21" OR "13" dla 225mm).
                 if (bar.ShapeCode != "21" && bar.ShapeCode != "13") continue;
                 if (bar.Diameter != diameter) continue;
+                if (BeamGeometry.IsBeamCode(bar.LayerCode)) continue;   // K3: pionowe U-bary belki (BU, kształt 21) — nie szablony UB płyty
                 var insPt = be.FirstOutlineVertex(tr);
                 if (insPt == null || !GeometryHelper.IsInsideBbox(insPt.Value, rebarBbox)) continue;
                 result.Add((be.Entity.ObjectId, bar));
@@ -2201,7 +2214,7 @@ namespace BricsCadRc.Core
 
             // Step 4: annotation bez kolizji (warianty, przesunięcie w bok, drobne wydłużenie)
             distBar.LeaderPoints = PlaceLabel(
-                candidates, ref annotInsertPt, $"{distBar.EffectiveCount} {distBar.Mark}", distBar.AnnotScale,
+                candidates, ref annotInsertPt, $"{distBar.CountText} {distBar.Mark}", distBar.AnnotScale,
                 double.IsNaN(alongMinOverride) ? (horizontal ? x0 : y0) + 150.0 : alongMinOverride,
                 double.IsNaN(alongMaxOverride) ? (horizontal ? x1 : y1) - 150.0 : alongMaxOverride, horizontal);
             {
@@ -2258,41 +2271,36 @@ namespace BricsCadRc.Core
         /// Krawędź uskoku: liczba = UB 03 krawędzi zewnętrznej ± 1 na każdy narożnik (wypukły −1, wklęsły +1),
         /// równo od otuliny do otuliny. Pas góry bierze położenia z „swojej” krawędzi uskoku (na końcu pręta,
         /// zakres najlepiej pasujący do pasa). UB na krawędzi = suma prętów górnych pasów dochodzących do niej.
+        /// Logika — czysta klasa <see cref="NibStepRules"/> (wolny koniec nibu zawiniętego: POPRAWKI_WZORCA 29).
         /// </summary>
         private sealed class NibStepPlan
         {
             public readonly Dictionary<StripBounds, List<double>> StripPositions = new Dictionary<StripBounds, List<double>>();
             public readonly List<StripBounds> Strips = new List<StripBounds>();
-            public readonly List<(double c, double lo, double hi, int rule)> Edges = new List<(double, double, double, int)>();
+            public readonly List<NibStepRules.StepEdge> Edges = new List<NibStepRules.StepEdge>();
 
             /// <summary>Położenia UB na krawędzi = pręty góry dochodzące do niej; null gdy któryś pas nie ma planu.</summary>
             public List<double> UbPositions(double c, double segLow, double segHigh)
-            {
-                var res = new List<double>();
-                bool any = false;
-                foreach (var s in Strips)
-                {
-                    bool touches = Math.Abs(s.PerpLow - c) < 1.0 || Math.Abs(s.PerpHigh - c) < 1.0;
-                    if (!touches || Math.Min(s.ScanHigh, segHigh) - Math.Max(s.ScanLow, segLow) < 1.0) continue;
-                    if (!StripPositions.TryGetValue(s, out var pos)) return null;
-                    any = true;
-                    foreach (double p in pos)
-                        if (p >= segLow - 0.5 && p <= segHigh + 0.5 && !res.Any(q => Math.Abs(q - p) < 1.0)) res.Add(p);
-                }
-                if (!any) return null;
-                res.Sort();
-                return res;
-            }
+                => NibStepRules.UbPositions(
+                    Strips.Select(s => (ToRule(s), StripPositions.TryGetValue(s, out var p) ? p : null)), c, segLow, segHigh);
         }
+
+        private static NibStepRules.Strip ToRule(StripBounds s)
+            => new NibStepRules.Strip(s.ScanLow, s.ScanHigh, s.PerpLow, s.PerpHigh);
 
         /// <summary>
         /// Liczba prętów/UB na krawędzi uskoku c [lo..hi] (oś rozkładu): pręty dołu przy krawędzi zewnętrznej
-        /// ± 1 na każdy koniec. -1 gdy krawędź nie leży na uskoku.
+        /// ± 1 na każdy koniec; na końcu wolnym (zawinięcie nibu, nib w środku krawędzi — <see cref="NibStepRules.IsFreeEnd"/>)
+        /// pręty dołu tylko w zakresie krawędzi uskoku, bez ± 1. -1 gdy krawędź nie leży na uskoku.
         /// </summary>
         private static int StepEdgeRuleCount(NibDetector.NibInfo nib, BottomView bottom, bool barsAlongX,
             double c, double lo, double hi, double cover, double spacing, out int nOuter)
+            => StepEdgeRuleCount(nib, bottom, barsAlongX, c, lo, hi, cover, spacing, out nOuter, out _, out _);
+
+        private static int StepEdgeRuleCount(NibDetector.NibInfo nib, BottomView bottom, bool barsAlongX,
+            double c, double lo, double hi, double cover, double spacing, out int nOuter, out bool freeLow, out bool freeHigh)
         {
-            nOuter = 0;
+            nOuter = 0; freeLow = freeHigh = false;
             var ne = nib.Edges.FirstOrDefault(nz => nz.Vertical == barsAlongX && Math.Abs(nz.InnerCoord - c) < 1.0
                                                   && Math.Min(nz.Hi, hi) - Math.Max(nz.Lo, lo) > 1.0);
             if (ne == null) return -1;
@@ -2307,21 +2315,38 @@ namespace BricsCadRc.Core
                 .Cast<(double c, double lo, double hi)?>().FirstOrDefault();
             if (!oe.HasValue) return -1;
             var o = oe.Value;
-            nOuter = bottom != null
-                ? BottomPositionsIn(bottom, o.lo + cover - 0.5, o.hi - cover + 0.5, o.c - 300.0, o.c + 300.0, out _).Count
-                : 0;
-            if (nOuter == 0) nOuter = (int)Math.Floor((o.hi - o.lo - 2 * cover) / spacing + 1e-9) + 1;
-            int dLow  = lo < o.lo - 1.0 ? 1 : lo > o.lo + 1.0 ? -1 : 0;
-            int dHigh = hi > o.hi + 1.0 ? 1 : hi < o.hi - 1.0 ? -1 : 0;
-            return Math.Max(1, nOuter + dLow + dHigh);
+            Func<double, double, int> bottomCount = null;
+            if (bottom != null)
+            {
+                double oc = o.c;
+                bottomCount = (a, b) => BottomPositionsIn(bottom, a, b, oc - 300.0, oc + 300.0, out _).Count;
+            }
+            // Kryterium końców (narożnik / współliniowy / odsadzka / otwarty) — czysta NibStepRules.RuleCountOnEdges
+            var refs = nib.Edges.Select(nz => new NibStepRules.NibEdgeRef(nz.Vertical, nz.OuterCoord, nz.InnerCoord, nz.Lo, nz.Hi)).ToList();
+            return NibStepRules.RuleCountOnEdges(refs, barsAlongX, c, ne.OuterCoord, lo, hi, o.lo, o.hi, bottomCount,
+                cover, spacing, out nOuter, out freeLow, out freeHigh);
         }
 
-        private static List<double> EvenPositions(double lo, double hi, int n, double cover)
+        /// <summary>
+        /// Diagnostyka (tylko odczyt; test BRX K1): krawędzie uskoku płyty z co najmniej jednym wolnym końcem —
+        /// (pionowa, c, lo, hi, wolny dolny koniec, wolny górny koniec). Brak nibu — pusta lista.
+        /// </summary>
+        private static List<(bool vertical, double c, double lo, double hi, bool freeLo, bool freeHi)> NibFreeStepEdges(
+            Database db, ObjectId slabId)
         {
-            double a = lo + cover, b = hi - cover;
-            var res = new List<double>();
-            if (n <= 1 || b < a) { res.Add((lo + hi) / 2.0); return res; }
-            for (int i = 0; i < n; i++) res.Add(a + (b - a) * i / (n - 1));
+            var res = new List<(bool, double, double, double, bool, bool)>();
+            var nib = NibDetector.Detect(db, slabId);
+            if (nib == null) return res;
+            foreach (var e in GeometryHelper.EnumerateAxisAlignedEdges(nib.Inner))
+            {
+                bool vert = e.Orientation == GeometryHelper.EdgeOrientation.Vertical;
+                if (!vert && e.Orientation != GeometryHelper.EdgeOrientation.Horizontal) continue;
+                double c  = vert ? e.Start.X : e.Start.Y;
+                double lo = vert ? Math.Min(e.Start.Y, e.End.Y) : Math.Min(e.Start.X, e.End.X);
+                double hi = vert ? Math.Max(e.Start.Y, e.End.Y) : Math.Max(e.Start.X, e.End.X);
+                int n = StepEdgeRuleCount(nib, null, vert, c, lo, hi, DefaultCover, 200.0, out _, out bool fLo, out bool fHi);
+                if (n > 0 && (fLo || fHi)) res.Add((vert, c, lo, hi, fLo, fHi));
+            }
             return res;
         }
 
@@ -2338,7 +2363,7 @@ namespace BricsCadRc.Core
                 double lo = barsAlongX ? Math.Min(e.Start.Y, e.End.Y) : Math.Min(e.Start.X, e.End.X);
                 double hi = barsAlongX ? Math.Max(e.Start.Y, e.End.Y) : Math.Max(e.Start.X, e.End.X);
                 int n = StepEdgeRuleCount(nib, bottom, barsAlongX, c, lo, hi, cover, spacing, out _);
-                if (n > 0) plan.Edges.Add((c, lo, hi, n));
+                if (n > 0) plan.Edges.Add(new NibStepRules.StepEdge(c, lo, hi, n));
             }
             if (plan.Edges.Count == 0) return null;
 
@@ -2347,17 +2372,10 @@ namespace BricsCadRc.Core
                 if (!s.Valid || s.ScanHigh - s.ScanLow < 50.0) continue;
                 if ((s.PerpHigh - s.PerpLow) - 2.0 * cover < TemplateMinLen) continue;
                 plan.Strips.Add(s);
-                var owner = plan.Edges
-                    .Where(e => (Math.Abs(e.c - s.PerpLow) < 1.0 || Math.Abs(e.c - s.PerpHigh) < 1.0)
-                             && Math.Min(e.hi, s.ScanHigh) - Math.Max(e.lo, s.ScanLow) > 1.0)
-                    .OrderBy(e => Math.Abs(e.lo - s.ScanLow) + Math.Abs(e.hi - s.ScanHigh))
-                    .Cast<(double c, double lo, double hi, int rule)?>().FirstOrDefault();
-                if (!owner.HasValue) continue;
-                var ow = owner.Value;
-                var pos = EvenPositions(ow.lo, ow.hi, ow.rule, cover)
-                    .Where(p => p >= s.ScanLow - 0.5 && p < s.ScanHigh - 0.5).ToList();
-                if (pos.Count == 0) pos.Add((s.ScanLow + s.ScanHigh) / 2.0);
-                plan.StripPositions[s] = pos;
+                var rs = ToRule(s);
+                var ow = NibStepRules.OwnerOf(plan.Edges, rs);
+                if (ow == null) continue;
+                plan.StripPositions[s] = NibStepRules.StripPositions(ow, rs, cover);
             }
             return plan;
         }
@@ -3844,7 +3862,7 @@ namespace BricsCadRc.Core
             }
             distBar.LeaderPoints = PlaceLabel(
                 ubCandidates, ref annotInsertPt,
-                $"{distBar.EffectiveCount} {distBar.Mark}", distBar.AnnotScale,
+                $"{distBar.CountText} {distBar.Mark}", distBar.AnnotScale,
                 ubAlongMin, ubAlongMax, isXBars);
             if (leaderEndAlong.HasValue)
             {

@@ -1,0 +1,135 @@
+# bug: 29
+# opis: K1 (PLAN_BELKI_PRAKTYKA, POPRAWKI_WZORCA 29): nib zawinięty — krawędź uskoku 465 mm na zawinięciu 600 mm; wzorzec liczy pręty dołu z CAŁEJ krawędzi zewnętrznej (58 UB 02 i 58 prętów T2 co ~6,6 mm), nasz: wolny koniec — tylko długość uskoku (2 UB 02, 2 pręty T2); opisy i linie rozkładów tych pozycji.
+# zrzut: fix
+<= F29| F29 dist Mark=H12-02-200 UB count=58 A=715.00 src=pręt H12-02
+<= F29| F29 dist Mark=H12-02-200 UB count=58 A=715.00 src=pręt H12-02
+<= F29| F29 dist Mark=H12-102-200 T2 count=58 A=5500.00 src=pręt H12-102
+<= F29|   X RC_BAR_ANNOT[3] 1070=58
+<= F29|   X RC_BAR_ANNOT[3] 1070=58
+<= F29|   X RC_BAR_ANNOT[3] 1070=58
+<= F29|   X RC_BAR_ANNOT[11] 1040=1854.17
+<= F29|   X RC_BAR_ANNOT[11] 1040=1854.17
+=> F29|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F29|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F29|     | Circle L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F29|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F29|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+=> F29|     | Hatch L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Line L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     |   (0.00,-105.00,0.00) -> (0.00,105.00,0.00)
+<= F29|     |   (0.00,-105.00,0.00) -> (0.00,105.00,0.00)
+<= F29|     |   (0.00,-105.00,0.00) -> (0.00,105.00,0.00)
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     | Solid L=RC-SLAB-LEADERS C=256 LT=ByLayer LTS=1.00 LW=ByLayer vis=True
+<= F29|     |   ext=(0.00,-22.50,0.00)..(151.00,22.50,0.00)
+<= F29|     |   ext=(0.00,-22.50,0.00)..(151.00,22.50,0.00)
+<= F29|     |   ext=(0.00,-22.50,0.00)..(151.00,22.50,0.00)
+<= F29|   X RC_BAR_ANNOT[5] 1040=6.75
+<= F29|   X RC_BAR_ANNOT[5] 1040=6.75
+<= F29|   X RC_BAR_ANNOT[5] 1040=6.75
+<= F29|     |   c=(195.88,0.00,0.00) r=35.00
+<= F29|     |   c=(195.88,0.00,0.00) r=35.00
+<= F29|     |   c=(195.88,0.00,0.00) r=35.00
+<= F29|     |   text="58 H12-02-200 UB" pos=(1035.83,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+<= F29|     |   text="58 H12-02-200 UB" pos=(1035.83,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+<= F29|     |   hatch pat=SOLID loops=1 ext=(160.88,-35.00,0.00)..(230.88,35.00,0.00)
+<= F29|     |   hatch pat=SOLID loops=1 ext=(160.88,-35.00,0.00)..(230.88,35.00,0.00)
+<= F29|     |   hatch pat=SOLID loops=1 ext=(160.88,-35.00,0.00)..(230.88,35.00,0.00)
+<= F29|     |   (385.00,-105.00,0.00) -> (385.00,105.00,0.00)
+<= F29|     |   (385.00,-105.00,0.00) -> (385.00,105.00,0.00)
+<= F29|     |   (385.00,-105.00,0.00) -> (385.00,105.00,0.00)
+<= F29|     |   (0.00,0.00,0.00) -> (385.00,0.00,0.00)
+<= F29|     |   (0.00,0.00,0.00) -> (385.00,0.00,0.00)
+<= F29|     |   (0.00,0.00,0.00) -> (385.00,0.00,0.00)
+<= F29|     |   (1035.83,0.00,0.00) -> (2960.00,0.00,0.00)
+<= F29|     |   (1035.83,0.00,0.00) -> (2960.00,0.00,0.00)
+<= F29|     |   ext=(234.00,-22.50,0.00)..(385.00,22.50,0.00)
+<= F29|     |   ext=(234.00,-22.50,0.00)..(385.00,22.50,0.00)
+<= F29|     |   ext=(234.00,-22.50,0.00)..(385.00,22.50,0.00)
+<= F29|   X RC_BAR_ANNOT[11] 1040=1937.50
+<= F29|     |   text="58 H12-102-200 T2" pos=(952.50,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+<= F29|     |   (952.50,0.00,0.00) -> (2960.00,0.00,0.00)
+=> F29|   X RC_BAR_ANNOT[3] 1070=2
+=> F29|   X RC_BAR_ANNOT[3] 1070=2
+=> F29|   X RC_BAR_ANNOT[3] 1070=2
+=> F29|     |   c=(0.00,0.00,0.00) r=35.00
+=> F29|     |   c=(0.00,0.00,0.00) r=35.00
+=> F29|     |   c=(0.00,0.00,0.00) r=35.00
+=> F29|     |   hatch pat=SOLID loops=1 ext=(-35.00,-35.00,0.00)..(35.00,35.00,0.00)
+=> F29|     |   hatch pat=SOLID loops=1 ext=(-35.00,-35.00,0.00)..(35.00,35.00,0.00)
+=> F29|     |   hatch pat=SOLID loops=1 ext=(-35.00,-35.00,0.00)..(35.00,35.00,0.00)
+<= F29|   X RC_BAR_BLOCK[3] 1070=58
+<= F29|   X RC_BAR_BLOCK[3] 1070=58
+<= F29|   X RC_BAR_BLOCK[3] 1070=58
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[18] 1005=@ext:LWPOLYLINE
+<= F29|   X RC_BAR_BLOCK[22] 1000="29"
+<= F29|   X RC_BAR_BLOCK[22] 1000="29"
+<= F29|   X RC_BAR_BLOCK[22] 1000="29"
+<= F29|   X RC_BAR_BLOCK[5] 1040=6.75
+<= F29|   X RC_BAR_BLOCK[5] 1040=6.75
+<= F29|   X RC_BAR_BLOCK[5] 1040=6.75
+<= F29|     |   c=(195.88,35.00,0.00) r=35.00
+<= F29|     |   (195.88,35.00,0.00) -> (195.88,715.00,0.00)
+<= F29|     |   c=(195.88,680.00,0.00) r=35.00
+<= F29|     |   (195.88,0.00,0.00) -> (195.88,680.00,0.00)
+<= F29|     |   (195.88,0.00,0.00) -> (195.88,5500.00,0.00)
+=> F29|   X RC_BAR_BLOCK[3] 1070=2
+=> F29|   X RC_BAR_BLOCK[3] 1070=2
+=> F29|   X RC_BAR_BLOCK[3] 1070=2
+=> F29|   X RC_BAR_BLOCK[22] 1000="1"
+=> F29|   X RC_BAR_BLOCK[22] 1000="1"
+=> F29|   X RC_BAR_BLOCK[22] 1000="1"
+=> F29| F29 dist Mark=H12-02-200 UB count=2 A=715.00 src=pręt H12-02
+=> F29| F29 dist Mark=H12-02-200 UB count=2 A=715.00 src=pręt H12-02
+=> F29| F29 dist Mark=H12-102-200 T2 count=2 A=5500.00 src=pręt H12-102
+=> F29|   X RC_BAR_ANNOT[5] 1040=385.00
+=> F29|   X RC_BAR_ANNOT[5] 1040=385.00
+=> F29|   X RC_BAR_ANNOT[5] 1040=385.00
+=> F29|   X RC_BAR_ANNOT[11] 1040=1729.17
+=> F29|   X RC_BAR_ANNOT[11] 1040=1729.17
+=> F29|     |   c=(385.00,0.00,0.00) r=35.00
+=> F29|     |   c=(385.00,0.00,0.00) r=35.00
+=> F29|     |   c=(385.00,0.00,0.00) r=35.00
+=> F29|     |   text="2 H12-02-200 UB" pos=(1160.83,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F29|     |   text="2 H12-02-200 UB" pos=(1160.83,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F29|     |   hatch pat=SOLID loops=1 ext=(350.00,-35.00,0.00)..(420.00,35.00,0.00)
+=> F29|     |   hatch pat=SOLID loops=1 ext=(350.00,-35.00,0.00)..(420.00,35.00,0.00)
+=> F29|     |   hatch pat=SOLID loops=1 ext=(350.00,-35.00,0.00)..(420.00,35.00,0.00)
+=> F29|     |   (-35.00,0.00,0.00) -> (420.00,0.00,0.00)
+=> F29|     |   (-35.00,0.00,0.00) -> (420.00,0.00,0.00)
+=> F29|     |   (-35.00,0.00,0.00) -> (420.00,0.00,0.00)
+=> F29|     |   (1160.83,0.00,0.00) -> (2960.00,0.00,0.00)
+=> F29|     |   (1160.83,0.00,0.00) -> (2960.00,0.00,0.00)
+=> F29|   X RC_BAR_ANNOT[11] 1040=1812.50
+=> F29|     |   text="2 H12-102-200 T2" pos=(1077.50,70.00,0.00) align=(0.00,0.00,0.00) h=125.00 rot=0.0000 wf=1.00 hm=TextLeft vm=TextBase style=StandardNarrow
+=> F29|     |   (1077.50,0.00,0.00) -> (2960.00,0.00,0.00)
+=> F29|   X RC_BAR_BLOCK[5] 1040=385.00
+=> F29|   X RC_BAR_BLOCK[5] 1040=385.00
+=> F29|   X RC_BAR_BLOCK[5] 1040=385.00
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|   X RC_BAR_BLOCK[18] 1005=@ext:INSERT
+=> F29|     |   c=(385.00,35.00,0.00) r=35.00
+=> F29|     |   (385.00,35.00,0.00) -> (385.00,715.00,0.00)
+=> F29|     |   c=(385.00,680.00,0.00) r=35.00
+=> F29|     |   (385.00,0.00,0.00) -> (385.00,680.00,0.00)
+=> F29|     |   (385.00,0.00,0.00) -> (385.00,5500.00,0.00)

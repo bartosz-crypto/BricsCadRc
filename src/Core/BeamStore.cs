@@ -20,6 +20,15 @@ namespace BricsCadRc.Core
     ///     [22] otulina boczna / czołowa strzemion [23] otulina dolna (Real) — decyzja użytkownika 2026-10-10 (45 / 50); rekord bez
     ///     tych pól (sprzed decyzji) czytany z NOWYMI domyślnymi 45 / 50 (nie dawnymi 40 / 40 — świadomie: belki generowane ponownie
     ///     dostają nowe otuliny).
+    ///     v2 (K2, docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; [1] = 2): [24] otulina górna strzemienia (Real; A1 35 / A2 50)
+    ///     [25] tryb prętów bocznych (Int16; 1 B1 brak, 2 B2 zawsze, 3 B3 od progu) [26] próg H prętów bocznych (Real)
+    ///     [27] krotność zakładu (Real; zakład = Ceil25(krotność · Ø)) [28] rozstaw nominalny w poprzek w opisie (Real)
+    ///     [29] B+T jedną pozycją (Int16 0 / 1) [30] obniżenie U-barów drugiego kierunku (Real) [31] pręty proste w kwadrat narożnika
+    ///     (Int16 0 / 1) [32] koniec pręta prostego przy U-barze od lica (Real; 0 = auto) [33] strzemiona przy UB 03 +100 (Int16 0 / 1)
+    ///     [34] strzemiona w kwadracie narożnika (Int16 0 / 1) [35] naddatek ramienia U-bara końca (Real).
+    ///     Od v2: [15] = Ceil25(krotność · Ø dołem) (tylko dla starej wtyczki), [17] nieużywane (zapis bez zmian).
+    ///     Rekord v1 ([1] &lt; 2) — migracja w pamięci (BeamParams.MigrateV1: nowe domyślne + komunikat), zapis przy OK w RC_BEAM
+    ///     albo przy generowaniu.
     ///     Nowe pola tylko na końcu; odczyt toleruje krótsze rekordy (brak pola = wartość domyślna BeamParams).
     ///   • Obiekty wygenerowane dla belki (rozkłady RC_BAR_BLOCK) — XData <see cref="TagApp"/> [1] = handle strefy (1005).
     ///     Ponowne generowanie usuwa tylko obiekty tej strefy; kopia samych prętów (CloneRemap → "") — test punktu w strefie.
@@ -30,7 +39,7 @@ namespace BricsCadRc.Core
         public const string LayerName = "RC-BEAM";
         public const string App = "RC_BEAM";
         public const string TagApp = "RC_AUTOREBAR_BEAM";
-        public const short FormatVersion = 1;
+        public const short FormatVersion = BeamParams.CurrentFormat;
         public const int SlabIdx = 6;     // RC_BEAM [6] obrys płyty (CloneRemap)
         public const int TagIdx = 1;      // RC_AUTOREBAR_BEAM [1] strefa (CloneRemap)
 
@@ -62,7 +71,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.TopCount),      // [12]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.UBarDia),       // [13]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, p.StirrupShape ?? "51"), // [14]
-                new TypedValue((int)DxfCode.ExtendedDataReal, p.Lap),                       // [15]
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.LapFor(p.BottomDia)),       // [15] dla starej wtyczki (v2)
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.MaxLength),                 // [16]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.StirrupTopLayers), // [17]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.SideDia),       // [18] E4b
@@ -70,7 +79,19 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibTopDia),     // [20]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibBottomDia),  // [21]
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverSide),                 // [22] otulina boczna / czołowa
-                new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverBottom));              // [23] otulina dolna
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverBottom),               // [23] otulina dolna
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverTop),                  // [24] v2: otulina górna strzemienia
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.SideMode),      // [25] tryb prętów bocznych
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.SideThreshold),             // [26] próg H prętów bocznych
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.LapMultiple),               // [27] krotność zakładu
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.AcrossNominal),             // [28] rozstaw nominalny w poprzek
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.BothOneMark ? 1 : 0)),   // [29] B+T jedną pozycją
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.UBarDrop),                  // [30] obniżenie U-barów 2. kierunku
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.CornerStraightIntoSquare ? 1 : 0)), // [31]
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.StraightEndOffset),         // [32] 0 = auto
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.StirrupsAtUb03 ? 1 : 0)),  // [33]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.CornerSquareLinks ? 1 : 0)), // [34]
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.UBarArmExtra));             // [35] naddatek ramienia U-bara
 
         /// <summary>Zapis rekordu strefy (RegApp rejestrowany); encja otwarta do zapisu w transakcji tr.</summary>
         public static void Write(Transaction tr, Database db, Entity zone, BeamParams p, string slabHandle)
@@ -80,7 +101,11 @@ namespace BricsCadRc.Core
             zone.XData = Build(p, slabHandle);
         }
 
-        /// <summary>Parametry strefy (null gdy brak RC_BEAM); krótsze rekordy — wartości domyślne.</summary>
+        /// <summary>
+        /// Parametry strefy (null gdy brak RC_BEAM); krótsze rekordy — wartości domyślne. Rekord v1 ([1] &lt; 2, wersje testowe) —
+        /// migracja w pamięci (<see cref="BeamParams.MigrateV1"/>: MigratedFromV1 + MigrationNote); zapis wywołującego (OK w RC_BEAM,
+        /// generowanie).
+        /// </summary>
         public static BeamParams Read(Entity e)
         {
             TypedValue[] v;
@@ -110,6 +135,22 @@ namespace BricsCadRc.Core
             p.NibBottomDia = I(21, p.NibBottomDia);
             p.CoverSide = D(22, p.CoverSide);       // brak pola (rekord sprzed 2026-10-10) → nowe domyślne 45 / 50
             p.CoverBottom = D(23, p.CoverBottom);
+            int ver = I(1, 1);
+            if (ver < BeamParams.CurrentFormat) return BeamParams.MigrateV1(p);
+            // v2
+            p.CoverTop = D(24, p.CoverTop);
+            p.SideMode = I(25, p.SideMode);
+            p.SideThreshold = D(26, p.SideThreshold);
+            p.LapMultiple = D(27, p.LapMultiple);
+            p.AcrossNominal = D(28, p.AcrossNominal);
+            p.BothOneMark = I(29, p.BothOneMark ? 1 : 0) != 0;
+            p.UBarDrop = D(30, p.UBarDrop);
+            p.CornerStraightIntoSquare = I(31, p.CornerStraightIntoSquare ? 1 : 0) != 0;
+            p.StraightEndOffset = D(32, p.StraightEndOffset);
+            p.StirrupsAtUb03 = I(33, p.StirrupsAtUb03 ? 1 : 0) != 0;
+            p.CornerSquareLinks = I(34, p.CornerSquareLinks ? 1 : 0) != 0;
+            p.UBarArmExtra = D(35, p.UBarArmExtra);
+            p.Lap = p.LapFor(p.BottomDia);
             return p;
         }
 
@@ -121,6 +162,22 @@ namespace BricsCadRc.Core
                 var v = rb?.AsArray();
                 return v != null && v.Length > SlabIdx ? XLink.Read(v[SlabIdx]) : "";
             }
+        }
+
+        /// <summary>
+        /// Zmiana tylko [6] (obrys płyty) w istniejącym rekordzie, reszta bez zmian (także wersja [1]) — np. kopia strefy
+        /// z rekordem v1 na drugi rzut: rekord v2 zapisuje dopiero OK w RC_BEAM albo generowanie. False — brak rekordu.
+        /// </summary>
+        public static bool WriteSlab(Transaction tr, Database db, Entity zone, string slabHandle)
+        {
+            TypedValue[] v;
+            using (var rb = zone?.GetXDataForApplication(App)) v = rb?.AsArray();
+            if (v == null || v.Length <= SlabIdx) return false;
+            v[SlabIdx] = XLink.Write(slabHandle);
+            EnsureApp(tr, db, App);
+            if (!zone.IsWriteEnabled) zone.UpgradeOpen();
+            using (var nrb = new ResultBuffer(v)) zone.XData = nrb;
+            return true;
         }
 
         private static double Num(TypedValue tv, double def)
@@ -162,7 +219,7 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// Rozkłady belki (kod BB / BT / BL) należące do strefy: znacznik = strefa; znacznik pusty / brak — punkt wstawienia
+        /// Rozkłady belki (kody belki — BeamGeometry.IsBeamCode: BM / BU / BB / BT / BL / BS / BN) należące do strefy: znacznik = strefa; znacznik pusty / brak — punkt wstawienia
         /// w wielokącie strefy (kopia samych prętów). Zwraca pary (rozkład, opis).
         /// </summary>
         public static List<(ObjectId distId, ObjectId annotId)> FindGenerated(Transaction tr, Database db, string zoneHandle,

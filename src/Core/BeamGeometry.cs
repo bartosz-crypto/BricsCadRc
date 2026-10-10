@@ -9,44 +9,128 @@ namespace BricsCadRc.Core
 {
     /// <summary>
     /// Parametry belki / pogrubienia (rekord RC_BEAM — sekcja 4i ARCHITECTURE.md). Czysta klasa (bez Teigha).
-    /// Wartości domyślne = rozstrzygnięcia DOMYŚLNE planu (docs/PLAN_BELKI_2026-10-10.md, 1a / 1b / 1c) —
-    /// „domyślne, do potwierdzenia” przez użytkownika; każda do zmiany w oknie RC_BEAM.
+    /// Wartości domyślne = praktyka biura (C12 / Holbrook ręczny — docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md, K2 / K3) i rozstrzygnięcia
+    /// planu belek — „domyślne, do potwierdzenia” przez użytkownika (sekcja 5 planu praktyki); każda do zmiany w oknie RC_BEAM.
+    /// Rekord v2 (FormatVersion 2) — pola [24]–[35]; rekord v1 (wersje testowe) migrowany w pamięci (<see cref="MigrateV1"/>).
     /// </summary>
     public sealed class BeamParams
     {
+        /// <summary>Wersja formatu rekordu RC_BEAM zapisywana przez tę wersję.</summary>
+        public const short CurrentFormat = 2;
+
         /// <summary>Wysokość belki od wierzchu płyty [mm] (z opisu „450THK” w GA; 0 = nieznana).</summary>
         public double Height;
         /// <summary>Szerokość trzonu belki [mm] (z geometrii strefy; typowo 600).</summary>
         public double Width = 600;
         /// <summary>Nib belki: szerokość × wysokość [mm] (decyzja 1a: 135 × 150).</summary>
         public double NibWidth = 135, NibHeight = 150;
-        /// <summary>Strzemiona: średnica i rozstaw (1a: H10 co 200; CP przy palach podaje H12@200 — decyzja Bartka).</summary>
-        public int StirrupDia = 10;
+        /// <summary>Strzemiona: średnica i rozstaw (K2: H12 co 200 — Holbrook / C12, CP „LINKS H12@200”).</summary>
+        public int StirrupDia = 12;
         public double StirrupSpacing = 200;
-        /// <summary>Pręty podłużne: dół i góra (1a: 4 H16 + 4 H16).</summary>
+        /// <summary>Pręty podłużne: dół i góra (4 H16 + 4 H16).</summary>
         public int BottomDia = 16, BottomCount = 4, TopDia = 16, TopCount = 4;
-        /// <summary>U-bary na końcach (E4) — średnica.</summary>
+        /// <summary>Pionowe U-bary na końcach i w narożnikach (K3, kształt 21) — średnica (Holbrook: jak pręty podłużne).</summary>
         public int UBarDia = 16;
-        /// <summary>Kod kształtu strzemienia (1a: 51).</summary>
+        /// <summary>Kod kształtu strzemienia (51).</summary>
         public string StirrupShape = "51";
-        /// <summary>Zakład prętów podłużnych [mm] (1c: domyślnie 800 ≈ 50d, do potwierdzenia).</summary>
-        public double Lap = 800;
+        /// <summary>Rekord [15] — zakład prętów głównych [mm]; od v2 tylko zapisywany (= Ceil25(krotność · Ø dołem), dla starej
+        /// wtyczki). Zakład liczony z <see cref="LapMultiple"/> (<see cref="LapFor"/>).</summary>
+        public double Lap = 650;
         /// <summary>Maksymalna długość pręta [mm] (1b.5: jak płyta, 6000).</summary>
         public double MaxLength = 6000;
-        /// <summary>Góra strzemienia pod: 2 = obiema warstwami T (domyślne, 1b.1), 1 = jedną warstwą T.</summary>
+        /// <summary>Rekord [17] — od v2 nieużywane w generowaniu (wysokość strzemienia z otuliny górnej [24]); zostaje dla starej
+        /// wtyczki i przekroju (RC_SECTION — krok K6).</summary>
         public int StirrupTopLayers = 2;
-        /// <summary>E4b (wymaganie użytkownika 2026-10-10): pręty boczne na obu bokach belki — średnica (0 = brak) i rozstaw pionowy
-        /// (liczba na bok = ceil(światło między prętami dołu i góry / rozstaw) − 1, min. 0; H 600 → 2). Domyślne, do potwierdzenia.</summary>
-        public int SideDia = 10;
+        /// <summary>Pręty boczne (BS): średnica (0 = brak) i rozstaw pionowy. K2: H12 (C12); tryb <see cref="SideMode"/>.</summary>
+        public int SideDia = 12;
         public double SideSpacing = 200;
-        /// <summary>E4b: pręty wzdłuż nibu belki w narożach spinki UB 03 — górą i dołem (0 = brak); po 1 pręcie. Domyślne H10 / H16,
-        /// do potwierdzenia przez Bartka.</summary>
-        public int NibTopDia = 10, NibBottomDia = 16;
-        /// <summary>Otulina strzemion belki: boczna / czołowa (boki i czoła belki — strzemię, pręty podłużne, boczne, U-bary, pręty L)
-        /// i dolna (spód belki i nibu belki) [mm]. Decyzja użytkownika 2026-10-10: 40 + odchyłka → 45 boki, 50 dół. Górna — 35 (pod siatką T).</summary>
+        /// <summary>Pręty wzdłuż nibu belki (BN): górą (0 = brak — K2: dubluje T IN NIB płyty) i dołem (H10 „B IN NIB” — K5).</summary>
+        public int NibTopDia = 0, NibBottomDia = 10;
+        /// <summary>Otulina strzemion belki: boczna / czołowa i dolna [mm] (decyzja użytkownika 2026-10-10: 45 / 50).</summary>
         public double CoverSide = BeamGeometry.DefaultCoverSide, CoverBottom = BeamGeometry.DefaultCoverBottom;
 
+        // ── v2 (K2, docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md) — domyślne do potwierdzenia ──
+        /// <summary>[24] Otulina górna strzemienia [mm]: A1 = 35 (A = H − 35 − dolna, Holbrook; domyślne) / A2 = 50 (C12).</summary>
+        public double CoverTop = BeamGeometry.CoverTopA1;
+        /// <summary>[25] Tryb prętów bocznych: 1 = B1 (brak), 2 = B2 (zawsze), 3 = B3 (od progu wysokości; domyślne).</summary>
+        public int SideMode = 3;
+        /// <summary>[26] Próg H trybu B3 [mm]: H ≤ próg — bez prętów bocznych (450; od 525 — H12).</summary>
+        public double SideThreshold = 450;
+        /// <summary>[27] Krotność zakładu (zakład = Ceil25(krotność · Ø): H10 400, H12 500, H16 650 — nota 12 biura).</summary>
+        public double LapMultiple = 40;
+        /// <summary>[28] Rozstaw nominalny prętów w poprzek belki w opisie [mm] („2x4 H16-nn-150 B+T”, „4 H16-nn-150 UB”).</summary>
+        public double AcrossNominal = 150;
+        /// <summary>[29] Dół = góra (Ø i liczba) → jedna pozycja „B+T” (kod BM); false — osobno BB / BT.</summary>
+        public bool BothOneMark = true;
+        /// <summary>[30] Obniżenie U-barów drugiego kierunku [mm]: noga Y narożnika L i belka dochodząca złącza T (B − 35).</summary>
+        public double UBarDrop = 35;
+        /// <summary>[31] Narożnik L / złącze T: pręty proste nogi w kwadrat narożnika do lica zewnętrznego (Holbrook); false — przed
+        /// kwadratem (C12, domyślne).</summary>
+        public bool CornerStraightIntoSquare;
+        /// <summary>[32] Koniec pręta prostego przy U-barze: odsunięcie od lica [mm]; 0 = auto (otulina + Ø U-bara = 61; C12 ≈ 90).</summary>
+        public double StraightEndOffset;
+        /// <summary>[33] Strzemiona względem UB 03: false — niezależnie (domyślne), true — położenia UB 03 + 100.</summary>
+        public bool StirrupsAtUb03;
+        /// <summary>[34] Strzemiona w kwadracie narożnika L: true — kontynuacja dłuższej nogi (domyślne), false — brak.</summary>
+        public bool CornerSquareLinks = true;
+        /// <summary>[35] Ramię U-bara końca: A = Ceil25(zakład + naddatek) [mm] (90: C12 740, Holbrook 770 — pytanie 14).</summary>
+        public double UBarArmExtra = 90;
+
+        /// <summary>Odczytano rekord v1 (wersje testowe) — parametry zbrojenia zastąpione nowymi domyślnymi w pamięci (niezapisywane).</summary>
+        public bool MigratedFromV1;
+        /// <summary>Komunikat migracji v1 (lista zmian; null gdy brak).</summary>
+        public string MigrationNote;
+
         public BeamParams Clone() => (BeamParams)MemberwiseClone();
+
+        /// <summary>Zakład pręta o średnicy d: Ceil25(krotność · d) (H10 400, H12 500, H16 650).</summary>
+        public double LapFor(int d) => d > 0 && LapMultiple > 0 ? BeamGeometry.Ceil25(LapMultiple * d) : Lap;
+
+        /// <summary>Dół = góra (Ø i liczba) i opcja „B+T jedną pozycją” → kod BM.</summary>
+        public bool UsesBothMark => BothOneMark && BottomDia == TopDia && BottomCount == TopCount;
+
+        /// <summary>Pręty boczne przy wysokości H (tryb [25] / próg [26]).</summary>
+        public bool SideBarsActive(double h)
+            => SideDia > 0 && (SideMode == 2 || (SideMode == 3 && h > SideThreshold + 0.5));
+
+        /// <summary>Koniec pręta prostego przy U-barze od lica: [32] albo otulina + Ø U-bara.</summary>
+        public double StraightEndOffsetAuto => StraightEndOffset > 0 ? StraightEndOffset : CoverSide + UBarDia;
+
+        /// <summary>
+        /// Migracja rekordu v1 (wersje testowe — poprawka 9 recenzji: prosta migracja): geometria i otuliny bez zmian (H, szerokość,
+        /// nib, otulina boczna / dolna), parametry zbrojenia = nowe domyślne. Komunikat z listą zmienionych wartości (tylko w pamięci —
+        /// zapis przy OK w RC_BEAM albo przy generowaniu).
+        /// </summary>
+        public static BeamParams MigrateV1(BeamParams v1)
+        {
+            var n = new BeamParams
+            {
+                Height = v1.Height, Width = v1.Width, NibWidth = v1.NibWidth, NibHeight = v1.NibHeight,
+                CoverSide = v1.CoverSide, CoverBottom = v1.CoverBottom, MigratedFromV1 = true
+            };
+            var ch = new List<string>();
+            string I(int x) => x.ToString(CultureInfo.InvariantCulture);
+            string F(double x) => x.ToString("0.#", CultureInfo.InvariantCulture);
+            if (v1.StirrupDia != n.StirrupDia) ch.Add($"strzemiona H{I(v1.StirrupDia)} → H{I(n.StirrupDia)}");
+            if (Math.Abs(v1.StirrupSpacing - n.StirrupSpacing) > 0.5) ch.Add($"rozstaw strzemion {F(v1.StirrupSpacing)} → {F(n.StirrupSpacing)}");
+            if (v1.BottomDia != n.BottomDia || v1.BottomCount != n.BottomCount)
+                ch.Add($"dołem {I(v1.BottomCount)} H{I(v1.BottomDia)} → {I(n.BottomCount)} H{I(n.BottomDia)}");
+            if (v1.TopDia != n.TopDia || v1.TopCount != n.TopCount)
+                ch.Add($"górą {I(v1.TopCount)} H{I(v1.TopDia)} → {I(n.TopCount)} H{I(n.TopDia)}");
+            if (v1.UBarDia != n.UBarDia) ch.Add($"U-bary H{I(v1.UBarDia)} → H{I(n.UBarDia)} (pionowe)");
+            if (Math.Abs(v1.Lap - n.LapFor(n.BottomDia)) > 0.5)
+                ch.Add($"zakład {F(v1.Lap)} → {F(n.LapMultiple)}·Ø (H{I(n.BottomDia)}: {F(n.LapFor(n.BottomDia))})");
+            if (Math.Abs(v1.MaxLength - n.MaxLength) > 0.5) ch.Add($"maks. długość {F(v1.MaxLength)} → {F(n.MaxLength)}");
+            ch.Add(v1.SideDia > 0
+                ? $"pręty boczne H{I(v1.SideDia)} → tryb B3 (H ≤ {F(n.SideThreshold)} brak, wyżej H{I(n.SideDia)})"
+                : $"pręty boczne: brak → tryb B3 (H ≤ {F(n.SideThreshold)} brak, wyżej H{I(n.SideDia)})");
+            if (v1.NibTopDia != n.NibTopDia) ch.Add($"nib górą H{I(v1.NibTopDia)} → {(n.NibTopDia > 0 ? "H" + I(n.NibTopDia) : "brak")}");
+            if (v1.NibBottomDia != n.NibBottomDia) ch.Add($"nib dołem H{I(v1.NibBottomDia)} → H{I(n.NibBottomDia)}");
+            ch.Add($"strzemię A = H − {F(n.CoverTop)} − {F(n.CoverBottom)} (otulina górna A1)");
+            n.MigrationNote = "rekord RC_BEAM v1 (wersja testowa) — parametry zbrojenia zastąpione nowymi domyślnymi (do potwierdzenia): "
+                              + string.Join("; ", ch) + ". Zapis przy OK w RC_BEAM albo przy generowaniu.";
+            return n;
+        }
     }
 
     /// <summary>
@@ -61,21 +145,27 @@ namespace BricsCadRc.Core
     public static class BeamGeometry
     {
         /// <summary>Kody warstw prętów belki (NIE zaczynają się od B1/B2/T1/T2 — EraseOldDistributions płyty ich nie widzi).
-        /// E4b: BS — pręty boczne, BN — pręty wzdłuż nibu belki (seria dolna, rzut dolny).</summary>
+        /// K3 (praktyka biura): BM — pręty podłużne dół = góra jedną pozycją („B+T”), BU — pionowe U-bary (kształt 21); BB / BT — tylko
+        /// gdy dół ≠ góra; BL — strzemiona; E4b: BS — pręty boczne, BN — pręty wzdłuż nibu belki. Wszystkie w serii dolnej, rzut dolny
+        /// (BT — warstwa CAD góry RC-SLAB-TOP-01; stare BT na rzucie górnym usuwane przy ponownym generowaniu).</summary>
         public const string CodeBottom = "BB", CodeTop = "BT", CodeLinks = "BL", CodeSide = "BS", CodeNib = "BN";
-        /// <summary>Sufiksy opisów: „4 H16-05 BEAM B”, „4 H16-103 BEAM T”, „52 H10-07-200 LINKS”; E4: pręty L narożnika / złącza T
-        /// „4 H16-08 BEAM CORNER”, U-bary końca „1 H16-09 BEAM END” (kody warstw jak pręty proste: BB dół, BT góra).</summary>
-        public const string SuffixBottom = "BEAM B", SuffixTop = "BEAM T", SuffixLinks = "LINKS";
-        public const string SuffixCorner = "BEAM CORNER", SuffixEnd = "BEAM END";
+        public const string CodeBoth = "BM", CodeUBar = "BU";
+        /// <summary>Sufiksy opisów (K3): „2x4 H16-nn-150 B+T” (BM), „4 H16-nn-150 B” / „4 H16-nn-150 T” (BB / BT, dół ≠ góra),
+        /// „29 H12-nn-200 LINKS”, „4 H16-nn-150 UB” (BU — kod BU, nie UB płyty: skany UB płyty porównują kod B1 / B2).</summary>
+        public const string SuffixBoth = "B+T", SuffixBottom = "B", SuffixTop = "T", SuffixLinks = "LINKS", SuffixUBar = "UB";
         /// <summary>E4b: „2 H10-10 BEAM SIDE”, „1 H10-11 BEAM NIB T”, „1 H16-12 BEAM NIB B”.</summary>
         public const string SuffixSide = "BEAM SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "BEAM NIB B";
 
+        /// <summary>Kod rozkładu belki (także stare BB / BT / BS / BN z wersji testowych) — pręty belki, nie siatki płyty.</summary>
         public static bool IsBeamCode(string code)
-            => code == CodeBottom || code == CodeTop || code == CodeLinks || code == CodeSide || code == CodeNib;
+            => code == CodeBottom || code == CodeTop || code == CodeLinks || code == CodeSide || code == CodeNib
+            || code == CodeBoth || code == CodeUBar;
 
         /// <summary>Otuliny belki (decyzja użytkownika 2026-10-10): boczna / czołowa strzemion 45 (40 + odchyłka), dolna 50, górna 35
         /// (pod siatką T, bez zmian). Domyślne parametrów BeamParams.CoverSide / CoverBottom.</summary>
         public const double DefaultCoverSide = 45.0, DefaultCoverBottom = 50.0, DefaultCoverTop = 35.0;
+        /// <summary>K2: otulina górna strzemienia — A1 35 (Holbrook, A = H − 85; domyślne) / A2 50 (C12, A = H − 100).</summary>
+        public const double CoverTopA1 = 35.0, CoverTopA2 = 50.0;
         /// <summary>Otulina spinki UB 03 od krawędzi płyty (element płyty — bez zmian, 40): położenie prętów BN w poprzek (naroża spinki).</summary>
         public const double NibUbEdgeCover = 40.0;
 
@@ -88,18 +178,19 @@ namespace BricsCadRc.Core
         public const double EdgeEndMaxGap = 260.0;
         /// <summary>Największa przerwa między kawałkami jednego odcinka (skos) [mm].</summary>
         public const double MaxLegGap = 3000.0;
-        /// <summary>Prześwit między tyłami zagnieżdżonych U-barów oraz między najgłębszym tyłem a pierwszym strzemieniem [mm]
-        /// (recenzja E4: tył wewnętrznego U-bara o Ø + 20 głębiej; domyślne, do potwierdzenia przez Bartka).</summary>
-        public const double UBarClearGap = 20.0;
+        /// <summary>Rozstaw rzeczywisty prętów w poprzek większy niż ten próg przy opisie nominalnym (150) — ostrzeżenie (K3).</summary>
+        public const double AcrossSpacingWarn = 175.0;
 
         public enum EndKind { Edge, Internal, Corner, Tee }
 
         /// <summary>
-        /// Zamknięcie końca odcinka (E4): None — pręty proste do lica końca (jak E3: narożnik / złącze z odcinkiem „detal ręczny”),
-        /// LBar — narożnik L z prętami L (kształt 11), Tee — złącze T (pręty proste do lica belki ciągłej + pręty L zakotwione w niej),
-        /// UBar — koniec przy krawędzi albo wewnętrzny: U-bary (kształt 21). Domyślne 1b.6–1b.8 — do potwierdzenia przez Bartka.
+        /// Zamknięcie końca odcinka (K3 — praktyka biura): None — pręty proste do lica końca z otuliną (złącze z odcinkiem „detal ręczny”),
+        /// LBar — narożnik L: każda noga zamknięta własnymi pionowymi U-barami z tyłem na licu zewnętrznym narożnika, Tee — belka
+        /// dochodząca złącza T (jak noga narożnika: U-bary z tyłem na dalszym licu belki ciągłej; belka ciągła bez przerwy),
+        /// UBar — koniec przy krawędzi albo wewnętrzny: pionowe U-bary kształt 21. Domyślne — do potwierdzenia przez Bartka.
         /// </summary>
         public enum Closure { None, LBar, Tee, UBar }
+
 
         /// <summary>Złącze odcinków: narożnik L (A — odcinek wzdłuż X, B — wzdłuż Y) albo T (A — belka ciągła, B — dochodząca).</summary>
         public sealed class Joint
@@ -491,11 +582,12 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// E4: zamknięcia końców odcinków osiowych i zakres strzemion (domyślne 1b.6–1b.8, do potwierdzenia przez Bartka).
-        /// Koniec Edge / Internal → U-bary (koniec wewnętrzny tak samo jak przy krawędzi); narożnik L dwóch odcinków osiowych →
-        /// pręty L, strzemiona dłuższego odcinka (równe — odcinka wzdłuż X) do lica zewnętrznego narożnika (kontynuacja jednego
-        /// kierunku, bez zdublowania); złącze T z osiową belką ciągłą → pręty belki dochodzącej do lica belki ciągłej + pręty L
-        /// zakotwione w belce ciągłej. Złącze z odcinkiem „detal ręczny” — bez zamknięcia (pręty do lica, jak E3).
+        /// Zamknięcia końców odcinków osiowych i zakres strzemion (K3 — praktyka biura; domyślne, do potwierdzenia przez Bartka).
+        /// Koniec Edge / Internal → pionowe U-bary (koniec wewnętrzny tak samo jak przy krawędzi); narożnik L dwóch odcinków osiowych →
+        /// każda noga własnymi pionowymi U-barami (tył na licu zewnętrznym narożnika), strzemiona dłuższego odcinka (równe — odcinka
+        /// wzdłuż X) do lica zewnętrznego narożnika (kontynuacja jednego kierunku, bez zdublowania; parametr [34]); złącze T z osiową
+        /// belką ciągłą → belka ciągła bez przerwy, dochodząca jak noga narożnika (U-bary z tyłem na dalszym licu belki ciągłej).
+        /// Złącze z odcinkiem „detal ręczny” — bez zamknięcia (pręty do lica, jak E3).
         /// </summary>
         private static void AssignClosures(Result res)
         {
@@ -573,7 +665,7 @@ namespace BricsCadRc.Core
         /// równo od lo + endOffset do hi − endOffset (rozstaw ≤ s, plan 1c). Z UB 03 wzdłuż tego odcinka (położenia
         /// ub03, rozstaw ≤ s) — położenia UB 03 + shift (domyślnie 100: w połowie między U-barami, kolizja dolnych ramion),
         /// rozstaw jak UB 03, w granicach [lo + endOffset, hi − endOffset]. Wynik: pierwszy, rozstaw, liczba.
-        /// endOffsetHi — odsunięcie przy końcu hi, gdy inne niż przy lo (koniec z U-barami — StirrupEndOffsetAtUBars); NaN = endOffset.
+        /// endOffsetHi — odsunięcie przy końcu hi, gdy inne niż przy lo (np. inna otulina końca); NaN = endOffset.
         /// </summary>
         public static (double First, double Step, int Count, bool FromUb03) StirrupLayout(
             double lo, double hi, double spacing = 200, double endOffset = 50, IList<double> ub03 = null, double shift = 100,
@@ -604,25 +696,11 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// Lico zewnętrzne tyłu k-tego zagnieżdżonego U-bara (k = 0 — rzędy skrajne) od lica końca: otulina + k·(Ø + prześwit 20)
-        /// (recenzja E4: prześwit między tyłami ≥ 20; domyślne, do potwierdzenia).
+        /// K2 (praktyka biura): oś pierwszego (i ostatniego) strzemienia od lica końca zakresu strzemion = otulina boczna / czołowa
+        /// + Ø strzemienia / 2 (45 + 6 = 51 dla H12) — także przy końcach z U-barami (C12: strzemiona na całej długości, także
+        /// w strefie U-barów; wcześniej E4: 125 za tyłami poziomych U-barów).
         /// </summary>
-        public static double UBarBackOffset(int k, int uDia, double cover = DefaultCoverSide) => cover + k * (uDia + UBarClearGap);
-
-        /// <summary>
-        /// Oś pierwszego strzemienia od lica końca z U-barami: za licem wewnętrznym najgłębszego tyłu U-bara (count prętów w rzędzie →
-        /// count / 2 U-barów) z prześwitem 20 + Ø strzemienia / 2, w górę do 5 mm, nie mniej niż minOffset (50). Tyły U-barów leżą
-        /// wtedy przed płaszczyzną pierwszego strzemienia (bez kolizji z ramionami / narożami strzemienia). 4 H16 (otulina czołowa 45): 45 + 36 + 16 + 20 + 5
-        /// = 122 → 125. Bez U-barów (count &lt; 2) — minOffset.
-        /// </summary>
-        public static double StirrupEndOffsetAtUBars(int count, int uDia, double dLink = 10, double cover = DefaultCoverSide, double minOffset = 50)
-        {
-            int pairs = count / 2;
-            if (pairs <= 0 || uDia <= 0) return minOffset;
-            double inner = UBarBackOffset(pairs - 1, uDia, cover) + uDia;
-            double need = Math.Ceiling((inner + UBarClearGap + dLink / 2.0) / 5.0 - 1e-9) * 5.0;
-            return Math.Max(minOffset, need);
-        }
+        public static double StirrupFirstOffset(int dLink, double cover = DefaultCoverSide) => cover + dLink / 2.0;
 
         /// <summary>
         /// Plan prętów podłużnych (proste, siatka 250, maks. maxLen, zakład w przedziale [lap, lap + grid) — decyzja 1c: 800,
@@ -708,7 +786,7 @@ namespace BricsCadRc.Core
             return r;
         }
 
-        // ── E4: plan warstwy — pręty proste, pręty L (narożniki L / złącza T), U-bary (końce) ──
+        // ── K3: plan warstwy — pręty proste; pionowe U-bary (końce, narożniki L, złącza T) ──
 
         /// <summary>Pręt prosty warstwy (jeden rozkład): odcinek, numer odcinka (pręt reprezentatywny), początek wzdłuż osi, długość.</summary>
         public sealed class StraightRun
@@ -718,55 +796,39 @@ namespace BricsCadRc.Core
             public double Start, Length;
         }
 
-        /// <summary>
-        /// Zestaw prętów giętych jednej pozycji w jednym miejscu (jeden rozkład): pręty L (kształt 11) narożnika / złącza T albo U-bar
-        /// (kształt 21) końca. W rzucie — widoczne ramię (linie prętów) z symbolem zagięcia na końcu przy zagięciu.
-        /// </summary>
-        public sealed class BentRun
-        {
-            /// <summary>"L" — narożnik L, "T" — złącze T, "U" — koniec (U-bar).</summary>
-            public string Kind;
-            public string Shape;
-            public int Dia;
-            /// <summary>Wymiary BS 8666:2020 (zewnętrzne): 11 — A, B (C = 0); 21 — A, B (szerokość zewnętrzna), C = A.</summary>
-            public double A, B, C;
-            public int Count;
-            public Segment Seg;
-            /// <summary>Linie prętów (widoczne ramię) wzdłuż X.</summary>
-            public bool AlongX;
-            /// <summary>Oś pierwszego pręta w poprzek (najmniejsza współrzędna) i rozstaw prętów w poprzek.</summary>
-            public double Across0, Spacing;
-            /// <summary>Początek linii pierwszego / ostatniego pręta wzdłuż — pręty L przesunięte po przekątnej (skos rozkładu).</summary>
-            public double Start0, StartN;
-            public double LineLength;
-            /// <summary>Zagięcie na początku linii (inaczej na końcu) i jego kierunek w poprzek linii (+1 / −1).</summary>
-            public bool BendAtStart;
-            public int BendDir;
-            /// <summary>Najmniejszy zakład z prętami prostymi [mm].</summary>
-            public double Overlap;
-
-            public override string ToString()
-                => string.Format(CultureInfo.InvariantCulture, "{0} {1} H{2} A={3:0} B={4:0} C={5:0} ×{6} zakład {7:0}",
-                    Kind, Shape, Dia, A, B, C, Count, Overlap);
-        }
-
         public sealed class LayerPlan
         {
             public List<StraightRun> Straight = new List<StraightRun>();
-            public List<BentRun> Bent = new List<BentRun>();
+            /// <summary>Zakres prętów prostych odcinka (początek pierwszego, koniec ostatniego pręta) — zakład U-barów.</summary>
+            public Dictionary<Segment, (double Lo, double Hi)> Bars = new Dictionary<Segment, (double Lo, double Hi)>();
             /// <summary>Komunikaty po polsku (bez prefiksu), liczby InvariantCulture.</summary>
             public List<string> Messages = new List<string>();
         }
 
         /// <summary>
-        /// Zakres prętów prostych odcinka wzdłuż osi: koniec LBar / Tee — lico własnego zakresu (kwadrat narożnika / bliższe lico
-        /// belki ciągłej; pręty L przejmują zakład), inaczej lico końca z otuliną (U-bar, krawędź, złącze z odcinkiem ręcznym — jak E3).
+        /// Zakres prętów prostych odcinka wzdłuż osi (K3): koniec z U-barami (UBar) — lico ∓ endOffset (otulina + Ø U-bara = 61,
+        /// parametr [32]; NaN = otulina); narożnik L / belka dochodząca złącza T — lico własnego zakresu (pręty proste kończą się PRZED
+        /// kwadratem narożnika / na bliższym licu belki ciągłej — C12, domyślne) albo, gdy <paramref name="intoSquare"/>, w kwadrat do
+        /// lica zewnętrznego (dalszego lica belki ciągłej) ∓ endOffset (Holbrook); złącze z odcinkiem „detal ręczny” — lico z otuliną.
         /// </summary>
-        public static (double Lo, double Hi) StraightRange(Segment s, double cover = DefaultCoverSide)
+        public static (double Lo, double Hi) StraightRange(Segment s, double cover = DefaultCoverSide, double endOffset = double.NaN,
+                                                           bool intoSquare = false)
         {
-            double lo = s.LoClose == Closure.LBar || s.LoClose == Closure.Tee ? s.OwnLo : s.FaceLo + cover;
-            double hi = s.HiClose == Closure.LBar || s.HiClose == Closure.Tee ? s.OwnHi : s.FaceHi - cover;
-            return (lo, hi);
+            double eo = double.IsNaN(endOffset) ? cover : endOffset;
+            double End(bool atLo)
+            {
+                var c = atLo ? s.LoClose : s.HiClose;
+                int dir = atLo ? 1 : -1;
+                double face = atLo ? s.FaceLo : s.FaceHi, own = atLo ? s.OwnLo : s.OwnHi;
+                switch (c)
+                {
+                    case Closure.UBar: return face + dir * eo;
+                    case Closure.LBar:
+                    case Closure.Tee: return intoSquare ? face + dir * eo : own;
+                    default: return face + dir * cover;
+                }
+            }
+            return (End(true), End(false));
         }
 
         /// <summary>Osie prętów warstwy w poprzek odcinka (rosnąco), jak BarsAcross.</summary>
@@ -776,7 +838,7 @@ namespace BricsCadRc.Core
             return Enumerable.Range(0, Math.Max(1, count)).Select(i => f + i * sp).ToList();
         }
 
-        /// <summary>Wymiar ramienia w górę do 25 mm (zakład ≥ zadany).</summary>
+        /// <summary>Wymiar w górę do 25 mm (zakład ≥ zadany).</summary>
         public static double Ceil25(double v) => Math.Ceiling(v / 25.0 - 1e-6) * 25.0;
 
         private static double Floor25(double v) => Math.Floor(v / 25.0 + 1e-6) * 25.0;
@@ -784,221 +846,162 @@ namespace BricsCadRc.Core
         private static double Floor5(double v) => Math.Floor(v / 5.0 + 1e-6) * 5.0;
 
         /// <summary>
-        /// E4: plan jednej warstwy (dół albo góra) wszystkich odcinków osiowych strefy (domyślne 1b.6–1b.8, do potwierdzenia):
-        ///   • pręty proste — PlanBars na zakresie StraightRange (narożnik L / złącze T — od lica własnego zakresu, bez otuliny);
-        ///   • narożnik L — pręty L kształt 11 we WSZYSTKICH rzędach warstwy (od zewnętrznego do wewnętrznego), identyczne (jedna
-        ///     pozycja), przesunięte po przekątnej (bez krzyżowania); ramiona z zakładem ≥ lap z pierwszym prętem prostym każdego
-        ///     odcinka (rząd zewnętrzny — najkrótszy zakład), wymiary w górę do 25 mm;
-        ///   • złącze T — pręty belki dochodzącej do bliższego lica belki ciągłej + pręty L: ramię wzdłuż belki dochodzącej
-        ///     (zakład ≥ lap) przez belkę ciągłą do jej rzędów prętów, ramię wzdłuż belki ciągłej = lap; rzędy z jednej połowy
-        ///     zagięte w jedną stronę, z drugiej — w drugą (zagnieżdżone, bez krzyżowania; jedna pozycja, dwa rozkłady);
-        ///   • koniec Edge / Internal — U-bary kształt 21 poziome w rzucie, zagnieżdżone: para rzędów skrajnych, para następnych …
-        ///     (4 pręty → 2 U-bary na warstwę), tył U na otulinie od lica końca (kolejny U-bar o Ø U-bara + 20 głębiej — prześwit ≥ 20), ramiona A = C
-        ///     z zakładem ≥ lap z prętami prostymi, szerokość B = rozstaw osi rzędów + Ø U-bara (w dół do 5 mm); różne B = osobne pozycje.
+        /// K3: pręty proste jednej warstwy (BM / BB / BT) wszystkich odcinków osiowych — PlanBars na zakresie
+        /// <see cref="StraightRange"/> (zakład = lap, maks. maxLen). Bez prętów giętych w poziomie (pręty L i poziome U-bary usunięte
+        /// — praktyka biura: końce i narożniki zamykają pionowe U-bary, <see cref="PlanVerticalUBars"/>).
         /// </summary>
-        public static LayerPlan PlanLayer(Result an, int count, int d, int uDia, double lap, double maxLen,
-                                          double dLink = 10, double cover = DefaultCoverSide)
+        public static LayerPlan PlanLayer(Result an, int d, double lap, double maxLen, double cover = DefaultCoverSide,
+                                          double endOffset = double.NaN, bool intoSquare = false)
         {
             var lp = new LayerPlan();
-            if (an == null || count <= 0 || d <= 0) return lp;
+            if (an == null || d <= 0) return lp;
             var segs = an.Segments.Where(x => !x.Manual).ToList();
-            var bars = new Dictionary<Segment, (double lo, double hi)>();
             for (int i = 0; i < segs.Count; i++)
             {
                 var s = segs[i];
-                var (lo, hi) = StraightRange(s, cover);
+                var (lo, hi) = StraightRange(s, cover, endOffset, intoSquare);
                 var plan = PlanBars(hi - lo, maxLen, lap);
                 for (int k = 0; k < plan.Count; k++)
                     lp.Straight.Add(new StraightRun { Seg = s, SegIndex = i, Index = k, Start = lo + plan[k].Offset, Length = plan[k].Length });
                 if (plan.Count > 0)
-                    bars[s] = (lo + plan[0].Offset, lo + plan[plan.Count - 1].Offset + plan[plan.Count - 1].Length);
+                    lp.Bars[s] = (lo + plan[0].Offset, lo + plan[plan.Count - 1].Offset + plan[plan.Count - 1].Length);
                 else
                 {
-                    bars[s] = (lo, hi);
+                    lp.Bars[s] = (lo, hi);
                     lp.Messages.Add(string.Format(CultureInfo.InvariantCulture,
-                        "odcinek {0} ({1:0}..{2:0}): brak miejsca na pręty proste — pręty L / U-bary bez zakładu z prętami prostymi.",
+                        "odcinek {0} ({1:0}..{2:0}): brak miejsca na pręty proste — U-bary bez zakładu z prętami prostymi.",
                         s.AlongX ? "poziomy" : "pionowy", s.FaceLo, s.FaceHi));
                 }
             }
-
-            // zasięg ramion prętów giętych wzdłuż odcinka od każdego końca (koniec pręta najdalej od końca odcinka)
-            var reach = new Dictionary<(Segment, bool), double>();
-            foreach (var j in an.Joints)
-            {
-                if (j.A.Manual || j.B.Manual)
-                {
-                    lp.Messages.Add(j.IsTee ? "złącze T z odcinkiem „detal ręczny” — pręty L pominięte, pręty proste do lica (jak E3)."
-                                            : "narożnik L z odcinkiem „detal ręczny” — pręty L pominięte, pręty proste do lica (jak E3).");
-                    continue;
-                }
-                if (j.IsTee) lp.Bent.AddRange(TeeRuns(j, count, d, lap, dLink, cover, bars, lp.Messages, reach));
-                else lp.Bent.Add(CornerRun(j, count, d, lap, dLink, cover, bars, lp.Messages, reach));
-            }
-
-            foreach (var s in segs)
-                foreach (bool atLo in new[] { true, false })
-                    if ((atLo ? s.LoClose : s.HiClose) == Closure.UBar)
-                        lp.Bent.AddRange(URuns(s, atLo, count, d, uDia, lap, dLink, cover, bars, lp.Messages, reach));
-
-            // Krótki odcinek: ramiona z obu końców (w tych samych rzędach) nachodzą na siebie — ostrzeżenie (recenzja E4)
-            foreach (var s in segs)
-                if (reach.TryGetValue((s, true), out double rLo) && reach.TryGetValue((s, false), out double rHi) && rLo > rHi + 1e-6)
-                    lp.Messages.Add(string.Format(CultureInfo.InvariantCulture,
-                        "odcinek {0} ({1:0}..{2:0}): ramiona prętów giętych z obu końców nachodzą na siebie ({3:0} mm, krótki odcinek) — sprawdź / detal ręczny.",
-                        s.AlongX ? "poziomy" : "pionowy", s.FaceLo, s.FaceHi, rLo - rHi));
-
-            foreach (var r in lp.Bent)
-            {
-                double len;
-                try { len = BarLengthRules.TotalLengthFor(r.Shape, new[] { r.A, r.B, r.C }, r.Dia); }
-                catch (System.Exception ex) { Log.Error("BeamGeometry.PlanLayer", ex); continue; }
-                if (len > maxLen + 0.5)
-                    lp.Messages.Add(string.Format(CultureInfo.InvariantCulture,
-                        "pręt {0} (kształt {1}, A={2:0}, B={3:0}) dłuższy niż {4:0} ({5:0}) — sprawdź.", r.Kind, r.Shape, r.A, r.B, maxLen, len));
-            }
+            foreach (var j in an.Joints.Where(j => j.A.Manual || j.B.Manual))
+                lp.Messages.Add(j.IsTee ? "złącze T z odcinkiem „detal ręczny” — bez U-barów, pręty proste do lica (jak E3)."
+                                        : "narożnik L z odcinkiem „detal ręczny” — bez U-barów, pręty proste do lica (jak E3).");
             return lp;
         }
 
         /// <summary>
-        /// Ramię ograniczone do zakresu prętów prostych (krótki odcinek): koniec ramienia najdalszego pręta (od <paramref name="from"/>
-        /// w kierunku <paramref name="dir"/>) ≤ limit; komunikat, gdy przycięte.
+        /// Pionowy U-bar (kształt 21 w płaszczyźnie przekroju) jednego końca odcinka — jeden rozkład: po jednym na kolumnę prętów
+        /// (4 szt.), w rzucie linia ramienia (od tyłu U wzdłuż osi belki) z kółkiem na zagięciu (konwencja UB płyty).
         /// </summary>
-        private static double CapArm(double arm, double from, int dir, double limit, double half, string what, List<string> msgs)
+        public sealed class VUBarRun
         {
-            double max = Floor25(dir * (limit - from) + half);
-            if (arm <= max + 1e-6) return arm;
-            double cut = Math.Max(25.0, max);
-            msgs.Add(string.Format(CultureInfo.InvariantCulture,
-                "{0}: ramię {1:0} przycięte do {2:0} (krótki odcinek) — zakład mniejszy niż zadany.", what, arm, cut));
-            return cut;
+            /// <summary>"E" — koniec (krawędź / wewnętrzny), "L" — noga narożnika L, "T" — belka dochodząca złącza T.</summary>
+            public string Kind;
+            public Segment Seg;
+            public bool AtLo;
+            public int Dia, Count;
+            /// <summary>Wymiary BS 8666:2020 (zewnętrzne): A = C ramiona, B — wysokość zewnętrzna U (A strzemienia − 2·Ø strzemienia).</summary>
+            public double A, B, C;
+            /// <summary>Obniżenie B (noga Y narożnika L / belka dochodząca złącza T — zestawy krzyżują się piętrowo).</summary>
+            public bool Dropped;
+            /// <summary>Linie ramion wzdłuż X.</summary>
+            public bool AlongX;
+            /// <summary>Oś pierwszej kolumny w poprzek (najmniejsza współrzędna) i rozstaw kolumn.</summary>
+            public double Across0, Spacing;
+            /// <summary>Lico zewnętrzne tyłu U (zagięcie) wzdłuż osi; linia ramienia od tyłu w głąb belki na długość A.</summary>
+            public double Back, LineStart, LineLength;
+            /// <summary>Kółko (zagięcie) na początku linii (koniec Lo) — inaczej na końcu.</summary>
+            public bool BendAtStart;
+            /// <summary>Najmniejszy zakład z prętami prostymi [mm] (NaN — brak prętów prostych).</summary>
+            public double Overlap;
+
+            public override string ToString()
+                => string.Format(CultureInfo.InvariantCulture, "{0} 21 H{1} A={2:0} B={3:0} C={4:0} ×{5}{6} zakład {7:0}",
+                    Kind, Dia, A, B, C, Count, Dropped ? " (B − obniżenie)" : "", Overlap);
         }
 
-        /// <summary>Zasięg ramion od końca atLo odcinka s: najdalsza współrzędna końca pręta (od lo — największa, od hi — najmniejsza).</summary>
-        private static void AddReach(Dictionary<(Segment, bool), double> reach, Segment s, bool atLo, double v)
+        /// <summary>
+        /// K3 (praktyka biura C12 / Holbrook — docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne do potwierdzenia): pionowe U-bary
+        /// kształt 21 na każdym końcu z zamknięciem UBar / LBar / Tee, po jednym na kolumnę prętów (columns), w osiach kolumn:
+        ///   • B = A strzemienia − 2·Ø strzemienia (w dół do 5; 528 A 290 → 265, 319: 365 → 340, 539: 215 → 190); noga Y narożnika L
+        ///     i belka dochodząca złącza T — B − drop (35: zestawy krzyżują się w kwadracie piętrowo);
+        ///   • tył U na otulinie czołowej od lica końca (narożnik L — lica zewnętrznego narożnika, złącze T — dalszego lica belki ciągłej);
+        ///   • ramię A = C: koniec — Ceil25(max(zakład + armExtra, tył → pręt prosty + zakład)) (zakład 650 + 90 → 750; C12 740);
+        ///     narożnik L / złącze T — Ceil25(tył → początek prętów prostych nogi + zakład) (≈ szerokość drugiej nogi + zakład);
+        ///     ograniczone do zakresu prętów prostych odcinka (krótki odcinek — komunikat), ostrzeżenie gdy ramiona z obu końców nachodzą.
+        /// Linia w rzucie: od tyłu (kółko na zagięciu) w głąb belki na długość A.
+        /// </summary>
+        public static List<VUBarRun> PlanVerticalUBars(Result an, LayerPlan straight, int columns, int dMain, int uDia, double stirrupA,
+                                                       int dLink, double lap, double armExtra, double drop, double maxLen,
+                                                       double cover, double endOffset, bool intoSquare, List<string> msgs)
         {
-            if (reach == null) return;
-            reach[(s, atLo)] = reach.TryGetValue((s, atLo), out double cur) ? (atLo ? Math.Max(cur, v) : Math.Min(cur, v)) : v;
-        }
-
-        private static BentRun CornerRun(Joint j, int n, int d, double lap, double dLink, double cover,
-                                         Dictionary<Segment, (double lo, double hi)> bars, List<string> msgs,
-                                         Dictionary<(Segment, bool), double> reach)
-        {
-            Segment P = j.A, Q = j.B;                              // P wzdłuż X, Q wzdłuż Y
-            int sP = j.ALo ? 1 : -1, sQ = j.BLo ? 1 : -1;          // kierunek odcinka od kwadratu narożnika
-            var rp = RowsAcross(P, n, d, dLink, cover);            // y rosnąco
-            var rq = RowsAcross(Q, n, d, dLink, cover);            // x rosnąco
-            // rząd i od zewnątrz narożnika: P — od lica przeciwnego do kierunku Q, Q — od lica przeciwnego do kierunku P
-            double YP(int i) => sQ > 0 ? rp[i] : rp[n - 1 - i];
-            double XQ(int i) => sP > 0 ? rq[i] : rq[n - 1 - i];
-            double half = d / 2.0;
-            double startP = sP > 0 ? bars[P].lo : bars[P].hi;
-            double startQ = sQ > 0 ? bars[Q].lo : bars[Q].hi;
-            // rząd zewnętrzny (0) ma najdłuższą drogę do zakładu — identyczne pręty L rzędów wewnętrznych mają zakład dłuższy
-            double A = Ceil25(sP * (startP + sP * lap - XQ(0)) + half);
-            double B = Ceil25(sQ * (startQ + sQ * lap - YP(0)) + half);
-            var (pLo, pHi) = StraightRange(P, cover);
-            var (qLo, qHi) = StraightRange(Q, cover);
-            A = CapArm(A, XQ(n - 1), sP, sP > 0 ? pHi : pLo, half, "narożnik L (ramię wzdłuż X)", msgs);
-            B = CapArm(B, YP(n - 1), sQ, sQ > 0 ? qHi : qLo, half, "narożnik L (ramię wzdłuż Y)", msgs);
-            double line = A - half;
-            double Start(int i) => sP > 0 ? XQ(i) : XQ(i) - line;
-            int first = sQ > 0 ? 0 : n - 1, last = sQ > 0 ? n - 1 : 0;   // rzędy w kolejności rosnącego y
-            double ovP = sP * (XQ(0) + sP * line - startP);
-            double ovQ = sQ * (YP(0) + sQ * (B - half) - startQ);
-            for (int i = 0; i < n; i++)
+            var res = new List<VUBarRun>();
+            if (an == null || columns <= 0 || uDia <= 0) return res;
+            double b0 = Floor5(stirrupA - 2 * dLink);
+            if (b0 <= 0)
             {
-                AddReach(reach, P, j.ALo, XQ(i) + sP * line);
-                AddReach(reach, Q, j.BLo, YP(i) + sQ * (B - half));
-            }
-            return new BentRun
-            {
-                Kind = "L", Shape = "11", Dia = d, A = A, B = B, C = 0, Count = n, Seg = P, AlongX = true,
-                Across0 = rp[0], Spacing = n > 1 ? rp[1] - rp[0] : 0,
-                Start0 = Start(first), StartN = Start(last), LineLength = line,
-                BendAtStart = sP > 0, BendDir = sQ, Overlap = Math.Min(ovP, ovQ)
-            };
-        }
-
-        private static List<BentRun> TeeRuns(Joint j, int n, int d, double lap, double dLink, double cover,
-                                             Dictionary<Segment, (double lo, double hi)> bars, List<string> msgs,
-                                             Dictionary<(Segment, bool), double> reach)
-        {
-            var res = new List<BentRun>();
-            Segment a = j.A, b = j.B;                              // a — belka ciągła, b — dochodząca
-            int sB = j.BLo ? 1 : -1;                               // kierunek belki dochodzącej od belki ciągłej
-            double half = d / 2.0;
-            // rzędy belki ciągłej (te same osie co jej pręty proste — RowsAcross) liczone od dalszego lica
-            var ra = RowsAcross(a, n, d, dLink, cover);
-            double YA(int k) => sB > 0 ? ra[k] : ra[n - 1 - k];
-            var xs = RowsAcross(b, n, d, dLink, cover);
-            int m = (n + 1) / 2;                                   // pierwsza połowa (z rzędem środkowym przy nieparzystej liczbie)
-            double start = sB > 0 ? bars[b].lo : bars[b].hi;
-            double A = Ceil25(sB * (start + sB * lap - YA(0)) + half);
-            double B = Ceil25(lap);
-            var (bLo, bHi) = StraightRange(b, cover);
-            A = CapArm(A, YA(Math.Max(m - 1, n - m - 1)), sB, sB > 0 ? bHi : bLo, half, "złącze T", msgs);
-            double line = A - half;
-            double ov = sB * (YA(0) + sB * line - start);
-            for (int k = 0; k <= Math.Max(m - 1, n - m - 1); k++) AddReach(reach, b, j.BLo, YA(k) + sB * line);
-            // pierwsza grupa (zagięta w stronę malejącej współrzędnej): rząd skrajny najpłycej (k = m − 1), środkowy najgłębiej (k = 0);
-            // druga grupa — lustrzanie
-            foreach (var (idx0, cnt, dir) in new[] { (0, m, -1), (m, n - m, 1) })
-            {
-                if (cnt <= 0) continue;
-                int K(int idx) => dir < 0 ? m - 1 - idx : idx - m;
-                double S(int idx) => sB > 0 ? YA(K(idx)) : YA(K(idx)) - line;
-                res.Add(new BentRun
-                {
-                    Kind = "T", Shape = "11", Dia = d, A = A, B = B, C = 0, Count = cnt, Seg = b, AlongX = b.AlongX,
-                    Across0 = xs[idx0], Spacing = cnt > 1 ? xs[idx0 + 1] - xs[idx0] : 0,
-                    Start0 = S(idx0), StartN = S(idx0 + cnt - 1), LineLength = line,
-                    BendAtStart = sB > 0, BendDir = dir, Overlap = ov
-                });
-            }
-            return res;
-        }
-
-        private static List<BentRun> URuns(Segment s, bool atLo, int n, int d, int uDia, double lap, double dLink, double cover,
-                                           Dictionary<Segment, (double lo, double hi)> bars, List<string> msgs,
-                                           Dictionary<(Segment, bool), double> reach)
-        {
-            var res = new List<BentRun>();
-            if (uDia <= 0) return res;
-            int sE = atLo ? 1 : -1;                                // kierunek w głąb belki od lica końca
-            double face = atLo ? s.FaceLo : s.FaceHi;
-            if (n == 1)
-            {
-                msgs.Add(string.Format(CultureInfo.InvariantCulture,
-                    "koniec odcinka {0} ({1:0}): jeden pręt w warstwie — koniec zostaje bez U-bara (detal ręczny).",
-                    s.AlongX ? "poziomego" : "pionowego", face));
+                msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                    "U-bary: wysokość U ≤ 0 (A strzemienia {0:0}) — U-bary pominięte.", stirrupA));
                 return res;
             }
-            var ys = RowsAcross(s, n, d, dLink, cover);
-            double start = atLo ? bars[s].lo : bars[s].hi;
-            var (lo, hi) = StraightRange(s, cover);
-            double uh = uDia / 2.0;
-            for (int k = 0; k < n / 2; k++)
-            {
-                // lico zewnętrzne tyłu U-bara: kolejny (wewnętrzny) o Ø + 20 głębiej — prześwit między tyłami ≥ 20
-                double back = face + sE * UBarBackOffset(k, uDia, cover);
-                double A = Ceil25(sE * (start + sE * lap - back));
-                A = CapArm(A, back, sE, atLo ? hi : lo, 0, "U-bar", msgs);
-                AddReach(reach, s, atLo, back + sE * A);
-                double B = Floor5(ys[n - 1 - k] - ys[k] + uDia);
-                double st = sE > 0 ? back + uh : back - A;
-                res.Add(new BentRun
+            var reach = new Dictionary<(Segment, bool), double>();
+            foreach (var s in an.Segments.Where(x => !x.Manual))
+                foreach (bool atLo in new[] { true, false })
                 {
-                    Kind = "U", Shape = "21", Dia = uDia, A = A, B = B, C = A, Count = 1, Seg = s, AlongX = s.AlongX,
-                    Across0 = ys[k], Spacing = 0, Start0 = st, StartN = st, LineLength = A - uh,
-                    BendAtStart = sE > 0, BendDir = 1, Overlap = sE * (back + sE * A - start)
-                });
+                    var c = atLo ? s.LoClose : s.HiClose;
+                    if (c != Closure.UBar && c != Closure.LBar && c != Closure.Tee) continue;
+                    string kind = c == Closure.UBar ? "E" : c == Closure.LBar ? "L" : "T";
+                    int sE = atLo ? 1 : -1;
+                    double face = atLo ? s.FaceLo : s.FaceHi;
+                    double back = face + sE * cover;
+                    (double Lo, double Hi) bars = (double.NaN, double.NaN);
+                    bool hasBars = straight != null && straight.Straight.Any(x => x.Seg == s) && straight.Bars.TryGetValue(s, out bars);
+                    double start = hasBars ? (atLo ? bars.Lo : bars.Hi) : back;
+                    double baseLen = Math.Max(0, sE * (start - back));
+                    double A = kind == "E" ? Ceil25(Math.Max(lap + armExtra, baseLen + lap)) : Ceil25(baseLen + lap);
+                    // ramię nie dalej niż zakres prętów prostych odcinka (krótki odcinek)
+                    var (lo, hi) = StraightRange(s, cover, endOffset, intoSquare);
+                    double limit = atLo ? hi : lo;
+                    double max = Floor25(sE * (limit - back));
+                    if (A > max + 1e-6)
+                    {
+                        double cut = Math.Max(25.0, max);
+                        msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                            "U-bar ({0}): ramię {1:0} przycięte do {2:0} (krótki odcinek) — zakład mniejszy niż zadany.",
+                            kind == "E" ? "koniec" : kind == "L" ? "narożnik L" : "złącze T", A, cut));
+                        A = cut;
+                    }
+                    bool dropped = (kind == "L" && !s.AlongX) || kind == "T";
+                    double B = dropped ? Floor5(b0 - drop) : b0;
+                    var rows = RowsAcross(s, columns, dMain, dLink, cover);
+                    double end = back + sE * A;
+                    reach[(s, atLo)] = end;
+                    res.Add(new VUBarRun
+                    {
+                        Kind = kind, Seg = s, AtLo = atLo, Dia = uDia, Count = columns, A = A, B = B, C = A, Dropped = dropped,
+                        AlongX = s.AlongX, Across0 = rows[0], Spacing = columns > 1 ? rows[1] - rows[0] : 0,
+                        Back = back, LineStart = atLo ? back : back - A, LineLength = A, BendAtStart = atLo,
+                        Overlap = hasBars ? sE * (end - start) : double.NaN
+                    });
+                }
+
+            // Krótki odcinek: ramiona z obu końców nachodzą na siebie — ostrzeżenie
+            foreach (var s in an.Segments.Where(x => !x.Manual))
+                if (reach.TryGetValue((s, true), out double rLo) && reach.TryGetValue((s, false), out double rHi) && rLo > rHi + 1e-6)
+                    msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                        "odcinek {0} ({1:0}..{2:0}): ramiona U-barów z obu końców nachodzą na siebie ({3:0} mm, krótki odcinek) — sprawdź / detal ręczny.",
+                        s.AlongX ? "poziomy" : "pionowy", s.FaceLo, s.FaceHi, rLo - rHi));
+
+            foreach (var r in res)
+            {
+                double len;
+                try { len = BarLengthRules.TotalLengthFor("21", new[] { r.A, r.B, r.C }, r.Dia); }
+                catch (System.Exception ex) { Log.Error("BeamGeometry.PlanVerticalUBars", ex); continue; }
+                if (len > maxLen + 0.5)
+                    msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                        "U-bar (kształt 21, A={0:0}, B={1:0}) dłuższy niż {2:0} ({3:0}) — sprawdź.", r.A, r.B, maxLen, len));
             }
-            if (n % 2 == 1 && n > 1)
-                msgs.Add(string.Format(CultureInfo.InvariantCulture,
-                    "koniec odcinka {0} ({1:0}): nieparzysta liczba prętów ({2}) — pręt środkowy bez U-bara.",
-                    s.AlongX ? "poziomego" : "pionowego", face, n));
             return res;
+        }
+
+        /// <summary>
+        /// Wysokość strzemienia 51 (K2): A = H − otulina górna (A1 35 / A2 50) − otulina dolna (50), w dół do 5 mm
+        /// (A1: 450 → 365, 375 → 290, 300 → 215 — Holbrook; A2: 450 → 350, 600 → 500 — C12).
+        /// </summary>
+        public static double StirrupHeightCovers(double h, double coverTop = CoverTopA1, double coverBottom = DefaultCoverBottom)
+        {
+            double a = h - coverTop - coverBottom;
+            return a > 0 ? Floor5(a) : 0;
         }
 
         /// <summary>

@@ -688,7 +688,7 @@ namespace BricsCadRc.Commands
                     if (obj is DBText txt)
                     {
                         txt.UpgradeOpen();
-                        txt.TextString = $"{bar.EffectiveCount} {bar.Mark}";
+                        txt.TextString = $"{bar.CountText} {bar.Mark}";
                         break;  // tylko pierwszy DBText
                     }
                 }
