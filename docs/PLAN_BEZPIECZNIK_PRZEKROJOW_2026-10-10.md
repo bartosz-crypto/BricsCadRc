@@ -1,6 +1,6 @@
 # Plan: bezpiecznik aktualności przekrojów RC_SECTION (RC_SECTION_CHECK / RC_SECTION_UPDATE)
 
-Status: PROJEKT — czeka na recenzję i akceptację użytkownika.
+Status: etapy 0–1 zacommitowane (acfa036); etapy 2–4 zaimplementowane (2026-10-10, staging) — czekają na recenzję diffu i testy ręczne użytkownika.
 Decyzje użytkownika (2026-10-10): ostrzeżenie przed BBS i wydrukiem/PDF — TAK; chmurka „NIEAKTUALNY” na niedrukowanej warstwie — TAK; UPDATE zachowuje ręczne poprawki — TAK.
 
 Ustalenia: RC_SECTION jest we wzorcu aba0ed1 → geometria przekroju bit w bit bez zmian; dochodzą tylko dane (XData/Xrecord) i warstwa chmurki. Anulowanie wydruku: `DocumentCollection.DocumentLockModeChanged` + `e.Veto()` (BrxMgd), `PlotReactorManager.BeginPlot`, `Publisher.AboutToBeginPublishing` (bez Cancel); `CommandWillStart` bez anulowania — skuteczność Veto do sprawdzenia spikiem (krok 0).
@@ -95,6 +95,18 @@ logi `bin/Release/net48/planc-sgspike-*.txt` + log linii poleceń `*-cmdlog.txt`
    …Background…) nie zaobserwowano — PUBLISH zawetowany przed oknem. Publikacja w tle i rysunki nieotwarte — do testu ręcznego (ograniczenie).
 6. Wniosek dla etapu 2: SectionGuard wydruku = `DocumentLockModeChanged` z filtrem {PLOT, -PLOT, PRINT, EXPORTPDF, PUBLISH, -PUBLISH}
    (bez `#…`), raz na komendę najwyższego poziomu, w ScriptMode tylko komunikat; fallback P8 niepotrzebny.
+
+## Realizacja etapów 2–4 (2026-10-10)
+- Etap 2: `SectionGuard.Register` (PluginApp) — DocumentLockModeChanged wg spiku, Veto + pytanie na Idle + ponowienie komendy;
+  ScriptMode tylko komunikat; `RC_SG_TEST=veto`; komunikat przy otwarciu na Idle (bez zapisów). Pomiar: czas w logu, bez cache.
+- Etap 3: `RC_SECTION_UPDATE` (`SectionUpdater`, `SectionLabelCarry`), rekord z pozycjami domyślnymi (`TITLEDEF`, `PART …|x,y|rodzaj`).
+- Etap 4: adopcja przekroju „nieznany” (znaczniki SD-SECTION, obiekty wskazane oknem, `RC_SG_ADOPT` / `RC_SG_PICK` w trybie skryptu).
+- Odstępstwa: (1) przesunięcie całego przekroju — mediana próbek betonu, tytuł tylko jako rozjemca przy ≥ 2 odcinkach (przy jednym
+  odcinku mediana dwóch próbek = średnia — tytuł przesunięty osobno przesuwałby przekrój); (2) adopcja usuwa także znaczniki tej
+  litery na rzutach (rozpoznane dokładnie po kształcie i literze — nie są wskazywane oknem); (3) przekrój bez znaczników (kopia) —
+  UPDATE nie dorysowuje znaczników; (4) test otwarcia (SGO): w /automation Idle przychodzi dopiero po skrypcie — test sprawdza
+  zaplanowanie przy podpięciu rysunku i woła tę samą procedurę (`SectionGuard.ProcessPending`); samo zdarzenie Idle — test ręczny.
+- Testy BRX: `run-planc-sg.ps1` — SG6 / SG7 (UPDATE + UNDO / REDO), SG11b (adopcja), SG13 (-PLOT / EXPORTPDF, Veto testowe), SGO.
 
 ## Decyzja P-b (użytkownik, 2026-10-10)
 Kopia części przekroju bez jej tytułu (np. COPY samego opisu) → CloneRemap zdejmuje z klonu `RC_SECTION_PART` (zwykły obiekt).

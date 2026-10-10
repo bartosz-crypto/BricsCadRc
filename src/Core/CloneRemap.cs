@@ -297,7 +297,7 @@ namespace BricsCadRc.Core
                             // lista części to tekst w Xrecordzie — BricsCAD jej nie tłumaczy (jak stare 1000)
                             long t = resolve(c, new Field { Hex = XLink.Norm(p.Handle), Text = true }, out _);
                             if (t != 0 && clones.TryGetValue(t, out var pc) && pc.Kind == Kind.SectionPart)
-                                parts.Add(new SectionRecord.Part { Handle = t.ToString("X8"), Role = p.Role, Key = p.Key });
+                                parts.Add(p.WithHandle(t.ToString("X8")));   // z pozycją domyślną i rodzajem (etap 3)
                         }
                     if (!e.IsWriteEnabled) e.UpgradeOpen();
                     if (rec == null || parts.Count == 0)

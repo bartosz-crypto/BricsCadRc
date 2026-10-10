@@ -131,5 +131,46 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
             }
         }
+
+        /// <summary>
+        /// RC_SECTION_UPDATE — aktualizacja przekroju (bezpiecznik, etapy 3–4): wskazany przekrój albo [Wszystkie] nieaktualne.
+        /// Przeliczenie jak RC_SECTION z zachowaniem ręcznych przesunięć opisów, tytułu, liter znaczników i całego przekroju;
+        /// przekrój „nieznany” (stary, bez danych) — adopcja (SectionUpdater). Jedna komenda = jeden Ctrl+Z.
+        /// Tryb bez okien: zmienna RC_SG_PICK = handle wskazanego obiektu (testy), zamiast wskazania.
+        /// </summary>
+        [CommandMethod("RC_SECTION_UPDATE", CommandFlags.Modal)]
+        public static void SectionUpdate()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            var db = doc.Database;
+            const string T = "[RC SECTION]";
+            SectionUpdater.LastMessages.Clear();
+            try
+            {
+                string testPick = ScriptMode.IsNonInteractive() ? Environment.GetEnvironmentVariable("RC_SG_PICK") : null;
+                if (!string.IsNullOrEmpty(testPick))
+                {
+                    Environment.SetEnvironmentVariable("RC_SG_PICK", null);   // jednorazowo
+                    var id = SingleBarEngine.HandleToObjectId(db, testPick.Trim());
+                    if (id.IsNull || id.IsErased) { ed.WriteMessage($"\n{T} RC_SG_PICK: brak obiektu {testPick}.\n"); return; }
+                    SectionUpdater.UpdatePicked(doc, id);
+                    return;
+                }
+                var peo = new PromptEntityOptions("\nWskaż przekrój do aktualizacji (tytuł albo dowolny jego obiekt) albo [Wszystkie] nieaktualne: ");
+                peo.Keywords.Add("Wszystkie");
+                peo.AppendKeywordsToMessage = false;
+                var per = ed.GetEntity(peo);
+                if (per.Status == PromptStatus.Keyword) SectionUpdater.UpdateAll(doc);
+                else if (per.Status == PromptStatus.OK) SectionUpdater.UpdatePicked(doc, per.ObjectId);
+                ed.WriteMessage("\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("SectionCommands.SectionUpdate", ex);
+                ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
     }
 }

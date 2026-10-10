@@ -1,5 +1,7 @@
-﻿# SG — testy dymne bezpiecznika aktualności przekrojów RC_SECTION (docs/PLAN_BEZPIECZNIK_PRZEKROJOW_2026-10-10.md, etap 1)
-# w prawdziwym BricsCAD V25 (SG1–SG5, SG8–SG12, SG14, SG15 STRETCH, SG16 zdublowany GUID). Rysunek NIE jest zapisywany (_QUIT → _Y).
+﻿# SG — testy dymne bezpiecznika aktualności przekrojów RC_SECTION (docs/PLAN_BEZPIECZNIK_PRZEKROJOW_2026-10-10.md, etapy 1–4)
+# w prawdziwym BricsCAD V25 (SG1–SG5, SG8–SG12, SG14, SG15 STRETCH, SG16 zdublowany GUID; etap 3: SG6 / SG7 RC_SECTION_UPDATE + UNDO / REDO;
+# etap 4: SG11b adopcja; etap 2: SG13 -PLOT / EXPORTPDF, SGO otwarcie rysunku). Rysunek NIE jest zapisywany (_QUIT → _Y).
+# PDF i rysunek SGO: %TEMP%\rc-sg (czyszczony przed przebiegiem; @OUT@ w skrypcie = ten katalog).
 # Uruchamia ukrytą instancję BricsCAD ze skryptem planc-sg.scr, czeka na koniec (limit czasu),
 # wypisuje planc-sg-results.txt. Kod wyjścia: 0 = wszystko PASS/SKIP, 1 = FAIL / brak raportu / limit czasu.
 #
@@ -23,6 +25,7 @@ $repo      = Resolve-Path (Join-Path $here '..\..')
 $scr       = Join-Path $here 'planc-sg.scr'
 $outDir    = Join-Path $here 'bin\Release\net48'
 $results   = Join-Path $outDir 'planc-sg-results.txt'
+$pdfDir    = Join-Path ([System.IO.Path]::GetTempPath()) 'rc-sg'   # bez spacji — ścieżka jest odpowiedzią w skrypcie
 $testDll   = Join-Path $outDir 'BrxSmokeTests.dll'
 . (Join-Path $here 'planc-plugin.ps1')
 $pluginDll = Resolve-PluginDll $PluginDll $repo
@@ -39,6 +42,8 @@ foreach ($f in @($exe, $scr, $testDll, $pluginDll)) {
 }
 
 if (Test-Path -LiteralPath $results) { Remove-Item -LiteralPath $results -Force }
+New-Item -ItemType Directory -Force -Path $pdfDir | Out-Null
+Get-ChildItem -LiteralPath $pdfDir -Include '*.pdf', '*.dwg', '*.bak' -File -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force
 
 $argList = @('/automation')
 if (Test-Path -LiteralPath $template) {
@@ -47,7 +52,14 @@ if (Test-Path -LiteralPath $template) {
 } else {
     Write-Host "Szablon Default-mm.dwt nie znaleziony — start bez /t."
 }
-$runScr = New-PluginScript $scr $pluginDll $outDir
+# @OUT@ → katalog PDF (ukośniki), potem kopia z NETLOAD wskazanego DLL
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$srcScr = Join-Path $outDir 'planc-sg.src.scr'
+$pdfFwd = $pdfDir.Replace('\', '/')
+$scrLines = (Get-Content -LiteralPath $scr) | ForEach-Object { $_.Replace('@OUT@', $pdfFwd) }
+[System.IO.File]::WriteAllLines($srcScr, [string[]]$scrLines, (New-Object System.Text.ASCIIEncoding))
+$runScr = New-PluginScript $srcScr $pluginDll $outDir
+Remove-Item -LiteralPath $srcScr -Force
 $argList += @('/b', "`"$runScr`"")
 
 Show-RunningBricsWarning

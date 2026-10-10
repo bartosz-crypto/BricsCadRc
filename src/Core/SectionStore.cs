@@ -31,6 +31,8 @@ namespace BricsCadRc.Core
         public List<ObjectId> Clouds = new List<ObjectId>();
         public string SlabPicked = "", SlabOuter = "", SelfLink = "";
         public bool NewVersionDiffers;
+        /// <summary>Osierocony: handle zamkniętego obrysu w tym samym miejscu (podpowiedź dla RC_SECTION_UPDATE); null = brak.</summary>
+        public string OutlineHint;
 
         public string Label => Letter.Length > 0 ? Letter + "-" + Letter : "?";
     }
@@ -221,7 +223,7 @@ namespace BricsCadRc.Core
 
         private static long HandleValue(string hex) => XLink.TryParse(hex, out long v) ? v : long.MaxValue;
 
-        private static string TitleLetter(Entity e)
+        internal static string TitleLetter(Entity e)
         {
             string text = e is MText mt ? (mt.Contents ?? "") : e is DBText dt ? (dt.TextString ?? "") : "";
             var m = TitleRx.Match(text);
@@ -248,37 +250,12 @@ namespace BricsCadRc.Core
                     s.Status = SectionStatus.Osierocony;
                     s.Reasons.Add("obrys płyty usunięty (przekrój bez źródła)");
                     string hint = OutlineAt(db, rec.MinPoint);
-                    if (hint != null) s.Info.Add($"w tym samym miejscu jest zamknięty obrys {hint} — przekrój można narysować ponownie na nim");
+                    s.OutlineHint = hint;
+                    if (hint != null) s.Info.Add($"w tym samym miejscu jest zamknięty obrys {hint} — przekrój można narysować ponownie na nim (RC_SECTION_UPDATE)");
                     return;
                 }
 
-                Point2d p1 = new Point2d(rec.P1.X, rec.P1.Y), p2 = new Point2d(rec.P2.X, rec.P2.Y);
-                var letters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
-                {
-                    Point2d? m1 = null, m2 = null;
-                    foreach (var (id, role, key) in s.Parts)
-                    {
-                        if (id.IsErased) continue;
-                        var e = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                        if (role == "MARK" && e is Polyline pl && pl.NumberOfVertices >= 3)
-                        {
-                            if (key == "V0.P1") m1 = pl.GetPoint2dAt(2);
-                            else if (key == "V0.P2") m2 = pl.GetPoint2dAt(2);
-                        }
-                        else if (role == "MARKTXT" && e is MText mt)
-                        {
-                            string t = (mt.Text ?? "").Trim();
-                            if (t.Length > 0) letters.Add(t);
-                        }
-                    }
-                    tr.Commit();
-                    if (m1.HasValue && m2.HasValue) { p1 = m1.Value; p2 = m2.Value; }
-                }
-                string letter = rec.Letter;
-                var other = letters.Where(l => !string.Equals(l, rec.Letter, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (other.Count > 0) letter = other.OrderBy(x => x, StringComparer.Ordinal).First().ToUpperInvariant();
-
+                CurrentCut(db, s, out var p1, out var p2, out string letter);
                 var rc = AutoRebarEngine.RecomputeSection(db, rec, slabId, p1, p2, letter);
                 if (rc.Error != null)
                 {
@@ -303,6 +280,41 @@ namespace BricsCadRc.Core
                 s.Status = SectionStatus.Uszkodzony;
                 s.Reasons.Add("błąd przeliczenia: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Bieżące cięcie i litera przekroju (Evaluate, RC_SECTION_UPDATE): cięcie ze znaczników rzutu wskazanego (V0.P1 / V0.P2,
+        /// wierzchołek [2]); brak znacznika — wartości bezwzględne z rekordu. Litera — z liter znaczników, gdy różna od rekordu.
+        /// </summary>
+        public static void CurrentCut(Database db, SectionInfo s, out Point2d p1, out Point2d p2, out string letter)
+        {
+            var rec = s.Record;
+            p1 = new Point2d(rec.P1.X, rec.P1.Y); p2 = new Point2d(rec.P2.X, rec.P2.Y);
+            var letters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                Point2d? m1 = null, m2 = null;
+                foreach (var (id, role, key) in s.Parts)
+                {
+                    if (id.IsErased) continue;
+                    var e = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (role == "MARK" && e is Polyline pl && pl.NumberOfVertices >= 3)
+                    {
+                        if (key == "V0.P1") m1 = pl.GetPoint2dAt(2);
+                        else if (key == "V0.P2") m2 = pl.GetPoint2dAt(2);
+                    }
+                    else if (role == "MARKTXT" && e is MText mt)
+                    {
+                        string t = (mt.Text ?? "").Trim();
+                        if (t.Length > 0) letters.Add(t);
+                    }
+                }
+                tr.Commit();
+                if (m1.HasValue && m2.HasValue) { p1 = m1.Value; p2 = m2.Value; }
+            }
+            letter = rec.Letter;
+            var other = letters.Where(l => !string.Equals(l, rec.Letter, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (other.Count > 0) letter = other.OrderBy(x => x, StringComparer.Ordinal).First().ToUpperInvariant();
         }
 
         /// <summary>ReadAll + Evaluate każdego przekroju; czas w logu.</summary>

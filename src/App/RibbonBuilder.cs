@@ -40,6 +40,11 @@ namespace BricsCadRc.App
                     "Generate slab reinforcement. Choose in the command line: Mesh (all layers), B1, B2, T1, T2, UB1, UB2, UBNib, Add (bottom additional bars B1/B2 ADD from imported reinforcement maps)."),
                 Large("Section", "RC_SECTION", "section",
                     "Slab section from a real cut: pick the slab outline and the cut line (horizontal / vertical) on the bottom or top plan. Thickness and SSL from the plot label, nib from the outline, bars from the bottom and top plans; section marks on both plans."),
+                Column(
+                    Small("Check Sections", "RC_SECTION_CHECK", "section",
+                        "Check whether the sections are up to date with the plans (distributions, piles, outline, thickness / SSL). Out-of-date sections get a red non-plotting cloud."),
+                    Small("Update Section", "RC_SECTION_UPDATE", "update",
+                        "Redraw an out-of-date section (or All) keeping moved labels, title and section letters; an old section without data is taken over (select its objects).")),
                 Large("Opening Detail", "RC_OPENING_DETAIL", "opening",
                     "Opening detail: DETAIL 'n' frame on the plan plus H16 bars and U-bars around the opening."),
                 Large("Punching", "RC_PUNCHING_AUTO", "punching",

@@ -47,6 +47,7 @@
     <Compile Include="..\src\Core\SectionPlanner.cs" />
     <Compile Include="..\src\Core\SectionFingerprint.cs" />
     <Compile Include="..\src\Core\SectionRecord.cs" />
+    <Compile Include="..\src\Core\SectionLabelCarry.cs" />
   </ItemGroup>
 
 </Project>

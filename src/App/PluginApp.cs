@@ -51,6 +51,9 @@ namespace BricsCadRc.App
                 d => { d.CommandEnded += OnCommandEnded;  d.CommandCancelled += OnCommandCancelled; },
                 d => { d.CommandEnded -= OnCommandEnded;  d.CommandCancelled -= OnCommandCancelled; });
 
+            // Bezpiecznik przekrojów (etap 2): wydruk / PDF / PUBLISH (DocumentLockModeChanged) i komunikat przy otwarciu rysunku
+            SectionGuard.Register();
+
             RibbonBuilder.Build();
         }
 
@@ -58,6 +61,7 @@ namespace BricsCadRc.App
         {
             BarBlockHighlightManager.Unregister();
             DocumentWatch.Unsubscribe("PluginApp");
+            SectionGuard.Unregister();
 
             SingleBarGripOverrule.Unregister();
             SingleBarBlockScaleWatcher.Unregister();

@@ -11,7 +11,8 @@ namespace BricsCadRc.Core
     /// rozszerzeń tytułu (MText). Czysta logika (bez Teigha), testy tests/SectionRecordTests.cs.
     /// Zapis: linie „KLUCZ=wartość” (<see cref="ToLines"/>), odczyt <see cref="Parse"/> toleruje starsze / krótsze rekordy
     /// (brak klucza = wartość domyślna, nieznane klucze pomijane). Współrzędne zapisywane dokładnie („R”).
-    /// Składniki odcisku: linie „C:klucz=wartość”, części: „PART=handle|rola|klucz” (handle „X8”).
+    /// Składniki odcisku: linie „C:klucz=wartość”, części: „PART=handle|rola|klucz[|x,y|rodzaj]” (handle „X8”; etap 3:
+    /// pozycja domyślna części względem TOPLEFT i rodzaj opisu — RC_SECTION_UPDATE; brak = rekord etapu 1).
     /// </summary>
     public sealed class SectionRecord
     {
@@ -44,6 +45,8 @@ namespace BricsCadRc.Core
         // odcisk
         public string Hash = "", ResultDigest = "";
         public int Version;
+        /// <summary>Etap 3: domyślne położenie tytułu (MText.Location) względem TopLeft; null = rekord sprzed etapu 3.</summary>
+        public (double X, double Y)? TitleDef;
         public SortedDictionary<string, string> Components = new SortedDictionary<string, string>(StringComparer.Ordinal);
 
         public sealed class Part
@@ -51,6 +54,13 @@ namespace BricsCadRc.Core
             public string Handle = "";
             public string Role = "";
             public string Key = "";
+            /// <summary>Etap 3: pozycja domyślna względem TopLeft (LBL — punkt tekstu, SLAB — wierzchołek [0]); null = brak.</summary>
+            public (double X, double Y)? Def;
+            /// <summary>Etap 3: rodzaj opisu (LBL): DOT / BAR / TIN — <see cref="SectionLabelCarry"/>; "" = brak.</summary>
+            public string Kind = "";
+
+            /// <summary>Kopia części z nowym handle (CloneRemap) — zachowuje pola etapu 3.</summary>
+            public Part WithHandle(string handle) => new Part { Handle = handle, Role = Role, Key = Key, Def = Def, Kind = Kind };
         }
         public List<Part> Parts = new List<Part>();
 
@@ -91,10 +101,17 @@ namespace BricsCadRc.Core
                 "DIGEST=" + (ResultDigest ?? ""),
                 "VER=" + Version.ToString(Inv),
             };
+            if (TitleDef.HasValue) l.Add("TITLEDEF=" + Xy(TitleDef.Value.X, TitleDef.Value.Y));   // etap 3 — tylko gdy jest
             foreach (var kv in Components.OrderBy(kv => kv.Key, StringComparer.Ordinal))
                 l.Add("C:" + kv.Key + "=" + kv.Value);
             foreach (var p in Parts)
-                l.Add("PART=" + (p.Handle ?? "") + "|" + (p.Role ?? "") + "|" + SectionFingerprint.Esc(p.Key));   // Esc zamienia też | → \p
+            {
+                string line = "PART=" + (p.Handle ?? "") + "|" + (p.Role ?? "") + "|" + SectionFingerprint.Esc(p.Key);   // Esc zamienia też | → \p
+                // etap 3: pozycja domyślna i rodzaj na końcu linii (starszy parser czyta tylko pola 0–2)
+                if (p.Def.HasValue || !string.IsNullOrEmpty(p.Kind))
+                    line += "|" + (p.Def.HasValue ? Xy(p.Def.Value.X, p.Def.Value.Y) : "") + "|" + SectionFingerprint.Esc(p.Kind ?? "");
+                l.Add(line);
+            }
             return l;
         }
 
@@ -147,14 +164,18 @@ namespace BricsCadRc.Core
                         case "HASH": r.Hash = v; break;
                         case "DIGEST": r.ResultDigest = v; break;
                         case "VER": r.Version = int.Parse(v, Inv); break;
+                        case "TITLEDEF": r.TitleDef = Pt(v); break;
                         case "PART":
                         {
                             var p = v.Split('|');
-                            r.Parts.Add(new Part
+                            var part = new Part
                             {
                                 Handle = p.Length > 0 ? p[0] : "", Role = p.Length > 1 ? p[1] : "",
-                                Key = p.Length > 2 ? SectionFingerprint.Unesc(p[2]) : ""
-                            });
+                                Key = p.Length > 2 ? SectionFingerprint.Unesc(p[2]) : "",
+                                Kind = p.Length > 4 ? SectionFingerprint.Unesc(p[4]) : ""
+                            };
+                            r.Parts.Add(part);
+                            if (p.Length > 3 && p[3].Length > 0) part.Def = Pt(p[3]);   // uszkodzona pozycja → wyjątek niżej, część zostaje
                             break;
                         }
                     }

@@ -86,6 +86,9 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   P1 / P2 (bezwzględne, rzut wskazany) i P1REL / P2REL (względem MIN), CUTX, LOOK, LOOKPT, TOPLEFT, MIN (MinPoint obrysu),
   parametry okna (THK, NIBH, CB, CT, CN, TOL, SSL, PILES), opis płyty (DESCTHK, DESCSSL) + flagi nadpisania (THKOVR, SSLOVR),
   HASH, DIGEST, VER (SectionPlanner.Version), składniki odcisku `C:klucz=wartość`, części `PART=handle|rola|klucz`.
+  Etap 3 (RC_SECTION_UPDATE): `TITLEDEF=x,y` (domyślne położenie tytułu względem TOPLEFT) i na końcu linii części
+  `PART=handle|rola|klucz|x,y|rodzaj` — pozycja domyślna względem TOPLEFT (LBL: punkt tekstu, SLAB: wierzchołek [0]) i rodzaj opisu
+  (DOT / BAR / TIN); pola dopisywane tylko, gdy są (rekord etapu 1 bez zmian; starszy parser czyta pola 0–2). CloneRemap je przenosi.
   Nowe klucze tylko dopisywane; `SectionRecord.Parse` toleruje starsze / krótsze rekordy (brak klucza = domyślna, nieznane pomijane).
 - `RC_SECTION_PART` (część przekroju): [1]tytuł(1005) [2]rola (SLAB, BAR, DOT, PILE, DIM, LBL, LDR, ARW, SSL, MARK,
   MARKTXT, CLOUD) [3]klucz (np. `SEG#0`, `LBL#3|05`, znaczniki `V<rzut>.P1|P2` — V0 = rzut wskazany) [4]GUID przekroju.
@@ -120,7 +123,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   `RC_GENERUJ_T1/T2` (Ø12, `rebar_top`). `AutoRebarUBCommands` — `RC_GENERUJ_UB_B1/B2`.
 - `GenerateCommands` (`RC_GENERATE_SLAB`), `PunchingTagCommands`, `CountCommands`, jigi (`AnnotLeaderJig`, `DistributionJig`).
 - `SectionCommands` — `RC_SECTION` (przekrój z rekordem bezpiecznika, sekcja 4g), `RC_SECTION_CHECK` (aktualność przekrojów:
-  lista ze statusem i przyczynami, chmurki „NIEAKTUALNY”). `BbsCommands` — `RC_BBS` pyta przed oknem BBS, gdy są przekroje
+  lista ze statusem i przyczynami, chmurki „NIEAKTUALNY”), `RC_SECTION_UPDATE` (wskazany przekrój albo [Wszystkie] nieaktualne —
+  `SectionUpdater`; przekrój „nieznany” — adopcja). `BbsCommands` — `RC_BBS` pyta przed oknem BBS, gdy są przekroje
   nieaktualne (`SectionGuard.ConfirmBeforeOutput`).
 
 - `MenuCommands` — angielskie komendy wstążki: `RC_GENERATE` (wybór w linii poleceń: Mesh / B1 / B2 / T1 / T2 / UB1 /
@@ -130,7 +134,7 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 ### Wstążka (`RibbonBuilder`)
 - Po angielsku (etykiety, podpowiedzi); komunikaty w linii poleceń i dialogi — po polsku.
 - Panele: Setup (Prepare GA; Import Analysis; GA Texts — „Reinf. Maps” zastąpione przez Import Analysis, komenda
-  `RC_IMPORT_MAP` zostaje) · Reinforcement (Generate, Section, Opening Detail, Punching; 3D Model,
+  `RC_IMPORT_MAP` zostaje) · Reinforcement (Generate, Section; Check Sections, Update Section; Opening Detail, Punching; 3D Model,
   Summary Bars) · Bars (New Bar, Distribution; Bar Format) · Edit (kolumny małych przycisków) · Schedule (BBS; Bar Schedule, Count Bars).
 - Ikony: `Resources/Icons/<nazwa>_32.png` i `_16.png` (EmbeddedResource `BricsCadRc.Icons.*`), generowane skryptem
   (proste wektorowe, paleta: pomarańczowy = pręty, niebieski = góra/akcje, szary = beton).
@@ -236,9 +240,10 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   linii uskoku + obrys → zamknięta pętla (sekcja 4 „Nib”); `LooksLikeNib` = replika kryteriów `NibDetector` (zmiana kryteriów
   w jednym miejscu → w obu). `NibAutoClose` — zapis (Teigha): `TryClose` (Prepare GA), `EnsureForCommand` (komendy);
   `WouldClose` — ta sama analiza bez zapisu (RC_SECTION_CHECK: otwarty nib do domknięcia).
-- Bezpiecznik przekrojów (sekcja 4g): `SectionFingerprint`, `SectionRecord` (bez Teigha, testy `SectionFingerprintTests`,
-  `SectionRecordTests`, złoty test planera `SectionPlannerGoldenTests`), `SectionStore` (odczyt przekrojów, statusy, chmurki),
-  `SectionGuard` (`ConfirmBeforeOutput` — RC_BBS).
+- Bezpiecznik przekrojów (sekcja 4g): `SectionFingerprint`, `SectionRecord`, `SectionLabelCarry` (bez Teigha, testy
+  `SectionFingerprintTests`, `SectionRecordTests`, `SectionLabelCarryTests`, złoty test planera `SectionPlannerGoldenTests`),
+  `SectionStore` (odczyt przekrojów, statusy, chmurki, `CurrentCut`), `SectionGuard` (`ConfirmBeforeOutput` — RC_BBS; etap 2:
+  wydruk / PDF / PUBLISH i komunikat przy otwarciu — rejestrowany w `PluginApp`), `SectionUpdater` (RC_SECTION_UPDATE, adopcja).
 - `PositionCounter` — **jedyny** przydział numerów pozycji. `PositionReconciler` — numer po zmianie wymiarów.
 - `XLink` — powiązania handle. `NumberParser`, `GeometryHelper`, `LayerManager`, `Log`, `DocumentWatch`.
   `Log.Error` (K2, 96809d3): ten sam błąd (miejsce + typ wyjątku) najwyżej raz na 60 s. `ScriptMode` — tryb bez okien (K4).
@@ -578,7 +583,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   s-Slab, s-Pile, 0-25TEXT, AP-TEXT, DIM, SD-SECTION (znaczniki), RC-SECTION-BARS (pręty). Numery pozycji nad / pod
   kropkami (kolejne rzędy przy kolizji), pręty w widoku — numer ze strzałką. Znaczniki przekroju na wszystkich rzutach płyty.
 - Etap 2 (do zrobienia): kształty prętów w widoku wg kodu kształtu (haki, odgięcia), zakłady, ponowne generowanie przekroju.
-- **Bezpiecznik aktualności przekrojów** (docs/PLAN_BEZPIECZNIK_PRZEKROJOW_2026-10-10.md; etap 0 = spike, etap 1 zrobiony):
+- **Bezpiecznik aktualności przekrojów** (docs/PLAN_BEZPIECZNIK_PRZEKROJOW_2026-10-10.md; etap 0 = spike, etapy 1–4 zrobione):
   - Geometria przekroju bit w bit jak wzorzec — dochodzą tylko dane (XData `RC_SECTION` / `RC_SECTION_PART`, Xrecord, sekcja 1)
     i chmurka. `DrawSection(…, rec)` znakuje części w chwili dodania (kolejność obiektów bez zmian); `rec = null` = dawny rysunek.
   - Planer oznacza „istotne wejście” bez wpływu na wynik: `Result.UsedDists` (rozkłady z ≥ 1 kropką / prętem w widoku, w chwili
@@ -602,7 +607,46 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
     nie trafia do -PLOT ani EXPORTPDF), części roli CLOUD. Ustawiają ją RC_SECTION_CHECK, RC_SECTION (wszystkie przekroje) i RC_BBS;
     zapis tylko przy zmianie stanu (CHECK bez zmian = zero zapisów).
   - RC_BBS: `SectionGuard.ConfirmBeforeOutput` przed oknem BBS — okno Tak / Nie w komendzie; ScriptMode — komunikat i dalej.
-    Wydruk / PDF / PUBLISH (DocumentLockModeChanged + Veto, wyniki spiku w planie) — etap 2; RC_SECTION_UPDATE — etap 3.
+  - **Wydruk / PDF / PUBLISH (etap 2, `SectionGuard.Register`):** `DocumentCollection.DocumentLockModeChanged` raz na aplikację;
+    komendy PLOT, -PLOT, PRINT, EXPORTPDF, PUBLISH, -PUBLISH (nazwy ze spiku; „#…” = odblokowanie i wyrażenia LISP „(…” pomijane);
+    tylko pierwsze zdarzenie komendy najwyższego poziomu (flaga per dokument, kasowana w CommandEnded / Cancelled / Failed komendy
+    najwyższego poziomu), `_inGuard`, `e.Document`. Sprawdzenie tylko do odczytu (`SectionStore.CheckAll`, bez chmurek — chmurki
+    ustawiają komendy), czas w logu, bez cache. Przekroje nieaktualne / osierocone / uszkodzone / kopie: interaktywnie Veto bez okna,
+    pytanie na Idle (`TextConfirmDialog` przez `ShowModalWindow`: „Tak, drukuj” / „Nie”), po „Tak” ta sama komenda przez
+    `SendStringToExecute` z jednorazowym obejściem; tryb bez okien — tylko komunikat, BEZ Veto (spike: odpowiedzi skryptu stałyby się
+    komendami); `RC_SG_TEST=veto` — Veto także w trybie bez okien (testy). PUBLISH rysunków nieotwartych — nie sprawdzane (ograniczenie).
+    **Wywołanie z LISP** (zdarzenie blokady z nazwą „(…” w tym rysunku — kasowane przy „#(…” i na końcu komendy — albo bit 32
+    `CMDACTIVE`): jak tryb bez okien — tylko komunikat, bez Veto (Veto zgubiłoby argumenty `(command …)`: reszta trafiłaby do linii
+    poleceń jako komendy, np. „_N” = QNEW). **Ograniczenie:** makra menu / przycisków bez LISP (np. `^C^C-PLOT;_N;…`) nie da się
+    odróżnić od wpisania komendy — dostaną Veto i pytanie, a dalsze odpowiedzi makra trafią do linii poleceń jako komendy.
+    Obejście „Tak, drukuj” ważne 10 s (kasowane na końcu komendy po tym czasie). `RC_SG_TEST=interactive` — testy: zachowanie
+    interaktywne w /automation (bez okna).
+  - **Otwarcie rysunku (etap 2):** po podpięciu dokumentu (DocumentWatch) jednorazowe sprawdzenie na Idle aktywnego rysunku: bez
+    RegApp przekrojów — szybkie wyjście; komunikat `[RC SECTION] Rysunek ma przekroje nieaktualne …` w linii poleceń; bez zapisów (P3)
+    i bez SendStringToExecute. W /automation Idle przychodzi dopiero po skrypcie (test SGO woła `SectionGuard.ProcessPending`).
+  - **RC_SECTION_UPDATE (etap 3, `SectionUpdater`):** [Wskaż / Wszystkie nieaktualne]; przeliczenie tą samą drogą co RC_SECTION
+    (`NibAutoClose.EnsureForCommand`, `SectionStore.CurrentCut` — cięcie i litera ze znaczników, `RecomputeSection`); przesunięcie
+    całego przekroju = mediana próbek betonu (wierzchołek [0] odcinka względem TOPLEFT + Def), tytuł jako rozjemca przy ≥ 2 odcinkach,
+    sam tytuł — gdy betonu brak (`SectionLabelCarry.SectionShift`); ręczne przesunięcia opisów (`SectionLabelCarry.Carry`: tekst + rodzaj,
+    zachłannie po najbliższej pozycji domyślnej ≤ 300 mm; leader: tekst i początek przesunięte, grot o dU tylko, gdy zostaje na pręcie),
+    tytułu i liter znaczników (względem polilinii znacznika) → `DrawSectionWith(…, SectionDrawOptions)` (opcje null = RC_SECTION bit w bit);
+    usuwane tylko części potwierdzone w obu kierunkach (+ chmurki, stary tytuł); opisy usunięte ręcznie odtwarzane z komunikatem (P5);
+    przekrój bez znaczników (kopia) — bez dorysowania znaczników; nowy rekord z tym samym GUID i flagami nadpisania (P1); jedna
+    transakcja w komendzie (jeden Ctrl+Z / Ctrl+Y). Obiekty z [1] → tytuł spoza listy rekordu → przerwanie (zabezpieczenie liczności).
+    Kopia / uszkodzony → odmowa; osierocony z obrysem w tym samym miejscu → pytanie Tak / Nie (tryb bez okien: pominięty).
+    Komunikat `[RC SECTION] B-B zaktualizowany: przesunięte opisy zachowane: n; bez dopasowania: k (poz. …).`
+    Rekord etapu 1 (bez pozycji domyślnych): przesunięcie przekroju z betonu względem nowego planu, opisy i tytuł domyślnie (komunikat).
+  - **Adopcja starych przekrojów (etap 4, P6):** RC_SECTION_UPDATE na przekroju „nieznany” (wskazany stary tytuł): znaczniki SD-SECTION
+    tej litery rozpoznane dokładnie (kształt DrawSection 83 / 294 / 300 mm ± 2, litera ≤ 300 mm od miejsca domyślnego, bez
+    RC_SECTION_PART), pary P1–P2 spójne (kierunek, strona, długość) — inaczej odmowa; obrys płyty = jedyny zewnętrzny zamknięty obrys
+    przecięty linią cięcia (inaczej wskazanie; tryb bez okien — odmowa); obiekty starego przekroju wskazuje użytkownik oknem (tryb bez
+    okien: handle w zmiennej `RC_SG_ADOPT`; wskazanie tytułu — `RC_SG_PICK`); litera użyta przez > 1 tytuł → odmowa („adopcja
+    niejednoznaczna”); z wskazanych usuwane TYLKO obiekty rysunku przekroju: warstwy DrawSection (s-Slab, s-Pile, RC-SECTION-BARS,
+    0-25TEXT, AP-TEXT, DIM), typy Polyline / Line / DBText / MText / Solid / Circle / Dimension, bez XData żadnej aplikacji „RC_…”;
+    na SD-Pile tylko linia CENTER (oś pala przekroju) w obwiedni betonu / pali starego przekroju (+ 100 mm) — pale rzutu zostają;
+    reszta liczona jako „pominięte wskazane obiekty”;
+    punkt wstawienia = lewy górny narożnik betonu (s-Slab) wskazanych obiektów (brak → wskazanie); okno parametrów (`SectionDialog`)
+    z wartościami z rysunku; jedna transakcja: usunięcie wskazanych obiektów, tytułu i znaczników tej litery + nowy przekrój z rekordem.
 
 ## 4h. B3 ADD — pręty ukośne w narożnikach wklęsłych (AutoRebarEngine.B3.cs)
 - Wymaganie użytkownika: w każdym narożniku wklęsłym (kąt wewnętrzny > 180°) **2 H10 co 100, L = 1250**, opis

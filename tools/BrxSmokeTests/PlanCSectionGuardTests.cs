@@ -20,6 +20,16 @@
 // SG10 drugi rysunek (baza w pamięci) — przekroje rozdzielne.
 // SG11 stary przekrój (DrawSection bez rekordu) → nieznany; ReadAll bez starych — pominięty.
 // SG14 RC_BBS w trybie skryptu: SectionGuard.ConfirmBeforeOutput → true + komunikat, chmurka; po przywróceniu — bez chmurki.
+// Etapy 2–4:
+// SG6  MOVE opisu „05” (+120, +80), tytułu (+200, 0), litery znacznika V1.P1 (+50, +50) + rozstaw D2 → RC_SECTION_CHECK (chmurki)
+//      → RC_SECTION_UPDATE „Wszystkie” → A (ten sam GUID) aktualny, opis / tytuł / litera przesunięte jak wcześniej, chmurki usunięte;
+//      kopia A z SG8 (bez znaczników) zaktualizowana w swoim miejscu (przesunięcie (0, −8000)), bez dorysowanych znaczników.
+// SG7  _.UNDO 1 po UPDATE → stary przekrój A (NIEAKTUALNY), _.REDO → nowy (aktualny).
+// SG11b adopcja starego przekroju Z (RC_SG_PICK = tytuł, RC_SG_ADOPT = obiekty) → przekrój z danymi, aktualny, stare obiekty
+//      i znaczniki usunięte.
+// SG13 -PLOT / EXPORTPDF w trybie skryptu przy nieaktualnych przekrojach → komunikat, PDF powstaje; RC_SG_TEST=veto (LISP) → PDF
+//      nie powstaje; RC_SG_TEST=interactive + (command "-PLOT" …) → wywołanie z LISP bez Veto, PDF powstaje.
+// SGO  otwarcie rysunku z nieaktualnym przekrojem (DocumentManager.Open) → komunikat na Idle (SectionGuard.LastOpenMessages).
 
 using System;
 using System.Collections;
@@ -42,7 +52,7 @@ namespace BricsCadRc.BrxSmokeTests
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
         private const string ResultsFile = "planc-sg-results.txt";
         private const string Prefix = "[RC SG]";
-        private const string Title = "SG — testy dymne bezpiecznika przekrojów RC_SECTION (etap 1)";
+        private const string Title = "SG — testy dymne bezpiecznika przekrojów RC_SECTION (etapy 1–4)";
         private const string Slab = "SD-PILED-RAFT";
 
         private const string Engine = "BricsCadRc.Core.AutoRebarEngine";
@@ -55,6 +65,7 @@ namespace BricsCadRc.BrxSmokeTests
         {
             "SETUP", "SG1", "SG3", "SG2", "SG2V", "SG12", "SG5", "SG4A", "SG4V", "SG4U", "SG2R", "SG2RV",
             "SG15", "SG16", "SG8P", "SG8V", "SG9V", "SG9U", "SG10", "SG11", "SG14",
+            "SG6P", "SG6V", "SG7U", "SG7R", "SG11BP", "SG11BV", "SG13P", "SG13A", "SG13B", "SG13T", "SG13TV", "SG13L", "SG13LV", "SGOP", "SGOV",
         };
 
         private static readonly List<string> _results = new List<string>();
@@ -67,6 +78,9 @@ namespace BricsCadRc.BrxSmokeTests
         private static string _guidA = "";
         private static int _partsA, _nonMarkerPartsA;
         private static readonly Point3d TopLeftA = new Point3d(8000, 3000, 0);
+        private static string _guidCopy = "";
+        private static List<ObjectId> _legacyZ = new List<ObjectId>();
+        private static ObjectId _legacyZTitle;
 
         // ================================================================
         // SETUP / REPORT
@@ -515,6 +529,7 @@ namespace BricsCadRc.BrxSmokeTests
                     var orig = titled.Single(i => (ObjectId)Prop(i, "TitleId") == _titleA);
                     var copy = titled.Single(i => (ObjectId)Prop(i, "TitleId") != _titleA);
                     var cid = (ObjectId)Prop(copy, "TitleId");
+                    _guidCopy = (string)Prop(copy, "Guid");
                     var v = XData(db, cid, "RC_SECTION");
                     string self = v[6].Value is Handle h ? h.Value.ToString("X8") : "?";
                     return Eq("GUID oryginału", Prop(orig, "Guid"), _guidA) + "; " + Eq("GUID kopii ≠", (string)Prop(copy, "Guid") != _guidA, true) + "; "
@@ -619,7 +634,10 @@ namespace BricsCadRc.BrxSmokeTests
                 Check(step, "przekrój Z bez danych (DrawSection, rec = null) → CHECK: nieznany; ReadAll bez starych — pominięty", () =>
                 {
                     var ctx = Ctx(db, 1000);
+                    var beforeZ = MsIds(db);
                     Call(Engine, "DrawSection", db, ctx, PlanOf(ctx), new Point3d(8000, -30000, 0), "Z", null);
+                    _legacyZ = MsIds(db).Except(beforeZ).ToList();
+                    _legacyZTitle = _legacyZ.Single(id => With(db, id, e => e is MText && e.Layer == "AP-TEXT"));
                     var withLegacy = CheckAll(db, true).Where(i => (string)Prop(i, "Letter") == "Z").ToList();
                     var fast = ((IEnumerable)Call(Store, "ReadAll", db, false)).Cast<object>().Where(i => (string)Prop(i, "Letter") == "Z").ToList();
                     return Int("Z (ze starymi)", withLegacy.Count, 1) + "; " + Eq("status", Status(withLegacy[0]), "Nieznany") + "; "
@@ -657,6 +675,444 @@ namespace BricsCadRc.BrxSmokeTests
                          + Int("obiektów chmurki", Ms(db, e => e.Layer == "RC-SECTION-STATUS").Count, 0);
                 });
             });
+        }
+
+        // ================================================================
+        // SG6 / SG7 — RC_SECTION_UPDATE z przesuniętymi opisami, UNDO / REDO (etap 3)
+        // ================================================================
+
+        private static ObjectId _sg6Label, _titleA2;
+        private static string _sg6Text = "";
+        private static Point3d _sg6LabelPos;
+
+        [CommandMethod("RCSMOKE_SG_SG6P", CommandFlags.Modal)]
+        public void SG6P()
+        {
+            const string step = "SG6P";
+            Run(step, db =>
+            {
+                Check(step, "rekord A: pozycje domyślne (TITLEDEF; każdy LBL i SLAB z Def, LBL z rodzajem)", () =>
+                {
+                    var rec = Prop(SectionA(db, false), "Record");
+                    var parts = ((IEnumerable)Prop(rec, "Parts")).Cast<object>().ToList();
+                    int lbl = parts.Count(p => (string)Prop(p, "Role") == "LBL"), slab = parts.Count(p => (string)Prop(p, "Role") == "SLAB");
+                    int lblDef = parts.Count(p => (string)Prop(p, "Role") == "LBL" && Prop(p, "Def") != null && (string)Prop(p, "Kind") != "");
+                    int slabDef = parts.Count(p => (string)Prop(p, "Role") == "SLAB" && Prop(p, "Def") != null);
+                    return Eq("TITLEDEF", Prop(rec, "TitleDef") != null, true) + "; " + Int("LBL z Def", lblDef, lbl) + "; " + Int("SLAB z Def", slabDef, slab);
+                });
+                Check(step, "MOVE opisu o tej samej pozycji domyślnej przed i po zmianie (+120, +80), tytułu (+200, 0), litery V1.P1 (+50, +50); D2 → H10-06-150, 40", () =>
+                {
+                    // opis, którego pozycja domyślna nie zmienia się po zmianie D2 (dopasowanie ≤ 300 mm — reguła planu)
+                    var plan0 = PlanOf(Ctx(db, 2000));
+                    EditDist(db, _d2, "H10-06-150 B2", 150, 40);
+                    var plan1 = PlanOf(Ctx(db, 2000));
+                    double u0 = (double)Prop(plan0, "UMin"), u1 = (double)Prop(plan1, "UMin");
+                    var l0 = ((IEnumerable)Prop(plan0, "Labels")).Cast<object>().Select(l => ((string)Prop(l, "Text"), (double)Prop(l, "U") - u0, (double)Prop(l, "V"))).ToList();
+                    var l1 = ((IEnumerable)Prop(plan1, "Labels")).Cast<object>().Select(l => ((string)Prop(l, "Text"), (double)Prop(l, "U") - u1, (double)Prop(l, "V"))).ToList();
+                    var stable = l0.Where(a => l1.Any(b => b.Item1 == a.Item1 && Math.Abs(b.Item2 - a.Item2) < 1e-6 && Math.Abs(b.Item3 - a.Item3) < 1e-6)
+                                               && l0.Count(c => c.Item1 == a.Item1 && Math.Abs(c.Item2 - a.Item2) < 400) == 1).ToList();
+                    if (stable.Count == 0) throw new AssertFail("brak opisu o stałej pozycji domyślnej");
+                    var pick = stable[0];
+                    var parts = Parts(SectionA(db, false));
+                    var at = new Point3d(TopLeftA.X + pick.Item2, TopLeftA.Y + pick.Item3, 0);
+                    var lbl = parts.First(x => x.Role == "LBL" && With(db, x.Id, e => ((DBText)e).TextString == pick.Item1 && ((DBText)e).AlignmentPoint.DistanceTo(at) < 0.01));
+                    var mk = parts.Single(x => x.Role == "MARKTXT" && x.Key == "V1.P1");
+                    Move(db, lbl.Id, 120, 80);
+                    Move(db, _titleA, 200, 0);
+                    Move(db, mk.Id, 50, 50);
+                    _sg6Label = lbl.Id;
+                    _sg6Text = pick.Item1;
+                    _sg6LabelPos = With(db, lbl.Id, e => ((DBText)e).AlignmentPoint);
+                    return $"opis „{pick.Item1}” {lbl.Id.Handle} → {_sg6LabelPos} (stałych pozycji: {stable.Count})";
+                });
+            });
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG6V", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG6V()
+        {
+            const string step = "SG6V";
+            Run(step, db =>
+            {
+                var msgs = ((IEnumerable)Plugin.GetType("BricsCadRc.Core.SectionUpdater", true).GetProperty("LastMessages").GetValue(null)).Cast<string>().ToList();
+                var all = CheckAll(db, true);
+                Check(step, "komunikat „A-A zaktualizowany: przesunięte opisy zachowane: 1; bez dopasowania: 0.” (+ kopia A)", () =>
+                {
+                    if (!msgs.Contains("A-A zaktualizowany: przesunięte opisy zachowane: 1; bez dopasowania: 0."))
+                        throw new AssertFail("komunikaty: " + string.Join(" | ", msgs));
+                    return Int("zaktualizowanych", msgs.Count(m => m.StartsWith("A-A zaktualizowany", StringComparison.Ordinal)), 2) + "; " + string.Join(" | ", msgs);
+                });
+                object a = null;
+                Check(step, "A: ten sam GUID, nowy tytuł (stary usunięty), aktualny, chmurek 0", () =>
+                {
+                    a = all.Single(i => (string)Prop(i, "Guid") == _guidA);
+                    _titleA2 = (ObjectId)Prop(a, "TitleId");
+                    return Eq("stary tytuł usunięty", _titleA.IsErased, true) + "; " + Eq("status", Status(a), "Aktualny") + "; "
+                         + Int("obiektów chmurki", Ms(db, e => e.Layer == "RC-SECTION-STATUS").Count, 0);
+                });
+                Check(step, "opis przesunięty jak wcześniej: punkt = TopLeft + Def(nowy) + (120, 80)", () =>
+                {
+                    var rec = Prop(a, "Record");
+                    var defs = ((IEnumerable)Prop(rec, "Parts")).Cast<object>()
+                        .Where(p => (string)Prop(p, "Role") == "LBL" && ((string)Prop(p, "Key")).EndsWith("|" + _sg6Text, StringComparison.Ordinal))
+                        .Select(p => ((ValueTuple<double, double>)Prop(p, "Def"))).ToList();
+                    var texts = Parts(a).Where(p => p.Role == "LBL").Select(p => With(db, p.Id, e => ((DBText)e).AlignmentPoint)).ToList();
+                    foreach (var d in defs)
+                    {
+                        var exp = new Point3d(TopLeftA.X + d.Item1 + 120, TopLeftA.Y + d.Item2 + 80, 0);
+                        if (texts.Any(t => t.DistanceTo(exp) < 0.01)) return "opis w " + exp;
+                    }
+                    throw new AssertFail($"brak opisu „{_sg6Text}” w TopLeft + Def + (120, 80); Def: " + string.Join(", ", defs) + "; opisy: " + string.Join(", ", texts));
+                });
+                Check(step, "tytuł: „SECTION A-A”, położenie = TopLeft + TITLEDEF + (200, 0)", () =>
+                {
+                    var rec = Prop(a, "Record");
+                    var td = (ValueTuple<double, double>)Prop(rec, "TitleDef");
+                    var (loc, txt) = With(db, _titleA2, e => (((MText)e).Location, ((MText)e).Contents));
+                    var exp = new Point3d(TopLeftA.X + td.Item1 + 200, TopLeftA.Y + td.Item2, 0);
+                    if (loc.DistanceTo(exp) > 0.01) throw new AssertFail($"tytuł w {loc}, oczekiwano {exp}");
+                    return Eq("litera w tytule", txt.Contains("SECTION A-A"), true) + "; tytuł w " + loc;
+                });
+                Check(step, "litera V1.P1 przesunięta (+50, +50) względem swojego znacznika, V0.P1 — domyślnie", () =>
+                {
+                    var parts = Parts(a);
+                    Vector3d Off(string key)
+                    {
+                        var poly = parts.Single(p => p.Role == "MARK" && p.Key == key).Id;
+                        var txt = parts.Single(p => p.Role == "MARKTXT" && p.Key == key).Id;
+                        var (v0, v1, v2) = With(db, poly, e => { var pl = (Polyline)e; return (pl.GetPoint3dAt(0), pl.GetPoint3dAt(1), pl.GetPoint3dAt(2)); });
+                        var lp = v2 + (v0 - v2).GetNormal() * 214 + (v1 - v2).GetNormal() * 130;
+                        return With(db, txt, e => ((MText)e).Location) - lp;
+                    }
+                    var o1 = Off("V1.P1"); var o0 = Off("V0.P1");
+                    if ((o1 - new Vector3d(50, 50, 0)).Length > 0.01 || o0.Length > 0.01) throw new AssertFail($"V1.P1 {o1}, V0.P1 {o0}");
+                    return $"V1.P1 {o1}; V0.P1 {o0}";
+                });
+                Check(step, "kopia A (SG8): zaktualizowana w swoim miejscu (TopLeft = A + (0, −8000)), aktualna, bez znaczników", () =>
+                {
+                    var c = all.Single(i => (string)Prop(i, "Guid") == _guidCopy);
+                    var tl = (ValueTuple<double, double, double>)Prop(Prop(c, "Record"), "TopLeft");
+                    var exp = TopLeftA + new Vector3d(0, -8000, 0);
+                    if (new Point3d(tl.Item1, tl.Item2, 0).DistanceTo(exp) > 0.01) throw new AssertFail($"TopLeft kopii {tl}, oczekiwano {exp}");
+                    return Eq("status", Status(c), "Aktualny") + "; " + Int("znaczników", Parts(c).Count(p => p.Role == "MARK"), 0);
+                });
+            });
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG7U", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG7U()
+        {
+            const string step = "SG7U";
+            Run(step, db => Check(step, "po _.UNDO 1: stary przekrój A (tytuł, opis w miejscu po MOVE), NIEAKTUALNY; nowy tytuł usunięty", () =>
+            {
+                var info = SectionA(db, true);
+                var pos = With(db, _sg6Label, e => ((DBText)e).AlignmentPoint);
+                return Eq("stary tytuł usunięty", _titleA.IsErased, false) + "; " + Eq("nowy tytuł usunięty", _titleA2.IsErased, true) + "; "
+                     + Eq("opis po MOVE", pos.DistanceTo(_sg6LabelPos) < 1e-6, true) + "; " + Eq("status", Status(info), "Nieaktualny");
+            }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG7R", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG7R()
+        {
+            const string step = "SG7R";
+            Run(step, db => Check(step, "po _.REDO: nowy przekrój A (aktualny), stary tytuł usunięty", () =>
+            {
+                var a = CheckAll(db, false).Single(i => (string)Prop(i, "Guid") == _guidA);
+                return Eq("stary tytuł usunięty", _titleA.IsErased, true) + "; " + Eq("nowy tytuł", (ObjectId)Prop(a, "TitleId") == _titleA2, true) + "; "
+                     + Eq("status", Status(a), "Aktualny");
+            }));
+        }
+
+        // ================================================================
+        // SG11b — adopcja starego przekroju (etap 4)
+        // ================================================================
+
+        [CommandMethod("RCSMOKE_SG_SG11BP", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG11BP()
+        {
+            const string step = "SG11BP";
+            Run(step, db => Check(step, "RC_SG_PICK = tytuł Z, RC_SG_ADOPT = obiekty starego przekroju Z (bez znaczników na rzutach) + rozkład D1, pal rzutu, tekst z RC_CUT_NOTE", () =>
+            {
+                var objs = _legacyZ.Where(id => id != _legacyZTitle && With(db, id, e => e.Layer != "SD-SECTION")).ToList();
+                _adoptPile = Circle(db, 5000, 3500, 300);   // pal rzutu (SD-Pile) — z dala od cięć
+                _adoptNote = NoteWithRcXData(db);           // tekst na warstwie przekroju z danymi RC_ — nie do usunięcia
+                var extra = new List<ObjectId> { _d1, _adoptPile, _adoptNote };
+                Environment.SetEnvironmentVariable("RC_SG_PICK", _legacyZTitle.Handle.ToString());
+                Environment.SetEnvironmentVariable("RC_SG_ADOPT", string.Join(",", objs.Concat(extra).Select(i => i.Handle.ToString())));
+                return "obiektów " + objs.Count.ToString(Inv) + " + 3 spoza przekroju, znaczników na rzutach " + (_legacyZ.Count - objs.Count - 1).ToString(Inv);
+            }));
+        }
+
+        private static ObjectId _adoptPile, _adoptNote;
+
+        private static ObjectId NoteWithRcXData(Database db)
+        {
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has("RC_CUT_NOTE"))
+                {
+                    rat.UpgradeOpen();
+                    var ra = new RegAppTableRecord { Name = "RC_CUT_NOTE" };
+                    rat.Add(ra);
+                    tr.AddNewlyCreatedDBObject(ra, true);
+                }
+                EnsureLayerTr(tr, db, "0-25TEXT");
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                var t = new DBText();
+                t.SetDatabaseDefaults(db);
+                t.Layer = "0-25TEXT";
+                t.TextString = "NOTE";
+                t.Height = 50;
+                t.Position = new Point3d(8500, -31000, 0);
+                var id = ms.AppendEntity(t);
+                tr.AddNewlyCreatedDBObject(t, true);
+                t.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, "RC_CUT_NOTE"),
+                                           new TypedValue((int)DxfCode.ExtendedDataAsciiString, "x"));
+                tr.Commit();
+                return id;
+            }
+        }
+
+        private static void EnsureLayerTr(Transaction tr, Database db, string name)
+        {
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (lt.Has(name)) return;
+            lt.UpgradeOpen();
+            var rec = new LayerTableRecord { Name = name };
+            lt.Add(rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG11BV", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG11BV()
+        {
+            const string step = "SG11BV";
+            Run(step, db =>
+            {
+                var msgs = ((IEnumerable)Plugin.GetType("BricsCadRc.Core.SectionUpdater", true).GetProperty("LastMessages").GetValue(null)).Cast<string>().ToList();
+                Check(step, "Z przejęty: komunikat, wszystkie stare obiekty (z tytułem i znacznikami) usunięte", () =>
+                {
+                    if (!msgs.Any(m => m.StartsWith("Z-Z przejęty", StringComparison.Ordinal))) throw new AssertFail("komunikaty: " + string.Join(" | ", msgs));
+                    return Int("starych obiektów nieusuniętych", _legacyZ.Count(id => !id.IsErased), 0) + "; " + string.Join(" | ", msgs);
+                });
+                Check(step, "wskazane obiekty spoza przekroju NIE usunięte: rozkład D1, pal rzutu, tekst z RC_CUT_NOTE; „pominięte …: 3”", () =>
+                {
+                    if (!msgs.Any(m => m.Contains("pominięte wskazane obiekty (płyta, zbrojenie, dane RC_, inne warstwy): 3;"))) throw new AssertFail("komunikaty: " + string.Join(" | ", msgs));
+                    string r = Eq("D1 usunięty", _d1.IsErased, false) + "; " + Eq("pal usunięty", _adoptPile.IsErased, false) + "; " + Eq("tekst RC_ usunięty", _adoptNote.IsErased, false);
+                    EraseAll(db, new List<ObjectId> { _adoptPile, _adoptNote });
+                    return r;
+                });
+                Check(step, "Z z danymi: aktualny, TopLeft = (8000, −30000), znaczniki 4 (2 rzuty), brak starego Z", () =>
+                {
+                    var z = CheckAll(db, true).Where(i => (string)Prop(i, "Letter") == "Z").ToList();
+                    if (z.Count != 1) throw new AssertFail("przekrojów Z: " + z.Count + " — " + Describe(z));
+                    var tl = (ValueTuple<double, double, double>)Prop(Prop(z[0], "Record"), "TopLeft");
+                    if (Math.Abs(tl.Item1 - 8000) > 0.01 || Math.Abs(tl.Item2 + 30000) > 0.01) throw new AssertFail("TopLeft " + tl);
+                    return Eq("status", Status(z[0]), "Aktualny") + "; " + Int("znaczników", Parts(z[0]).Count(p => p.Role == "MARK"), 4);
+                });
+            });
+        }
+
+        // ================================================================
+        // SG13 — wydruk / PDF przy nieaktualnych przekrojach (etap 2)
+        // ================================================================
+
+        private static string PdfDir => Path.Combine(Path.GetTempPath(), "rc-sg");
+        private static int _vetoBefore;
+
+        private static int GuardInt(string prop) => (int)Plugin.GetType(Guard, true).GetProperty(prop).GetValue(null);
+        private static List<string> GuardList(string prop)
+            => ((IEnumerable)Plugin.GetType(Guard, true).GetProperty(prop).GetValue(null)).Cast<string>().ToList();
+
+        [CommandMethod("RCSMOKE_SG_SG13P", CommandFlags.Modal)]
+        public void SG13P()
+        {
+            const string step = "SG13P";
+            Run(step, db => Check(step, "D2 → H10-06-200 (A zaktualizowany przy 150) → A NIEAKTUALNY; katalog PDF pusty", () =>
+            {
+                Directory.CreateDirectory(PdfDir);
+                foreach (var f in Directory.GetFiles(PdfDir, "sg13*.pdf")) File.Delete(f);
+                EditDist(db, _d2, "H10-06-200 B2", 200, 30);
+                _vetoBefore = GuardInt("VetoCount");
+                return Eq("status A", Status(SectionA2(db)), "Nieaktualny") + "; " + PdfDir;
+            }));
+        }
+
+        private static object SectionA2(Database db) => CheckAll(db, false).Single(i => (string)Prop(i, "Guid") == _guidA);
+
+        private static string PdfCheck(string name, bool exists)
+        {
+            var p = Path.Combine(PdfDir, name);
+            bool has = File.Exists(p) && new FileInfo(p).Length > 0;
+            return Eq(name + " istnieje", has, exists);
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13A", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13A()
+        {
+            const string step = "SG13A";
+            Run(step, db => Check(step, "-PLOT w trybie skryptu: komunikat (bez Veto), PDF powstał", () =>
+            {
+                var m = GuardList("LastPrintMessages");
+                if (!m.Any(x => x.StartsWith("-PLOT: tryb bez okien", StringComparison.Ordinal))) throw new AssertFail("komunikaty: " + string.Join(" | ", m));
+                return PdfCheck("sg13a.pdf", true) + "; " + Int("Veto", GuardInt("VetoCount") - _vetoBefore, 0) + "; " + string.Join(" | ", m);
+            }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13B", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13B()
+        {
+            const string step = "SG13B";
+            Run(step, db => Check(step, "EXPORTPDF w trybie skryptu: komunikat (bez Veto), PDF powstał", () =>
+            {
+                var m = GuardList("LastPrintMessages");
+                if (!m.Any(x => x.StartsWith("EXPORTPDF: tryb bez okien", StringComparison.Ordinal))) throw new AssertFail("komunikaty: " + string.Join(" | ", m));
+                return PdfCheck("sg13b.pdf", true) + "; " + Int("Veto", GuardInt("VetoCount") - _vetoBefore, 0);
+            }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13T", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13T()
+        {
+            const string step = "SG13T";
+            Run(step, db => Check(step, "tryb testowy RC_SG_TEST=veto", () => { Environment.SetEnvironmentVariable("RC_SG_TEST", "veto"); return "ustawiono"; }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13L", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13L()
+        {
+            const string step = "SG13L";
+            Run(step, db => Check(step, "tryb testowy RC_SG_TEST=interactive (zachowanie interaktywne, bez okna)", () => { Environment.SetEnvironmentVariable("RC_SG_TEST", "interactive"); return "ustawiono"; }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13LV", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13LV()
+        {
+            const string step = "SG13LV";
+            Run(step, db =>
+            {
+                Environment.SetEnvironmentVariable("RC_SG_TEST", null);
+                Check(step, "(command \"-PLOT\" …) z LISP przy nieaktualnych przekrojach (interaktywnie) → bez Veto, komunikat, PDF powstał, bez nowego rysunku", () =>
+                {
+                    var m = GuardList("LastPrintMessages");
+                    if (!m.Any(x => x.StartsWith("-PLOT: wywołanie z LISP", StringComparison.Ordinal))) throw new AssertFail("komunikaty: " + string.Join(" | ", m));
+                    return PdfCheck("sg13e.pdf", true) + "; " + Int("Veto (od SG13P)", GuardInt("VetoCount") - _vetoBefore, 2) + "; "
+                         + Int("dokumentów", Application.DocumentManager.Count, 1);
+                });
+            });
+        }
+
+        [CommandMethod("RCSMOKE_SG_SG13TV", CommandFlags.Modal | CommandFlags.NoUndoMarker)]
+        public void SG13TV()
+        {
+            const string step = "SG13TV";
+            Run(step, db =>
+            {
+                Environment.SetEnvironmentVariable("RC_SG_TEST", null);
+                // (command "-PLOT") bez odpowiedzi — po Veto pozostałe argumenty LISP trafiłyby do linii poleceń jako komendy („_N” = QNEW)
+                Check(step, "(command \"-PLOT\") i (command \"EXPORTPDF\" …) z Veto → 2 × Veto, PDF nie powstał, komunikat „zatrzymano”", () =>
+                {
+                    var m = GuardList("LastPrintMessages");
+                    if (!m.Any(x => x.StartsWith("EXPORTPDF: zatrzymano (tryb testowy", StringComparison.Ordinal))) throw new AssertFail("komunikaty: " + string.Join(" | ", m));
+                    return PdfCheck("sg13d.pdf", false) + "; " + Int("Veto", GuardInt("VetoCount") - _vetoBefore, 2) + "; "
+                         + Int("dokumentów", Application.DocumentManager.Count, 1);
+                });
+            });
+        }
+
+        // ================================================================
+        // SGO — komunikat przy otwarciu rysunku (etap 2)
+        // ================================================================
+
+        private static string _sgoPath = "";
+        private static int _sgoOpenBefore;
+
+        [CommandMethod("RCSMOKE_SG_SGOP", CommandFlags.Session)]
+        public void SGOP()
+        {
+            const string step = "SGOP";
+            Run(step, db => Check(step, "rysunek z przekrojem B NIEAKTUALNYM (baza w pamięci → DWG) → DocumentManager.Open", () =>
+            {
+                Directory.CreateDirectory(PdfDir);
+                _sgoPath = Path.Combine(PdfDir, "sgo-" + DateTime.Now.ToString("HHmmss", Inv) + ".dwg");
+                using (var side = new Database(true, true))
+                {
+                    var prev = HostApplicationServices.WorkingDatabase;
+                    try
+                    {
+                        HostApplicationServices.WorkingDatabase = side;
+                        EnsureLayer(side, Slab);
+                        var slab = Rect(side, 0, 0, 5000, 3000);
+                        var d = Dist(side, "H10-21-200 B1", "B1", "Y", 40, 40, 2920, 4920, 25, 200, 10);
+                        var ctx = Call(Engine, "PrepareSection", side, slab, new Point2d(-100, 1500), new Point2d(5100, 1500), new Point2d(0, 1600));
+                        Call(Engine, "DrawSectionRecorded", side, ctx, PlanOf(ctx), new Point3d(7000, 2000, 0), "B");
+                        EditDist(side, d, "H10-21-150 B1", 150, 33);
+                    }
+                    finally { HostApplicationServices.WorkingDatabase = prev; }
+                    side.SaveAs(_sgoPath, DwgVersion.Current);
+                }
+                _sgoOpenBefore = GuardInt("OpenCheckCount");
+                Application.DocumentManager.Open(_sgoPath, false);
+                return "otwarto " + _sgoPath;
+            }));
+        }
+
+        [CommandMethod("RCSMOKE_SG_SGOV", CommandFlags.Session)]
+        public void SGOV()
+        {
+            const string step = "SGOV";
+            Run(step, db =>
+            {
+                // W /automation Idle przychodzi dopiero po skrypcie (także po _.DELAY) — sprawdzamy zaplanowanie przy podpięciu rysunku
+                // (DocumentWatch → ScheduleOpenCheck) i wykonujemy tę samą procedurę, którą woła handler Idle (SectionGuard.ProcessPending).
+                Check(step, "otwarty rysunek czeka na sprawdzenie przy otwarciu (zaplanowane przy podpięciu, bez sprawdzenia w trakcie Open)", () =>
+                {
+                    var doc = Application.DocumentManager.MdiActiveDocument;
+                    bool pending = (bool)Call(Guard, "IsOpenCheckPending", doc);
+                    return Eq("aktywny = otwarty", string.Equals(Path.GetFullPath(doc.Name), Path.GetFullPath(_sgoPath), StringComparison.OrdinalIgnoreCase), true) + "; "
+                         + Eq("czeka", pending, true) + "; " + Int("sprawdzeń przed Idle", GuardInt("OpenCheckCount") - _sgoOpenBefore, 0);
+                });
+                Check(step, "procedura Idle (ProcessPending): komunikat „Rysunek ma przekroje nieaktualne …”, B-B: NIEAKTUALNY; bez zapisów", () =>
+                {
+                    var doc = Application.DocumentManager.MdiActiveDocument;
+                    int app = 0, mod = 0, er = 0;
+                    ObjectEventHandler a = (s, e) => app++;
+                    ObjectEventHandler mo = (s, e) => mod++;
+                    ObjectErasedEventHandler x = (s, e) => er++;
+                    int dbmod0 = Convert.ToInt32(Application.GetSystemVariable("DBMOD"), Inv);
+                    doc.Database.ObjectAppended += a; doc.Database.ObjectModified += mo; doc.Database.ObjectErased += x;
+                    try { Call(Guard, "ProcessPending"); }
+                    finally { doc.Database.ObjectAppended -= a; doc.Database.ObjectModified -= mo; doc.Database.ObjectErased -= x; }
+                    int dbmod1 = Convert.ToInt32(Application.GetSystemVariable("DBMOD"), Inv);
+                    var m = GuardList("LastOpenMessages");
+                    int n = GuardInt("OpenCheckCount") - _sgoOpenBefore;
+                    if (!m.Any(x => x.StartsWith("Rysunek ma przekroje nieaktualne", StringComparison.Ordinal)) || !m.Any(x => x.StartsWith("B-B: NIEAKTUALNY", StringComparison.Ordinal)))
+                        throw new AssertFail($"sprawdzeń przy otwarciu {n}, czekających {GuardInt("PendingOpenCount")}, aktywny {Application.DocumentManager.MdiActiveDocument?.Name}; komunikaty: " + string.Join(" | ", m));
+                    return Int("sprawdzeń", n, 1) + "; " + Eq("czeka po sprawdzeniu", (bool)Call(Guard, "IsOpenCheckPending", doc), false) + "; "
+                         + Int("zapisów", app + mod + er, 0) + "; " + Int("DBMOD po (przed " + dbmod0.ToString(Inv) + ")", dbmod1, dbmod0) + "; " + string.Join(" | ", m);
+                });
+                Check(step, "otwarty rysunek zamknięty bez zapisu", () =>
+                {
+                    foreach (Bricscad.ApplicationServices.Document d in Application.DocumentManager)
+                        if (string.Equals(Path.GetFullPath(d.Name), Path.GetFullPath(_sgoPath), StringComparison.OrdinalIgnoreCase))
+                        {
+                            d.CloseAndDiscard();
+                            return "zamknięto " + _sgoPath;
+                        }
+                    throw new AssertFail("nie znaleziono otwartego rysunku " + _sgoPath);
+                });
+            });
+        }
+
+        private static void Move(Database db, ObjectId id, double dx, double dy)
+        {
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                ((Entity)tr.GetObject(id, OpenMode.ForWrite)).TransformBy(Matrix3d.Displacement(new Vector3d(dx, dy, 0)));
+                tr.Commit();
+            }
         }
 
         // ================================================================

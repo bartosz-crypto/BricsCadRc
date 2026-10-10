@@ -78,6 +78,50 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
+        public void Stage3_PartDefaultsAndTitleDef_RoundTrip()
+        {
+            var a = Sample();
+            a.TitleDef = (2650.5, -735);
+            a.Parts[0].Def = (1234.25, -90.5);
+            a.Parts[0].Kind = SectionLabelCarry.KindBar;
+            a.Parts.Add(new SectionRecord.Part { Handle = "0000ABCF", Role = "SLAB", Key = "SEG#0", Def = (0, -225) });
+            var b = SectionRecord.Parse(a.ToLines())!;
+            Assert.That(b.ToLines(), Is.EqualTo(a.ToLines()));
+            Assert.That(b.TitleDef, Is.EqualTo(((double, double)?)(2650.5, -735)));
+            Assert.That(b.Parts[0].Def, Is.EqualTo(((double, double)?)(1234.25, -90.5)));
+            Assert.That(b.Parts[0].Kind, Is.EqualTo("BAR"));
+            Assert.That(b.Parts[0].Key, Is.EqualTo("LBL#03|105"));
+            Assert.That(b.Parts[1].Def, Is.Null);
+            Assert.That(b.Parts[2].Def, Is.EqualTo(((double, double)?)(0, -225)));
+            Assert.That(b.Parts[2].Kind, Is.EqualTo(""));
+            var c = b.Parts[0].WithHandle("0000FFFF");
+            Assert.That((c.Handle, c.Role, c.Key, c.Def, c.Kind), Is.EqualTo(("0000FFFF", "LBL", "LBL#03|105", b.Parts[0].Def, "BAR")));
+        }
+
+        [Test]
+        public void Stage1Record_WithoutDefaults_LinesUnchanged()
+        {
+            // rekord etapu 1 (bez pozycji domyślnych) — zapis bez nowych pól / kluczy
+            var a = Sample();
+            Assert.That(a.ToLines().Any(l => l.StartsWith("TITLEDEF=", StringComparison.Ordinal)), Is.False);
+            Assert.That(a.ToLines().Where(l => l.StartsWith("PART=", StringComparison.Ordinal)),
+                        Is.EqualTo(new[] { "PART=0000ABCD|LBL|LBL#03\\p105", "PART=0000ABCE|MARK|V0.P1" }));
+            var b = SectionRecord.Parse(a.ToLines())!;
+            Assert.That(b.TitleDef, Is.Null);
+            Assert.That(b.Parts.All(p => p.Def == null && p.Kind == ""), Is.True);
+        }
+
+        [Test]
+        public void Stage3_BrokenDefault_PartKept()
+        {
+            var r = SectionRecord.Parse(new[] { "FORMAT=2", "PART=00000010|LBL|LBL#0\\p05|x;y|DOT", "TITLEDEF=abc" })!;
+            Assert.That(r.Parts.Single().Key, Is.EqualTo("LBL#0|05"));
+            Assert.That(r.Parts.Single().Kind, Is.EqualTo("DOT"));
+            Assert.That(r.Parts.Single().Def, Is.Null);
+            Assert.That(r.TitleDef, Is.Null);
+        }
+
+        [Test]
         public void Parse_NotARecord_Null()
         {
             Assert.That(SectionRecord.Parse(new[] { "GUID=x" }), Is.Null);

@@ -251,10 +251,34 @@ namespace BricsCadRc.Core
         /// </summary>
         public static int DrawSection(Database db, SectionContext ctx, SectionPlanner.Result r, Point3d topLeft, string letter,
                                       SectionRecord rec = null)
+            => DrawSectionWith(db, ctx, r, topLeft, letter, rec, null);
+
+        /// <summary>
+        /// Opcje rysowania przy RC_SECTION_UPDATE (bezpiecznik przekrojów, etap 3): przesunięcia opisów (indeks w Result.Labels),
+        /// tytułu i liter znaczników (klucz V&lt;rzut&gt;.P1|P2) względem pozycji domyślnych; DrawMarks = false — bez znaczników
+        /// na rzutach (przekrój bez znaczników, np. kopia). null = rysunek jak RC_SECTION (bit w bit).
+        /// </summary>
+        public sealed class SectionDrawOptions
+        {
+            public Dictionary<int, (double DX, double DY)> LabelOffsets = new Dictionary<int, (double DX, double DY)>();
+            public Vector2d TitleOffset;
+            public Dictionary<string, Vector2d> MarkTextOffsets = new Dictionary<string, Vector2d>(StringComparer.Ordinal);
+            public bool DrawMarks = true;
+        }
+
+        /// <summary>
+        /// <see cref="DrawSection"/> z opcjami RC_SECTION_UPDATE (<paramref name="opt"/> = null — bez zmian). Pozycje domyślne
+        /// (bez przesunięć) zapisywane w rekordzie: opisy i wierzchołek [0] betonu (PART …|x,y|rodzaj), tytuł (TITLEDEF) —
+        /// względem <paramref name="topLeft"/>.
+        /// </summary>
+        public static int DrawSectionWith(Database db, SectionContext ctx, SectionPlanner.Result r, Point3d topLeft, string letter,
+                                          SectionRecord rec, SectionDrawOptions opt)
         {
             int n = 0;
-            var parts = new List<(Entity e, string role, string key)>();
+            var parts = new List<(Entity e, string role, string key, (double X, double Y)? def, string kind)>();
             string pRole = null, pKey = null;   // część dodawana przez Add (bezpiecznik); null = bez znacznika
+            (double X, double Y)? pDef = null;  // pozycja domyślna części względem topLeft (etap 3)
+            string pKind = "";
             Entity titleEnt = null;
             double T = ctx.Input.Thickness;
             double ox = topLeft.X - r.UMin, oy = topLeft.Y;
@@ -288,9 +312,11 @@ namespace BricsCadRc.Core
                 {
                     ms.AppendEntity(e); tr.AddNewlyCreatedDBObject(e, true); n++;
                     if (e is DBText dbt) dbt.AdjustAlignment(db);
-                    if (rec != null && pRole != null) parts.Add((e, pRole, pKey));
+                    if (rec != null && pRole != null) parts.Add((e, pRole, pKey, pDef, pKind));
                 }
-                void Tag(string role, string key) { pRole = role; pKey = key; }
+                void Tag(string role, string key) { pRole = role; pKey = key; pDef = null; pKind = ""; }
+                // pozycja domyślna względem topLeft: W(u, v) − topLeft = (u − UMin, v)
+                void TagDef(string role, string key, double u, double v, string kind) { Tag(role, key); pDef = (u - r.UMin, v); pKind = kind ?? ""; }
                 int idx = 0;
                 Polyline Pl(IList<(double U, double V)> pts, string layer, bool closed)
                 {
@@ -327,7 +353,12 @@ namespace BricsCadRc.Core
 
                 // Beton
                 idx = 0;
-                foreach (var sg in r.Segments) { Tag("SLAB", "SEG#" + idx++); Add(Pl(sg.Polygon, SectionSlabLayer, true)); }
+                foreach (var sg in r.Segments)
+                {
+                    if (sg.Polygon.Count > 0) TagDef("SLAB", "SEG#" + idx++, sg.Polygon[0].U, sg.Polygon[0].V, "");
+                    else Tag("SLAB", "SEG#" + idx++);
+                    Add(Pl(sg.Polygon, SectionSlabLayer, true));
+                }
 
                 // Pręty w widoku i przekroju
                 idx = 0;
@@ -395,19 +426,36 @@ namespace BricsCadRc.Core
                 idx = 0;
                 foreach (var lb in r.Labels)
                 {
+                    int li = idx;
                     string lk = "#" + idx++ + "|" + lb.Text;
-                    Tag("LBL", "LBL" + lk);
-                    Add(Txt(lb.Text, lb.U, lb.V, lb.Height, SectionTextLayer));
+                    string kind = SectionLabelCarry.KindOf(lb.HasLeader, r.Dots.Any(d => d.TinNib && d.PosNr == lb.Text));
+                    TagDef("LBL", "LBL" + lk, lb.U, lb.V, kind);
+                    // RC_SECTION_UPDATE: ręczne przesunięcie opisu (etap 3); bez przesunięcia — dawne wyrażenia bit w bit
+                    (double DX, double DY) off = (0, 0);
+                    bool moved = opt != null && opt.LabelOffsets.TryGetValue(li, out off);
+                    Add(moved ? Txt(lb.Text, lb.U + off.DX, lb.V + off.DY, lb.Height, SectionTextLayer)
+                              : Txt(lb.Text, lb.U, lb.V, lb.Height, SectionTextLayer));
                     minV = Math.Min(minV, lb.V);
                     if (!lb.HasLeader) continue;
                     bool down = lb.LeaderV < lb.V;
                     double vStart = down ? lb.V - 10 : lb.V + lb.Height + 10;
                     double tip = lb.LeaderV, ah = down ? 40 : -40;
                     Tag("LDR", "LDR" + lk);
-                    Add(Ln(lb.U, vStart, lb.U, tip + ah, SectionTextLayer));
-                    var arrow = new Solid(W(lb.U, tip), W(lb.U - 9, tip + ah), W(lb.U + 9, tip + ah)) { Layer = SectionTextLayer };
+                    if (!moved)
+                    {
+                        Add(Ln(lb.U, vStart, lb.U, tip + ah, SectionTextLayer));
+                        var arrow = new Solid(W(lb.U, tip), W(lb.U - 9, tip + ah), W(lb.U + 9, tip + ah)) { Layer = SectionTextLayer };
+                        Tag("ARW", "ARW" + lk);
+                        Add(arrow);
+                        continue;
+                    }
+                    // tekst i początek leadera przesunięte; grot o dU tylko, gdy zostaje na pręcie tej pozycji
+                    double tu = SectionLabelCarry.LeaderTipU(lb.U, off.DX, r.Bars.Where(b => b.PosNr == lb.Text && b.Path.Count > 0)
+                                                                              .Select(b => (b.Path.Min(q => q.U), b.Path.Max(q => q.U))));
+                    Add(Ln(lb.U + off.DX, vStart + off.DY, tu, tip + ah, SectionTextLayer));
+                    var arrowM = new Solid(W(tu, tip), W(tu - 9, tip + ah), W(tu + 9, tip + ah)) { Layer = SectionTextLayer };
                     Tag("ARW", "ARW" + lk);
-                    Add(arrow);
+                    Add(arrowM);
                 }
                 foreach (var p in r.Piles) minV = Math.Min(minV, p.Bottom - 110);
 
@@ -437,13 +485,16 @@ namespace BricsCadRc.Core
                     TextHeight = 4, Layer = SectionTitleLayer, TextStyleId = titleStyle,
                     Location = W((r.UMin + r.UMax) / 2, minV - 260), Attachment = AttachmentPoint.MiddleCenter
                 };
+                if (rec != null) rec.TitleDef = ((r.UMin + r.UMax) / 2 - r.UMin, minV - 260);
+                if (opt != null && opt.TitleOffset.Length > 1e-9)
+                    title.Location = title.Location + new Vector3d(opt.TitleOffset.X, opt.TitleOffset.Y, 0);   // tytuł przesunięty ręcznie
                 Tag(null, null);   // tytuł = głowa przekroju, nie część
                 Add(title);
                 titleEnt = title;
 
                 // Znaczniki przekroju na rzutach
                 var a = ctx.P2 - ctx.P1;
-                if (a.Length > 1e-6)
+                if (a.Length > 1e-6 && (opt == null || opt.DrawMarks))
                 {
                     a = a.GetNormal();
                     var nrm = ctx.Input.CutAlongX ? new Vector2d(0, ctx.Input.LookSign) : new Vector2d(ctx.Input.LookSign, 0);
@@ -464,6 +515,7 @@ namespace BricsCadRc.Core
                             mk.AddVertexAt(3, t2, 0, 0, 0);
                             Add(mk);
                             var lp = p + dir * 214 + nrm * 130;
+                            if (opt != null && opt.MarkTextOffsets.TryGetValue(mkKey, out var mo)) lp = lp + mo;   // litera przesunięta ręcznie
                             Tag("MARKTXT", mkKey);
                             Add(new MText
                             {
@@ -491,16 +543,17 @@ namespace BricsCadRc.Core
 
         /// <summary>Zapis danych przekroju w transakcji rysowania: RegApp, XData części i tytułu, Xrecord rekordu (lista części).</summary>
         private static void WriteSectionData(Transaction tr, Database db, SectionContext ctx, SectionRecord rec, Entity title,
-                                             List<(Entity e, string role, string key)> parts)
+                                             List<(Entity e, string role, string key, (double X, double Y)? def, string kind)> parts)
         {
             EnsureRegApp(tr, db, SectionTitleApp);
             EnsureRegApp(tr, db, SectionPartApp);
             string th = XLink.Norm(title.Handle.ToString());
             rec.Parts.Clear();
-            foreach (var (e, role, key) in parts)
+            foreach (var (e, role, key, def, kind) in parts)
             {
                 e.XData = PartXData(th, role, key, rec.Guid);
-                rec.Parts.Add(new SectionRecord.Part { Handle = XLink.Norm(e.Handle.ToString()), Role = role, Key = key });
+                rec.Parts.Add(new SectionRecord.Part
+                    { Handle = XLink.Norm(e.Handle.ToString()), Role = role, Key = key, Def = def, Kind = kind ?? "" });
             }
             title.XData = TitleXData(rec.Guid, rec.Letter, ctx.PickedHandle, ctx.OuterHandle, th);
             WriteRecord(tr, title, rec);
@@ -568,14 +621,22 @@ namespace BricsCadRc.Core
         /// odcisk z policzonego planu. Części dopisuje DrawSection.
         /// </summary>
         public static SectionRecord BuildSectionRecord(SectionContext ctx, SectionPlanner.Result plan, string letter, Point3d topLeft)
+            => BuildSectionRecord(ctx, plan, letter, topLeft, null, null, null);
+
+        /// <summary>
+        /// Rekord przekroju; RC_SECTION_UPDATE (etap 3) podaje flagi nadpisania z poprzedniego rekordu (P1: nadpisanie zostaje)
+        /// i GUID przekroju (ten sam przekrój). null = jak RC_SECTION (flagi z porównania z opisem płyty, nowy GUID).
+        /// </summary>
+        public static SectionRecord BuildSectionRecord(SectionContext ctx, SectionPlanner.Result plan, string letter, Point3d topLeft,
+                                                       bool? thkOverridden, bool? sslOverridden, string guid)
         {
             var inp = ctx.Input;
-            bool thkOvr = Math.Abs(inp.Thickness - (ctx.DescThickness ?? new SectionPlanner.Input().Thickness)) > 1e-6;
-            bool sslOvr = !string.Equals((inp.Ssl ?? "").Trim(), (ctx.DescSsl ?? "").Trim(), StringComparison.Ordinal);
+            bool thkOvr = thkOverridden ?? Math.Abs(inp.Thickness - (ctx.DescThickness ?? new SectionPlanner.Input().Thickness)) > 1e-6;
+            bool sslOvr = sslOverridden ?? !string.Equals((inp.Ssl ?? "").Trim(), (ctx.DescSsl ?? "").Trim(), StringComparison.Ordinal);
             var st = SectionFingerprint.Build(inp, plan, SectionSourceOf(ctx, letter, thkOvr, sslOvr));
             return new SectionRecord
             {
-                Guid = System.Guid.NewGuid().ToString("D"), Letter = letter ?? "",
+                Guid = string.IsNullOrEmpty(guid) ? System.Guid.NewGuid().ToString("D") : guid, Letter = letter ?? "",
                 P1 = (ctx.P1.X, ctx.P1.Y), P2 = (ctx.P2.X, ctx.P2.Y),
                 P1Rel = (ctx.P1.X - ctx.MinPoint.X, ctx.P1.Y - ctx.MinPoint.Y), P2Rel = (ctx.P2.X - ctx.MinPoint.X, ctx.P2.Y - ctx.MinPoint.Y),
                 CutAlongX = inp.CutAlongX, LookSign = inp.LookSign >= 0 ? 1 : -1, LookPt = (ctx.LookPt.X, ctx.LookPt.Y),
