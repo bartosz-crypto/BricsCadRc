@@ -13,18 +13,23 @@ namespace BricsCadRc.Core
     {
         /// <summary>Kod rozkładu z krotnością (CountDisplay = Count × krotność) zachowywaną po gripie: BM (B+T), BS (pręty boczne).</summary>
         public static bool KeepsMultiplicity(string layerCode)
-            => layerCode == BeamGeometry.CodeBoth || layerCode == BeamGeometry.CodeSide;
+            => layerCode == BeamGeometry.CodeBoth || layerCode == BeamGeometry.CodeSide || layerCode == BeamGeometry.CodeSideU;
 
         /// <summary>
-        /// Tekst liczby prętów w opisie: BM z CountDisplay = k · Count (k ≥ 2) → „kxCount” (np. „2x4”); inaczej CountDisplay ?? Count.
+        /// Tekst liczby prętów w opisie: BM i BC (K4, UB SIDE: Count = 1 w rzucie, CountDisplay = liczba poziomów) z CountDisplay
+        /// = k · Count (k ≥ 2) → „kxCount” (np. „2x4”, „3x1”); BS (K4, pręty boczne: Count = 2 boki w rzucie, CountDisplay = 2 · n)
+        /// → „Countxn” („2x1”, „2x3”, także n = 1); inaczej CountDisplay ?? Count.
         /// </summary>
         public static string CountText(string layerCode, int count, int? countDisplay)
         {
             int eff = countDisplay ?? count;
-            if (layerCode == BeamGeometry.CodeBoth && countDisplay.HasValue && count > 0
+            string I(int x) => x.ToString(CultureInfo.InvariantCulture);
+            if ((layerCode == BeamGeometry.CodeBoth || layerCode == BeamGeometry.CodeSideU) && countDisplay.HasValue && count > 0
                 && countDisplay.Value % count == 0 && countDisplay.Value / count >= 2)
-                return (countDisplay.Value / count).ToString(CultureInfo.InvariantCulture) + "x" + count.ToString(CultureInfo.InvariantCulture);
-            return eff.ToString(CultureInfo.InvariantCulture);
+                return I(countDisplay.Value / count) + "x" + I(count);
+            if (layerCode == BeamGeometry.CodeSide && countDisplay.HasValue && count > 1 && countDisplay.Value % count == 0)
+                return I(count) + "x" + I(countDisplay.Value / count);
+            return I(eff);
         }
     }
 }

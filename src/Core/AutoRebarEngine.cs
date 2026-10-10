@@ -236,9 +236,22 @@ namespace BricsCadRc.Core
             // Strip decomposition (Etap 1E + 1B Faza 2 dispatch).
             // horizontal=true (X-bars/B1) → DecomposeIntoYStrips (Y-axis scan).
             // horizontal=false (Y-bars/B2) → DecomposeIntoXStrips (X-axis scan).
+            // K7 (E2): płyta ze strefami belek — wielokąt pasów = obrys − odcięcia przy belce (BeamMeshRegion); bez stref — null
+            // (podział bit w bit jak dawniej)
+            var e2 = BeamMeshRegion(db, slabPolyId, outerVertices, layerCode.StartsWith("T"), horizontal, diameter, spacing, cover);
+            if (e2 != null && e2.Cuts.Count > 0)
+                ed.WriteMessage($"\n[AutoRebar] Belki na płycie: {e2.Zones} stref(a) — siatka {layerCode} przy belce (E2): " +
+                                (layerCode.StartsWith("T")
+                                    ? "równoległe od s/2 od lica wewnętrznego, prostopadłe bez zmian (do linii uskoku)"
+                                    : $"równoległe od 40 + {diameter} od lica wewnętrznego, prostopadłe prosto do linii uskoku − {cover:F0}") +
+                                "; krawędzie przy belce bez UB 01/02.\n" +
+                                (layerCode.StartsWith("B")
+                                    ? "[AutoRebar] Płyta ma strefy belek — po zmianie siatki dolnej ponów Beam (RC_GENERATE → Beam): " +
+                                      "B IN NIB bierze podział i numer pozycji z siatki dolnej.\n"
+                                    : ""));
             List<StripBounds> strips = horizontal
-                ? DecomposeStrips(plan.SlabVertices, scanIsY: true)
-                : DecomposeStrips(plan.SlabVertices, scanIsY: false);
+                ? DecomposeStrips(plan.SlabVertices, e2?.Cuts, scanIsY: true)
+                : DecomposeStrips(plan.SlabVertices, e2?.Cuts, scanIsY: false);
             int validStrips   = strips.Count(s => s.Valid);
             int skippedStrips = strips.Count - validStrips;
 
@@ -278,6 +291,23 @@ namespace BricsCadRc.Core
                 else
                     ed.WriteMessage($"\n*** WARNING *** [AutoRebar] Nie znaleziono rzutu dolnego z rozkładami {bottomCode} " +
                         "(obrys o tym samym kształcie) — góra liczona z planu teoretycznego dołu.\n");
+
+                // K7 (poprawka recenzji 2): rzut górny bez stref RC_BEAM, a rzut dolny ze strefami — siatka T bez E2 (tylko komunikat)
+                if (e2 == null && nib != null && bottomView != null && !bottomView.OutlineId.IsNull && bottomView.OutlineId != slabPolyId)
+                {
+                    int bottomZones = 0;
+                    try
+                    {
+                        using (var trZ = db.TransactionManager.StartOpenCloseTransaction())
+                        {
+                            bottomZones = BeamStore.ZonesOfSlab(trZ, db, bottomView.OutlineId, bottomView.Verts).Count;
+                            trZ.Commit();
+                        }
+                    }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.GenerateLayer.BottomZones", ex); }
+                    if (bottomZones > 0)
+                        ed.WriteMessage("\n*** WARNING *** [AutoRebar] rzut górny bez strefy belki — siatka T bez E2 (RC_BEAM na rzucie górnym)\n");
+                }
             }
 
             // Góra: pale — zakłady ≥ PileLapClearance od lica pala (chyba że geometria wymusza)
@@ -299,7 +329,7 @@ namespace BricsCadRc.Core
 
                 // Nib: góra przy krawędziach uskoku = UB 01/02 (każdy pręt górny ma swój UB)
                 var nibPlan = nib != null && layerCode.StartsWith("T")
-                    ? PlanNibStepBars(nib, strips, horizontal, bottomView, cover, spacing) : null;
+                    ? PlanNibStepBars(nib, strips, horizontal, bottomView, cover, spacing, e2) : null;
 
                 foreach (var strip in strips.Where(s => s.Valid))
                 {
@@ -678,6 +708,7 @@ namespace BricsCadRc.Core
             (ObjectId, BarData)? matchedTemplate;
             int existingUBTemplateCount;
             List<Point2d> slabVertices;
+            List<Point2d> outerForBeams = null;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -733,8 +764,21 @@ namespace BricsCadRc.Core
 
                 oldUBs = ScanOldUBDistributions(db, tr, slabVertices, layerCode, filterDirection,
                                                 pnr => nibUB ? pnr == NibUBPosNr : pnr != NibUBPosNr);
+                if (nib == null) outerForBeams = slabVertices;
                 tr.Commit();
             }
+
+            // K7 (E2): UB 01/02 płyty ze strefami belek — pasy prętów głównych na wielokącie siatki przy belce (dół; przy nibie — góra,
+            // jak UB na uskoku), krawędzie przy belce bez UB 01/02. UB 03 (nibUB) — bez zmian (liczba z prętów dołu rzutu dolnego).
+            // Odcięcie dołem (bez nibu) = 40 + Ø siatki dolnej tego kierunku — Ø z istniejących rozkładów B1 / B2 płyty (jak GenerateLayer);
+            // brak siatki → Ø10 + ostrzeżenie (przy nibie reguła góry, Ø bez znaczenia)
+            int? meshDia = nibUB || nib != null ? null : MeshBottomDiaOf(db, slabPolyId, isUBB1);
+            var e2 = nibUB ? null
+                : BeamMeshRegion(db, slabPolyId, nib != null ? nib.Outer : outerForBeams, top: nib != null, barsAlongX: isUBB1,
+                                 d: meshDia ?? MeshBottomDia, spacing: spacing, cover: cover);
+            if (e2 != null && nib == null && meshDia == null)
+                ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Płyta ma strefy belek, a nie ma siatki {(isUBB1 ? "B1" : "B2")} — " +
+                                $"pasy UB przy belce liczone dla Ø{MeshBottomDia} (40 + {MeshBottomDia} od lica); wygeneruj siatkę przed UB.\n");
 
             // Edge enumeration — classify all polyline edges
             var edges = GeometryHelper.EnumerateAxisAlignedEdges(slabVertices);
@@ -815,6 +859,18 @@ namespace BricsCadRc.Core
                 bool   interiorOnPositiveSide = GeometryHelper.IsPointInsidePolygon(slabVertices, testPoint);
                 string symbolSide = interiorOnPositiveSide ? "Left" : "Right";
 
+                // K7 (E2): część krawędzi przy belce — bez UB 01/02 (koniec belki zamykają pionowe U-bary)
+                if (e2 != null)
+                {
+                    var keep = EdgePartsOutsideBeams(e2, isUBB1, edgeCoord, segLow, segHigh);
+                    if (keep.Count != 1 || Math.Abs(keep[0].Lo - segLow) > 1e-6 || Math.Abs(keep[0].Hi - segHigh) > 1e-6)
+                        ed.WriteMessage($"\n[AutoRebar UB] Belka: krawędź {edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] przy belce — UB 01/02 " +
+                                        (keep.Count == 0 ? "pominięte (E2).\n"
+                                                         : "tylko na " + string.Join(", ", keep.Select(k => $"[{k.Lo:F0}..{k.Hi:F0}]")) + " (E2).\n"));
+                    foreach (var (klo, khi) in keep) validSegments.Add((edgeCoord, klo, khi, symbolSide));
+                    continue;
+                }
+
                 validSegments.Add((edgeCoord, segLow, segHigh, symbolSide));
             }
 
@@ -862,7 +918,7 @@ namespace BricsCadRc.Core
                 // UB na krawędzi dzielimy dokładnie jak te pasy — z tymi samymi odsunięciami
                 // i trybem rozstawu — żeby LICZBA I POŁOŻENIE UB = pręty dochodzące do krawędzi.
                 // (Wcześniej jeden UB na całą krawędź z równym rozstawem: np. 92 UB przy 27+39+27=93 prętach.)
-                var mainStrips = DecomposeStrips(slabVertices, scanIsY: isUBB1)
+                var mainStrips = DecomposeStrips(slabVertices, e2?.Cuts, scanIsY: isUBB1)
                     .Where(st => st.Valid).ToList();
 
                 // Nib: rzeczywiste pręty dołu tego rzutu (ten sam obrys) — liczba i położenie UB jak pręty
@@ -878,7 +934,7 @@ namespace BricsCadRc.Core
                     : null;
 
                 var nibPlan = nib != null && !nibUB
-                    ? PlanNibStepBars(nib, mainStrips, isUBB1, ubBottom, cover, spacing) : null;
+                    ? PlanNibStepBars(nib, mainStrips, isUBB1, ubBottom, cover, spacing, e2) : null;
 
                 foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
@@ -1381,6 +1437,15 @@ namespace BricsCadRc.Core
         ///     w środku i na górze pasa → pręty nigdy nie wychodzą poza płytę.
         /// </summary>
         private static List<StripBounds> DecomposeStrips(List<Point2d> vertices, bool scanIsY)
+            => DecomposeStrips(vertices, null, scanIsY);
+
+        /// <summary>
+        /// Jak wyżej, z obszarem odcięcia <paramref name="cutRegion"/> (K7 / E2 — siatka przy belce: pętle sumy prostokątów
+        /// <see cref="BeamGeometry.MeshCutRects"/>): obszar pasów = wielokąt − odcięcia (przecięcia linii skanu = odcinki wielokąta
+        /// minus odcinki odcięć, punkt w obszarze = w wielokącie i poza odcięciami, cięcia skanu także na bokach odcięć).
+        /// cutRegion = null — dokładnie dawny podział (bit w bit).
+        /// </summary>
+        private static List<StripBounds> DecomposeStrips(List<Point2d> vertices, List<List<Point2d>> cutRegion, bool scanIsY)
         {
             var result = new List<StripBounds>();
             if (vertices == null || vertices.Count < 3) return result;
@@ -1388,8 +1453,32 @@ namespace BricsCadRc.Core
             // Przestrzeń skanu: X = perp (wzdłuż prętów), Y = scan
             var pts = scanIsY ? vertices : vertices.Select(v => new Point2d(v.Y, v.X)).ToList();
 
+            // E2: odcięcia w przestrzeni skanu; funkcje przecięć / „w obszarze” (bez odcięć — dawne wywołania)
+            List<List<(double X, double Y)>> cutLoops = cutRegion == null || cutRegion.Count == 0 ? null
+                : cutRegion.Select(l => l.Select(v => scanIsY ? (v.X, v.Y) : (v.Y, v.X)).ToList()).ToList();
+            Func<double, List<double>> isect = y => GeometryHelper.FindIntersectionsH(pts, y);
+            Func<Point2d, bool> inside = p => GeometryHelper.IsPointInsidePolygon(pts, p);
+            if (cutLoops != null)
+            {
+                isect = y =>
+                {
+                    var b = GeometryHelper.FindIntersectionsH(pts, y);
+                    var baseIv = new List<(double Lo, double Hi)>();
+                    for (int k = 0; k + 1 < b.Count; k += 2) baseIv.Add((b[k], b[k + 1]));
+                    var left = RectilinearPolygons.SubtractIntervals(baseIv, RectilinearPolygons.IntervalsOnLine(cutLoops, true, y));
+                    return left.SelectMany(iv => new[] { iv.Lo, iv.Hi }).ToList();
+                };
+                inside = p => GeometryHelper.IsPointInsidePolygon(pts, p) && !RectilinearPolygons.Inside(cutLoops, p.X, p.Y);
+            }
+
             // Unikalne współrzędne scan (eps 1e-3)
-            var raw = pts.Select(v => v.Y).OrderBy(y => y).ToList();
+            var raw = pts.Select(v => v.Y).ToList();
+            if (cutLoops != null)
+            {
+                double yMin = raw.Min(), yMax = raw.Max();
+                raw.AddRange(cutLoops.SelectMany(l => l.Select(v => v.Y)).Where(y => y > yMin && y < yMax));
+            }
+            raw = raw.OrderBy(y => y).ToList();
             var coords = new List<double>();
             foreach (double y in raw)
                 if (coords.Count == 0 || Math.Abs(y - coords[coords.Count - 1]) >= 1e-3)
@@ -1400,8 +1489,8 @@ namespace BricsCadRc.Core
             var cuts = new List<double> { coords[0] };
             for (int i = 1; i < coords.Count - 1; i++)
             {
-                var below = GeometryHelper.FindIntersectionsH(pts, coords[i] - 0.5);
-                var above = GeometryHelper.FindIntersectionsH(pts, coords[i] + 0.5);
+                var below = isect(coords[i] - 0.5);
+                var above = isect(coords[i] + 0.5);
                 if (!XIntersectionsEqual(below, above)) cuts.Add(coords[i]);
             }
             cuts.Add(coords[coords.Count - 1]);
@@ -1413,8 +1502,8 @@ namespace BricsCadRc.Core
             {
                 double lo = cuts[i], hi = cuts[i + 1];
                 double pr = Math.Min(0.5, (hi - lo) * 0.25);
-                var a = GeometryHelper.FindIntersectionsH(pts, lo + pr);
-                var b = GeometryHelper.FindIntersectionsH(pts, hi - pr);
+                var a = isect(lo + pr);
+                var b = isect(hi - pr);
                 bool skewed = a.Count == b.Count && a.Zip(b, (u, w) => Math.Abs(u - w)).Any(d => d > 1.0);
                 int nSub = skewed ? Math.Max(1, (int)Math.Ceiling((hi - lo) / SkewBandHeight)) : 1;
                 for (int k = 0; k < nSub; k++)
@@ -1426,9 +1515,9 @@ namespace BricsCadRc.Core
                 double h     = hi - lo;
                 double probe = Math.Min(0.5, h * 0.25);
 
-                var xsMid = GeometryHelper.FindIntersectionsH(pts, (lo + hi) * 0.5 + 0.1);
-                var xsLo  = GeometryHelper.FindIntersectionsH(pts, lo + probe);
-                var xsHi  = GeometryHelper.FindIntersectionsH(pts, hi - probe);
+                var xsMid = isect((lo + hi) * 0.5 + 0.1);
+                var xsLo  = isect(lo + probe);
+                var xsHi  = isect(hi - probe);
 
                 if (xsMid.Count < 2 || xsMid.Count % 2 != 0)
                 {
@@ -1467,8 +1556,8 @@ namespace BricsCadRc.Core
                         ScanHigh        = hi,
                         PerpLow         = pLo,
                         PerpHigh        = pHi,
-                        LowerIsExternal = IsBoundaryExternal(pts, pLo, pHi, lo - 0.5),
-                        UpperIsExternal = IsBoundaryExternal(pts, pLo, pHi, hi + 0.5),
+                        LowerIsExternal = IsBoundaryExternal(inside, pLo, pHi, lo - 0.5),
+                        UpperIsExternal = IsBoundaryExternal(inside, pLo, pHi, hi + 0.5),
                         Valid           = true,
                     });
                 }
@@ -1510,7 +1599,7 @@ namespace BricsCadRc.Core
         /// Czy za końcem pasa (linia scan = <paramref name="scanProbe"/>) choć na części zakresu
         /// [pLo, pHi] nie ma płyty → koniec pasa to krawędź płyty (otulina, reguła 70 mm).
         /// </summary>
-        private static bool IsBoundaryExternal(List<Point2d> pts, double pLo, double pHi, double scanProbe)
+        private static bool IsBoundaryExternal(Func<Point2d, bool> inside, double pLo, double pHi, double scanProbe)
         {
             double width = pHi - pLo;
             int    n     = Math.Max(4, Math.Min(400, (int)Math.Ceiling(width / 50.0)));
@@ -1518,7 +1607,7 @@ namespace BricsCadRc.Core
             {
                 // próbki od pLo+1 do pHi-1 (bez samych narożników)
                 double x = pLo + 1.0 + (width - 2.0) * j / n;
-                if (!GeometryHelper.IsPointInsidePolygon(pts, new Point2d(x, scanProbe)))
+                if (!inside(new Point2d(x, scanProbe)))
                     return true;
             }
             return false;
@@ -2351,8 +2440,10 @@ namespace BricsCadRc.Core
         }
 
         /// <param name="strips">Pasy na obrysie uskoku (nib.Inner), scanIsY = barsAlongX.</param>
+        /// <param name="e2">K7 (E2): obszar siatki przy belkach — krawędź uskoku w większej części przy belce (lico zewnętrzne belki,
+        /// nib zawinięty przy końcu belki) bez reguły UB 01/02 (pręty góry jak bez nibu, UB 01/02 na niej nie ma). Null — bez belek.</param>
         private static NibStepPlan PlanNibStepBars(NibDetector.NibInfo nib, List<StripBounds> strips, bool barsAlongX,
-            BottomView bottom, double cover, double spacing)
+            BottomView bottom, double cover, double spacing, BeamMeshCuts e2 = null)
         {
             var plan = new NibStepPlan();
             foreach (var e in GeometryHelper.EnumerateAxisAlignedEdges(nib.Inner))
@@ -2362,6 +2453,8 @@ namespace BricsCadRc.Core
                 double c  = barsAlongX ? e.Start.X : e.Start.Y;
                 double lo = barsAlongX ? Math.Min(e.Start.Y, e.End.Y) : Math.Min(e.Start.X, e.End.X);
                 double hi = barsAlongX ? Math.Max(e.Start.Y, e.End.Y) : Math.Max(e.Start.X, e.End.X);
+                if (e2 != null && hi - lo > 1e-6
+                    && EdgePartsOutsideBeams(e2, barsAlongX, c, lo, hi).Sum(p => p.Hi - p.Lo) < 0.5 * (hi - lo)) continue;
                 int n = StepEdgeRuleCount(nib, bottom, barsAlongX, c, lo, hi, cover, spacing, out _);
                 if (n > 0) plan.Edges.Add(new NibStepRules.StepEdge(c, lo, hi, n));
             }
@@ -4397,6 +4490,8 @@ namespace BricsCadRc.Core
         private class BottomView
         {
             public Vector2d         Delta;  // przesunięcie rzut dolny → rzut górny
+            public ObjectId         OutlineId;   // obrys rzutu dolnego (K7: strefy belek rzutu dolnego)
+            public List<Point2d>    Verts;
             public List<BottomDist> Dists = new List<BottomDist>();
         }
 
@@ -4437,7 +4532,7 @@ namespace BricsCadRc.Core
             // Kandydat 0: ten sam obrys
             {
                 var v = CollectBottom(allDists, topVerts, new Vector2d(0, 0), topSlabId.Handle.ToString(), horizontal);
-                if (v != null) return v;
+                if (v != null) { v.OutlineId = topSlabId; v.Verts = topVerts; return v; }
             }
 
             var topMin = MinPoint(topVerts);
@@ -4450,6 +4545,7 @@ namespace BricsCadRc.Core
                 if (!Congruent(topVerts, verts, delta)) continue;
                 var v = CollectBottom(allDists, verts, delta, pl.Handle.ToString(), horizontal);
                 if (v == null) continue;
+                v.OutlineId = pl.ObjectId; v.Verts = verts;
                 if (delta.Length < bestDist) { bestDist = delta.Length; best = v; }
             }
             return best;

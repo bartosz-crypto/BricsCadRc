@@ -409,8 +409,9 @@ namespace BricsCadRc.Core
             if (uruns.Count > 0)
                 msg($"{name}: U-bary pionowe: {string.Join(", ", uruns.Select(r => r.ToString()))}.");
 
-            // ── E4b (domyślne, do potwierdzenia; tryb K2 [25] / [26], opis i UB SIDE — krok K4): pręty boczne (BS) na obu bokach przy
-            //    ramionach strzemienia i pręty wzdłuż nibu belki (BN) — rzut dolny, seria dolna; proste, bez zagięć ──
+            // ── K4 (praktyka biura C12; tryb K2 [25] / [26], domyślne do potwierdzenia — pytanie 9): pręty boczne BS H12 na obu bokach
+            //    przy ramionach strzemienia, opis „2x{n} H12-nn SIDE” (boki × liczba na bok), proste do U-barów „UB SIDE” (BC, kształt 21
+            //    poziomo, 1 na poziom na koniec / narożnik / złącze T, opis „{n}x1 H12-nn UB SIDE”) — rzut dolny, seria dolna ──
             bool sideOn = p.SideBarsActive(H);
             int nSide = sideOn ? BeamGeometry.SideBarCount(A51, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing) : 0;
             if (p.SideDia > 0)
@@ -421,30 +422,42 @@ namespace BricsCadRc.Core
             {
                 double lapS = p.LapFor(p.SideDia);
                 int total = 2 * nSide;
+                var sideRanges = new Dictionary<BeamGeometry.Segment, (double Lo, double Hi)>();
                 for (int i = 0; i < segs.Count; i++)
                 {
                     var s = segs[i];
-                    var (lo, hi) = BeamGeometry.StraightRange(s, p.CoverSide);
+                    // koniec pręta bocznego przy U-barze UB SIDE: lico ∓ (otulina + Ø UB SIDE) — jak pręty podłużne przy pionowych U-barach
+                    var (lo, hi) = BeamGeometry.StraightRange(s, p.CoverSide, p.CoverSide + p.SideDia, p.CornerStraightIntoSquare);
                     var (c0, c1) = BeamGeometry.SideBarsAcross(s, p.SideDia, p.StirrupDia, p.CoverSide);
                     var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapS);
+                    if (plan.Count > 0) sideRanges[s] = (lo + plan[0].Offset, lo + plan[plan.Count - 1].Offset + plan[plan.Count - 1].Length);
                     for (int k = 0; k < plan.Count; k++)
                     {
                         double a0 = lo + plan[k].Offset, a1 = a0 + plan[k].Length;
                         var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.SideDia, shape: "00", a: plan[k].Length, b: 0,
                                                            code: BeamGeometry.CodeSide);
-                        // dwa pręty w rzucie (po jednym na bok), opis i BBS — wszystkie (CountDisplay = 2 × liczba na bok)
+                        // dwa pręty w rzucie (po jednym na bok), opis „2x{n}” i BBS — wszystkie (CountDisplay = 2 × liczba na bok)
                         if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, s, a0, a1, c0, c1 - c0, 2, p.SideDia, BeamGeometry.CodeSide,
                                                                 BeamGeometry.SuffixSide, i + k, zbHandle, new Vector2d(),
-                                                                total > 2 ? (Action<BarData>)(bar => bar.CountDisplay = total) : null))
+                                                                bar => bar.CountDisplay = total))
                             res.SideDists++;
                     }
                 }
+                var smsgs = new List<string>();
+                var sruns = BeamGeometry.PlanSideUBars(an, sideRanges, nSide, p.SideDia, p.StirrupDia, lapS, p.CoverSide, smsgs);
+                foreach (var m in smsgs) msg($"{name}: {m}");
+                foreach (var r in sruns)
+                    if (BeamSideUBar(db, doc.Editor, bottom, r, zbHandle)) res.SideDists++;
+                if (sruns.Count > 0)
+                    msg($"{name}: UB SIDE: {string.Join(", ", sruns.Select(r => r.ToString()))}.");
             }
             var outl = bottom.Verts.Select(v => (v.X, v.Y)).ToList();
             int nibRuns = 0;
-            // T IN NIB płyty (rzut górny, przesunięty do układu rzutu dolnego) — BN górą może je dublować (Mesh nie widzi belek, E2 wstrzymany)
+            // T IN NIB płyty (rzut górny, przesunięty do układu rzutu dolnego) — BN górą (domyślnie 0, K2) może je dublować
             var tinNib = p.NibTopDia > 0 ? ReadTinNib(db, top ?? bottom, top != null ? delta : new Vector2d()) : null;
             var noUbMsg = new HashSet<int>();
+            // K5: B IN NIB — podział (i numer) jak rozkład siatki dolnej równoległy do nibu, najbliższy belce (Mesh przed Beam)
+            var meshB = p.NibBottomDia > 0 ? ReadMeshDists(db, bottom) : null;
             foreach (var (nd, suffix) in new[] { (p.NibTopDia, BeamGeometry.SuffixNibTop), (p.NibBottomDia, BeamGeometry.SuffixNibBottom) })
             {
                 if (nd <= 0) continue;
@@ -461,10 +474,24 @@ namespace BricsCadRc.Core
                     if (suffix == BeamGeometry.SuffixNibTop && TinAlong(tinNib, segs[i], across, lo, hi))
                         msg($"{name}: odcinek {i + 1} — pręt BN górą (H{nd}) może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia " +
                             "(Nib: pręt górą = 0 w oknie RC_BEAM wyłącza BN górą).");
-                    var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapN);
+                    var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapN).Select(x => (Start: lo + x.Offset, x.Length)).ToList();
+                    if (suffix == BeamGeometry.SuffixNibBottom)
+                    {
+                        var row = MeshRowNearBeam(meshB, segs[i], lo, hi, nd);
+                        if (row != null)
+                        {
+                            plan = row;
+                            msg($"{name}: odcinek {i + 1} — B IN NIB H{nd}: podział jak rozkład siatki dolnej najbliższy belce " +
+                                $"({string.Join(" + ", row.Select(x => x.Length.ToString("F0", CultureInfo.InvariantCulture)))}) — wspólny numer.");
+                        }
+                        else
+                            msg($"{name}: odcinek {i + 1} — B IN NIB H{nd}: brak rozkładu siatki dolnej na całej długości nibu (nib częściowy " +
+                                $"albo siatka po belce) — pręty z zakładem {lapN:F0} " +
+                                $"({string.Join(" + ", plan.Select(x => x.Length.ToString("F0", CultureInfo.InvariantCulture)))}).");
+                    }
                     for (int k = 0; k < plan.Count; k++)
                     {
-                        double a0 = lo + plan[k].Offset, a1 = a0 + plan[k].Length;
+                        double a0 = plan[k].Start, a1 = a0 + plan[k].Length;
                         var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: nd, shape: "00", a: plan[k].Length, b: 0,
                                                            code: BeamGeometry.CodeNib);
                         if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, segs[i], a0, a1, across, 0, 1, nd, BeamGeometry.CodeNib,
@@ -476,7 +503,7 @@ namespace BricsCadRc.Core
             if (p.NibTopDia > 0 || p.NibBottomDia > 0)
                 msg($"{name}: pręty wzdłuż nibu belki (górą {(p.NibTopDia > 0 ? "H" + p.NibTopDia : "brak")}, dołem " +
                     $"{(p.NibBottomDia > 0 ? "H" + p.NibBottomDia : "brak")} w narożach spinki UB 03): {nibRuns} rozkł. " +
-                    "(na końcach przy krawędzi do lica z otuliną; domyślne, do potwierdzenia — B IN NIB: krok K5).");
+                    "(dołem „B IN NIB” — podział i numer z siatki dolnej, K5; domyślne, do potwierdzenia).");
         }
 
         /// <summary>
@@ -500,6 +527,36 @@ namespace BricsCadRc.Core
                                     BeamGeometry.CodeUBar, BeamGeometry.SuffixUBar, noSpacing: r.Count <= 1,
                                     shape: "21", repr: -1, zoneHandle: zoneHandle,
                                     customize: bar => { bar.SymbolType = "Circle"; bar.SymbolSide = side; });
+        }
+
+        /// <summary>
+        /// K4: rozkład U-barów „UB SIDE” jednego końca (kształt 21 poziomo; identyczny pręt = ta sama pozycja, seria dolna): w rzucie ramię
+        /// przy jednym boku (od tyłu U w głąb belki na długość A) z hakiem na zagięciu w stronę drugiego ramienia; opis „{n}x1 H12-nn UB SIDE”
+        /// (Count 1, CountDisplay = liczba poziomów — BBS liczy wszystkie).
+        /// </summary>
+        private static bool BeamSideUBar(Database db, Editor ed, BeamView view, BeamGeometry.SideUBarRun r, string zoneHandle)
+        {
+            var tpl = FindOrCreateBeamTemplate(db, ed, view.Box, top: false, d: r.Dia, shape: "21", a: r.A, b: r.B,
+                                               code: BeamGeometry.CodeSideU, c: r.C);
+            if (tpl.id.IsNull) return false;
+            bool barsX = r.AlongX;
+            double s0 = r.LineStart, s1 = r.LineStart + r.LineLength;
+            double x0 = barsX ? s0 : r.Across0, x1 = barsX ? s1 : r.Across0;
+            double y0 = barsX ? r.Across0 : s0, y1 = barsX ? r.Across0 : s1;
+            // hak w stronę drugiego ramienia (Across1 > Across0): pręty X → +Y = „Up”, pręty Y → +X = „Down” (Up = 90° w lewo)
+            string dir = barsX ? "Up" : "Down";
+            string side = r.BendAtStart ? "Left" : "Right";
+            int levels = r.Levels;
+            return BeamDistribution(db, view, tpl, x0, y0, x1, y1, barsX, r.Dia, r.LineLength, 200, double.NaN,
+                                    BeamGeometry.CodeSideU, BeamGeometry.SuffixSideU, noSpacing: true, shape: "21", repr: -1,
+                                    zoneHandle: zoneHandle,
+                                    customize: bar =>
+                                    {
+                                        bar.SymbolType = "Hook";
+                                        bar.SymbolSide = side;
+                                        bar.SymbolDirection = dir;
+                                        if (levels > 1) bar.CountDisplay = levels;
+                                    });
         }
 
         /// <summary>
@@ -880,10 +937,8 @@ namespace BricsCadRc.Core
             if (nib != null)
                 foreach (var e in nib.Edges)
                     if (e.Vertical == vert && Math.Abs(e.OuterCoord - c) < 1.0 && e.Hi > t0 && e.Lo < t1) { nibW = e.Width; break; }
-            double c0 = c + inward * nibW, c1 = c + inward * (nibW + width);
-            var pts = vert
-                ? new[] { new Point2d(c0, t0), new Point2d(c1, t0), new Point2d(c1, t1), new Point2d(c0, t1) }
-                : new[] { new Point2d(t0, c0), new Point2d(t1, c0), new Point2d(t1, c1), new Point2d(t0, c1) };
+            // K8: prostokąt strefy z jednej funkcji (wspólnej z Prepare GA — strefy z opisów „xxxTHK”)
+            var pts = BeamGeometry.ZoneFromNibEdge(vert, c + inward * nibW, inward, t0, t1, width).Select(q => new Point2d(q.X, q.Y)).ToArray();
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 BeamStore.EnsureLayer(tr, db);
@@ -897,6 +952,160 @@ namespace BricsCadRc.Core
                 messages.Add(string.Format(CultureInfo.InvariantCulture, "Strefa belki wzdłuż krawędzi: {0:0} × {1:0} (nib {2:0}).", t1 - t0, width, nibW));
                 return id;
             }
+        }
+
+        // ── K7 (E2): siatka płyty przy belce ──
+
+        /// <summary>
+        /// Średnica siatki dolnej (B1 / B2) — odsunięcie pierwszego pręta równoległego od lica belki (40 + d). Tylko wartość zapasowa
+        /// UB 01/02, gdy płyta nie ma jeszcze siatki dolnej (<see cref="MeshBottomDiaOf"/>).
+        /// </summary>
+        public const int MeshBottomDia = 10;
+
+        /// <summary>
+        /// Poprawka recenzji K7 (pkt 3): Ø siatki dolnej płyty w kierunku prętów <paramref name="barsAlongX"/> (B1 — X, B2 — Y) z istniejących
+        /// rozkładów rzutu (<see cref="ReadMeshDists"/> — znacznik płyty albo punkt w obrysie), żeby pasy UB 01/02 przy belce liczyły odcięcie
+        /// (40 + d) z tej samej średnicy co GenerateLayer. Najczęstsza średnica (remis — większa); null — brak siatki. Tylko odczyt.
+        /// </summary>
+        internal static int? MeshBottomDiaOf(Database db, ObjectId slabId, bool barsAlongX)
+        {
+            try
+            {
+                var view = ReadBeamView(db, slabId);
+                if (view == null) return null;
+                var dias = ReadMeshDists(db, view).Where(m => m.barsAlongX == barsAlongX && m.dia > 0).Select(m => m.dia).ToList();
+                if (dias.Count == 0) return null;
+                return dias.GroupBy(x => x).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First().Key;
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.MeshBottomDiaOf", ex); return null; }
+        }
+
+        /// <summary>Obszar siatki przy belkach (K7 / E2): odcięcia pasów prętów i obszary krawędzi bez UB 01/02 (pętle, WCS).</summary>
+        internal sealed class BeamMeshCuts
+        {
+            /// <summary>Suma prostokątów <see cref="BeamGeometry.MeshCutRects"/> — odejmowana od wielokąta pasów (DecomposeStrips).</summary>
+            public List<List<Point2d>> Cuts = new List<List<Point2d>>();
+            /// <summary>Suma prostokątów <see cref="BeamGeometry.UbExclusionRects"/> — krawędzie w nich bez UB 01/02 i bez reguły uskoku.</summary>
+            public List<List<Point2d>> UbCuts = new List<List<Point2d>>();
+            public int Zones;
+        }
+
+        /// <summary>
+        /// JEDYNE źródło wielokąta siatki przy belce (K7 / E2; plan praktyki biura, poprawka 6): strefy RC_BEAM rzutu
+        /// (<paramref name="slabOuterId"/> — Prepare GA / RC_BEAM zapisują strefy na obu rzutach), analiza odcinków względem obrysu zewnętrznego
+        /// <paramref name="outerVerts"/>, prostokąty odcięcia warstwy (top — siatka górna T1 / T2 na linii uskoku, inaczej dolna B1 / B2;
+        /// barsAlongX — kierunek prętów) i obszary krawędzi bez UB 01/02. Null — płyta bez stref belek (siatka bit w bit jak dawniej).
+        /// Używane w GenerateLayer (pasy), GenerateUBLayerCore (pasy prętów głównych UB 01/02, krawędzie bez UB) i PlanNibStepBars
+        /// (krawędzie uskoku przy belce bez reguły UB 01/02). B3 ADD i Add — na obrysie płyty (bez E2). Tylko odczyt.
+        /// </summary>
+        internal static BeamMeshCuts BeamMeshRegion(Database db, ObjectId slabOuterId, List<Point2d> outerVerts, bool top,
+                                                    bool barsAlongX, int d, double spacing, double cover)
+        {
+            try
+            {
+                var zonePolys = new List<List<Point2d>>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var z in BeamStore.ZonesOfSlab(tr, db, slabOuterId, outerVerts)) zonePolys.Add(ZoneVerts(tr, z));
+                    tr.Commit();
+                }
+                // Bez szukania stref na rzucie „przystającym”: Prepare GA i RC_BEAM zapisują strefę na obu rzutach, a przystający obrys
+                // innej płyty (np. ta sama płyta skopiowana obok) dawałby jej belki tej płycie (S-REG F29 / FBEAM)
+                if (zonePolys.Count == 0) return null;
+                var outl = outerVerts.Select(v => (v.X, v.Y)).ToList();
+                var rects = new List<RectilinearPolygons.Rect>();
+                var ubRects = new List<RectilinearPolygons.Rect>();
+                foreach (var zp in zonePolys)
+                {
+                    var an = BeamGeometry.Analyze(zp.Select(v => (v.X, v.Y)).ToList(), outl);
+                    rects.AddRange(BeamGeometry.MeshCutRects(an, top, barsAlongX, d, spacing, cover));
+                    ubRects.AddRange(BeamGeometry.UbExclusionRects(an));
+                }
+                List<List<Point2d>> ToPts(List<List<(double X, double Y)>> loops)
+                    => loops.Select(l => l.Select(p => new Point2d(p.X, p.Y)).ToList()).ToList();
+                return new BeamMeshCuts
+                {
+                    Cuts = ToPts(RectilinearPolygons.Union(rects)),
+                    UbCuts = ToPts(RectilinearPolygons.Union(ubRects)),
+                    Zones = zonePolys.Count
+                };
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.BeamMeshRegion", ex); return null; }
+        }
+
+        /// <summary>Pętle (Point2d) → krotki dla RectilinearPolygons.</summary>
+        private static List<List<(double X, double Y)>> Tuples(List<List<Point2d>> loops)
+            => loops?.Select(l => l.Select(p => (p.X, p.Y)).ToList()).ToList();
+
+        /// <summary>
+        /// Krawędź (oś rozkładu c, zakres lo..hi; vertical — krawędź pionowa) bez części przy belce (K7 / E2: UB 01/02 tylko poza
+        /// obszarami <see cref="BeamMeshCuts.UbCuts"/>). Bez belek — cała krawędź.
+        /// </summary>
+        private static List<(double Lo, double Hi)> EdgePartsOutsideBeams(BeamMeshCuts e2, bool vertical, double c, double lo, double hi)
+            => e2 == null || e2.UbCuts.Count == 0
+                ? new List<(double, double)> { (lo, hi) }
+                : RectilinearPolygons.UncoveredParts(lo, hi, Tuples(e2.UbCuts), horizontal: !vertical, c);
+
+        /// <summary>
+        /// K5: rozkłady siatki dolnej (B1 / B2, opis „… B1” / „… B2”, bez UB / ADD) rzutu: kierunek prętów, położenia w poprzek, zakres
+        /// wzdłuż (początek, długość), średnica. Tylko odczyt; rozkłady obrócone pomijane.
+        /// </summary>
+        private static List<(bool barsAlongX, List<double> pos, double a0, double len, int dia)> ReadMeshDists(Database db, BeamView view)
+        {
+            var res = new List<(bool, List<double>, double, double, int)>();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                string vh = view.OuterId.Handle.ToString();
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = BarBlockEngine.ReadXData(br);
+                    if (bar == null || (bar.LayerCode != "B1" && bar.LayerCode != "B2") || string.IsNullOrEmpty(bar.Mark)) continue;
+                    if (!bar.Mark.TrimEnd().EndsWith(" " + bar.LayerCode, StringComparison.Ordinal) || Math.Abs(br.Rotation) > 1e-6) continue;
+                    string tag = ReadSlabTag(br);
+                    bool mine = tag != null ? SameHandle(tag, vh)
+                                            : GeometryHelper.IsPointInsidePolygon(view.Verts, new Point2d(br.Position.X, br.Position.Y));
+                    if (!mine) continue;
+                    bool x = !string.Equals(bar.Direction, "Y", StringComparison.OrdinalIgnoreCase);
+                    double scan0 = x ? br.Position.Y : br.Position.X, along0 = x ? br.Position.X : br.Position.Y;
+                    var pos = new List<double>();
+                    for (int i = 0; i < Math.Max(1, bar.Count); i++) pos.Add(scan0 + i * (bar.Count > 1 ? bar.Spacing : 0));
+                    res.Add((x, pos, along0, bar.LengthA, bar.Diameter));
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.ReadMeshDists", ex); }
+            return res;
+        }
+
+        /// <summary>
+        /// K5 (B IN NIB): podział prętów (początek, długość) rozkładów siatki dolnej równoległych do odcinka belki, najbliższych belce
+        /// (pręt najbliżej lica wewnętrznego, po stronie płyty) — gdy ta sama średnica i rząd pokrywa nib [lo, hi] (końce ± 300);
+        /// inaczej null (nib częściowy, brak siatki — wywołujący: PlanBars z zakładem 40·Ø).
+        /// </summary>
+        private static List<(double Start, double Length)> MeshRowNearBeam(List<(bool barsAlongX, List<double> pos, double a0, double len, int dia)> mesh,
+                                                                          BeamGeometry.Segment s, double lo, double hi, int d)
+        {
+            if (mesh == null || s.OuterSide == 0) return null;
+            double face = s.OuterSide < 0 ? s.AcrossHi : s.AcrossLo;
+            int sg = s.OuterSide < 0 ? 1 : -1;
+            var cand = mesh.Where(m => m.barsAlongX == s.AlongX && m.a0 < hi && m.a0 + m.len > lo).ToList();
+            double best = double.MaxValue;
+            foreach (var m in cand)
+                foreach (var v in m.pos)
+                {
+                    double off = (v - face) * sg;
+                    if (off > 0 && off < best) best = off;
+                }
+            if (best == double.MaxValue) return null;
+            var row = cand.Where(m => m.pos.Any(v => Math.Abs((v - face) * sg - best) < 1.0)).OrderBy(m => m.a0).ToList();
+            if (row.Count == 0 || row.Any(m => m.dia != d)) return null;
+            double r0 = row.Min(m => m.a0), r1 = row.Max(m => m.a0 + m.len);
+            const double tol = 300.0;
+            if (Math.Abs(r0 - lo) > tol || Math.Abs(r1 - hi) > tol) return null;
+            return row.Select(m => (m.a0, m.len)).ToList();
         }
 
         /// <summary>UB 03 rzutu dolnego płyty: kierunek prętów, zakres prętów w poprzek (c0..c1) i położenia prętów wzdłuż krawędzi.</summary>

@@ -74,6 +74,9 @@ namespace RegressionDump
             new FixCase { Id = "F3g", Index = 25 },   // K5 (3c): B1 na płycie, COPY płyty z rozkładami (+20000 w X), B1 ponownie na oryginale
             // K1 planu PLAN_BELKI_PRAKTYKA (#29): nib zawinięty — pas 26 pusty (odstęp od F3g na opisy), płyta w pasie 27
             new FixCase { Id = "F29", Index = 27 },   // płyta 12000×6000, nib 135 wzdłuż prawej krawędzi zawinięty 600 na górnej i dolnej; T2, UB B2
+            // K7 planu PLAN_BELKI_PRAKTYKA (#30, E2): siatka przy belce — pas 28 pusty (opisy F29), płyta w pasie 29
+            new FixCase { Id = "FBEAM", Index = 29 }, // płyta 12000×6000, nib 160 wzdłuż lewej krawędzi, strefa belki RC_BEAM 600 od uskoku; B1, B2, UB B1;
+                                                      // rzut górny (+20000 w X, własna strefa [6]): T1, T2; UB 03 (rzut dolny)
         };
 
         /// <summary>Plik -WBLOCK przypadku F3e (ścieżka bez spacji — skrypt); usuwany w RC_REG_FIX_SETUP.</summary>
@@ -224,6 +227,48 @@ namespace RegressionDump
                 }
                 return "OK";
             });
+            // #30 (K7, E2): płyta 12000×6000 (Y0 ± 3000) + linia uskoku 160 wzdłuż lewej krawędzi + strefa belki (warstwa RC-BEAM, rekord
+            // RC_BEAM v2: H 375, szer. 600, [6] = obrys) x 160..760, y ± 2840 (końce przy krawędzi). Wzorzec strefy nie zna (zwykła polilinia
+            // poza zakresem nibu); nasz: siatka przy belce (E2). Rzut górny (poprawka recenzji K7, pkt 2): przystający obrys +20000 w X
+            // z linią uskoku i własną strefą ([6] = obrys rzutu górnego) — T1 / T2 z E2 (Bar2 = obrys górny). Generowanie na końcu
+            // RC_REG_FIX_CHECK.
+            FixStep("FBEAM.setup", () =>
+            {
+                var c = Fx("FBEAM");
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayer(db, tr, SlabLayer, 7);
+                    EnsureLayer(db, tr, "RC-BEAM", 6);
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                    var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                    if (!rat.Has("RC_BEAM"))
+                    {
+                        rat.UpgradeOpen();
+                        var rec = new RegAppTableRecord { Name = "RC_BEAM" };
+                        rat.Add(rec);
+                        tr.AddNewlyCreatedDBObject(rec, true);
+                    }
+                    // rzut dolny (x 0) i górny (x 20000): obrys, linia uskoku, strefa belki z [6] = obrys tego rzutu
+                    foreach (double dx in new[] { 0.0, 20000.0 })
+                    {
+                        var outer = AddRect(ms, tr, dx, c.Y0 - 3000, dx + 12000, c.Y0 + 3000, SlabLayer);
+                        if (dx == 0) c.Bar = outer; else c.Bar2 = outer;
+                        AddRect(ms, tr, dx + 160, c.Y0 - 3000, dx + 12000, c.Y0 + 3000, SlabLayer);
+                        var zone = AddRect(ms, tr, dx + 160, c.Y0 - 2840, dx + 760, c.Y0 + 2840, "RC-BEAM");
+                        var ze = (Entity)tr.GetObject(zone, OpenMode.ForWrite);
+                        ze.XData = new ResultBuffer(
+                            new TypedValue((int)DxfCode.ExtendedDataRegAppName, "RC_BEAM"),
+                            new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)2),
+                            new TypedValue((int)DxfCode.ExtendedDataReal, 375.0),
+                            new TypedValue((int)DxfCode.ExtendedDataReal, 600.0),
+                            new TypedValue((int)DxfCode.ExtendedDataReal, 160.0),
+                            new TypedValue((int)DxfCode.ExtendedDataReal, 150.0),
+                            new TypedValue((int)DxfCode.ExtendedDataHandle, outer.Handle));
+                    }
+                    tr.Commit();
+                }
+                return "OK";
+            });
             // K5 (3c): płyta 12000×8000 w pasie (Y0 ± 4000) + AutoRebar B1; Bar = obrys płyty
             FixStep("F3g.setup", () =>
             {
@@ -291,6 +336,23 @@ namespace RegressionDump
                                          Fx("F29").Bar, "rebar_top", "Y", "T2", 12, 200.0, 40.0, true));
             FixStep("F29.ub2", () => Call("AutoRebarEngine", "GenerateUBLayer", Application.DocumentManager.MdiActiveDocument,
                                           Fx("F29").Bar, "rebar_bottom", "B2", 225, "Y", 200.0, 40.0, true));
+            // #30 (K7, E2): siatka dolna B1 / B2 i UB B1 na płycie z belką (na końcu — numeracja innych przypadków bez zmian).
+            // Wzorzec: siatka jak bez belki (B2 w nibie i w belce, UB 01 na linii uskoku); nasz: B1 do linii uskoku − 40, B2 od lica + 50,
+            // UB 01 tylko na prawej krawędzi.
+            FixStep("FBEAM.b1", () => Call("AutoRebarEngine", "GenerateLayer", Application.DocumentManager.MdiActiveDocument,
+                                           Fx("FBEAM").Bar, "rebar_bottom", "X", "B1", 10, 200.0, 40.0, true));
+            FixStep("FBEAM.b2", () => Call("AutoRebarEngine", "GenerateLayer", Application.DocumentManager.MdiActiveDocument,
+                                           Fx("FBEAM").Bar, "rebar_bottom", "Y", "B2", 10, 200.0, 40.0, true));
+            FixStep("FBEAM.ub1", () => Call("AutoRebarEngine", "GenerateUBLayer", Application.DocumentManager.MdiActiveDocument,
+                                            Fx("FBEAM").Bar, "rebar_bottom", "B1", 225, "X", 200.0, 40.0, true));
+            // Poprawka recenzji K7 (pkt 2): rzut górny ze strefą — T1 / T2 (góra do linii uskoku, krawędź uskoku przy belce bez reguły
+            // UB 01/02, równoległe od s/2 od lica; rzut dolny = FBEAM.Bar) i UB 03 w nibie (liczba z prętów dołu rzutu dolnego).
+            FixStep("FBEAM.t1", () => Call("AutoRebarEngine", "GenerateLayer", Application.DocumentManager.MdiActiveDocument,
+                                           Fx("FBEAM").Bar2, "rebar_top", "X", "T1", 12, 200.0, 40.0, true));
+            FixStep("FBEAM.t2", () => Call("AutoRebarEngine", "GenerateLayer", Application.DocumentManager.MdiActiveDocument,
+                                           Fx("FBEAM").Bar2, "rebar_top", "Y", "T2", 12, 200.0, 40.0, true));
+            FixStep("FBEAM.ubnib", () => Call("AutoRebarEngine", "GenerateNibUBLayer", Application.DocumentManager.MdiActiveDocument,
+                                              Fx("FBEAM").Bar, "rebar_bottom", true));
         }
 
         [CommandMethod("RC_REG_DUMP_FIX", CommandFlags.Modal)]

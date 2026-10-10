@@ -18,8 +18,11 @@ namespace BricsCadRc.Core
         /// Wersja logiki planera (bezpiecznik przekrojów, SectionFingerprint): podbić przy KAŻDEJ zmianie wyniku dla tego samego
         /// wejścia (złoty test tests/SectionPlannerGoldenTests). Przekrój narysowany starszą wersją: „aktualny (nowa wersja
         /// rysowałaby inaczej)” — decyzja użytkownika P2.
+        /// 2 (K6 planu PLAN_BELKI_PRAKTYKA, decyzja użytkownika 2026-10-10 „schemat zakończenia pręta jak na rysunkach biura”):
+        /// zakończenia prętów prostych w widoku — odgięcie 45° (<see cref="Input.BarEndTicks"/>, RC_SECTION włącza), pionowe U-bary
+        /// belki BU (kropki przy prętach podłużnych, w cięciu wzdłuż — kształt A–B–A), UB SIDE (BC).
         /// </summary>
-        public const int Version = 1;
+        public const int Version = 2;
 
         // ── wejście ─────────────────────────────────────────────────────────
 
@@ -115,6 +118,13 @@ namespace BricsCadRc.Core
             public double UbTolerance = 5;
             public string Ssl;               // np. "21.925" (null = bez znacznika)
             public bool   DrawPiles = true;
+            /// <summary>
+            /// K6 (wersja 2): zakończenie pręta prostego w widoku jak na rysunkach biura (Holbrook 4.RC, C12 7.RC — przekroje A-A, C-C,
+            /// D-D, E-E: pręt kończący się w przekroju ma krótkie odgięcie 45° w głąb elementu: górny w dół, dolny w górę; także oba
+            /// pręty zakładu; pręt przechodzący przez linię urwania / koniec cięcia — bez odgięcia). RC_SECTION: true;
+            /// false = dawny rysunek (złote testy wzorca bit w bit).
+            /// </summary>
+            public bool   BarEndTicks;
         }
 
         // ── wyjście ─────────────────────────────────────────────────────────
@@ -146,6 +156,9 @@ namespace BricsCadRc.Core
             public List<(double U, double V)> Path = new List<(double, double)>();
             public int Diameter; public string PosNr; public bool Top;
             public DistKind Kind;
+            /// <summary>K6: pręt prosty — początek / koniec ścieżki to rzeczywisty koniec pręta (nie urwanie, nie koniec cięcia);
+            /// przy <see cref="Input.BarEndTicks"/> dostaje odgięcie 45°.</summary>
+            public bool End0, End1;
             /// <summary>Obrys pręta z grubością (zamknięty), jak pręt w elewacji.</summary>
             public List<(double U, double V)> Outline;
         }
@@ -198,6 +211,41 @@ namespace BricsCadRc.Core
 
         /// <summary>E4b: Ø spinki UB 03 w nibie belki (pręty BN w jej narożach).</summary>
         public const double BeamNibUbDia = 10;
+        /// <summary>K6: odgięcie końca pręta prostego w widoku — rzut ramienia 45° [mm] (≈ 50 mm po skosie; rysunki biura 1:20).</summary>
+        public const double BarEndTick = 35.0;
+
+        /// <summary>K6: rzeczywiste końce kawałka pręta prostego (ścieżka w u) — gdy koniec kawałka = koniec pręta ua / ub.</summary>
+        private static BarLine Straight(List<(double U, double V)> part, double ua, double ub, BarLine b)
+        {
+            if (part.Count >= 2)
+            {
+                double u0 = part[0].U, u1 = part[part.Count - 1].U;
+                b.End0 = Math.Abs(u0 - ua) < 0.5 || Math.Abs(u0 - ub) < 0.5;
+                b.End1 = Math.Abs(u1 - ua) < 0.5 || Math.Abs(u1 - ub) < 0.5;
+            }
+            return b;
+        }
+
+        /// <summary>
+        /// K6: odgięcie 45° na rzeczywistych końcach prętów prostych w widoku (ścieżka pozioma z 2 punktów): przedłużenie od końca
+        /// o <see cref="BarEndTick"/> dalej wzdłuż pręta i w głąb elementu (pręt górny — w dół, pozostałe — w górę).
+        /// </summary>
+        private static void AddEndTicks(Result res)
+        {
+            foreach (var b in res.Bars)
+            {
+                if (!(b.End0 || b.End1) || b.Path.Count != 2 || Math.Abs(b.Path[0].V - b.Path[1].V) > 0.5) continue;
+                double dirU = Math.Sign(b.Path[1].U - b.Path[0].U);
+                if (dirU == 0) continue;
+                double inward = b.Top ? -1 : 1;
+                var p = new List<(double U, double V)>();
+                if (b.End0) p.Add((b.Path[0].U - dirU * BarEndTick, b.Path[0].V + inward * BarEndTick));
+                p.Add(b.Path[0]); p.Add(b.Path[1]);
+                if (b.End1) p.Add((b.Path[1].U + dirU * BarEndTick, b.Path[1].V + inward * BarEndTick));
+                b.Path = p;
+                b.Outline = OutlineOf(p, b.Diameter);
+            }
+        }
 
         /// <summary>E4b: pręt w nibie górą („… BEAM NIB T”); inaczej dołem.</summary>
         private static bool IsNibTop(Dist d) => (d.Mark ?? "").TrimEnd().EndsWith(BeamGeometry.SuffixNibTop, StringComparison.OrdinalIgnoreCase);
@@ -503,14 +551,16 @@ namespace BricsCadRc.Core
                             }
                         }
                         // przytnij do zakresu cięcia i betonu (otwory, końce cięcia)
+                        bool straight = path.Count == 2;
                         foreach (var piece in ClipPath(path, s0, s1))
                         {
                             var up = piece.Select(p => (U(p.s), p.v)).ToList();
                             foreach (var part in SplitByConcrete(up, InConcrete))
                                 if (part.Count >= 2)
                                 {
-                                    res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, dia),
-                                                               Diameter = d.Diameter, PosNr = d.PosNr, Top = top });
+                                    var bl = new BarLine { Path = part, Outline = OutlineOf(part, dia),
+                                                           Diameter = d.Diameter, PosNr = d.PosNr, Top = top };
+                                    res.Bars.Add(straight ? Straight(part, U(a), U(b), bl) : bl);
                                     MarkUsed(res, d);
                                 }
                         }
@@ -601,8 +651,11 @@ namespace BricsCadRc.Core
                 res.SslText = inp.Ssl.Trim();
             }
 
-            // 7. Opisy
-            PlaceLabels(res, T);
+            // 6a. K6 (wersja 2): zakończenia prętów prostych w widoku — odgięcie 45° (rysunki biura); wyłączone — dawny rysunek
+            if (inp.BarEndTicks) AddEndTicks(res);
+
+            // 7. Opisy (K6 / wersja 2: przy BarEndTicks — opisy prętów belki w grupach, T IN NIB w nibie belki nad betonem)
+            PlaceLabels(res, T, inp.BarEndTicks);
             return res;
         }
 
@@ -780,7 +833,7 @@ namespace BricsCadRc.Core
                 }
             }
             foreach (var b in bands)
-                if (b.LinkA <= 0) b.LinkA = BeamGeometry.StirrupHeight(b.H, coverBottom: b.Src.CoverBottom);   // brak A — wzór 1b.1
+                if (b.LinkA <= 0) b.LinkA = BeamGeometry.StirrupHeightCovers(b.H, BeamGeometry.CoverTopA1, b.Src.CoverBottom);   // brak A — wzór K2 (A1)
             // średnice prętów dołu / góry pasu (poziomy prętów bocznych E4b)
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam && (x.ShapeCode ?? "00") == "00"
                                                    && (x.LayerCode == BeamGeometry.CodeBottom || x.LayerCode == BeamGeometry.CodeTop
@@ -808,6 +861,7 @@ namespace BricsCadRc.Core
                 {
                     case BeamGeometry.CodeTop: return new List<double> { b.VLinkTop - b.LinkDia - half };
                     case BeamGeometry.CodeSide:
+                    case BeamGeometry.CodeSideU:   // K4: UB SIDE — ramiona na poziomach prętów bocznych
                     {
                         double vb = b.VLinkBot + b.LinkDia + b.MainDiaB / 2.0, vt = b.VLinkTop - b.LinkDia - b.MainDiaT / 2.0;
                         int n = Math.Max(1, d.Layers);
@@ -831,8 +885,8 @@ namespace BricsCadRc.Core
 
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam))
             {
-                // K3: pionowe U-bary belki (BU) — w przekroju dopiero w kroku K6 (kropki dół / góra przesunięte o Ø, w cięciu wzdłuż A–B–A)
-                if (d.LayerCode == BeamGeometry.CodeUBar) continue;
+                // K6: pionowe U-bary belki (BU) — osobno (niżej): kropki przy prętach podłużnych, w cięciu wzdłuż kształt A–B–A
+                if (d.LayerCode == BeamGeometry.CodeUBar) { PlaceVerticalUBar(res, d, BandAt, BandOver, U, Sp(d, Math.Max(1, d.Count)), s0, s1, c, inConcrete, d.AlongX != inp.CutAlongX); continue; }
                 bool link = IsLink(d);
                 bool nib = d.LayerCode == BeamGeometry.CodeNib;
                 bool top = d.LayerCode == BeamGeometry.CodeTop || (nib && IsNibTop(d));
@@ -920,8 +974,9 @@ namespace BricsCadRc.Core
                             foreach (var part in SplitByConcrete(up, inConcrete))
                                 if (part.Count >= 2)
                                 {
-                                    res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
-                                                               PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam });
+                                    var bl = new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
+                                                           PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam };
+                                    res.Bars.Add(bent ? bl : Straight(part, U(a), U(bEnd), bl));
                                     MarkUsed(res, d);
                                 }
                         }
@@ -933,6 +988,79 @@ namespace BricsCadRc.Core
             foreach (var dt in res.Dots.Where(x => x.Beam && x.Bent).ToList())
                 if (res.Dots.Any(o => o != dt && o.Beam && !o.Bent && o.Top == dt.Top && Math.Abs(o.U - dt.U) < 1.0 && Math.Abs(o.V - dt.V) < 1.0))
                     dt.V += dt.Top ? -dt.Diameter : dt.Diameter;
+        }
+
+        /// <summary>
+        /// K6: pionowy U-bar belki (BU, kształt 21 w płaszczyźnie przekroju belki; rozkład wzdłuż osi belki, kolumny w poprzek):
+        ///   • cięcie prostopadłe do belki przez ramiona — kropki na poziomach prętów podłużnych (dół i góra), przesunięte w poprzek
+        ///     o Ø w stronę środka belki (zakład obok pręta prostego — pytanie 5);
+        ///   • cięcie wzdłuż belki — kolumna najbliższa linii cięcia w widoku: kształt A–B–A (tył U przy licu końca — symbol zagięcia,
+        ///     ramiona dół / góra na poziomach prętów podłużnych).
+        /// B pręta mniejsze od nominalnego (A strzemienia − 2·Ø strzemienia; noga Y narożnika L / belka dochodząca T: B − 35) — ramiona
+        /// zsunięte symetrycznie (17,5 góra / dół).
+        /// </summary>
+        private static void PlaceVerticalUBar(Result res, Dist d, Func<double, BandU> bandAt, Func<double, double, BandU> bandOver,
+                                              Func<double, double> U, double sp, double s0, double s1, double c, Func<double, double, bool> inConcrete,
+                                              bool perpendicular)
+        {
+            int n = Math.Max(1, d.Count);
+            double half = d.Diameter / 2.0;
+            (double vb, double vt) Arms(BandU b)
+            {
+                double vb = b.VLinkBot + b.LinkDia + half, vt = b.VLinkTop - b.LinkDia - half;
+                if (d.SourceDims != null && d.SourceDims.Length > 1 && d.SourceDims[1] > 0)
+                {
+                    double nominal = Math.Floor((b.LinkA - 2 * b.LinkDia) / 5.0 + 1e-6) * 5.0;
+                    double off = Math.Max(0, (nominal - d.SourceDims[1]) / 2.0);
+                    vb += off; vt -= off;
+                }
+                return (vb, vt);
+            }
+            double p0 = d.AlongX ? d.X0 : d.Y0, q0 = d.AlongX ? d.Y0 : d.X0;
+            if (perpendicular)
+            {
+                if (c < p0 - 1.0 || c > p0 + d.LengthA + 1.0) return;   // linia cięcia poza ramionami
+                for (int i = 0; i < n; i++)
+                {
+                    double s = q0 + i * sp;
+                    if (s < s0 - 0.5 || s > s1 + 0.5) continue;
+                    double u = U(s);
+                    var b = bandAt(u);
+                    if (b == null) continue;
+                    double mid = (b.U0 + b.U1) / 2.0;
+                    double uu = u + (u < mid ? d.Diameter : -d.Diameter);
+                    var (vb, vt) = Arms(b);
+                    foreach (var (v, top) in new[] { (vb, false), (vt, true) })
+                    {
+                        if (!inConcrete(uu, v)) continue;
+                        res.Dots.Add(new Dot { U = uu, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Beam = true, Bent = true,
+                                               NomSpacing = NominalSpacing(d) });
+                        MarkUsed(res, d);
+                    }
+                }
+                return;
+            }
+            // cięcie wzdłuż belki: kolumna najbliższa linii cięcia
+            int ib = -1; double best = double.MaxValue;
+            for (int i = 0; i < n; i++) { double dd = Math.Abs(q0 + i * sp - c); if (dd < best) { best = dd; ib = i; } }
+            double tol = Math.Max(n > 1 ? sp / 2.0 : d.Spacing / 2.0, 100.0) + 0.5;
+            if (ib < 0 || best > tol) return;
+            double a = p0, bEnd = p0 + d.LengthA;
+            if (bEnd < s0 - 1.0 || a > s1 + 1.0) return;
+            var band = bandOver(U(Math.Max(a, s0)), U(Math.Min(bEnd, s1)));
+            if (band == null) return;
+            bool backAtStart = !string.Equals(d.SymbolSide, "Right", StringComparison.OrdinalIgnoreCase);
+            double sBack = backAtStart ? a + half : bEnd - half, sTip = backAtStart ? bEnd : a;
+            var (vB, vT) = Arms(band);
+            var pathS = new List<(double s, double v)> { (sTip, vT), (sBack, vT), (sBack, vB), (sTip, vB) };
+            foreach (var piece in ClipPath(pathS, s0, s1))
+            {
+                if (piece.Count < 2) continue;
+                var up = piece.Select(p => (U(p.s), p.v)).ToList();
+                res.Bars.Add(new BarLine { Path = up, Outline = OutlineOf(up, d.Diameter), Diameter = d.Diameter, PosNr = d.PosNr,
+                                           Top = false, Kind = DistKind.Beam });
+                MarkUsed(res, d);
+            }
         }
 
         private static void AddNibDims(Result res, double uEdge, int inward, double w, double T, double vNibTop)
@@ -972,7 +1100,14 @@ namespace BricsCadRc.Core
 
         private static double TextWidth(string t) => Math.Max(1, t.Length) * TextHeight * 0.8 + 10;
 
-        private static void PlaceLabels(Result res, double T)
+        /// <summary>
+        /// Opisy przekroju. <paramref name="beamGroups"/> (K6, wersja 2 — RC_SECTION; złote wejścia wzorca i „beam” bez zmian): tylko odcinki
+        /// z belką (profil) i kropki prętów belki — (a) T IN NIB w nibie belki: numer nad swoją kropką na lokalnym wierzchu betonu (nib belki
+        /// / trzon), przesunięty w poziomie tak, by leżał nad betonem (nie poza krawędzią); (b) kropki prętów belki tej samej pozycji obok
+        /// siebie (odstęp ≤ <see cref="BeamDotGroupGap"/>) — jeden numer ze strzałką do kropki grupy (zamiast rzędów „48 48 48 48” między
+        /// numerami siatki). Płyty bez belek — bez zmian.
+        /// </summary>
+        private static void PlaceLabels(Result res, double T, bool beamGroups = false)
         {
             var occupied = new List<(double u0, double v0, double u1, double v1)>();
             bool Free(double u0, double v0, double u1, double v1)
@@ -1012,6 +1147,7 @@ namespace BricsCadRc.Core
                 foreach (var (nibW, uEdge, outward) in new[] { (sg.Nib0, sg.U0, -1), (sg.Nib1, sg.U1, 1) })
                 {
                     if (nibW <= 0) continue;
+                    if (beamGroups && sg.Prof != null) continue;   // K6: nib belki — numery nad kropkami, nad betonem (niżej)
                     double uStep = uEdge - outward * nibW;
                     var tins = res.Dots.Where(d => d.TinNib && Math.Abs(d.U - uEdge) < nibW + 400)
                                        .OrderBy(d => Math.Abs(d.U - uEdge)).ToList();
@@ -1027,18 +1163,81 @@ namespace BricsCadRc.Core
                     }
                 }
 
+            // K6 (wersja 2): grupy kropek prętów belki — ta sama pozycja i strona, w odcinku z belką, obok siebie
+            var grouped = new HashSet<Dot>();
+            var groups = new List<List<Dot>>();
+            if (beamGroups)
+            {
+                foreach (var g in res.Dots.Where(d => d.Beam && !d.TinNib && !tinDone.Contains(d) && InBeamSegment(res, d.U))
+                                          .GroupBy(d => (d.PosNr, d.Top)))
+                {
+                    var cur = new List<Dot>();
+                    foreach (var d in g.OrderBy(d => d.U))
+                    {
+                        if (cur.Count > 0 && d.U - cur[cur.Count - 1].U > BeamDotGroupGap) { if (cur.Count > 1) groups.Add(cur); cur = new List<Dot>(); }
+                        cur.Add(d);
+                    }
+                    if (cur.Count > 1) groups.Add(cur);
+                }
+                foreach (var g in groups) foreach (var d in g) grouped.Add(d);
+            }
+
+            // K6: jedna etykieta na grupę kropek belki — nad / pod grupą, strzałka do kropki, której pionowa strzałka nie tnie opisów
+            // ani miejsc numerów pozostałych kropek (rząd 0, wstawiane po grupach)
+            var slots = res.Dots.Where(d => !tinDone.Contains(d) && !grouped.Contains(d))
+                                .Select(d => (u0: d.U - TextWidth(d.PosNr) / 2 - 10, u1: d.U + TextWidth(d.PosNr) / 2 + 10, top: d.Top)).ToList();
+            foreach (var g in groups.OrderBy(g => g[0].Top ? 0 : 1).ThenBy(g => g[0].U))
+            {
+                bool top = g[0].Top;
+                double w = TextWidth(g[0].PosNr);
+                double gu0 = g[0].U, gu1 = g[g.Count - 1].U, mid = (gu0 + gu1) / 2;
+                double edge = top ? g.Max(d => TopAt(d.U)) : MinBottom(res, gu0, gu1, T);
+                var targets = g.OrderBy(d => Math.Abs(d.U - mid)).ThenBy(d => d.U).ToList();
+                bool done = false;
+                for (int pass = 0; pass < 2 && !done; pass++)
+                for (int row = 1; row < 12 && !done; row++)
+                    foreach (var t in targets)
+                    {
+                        double u = t.U;
+                        double vb = top ? edge + LabelGap + row * LabelRowStep : edge - LabelGap - TextHeight - row * LabelRowStep;
+                        if (!Free(u - w / 2, vb, u + w / 2, vb + TextHeight)) continue;
+                        double lv0 = top ? t.V : vb + TextHeight, lv1 = top ? vb : t.V;
+                        if (pass == 0 && occupied.Skip(fixedCount).Any(o => u > o.u0 - 5 && u < o.u1 + 5 && lv0 < o.v1 && lv1 > o.v0)) continue;
+                        if (pass == 0 && slots.Any(sl => sl.top == top && u + 4 > sl.u0 && u - 4 < sl.u1)) continue;
+                        occupied.Add((u - w / 2, vb, u + w / 2, vb + TextHeight));
+                        // strzałka (poza betonem) zajęta — numery kropek siatki nie leżą na niej (opisy grup przed numerami kropek)
+                        double ov0 = top ? Math.Max(lv0, edge) : lv0, ov1 = top ? lv1 : Math.Min(lv1, edge);
+                        if (ov1 > ov0) occupied.Add((u - 4, ov0, u + 4, ov1));
+                        res.Labels.Add(new Label
+                        {
+                            Text = t.PosNr, U = u, V = vb, Height = TextHeight, HasLeader = true,
+                            LeaderU = u, LeaderV = t.V + (top ? t.Diameter / 2.0 : -t.Diameter / 2.0)
+                        });
+                        done = true;
+                        break;
+                    }
+            }
+
             // kropki: numer nad (góra) / pod (dół) kropką, kolejne rzędy przy kolizji
-            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d)).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
+            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !grouped.Contains(d)).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
             {
                 double w = TextWidth(dot.PosNr);
-                for (int row = 0; row < 8; row++)
-                {
-                    double vb = dot.Top ? TopAt(dot.U) + LabelGap + row * LabelRowStep : LocalBottom(res, dot.U, T) - LabelGap - TextHeight - row * LabelRowStep;
-                    if (!Free(dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight)) continue;
-                    occupied.Add((dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight));
-                    res.Labels.Add(new Label { Text = dot.PosNr, U = dot.U, V = vb, Height = TextHeight });
-                    break;
-                }
+                // K6: T IN NIB w nibie belki — numer nad betonem (przesunięty w obrębie płaskiego wierzchu pod kropką)
+                double u = beamGroups && dot.TinNib ? ClampToTop(res, dot.U, w) : dot.U;
+                // K6: w odcinku z belką numer może przesunąć się w bok (≤ 40) w swoim rzędzie, zanim przejdzie rząd wyżej / niżej
+                var shifts = beamGroups && InBeamSegment(res, dot.U) ? new[] { 0.0, 20, -20, 40, -40 } : new[] { 0.0 };
+                bool placed = false;
+                for (int row = 0; row < 8 && !placed; row++)
+                    foreach (double sh in shifts)
+                    {
+                        double uu = u + sh;
+                        double vb = dot.Top ? TopAt(dot.U) + LabelGap + row * LabelRowStep : LocalBottom(res, dot.U, T) - LabelGap - TextHeight - row * LabelRowStep;
+                        if (!Free(uu - w / 2, vb, uu + w / 2, vb + TextHeight)) continue;
+                        occupied.Add((uu - w / 2, vb, uu + w / 2, vb + TextHeight));
+                        res.Labels.Add(new Label { Text = dot.PosNr, U = uu, V = vb, Height = TextHeight });
+                        placed = true;
+                        break;
+                    }
             }
 
             // pręty w widoku: numer ze strzałką, nad płytą (góra) albo pod płytą (dół)
@@ -1102,6 +1301,34 @@ namespace BricsCadRc.Core
                     done = true;
                 }
             }
+        }
+
+        /// <summary>K6: największy odstęp sąsiednich kropek pręta belki tej samej pozycji w jednej grupie opisu [mm].</summary>
+        public const double BeamDotGroupGap = 400.0;
+
+        /// <summary>Punkt u leży w odcinku betonu z belką (profil E5).</summary>
+        private static bool InBeamSegment(Result res, double u)
+            => res.Segments.Any(sg => sg.Prof != null && u >= sg.U0 - 0.5 && u <= sg.U1 + 0.5);
+
+        /// <summary>
+        /// K6: środek opisu szerokości w nad kropką u — przesunięty tak, by opis leżał nad płaskim wierzchem betonu pod kropką (przedziały
+        /// profilu belki o tym samym wierzchu); wierzch węższy niż opis — środek wierzchu. Bez profilu — u.
+        /// </summary>
+        private static double ClampToTop(Result res, double u, double w)
+        {
+            foreach (var sg in res.Segments)
+            {
+                if (sg.Prof == null || u < sg.U0 - 0.5 || u > sg.U1 + 0.5) continue;
+                double top = ProfTop(sg, u);
+                double lo = u, hi = u;
+                foreach (var p in sg.Prof.OrderBy(p => p.U0))
+                    if (Math.Abs(p.Top - top) < 0.5 && p.U1 >= lo - 0.5 && p.U0 <= hi + 0.5) { lo = Math.Min(lo, p.U0); hi = Math.Max(hi, p.U1); }
+                foreach (var p in sg.Prof.OrderByDescending(p => p.U0))
+                    if (Math.Abs(p.Top - top) < 0.5 && p.U1 >= lo - 0.5 && p.U0 <= hi + 0.5) { lo = Math.Min(lo, p.U0); hi = Math.Max(hi, p.U1); }
+                if (hi - lo <= w) return (lo + hi) / 2;
+                return Math.Min(Math.Max(u, lo + w / 2), hi - w / 2);
+            }
+            return u;
         }
 
         /// <summary>Najniższy spód betonu w zakresie [u0, u1] (belka E5); bez profilu belki — dokładnie −T.</summary>

@@ -150,16 +150,20 @@ namespace BricsCadRc.Core
         /// (BT — warstwa CAD góry RC-SLAB-TOP-01; stare BT na rzucie górnym usuwane przy ponownym generowaniu).</summary>
         public const string CodeBottom = "BB", CodeTop = "BT", CodeLinks = "BL", CodeSide = "BS", CodeNib = "BN";
         public const string CodeBoth = "BM", CodeUBar = "BU";
+        /// <summary>K4: poziomy U-bar zamykający pręty boczne na końcu / w narożniku („UB SIDE”, kształt 21) — kod BC (nie BS: pręty
+        /// boczne proste i U-bary to różne kształty i opisy; nie BU: pionowe U-bary prętów podłużnych).</summary>
+        public const string CodeSideU = "BC", SuffixSideU = "UB SIDE";
         /// <summary>Sufiksy opisów (K3): „2x4 H16-nn-150 B+T” (BM), „4 H16-nn-150 B” / „4 H16-nn-150 T” (BB / BT, dół ≠ góra),
         /// „29 H12-nn-200 LINKS”, „4 H16-nn-150 UB” (BU — kod BU, nie UB płyty: skany UB płyty porównują kod B1 / B2).</summary>
         public const string SuffixBoth = "B+T", SuffixBottom = "B", SuffixTop = "T", SuffixLinks = "LINKS", SuffixUBar = "UB";
-        /// <summary>E4b: „2 H10-10 BEAM SIDE”, „1 H10-11 BEAM NIB T”, „1 H16-12 BEAM NIB B”.</summary>
-        public const string SuffixSide = "BEAM SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "BEAM NIB B";
+        /// <summary>Opisy prętów bocznych i w nibie: K4 — „2x1 H12-nn SIDE” (BS); E4b — „1 H10-11 BEAM NIB T” (BN górą, domyślnie brak);
+        /// K5 — „1 H10-nn B IN NIB” (BN dołem, podział i numer jak pręt siatki dolnej).</summary>
+        public const string SuffixSide = "SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "B IN NIB";
 
         /// <summary>Kod rozkładu belki (także stare BB / BT / BS / BN z wersji testowych) — pręty belki, nie siatki płyty.</summary>
         public static bool IsBeamCode(string code)
             => code == CodeBottom || code == CodeTop || code == CodeLinks || code == CodeSide || code == CodeNib
-            || code == CodeBoth || code == CodeUBar;
+            || code == CodeBoth || code == CodeUBar || code == CodeSideU;
 
         /// <summary>Otuliny belki (decyzja użytkownika 2026-10-10): boczna / czołowa strzemion 45 (40 + odchyłka), dolna 50, górna 35
         /// (pod siatką T, bez zmian). Domyślne parametrów BeamParams.CoverSide / CoverBottom.</summary>
@@ -1054,6 +1058,75 @@ namespace BricsCadRc.Core
             return Math.Max(0, (int)Math.Ceiling(axes / spacing - 1e-9) - 1);
         }
 
+        /// <summary>
+        /// K4: poziomy U-bar „UB SIDE” (kształt 21 w rzucie) jednego końca odcinka — zamyka pręty boczne obu boków na jednym poziomie;
+        /// jeden na poziom (Levels — liczba prętów bocznych na bok). W rzucie: ramię przy jednym boku (oś Across0) od tyłu U w głąb
+        /// belki na długość A, hak na zagięciu w stronę drugiego ramienia (pełny U w rzucie — później).
+        /// </summary>
+        public sealed class SideUBarRun
+        {
+            public string Kind;
+            public Segment Seg;
+            public bool AtLo;
+            public int Dia, Levels;
+            /// <summary>Wymiary zewnętrzne: A = C ramiona, B — rozstaw zewnętrzny ramion (B strzemienia − 2·Ø strzemienia).</summary>
+            public double A, B, C;
+            public bool AlongX;
+            /// <summary>Osie ramion w poprzek (pręty boczne obu boków).</summary>
+            public double Across0, Across1;
+            public double Back, LineStart, LineLength;
+            public bool BendAtStart;
+
+            public override string ToString()
+                => string.Format(CultureInfo.InvariantCulture, "{0} 21 H{1} A={2:0} B={3:0} C={4:0} ×{5}", Kind, Dia, A, B, C, Levels);
+        }
+
+        /// <summary>
+        /// K4 (praktyka biura C12; domyślne do potwierdzenia — pytanie 9): U-bary „UB SIDE” na każdym końcu z zamknięciem UBar / LBar /
+        /// Tee (jak pionowe U-bary): tył na otulinie od lica końca (narożnik — lica zewnętrznego narożnika, T — dalszego lica belki
+        /// ciągłej), B = Floor5(B strzemienia − 2·Ø strzemienia) (510 → 485; C12 480), A = C = Ceil25(tył → początek prętów bocznych
+        /// + zakład) (koniec 525, narożnik ≈ szerokość drugiej nogi + zakład), przycięte do zakresu prętów bocznych odcinka (komunikat).
+        /// sideBars — zakres prętów bocznych odcinka (początek pierwszego, koniec ostatniego pręta).
+        /// </summary>
+        public static List<SideUBarRun> PlanSideUBars(Result an, IDictionary<Segment, (double Lo, double Hi)> sideBars, int levels,
+                                                      int dSide, int dLink, double lap, double cover, List<string> msgs)
+        {
+            var res = new List<SideUBarRun>();
+            if (an == null || levels <= 0 || dSide <= 0) return res;
+            foreach (var s in an.Segments.Where(x => !x.Manual))
+            {
+                if (sideBars == null || !sideBars.TryGetValue(s, out var bars)) continue;
+                double b = Floor5(StirrupWidth(s.Width, cover) - 2 * dLink);
+                if (b <= 0) continue;
+                var (c0, c1) = SideBarsAcross(s, dSide, dLink, cover);
+                foreach (bool atLo in new[] { true, false })
+                {
+                    var c = atLo ? s.LoClose : s.HiClose;
+                    if (c != Closure.UBar && c != Closure.LBar && c != Closure.Tee) continue;
+                    string kind = c == Closure.UBar ? "E" : c == Closure.LBar ? "L" : "T";
+                    int sE = atLo ? 1 : -1;
+                    double back = (atLo ? s.FaceLo : s.FaceHi) + sE * cover;
+                    double start = atLo ? bars.Lo : bars.Hi;
+                    double a = Ceil25(Math.Max(0, sE * (start - back)) + lap);
+                    double max = Floor25(sE * ((atLo ? bars.Hi : bars.Lo) - back));
+                    if (a > max + 1e-6)
+                    {
+                        double cut = Math.Max(25.0, max);
+                        msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                            "UB SIDE ({0}): ramię {1:0} przycięte do {2:0} (krótki odcinek) — zakład mniejszy niż zadany.",
+                            kind == "E" ? "koniec" : kind == "L" ? "narożnik L" : "złącze T", a, cut));
+                        a = cut;
+                    }
+                    res.Add(new SideUBarRun
+                    {
+                        Kind = kind, Seg = s, AtLo = atLo, Dia = dSide, Levels = levels, A = a, B = b, C = a, AlongX = s.AlongX,
+                        Across0 = c0, Across1 = c1, Back = back, LineStart = atLo ? back : back - a, LineLength = a, BendAtStart = atLo
+                    });
+                }
+            }
+            return res;
+        }
+
         /// <summary>Osie prętów bocznych w poprzek (przy ramionach strzemienia): otulina + strzemię + d/2 od każdego lica.</summary>
         public static (double Lo, double Hi) SideBarsAcross(Segment s, double d, double dLink = 10, double cover = DefaultCoverSide)
             => (s.AcrossLo + cover + dLink + d / 2.0, s.AcrossHi - cover - dLink - d / 2.0);
@@ -1098,6 +1171,296 @@ namespace BricsCadRc.Core
             }
             double lo = End(true), hi = End(false);
             return hi - lo > 100 ? (across, lo, hi) : ((double, double, double)?)null;
+        }
+
+        // ── K7 (E2): siatka płyty przy belce (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne, do potwierdzenia — pytanie 11) ──
+
+        /// <summary>Zasięg odcięcia poza lico belki (nib przed belką / nib zawinięty na końcu): nib ≤ EdgeEndMaxGap + 5.</summary>
+        public const double MeshCutReach = EdgeEndMaxGap + 5.0;
+
+        /// <summary>
+        /// Prostokąty odejmowane od wielokąta siatki płyty (E2) dla warstwy dolnej (top = false, wielokąt = obrys zewnętrzny) albo
+        /// górnej (top = true, wielokąt = linia uskoku), pręty wzdłuż X (barsAlongX) albo Y; każdy odcinek osiowy belki (odcinki
+        /// „detal ręczny” — bez odcięcia, siatka jak bez belki):
+        ///   • pręty RÓWNOLEGŁE do odcinka — dół: od strony krawędzi płyty (nib przed belką) do lica wewnętrznego + d (pierwszy pręt
+        ///     40 + d od lica), góra: do lica wewnętrznego + (s/2 − otulina) (pierwszy pręt s/2 od lica); belka bez krawędzi płyty
+        ///     (OuterSide = 0) — oba lica;
+        ///   • pręty PROSTOPADŁE — dół: odjęty pas nibu przed belką (pręty do linii uskoku − otulina, prosto do lica zewnętrznego belki),
+        ///     góra: bez zmian (już do linii uskoku).
+        /// Wzdłuż: lica końców odcinka (FaceLo..FaceHi), na końcu przy krawędzi i w narożniku L dalej o <see cref="MeshCutReach"/>
+        /// (nib zawinięty / nib narożnika). d — średnica prętów warstwy, spacing — rozstaw nominalny, cover — otulina siatki.
+        /// </summary>
+        public static List<RectilinearPolygons.Rect> MeshCutRects(Result an, bool top, bool barsAlongX, double d,
+                                                                  double spacing = 200, double cover = 40)
+        {
+            var res = new List<RectilinearPolygons.Rect>();
+            if (an == null) return res;
+            foreach (var s in an.Segments)
+            {
+                if (s.Manual) continue;
+                double eLo = s.FaceLo - (s.LoKind == EndKind.Edge || s.LoKind == EndKind.Corner ? MeshCutReach : 0);
+                double eHi = s.FaceHi + (s.HiKind == EndKind.Edge || s.HiKind == EndKind.Corner ? MeshCutReach : 0);
+                double cLo, cHi;
+                if (s.AlongX == barsAlongX)
+                {
+                    double off = top ? spacing / 2.0 - cover : d;
+                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossHi + off; }
+                    else if (s.OuterSide > 0) { cLo = s.AcrossLo - off; cHi = s.AcrossHi + MeshCutReach; }
+                    else { cLo = s.AcrossLo - off; cHi = s.AcrossHi + off; }
+                }
+                else
+                {
+                    if (top || s.OuterSide == 0) continue;
+                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossLo; }
+                    else { cLo = s.AcrossHi; cHi = s.AcrossHi + MeshCutReach; }
+                }
+                res.Add(s.AlongX ? new RectilinearPolygons.Rect(eLo, cLo, eHi, cHi) : new RectilinearPolygons.Rect(cLo, eLo, cHi, eHi));
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// E2: obszary krawędzi „przy belce” — krawędź obrysu (uskoku) leżąca w nich nie dostaje UB 01/02 (koniec belki zamykają
+        /// pionowe U-bary BU, pręty siatki prostopadłe kończą się w belce): odcinek osiowy belki (lica boczne, lica końców) rozszerzony
+        /// o <see cref="MeshCutReach"/> po stronie krawędzi płyty (nib przed belką) i na końcach przy krawędzi / w narożniku L
+        /// (nib zawinięty). Odcinki „detal ręczny” — bez zmian (UB jak bez belki).
+        /// </summary>
+        public static List<RectilinearPolygons.Rect> UbExclusionRects(Result an)
+        {
+            var res = new List<RectilinearPolygons.Rect>();
+            if (an == null) return res;
+            foreach (var s in an.Segments)
+            {
+                if (s.Manual) continue;
+                double eLo = s.FaceLo - (s.LoKind == EndKind.Edge || s.LoKind == EndKind.Corner ? MeshCutReach : 0);
+                double eHi = s.FaceHi + (s.HiKind == EndKind.Edge || s.HiKind == EndKind.Corner ? MeshCutReach : 0);
+                double cLo = s.AcrossLo - (s.OuterSide < 0 ? MeshCutReach : 0);
+                double cHi = s.AcrossHi + (s.OuterSide > 0 ? MeshCutReach : 0);
+                res.Add(s.AlongX ? new RectilinearPolygons.Rect(eLo, cLo, eHi, cHi) : new RectilinearPolygons.Rect(cLo, eLo, cHi, eHi));
+            }
+            return res;
+        }
+
+        // ── K8: belki z opisów „xxxTHK” bez warstwy SD-Thickening-Zone (GA C12; domyślne do potwierdzenia — pytanie 12) ──
+
+        /// <summary>Krawędź linii uskoku (nib): Vertical — x = C; Inward — wnętrze płyty po stronie +1 / −1; Lo..Hi — zakres krawędzi linii uskoku.</summary>
+        public sealed class ThkStepEdge
+        {
+            public bool Vertical;
+            public double C, Lo, Hi;
+            public int Inward;
+        }
+
+        /// <summary>Opis z GA: treść (linie złączone), punkt (MText — środek obwiedni, MLeader — grot pierwszego odnośnika), MLeader.</summary>
+        public sealed class ThkText
+        {
+            public string Text;
+            public double X, Y;
+            public bool Leader;
+        }
+
+        /// <summary>Strefa belki z opisów: wielokąt (CCW), H, źródła (komunikaty).</summary>
+        public sealed class ThkZone
+        {
+            public List<(double X, double Y)> Polygon = new List<(double X, double Y)>();
+            public int Height;
+            public string Note;
+        }
+
+        /// <summary>Pas szukania opisu od linii uskoku w głąb płyty [mm].</summary>
+        public const double ThkBand = 750.0;
+        /// <summary>Linia strefy w GA: równoległa do linii uskoku w tej odległości w głąb (C12 / Holbrook: 600) [mm].</summary>
+        public const double ThkLineMin = 300.0, ThkLineMax = 1000.0;
+
+        /// <summary>
+        /// Strefa belki = prostokąt wzdłuż krawędzi linii uskoku (nib): od linii uskoku <paramref name="c"/> w głąb płyty (inward) na
+        /// <paramref name="depth"/>, wzdłuż lo..hi. Wspólne z RC_BEAM → Krawedz (AutoRebarEngine.CreateZoneFromEdge). Wierzchołki CCW.
+        /// </summary>
+        public static List<(double X, double Y)> ZoneFromNibEdge(bool vertical, double c, int inward, double lo, double hi, double depth)
+        {
+            double c0 = c, c1 = c + inward * depth;
+            var r = vertical
+                ? new List<(double X, double Y)> { (c0, lo), (c1, lo), (c1, hi), (c0, hi) }
+                : new List<(double X, double Y)> { (lo, c0), (hi, c0), (hi, c1), (lo, c1) };
+            if (SignedArea(r) < 0) r.Reverse();
+            return r;
+        }
+
+        /// <summary>
+        /// K8 (plan praktyki biura, poprawka 8 recenzji): strefy belek z opisów „xxxTHK” (MText / MLeader na SD-Text), gdy GA nie ma
+        /// warstwy SD-Thickening-Zone:
+        ///   • odrzucenia (komunikat): „GB-…” (belka gruntowa poza płytą — detal ręczny), H ≤ grubość płyty (opis płyty), punkt poza
+        ///     obrysem, punkt poza pasem [linia uskoku, +750] żadnej krawędzi nibu; MLeader bez linii strefy w GA (pole lokalne, np. styk GB);
+        ///   • zasięg w głąb: linia strefy z GA (odcinek równoległy do linii uskoku 300–1000 w głąb, najbliższy 600), bez niej — 600;
+        ///   • zasięg wzdłuż: krawędź linii uskoku, podzielona odcinkami prostopadłymi w pasie (granice stref o różnym H, PLOT 3: 600 / 675);
+        ///   • H przedziału: z opisów MText (najczęstsze), MLeader tylko gdy brak MText (inny H z MLeader — ostrzeżenie);
+        ///   • sąsiednia krawędź (narożnik) — dołączona (L / U) tylko, gdy ma własny opis albo linię strefy;
+        ///   • przedziały tego samego H stykające się → jeden wielokąt (suma prostokątów).
+        /// </summary>
+        public static List<ThkZone> ZonesFromThk(IList<ThkStepEdge> edges, IList<ThkText> texts,
+                                                 IList<((double X, double Y) A, (double X, double Y) B)> lines,
+                                                 IList<(double X, double Y)> outline, double slabThickness, List<string> msgs,
+                                                 double defaultDepth = 600)
+        {
+            var res = new List<ThkZone>();
+            if (edges == null || texts == null) return res;
+            string F(double v) => v.ToString("0", CultureInfo.InvariantCulture);
+
+            // linia strefy i dzielniki krawędzi
+            double? LineDepth(ThkStepEdge e)
+            {
+                double best = double.NaN;
+                foreach (var (a, b) in lines ?? new List<((double X, double Y), (double X, double Y))>())
+                {
+                    bool vert = Math.Abs(a.X - b.X) < 1.0, hor = Math.Abs(a.Y - b.Y) < 1.0;
+                    if (e.Vertical ? !vert : !hor) continue;
+                    double cc = e.Vertical ? (a.X + b.X) / 2 : (a.Y + b.Y) / 2;
+                    double l0 = e.Vertical ? Math.Min(a.Y, b.Y) : Math.Min(a.X, b.X), l1 = e.Vertical ? Math.Max(a.Y, b.Y) : Math.Max(a.X, b.X);
+                    double off = (cc - e.C) * e.Inward;
+                    if (off < ThkLineMin || off > ThkLineMax) continue;
+                    if (Math.Min(l1, e.Hi) - Math.Max(l0, e.Lo) < 0.5 * (e.Hi - e.Lo)) continue;
+                    if (double.IsNaN(best) || Math.Abs(off - defaultDepth) < Math.Abs(best - defaultDepth)) best = off;
+                }
+                return double.IsNaN(best) ? (double?)null : best;
+            }
+            List<double> Dividers(ThkStepEdge e, double depth)
+            {
+                var r = new List<double>();
+                foreach (var (a, b) in lines ?? new List<((double X, double Y), (double X, double Y))>())
+                {
+                    bool vert = Math.Abs(a.X - b.X) < 1.0, hor = Math.Abs(a.Y - b.Y) < 1.0;
+                    if (e.Vertical ? !hor : !vert) continue;        // prostopadłe do krawędzi
+                    double along = e.Vertical ? (a.Y + b.Y) / 2 : (a.X + b.X) / 2;
+                    if (along <= e.Lo + 1.0 || along >= e.Hi - 1.0) continue;
+                    double q0 = (e.Vertical ? a.X : a.Y), q1 = (e.Vertical ? b.X : b.Y);
+                    double o0 = Math.Min((q0 - e.C) * e.Inward, (q1 - e.C) * e.Inward), o1 = Math.Max((q0 - e.C) * e.Inward, (q1 - e.C) * e.Inward);
+                    if (o0 <= 5.0 && o1 >= depth - 5.0) r.Add(along);   // odcinek od linii uskoku do linii strefy
+                }
+                return r.OrderBy(x => x).ToList();
+            }
+
+            var entries = new Dictionary<(int e, double lo, double hi), (List<int> hText, List<int> hLeader, double depth, bool line)>();
+            foreach (var t in texts)
+            {
+                string txt = t.Text ?? "";
+                if (Regex.IsMatch(txt, @"\bGB\s*-", RegexOptions.IgnoreCase))
+                {
+                    msgs?.Add($"„{txt}” — belka gruntowa poza płytą: detal ręczny (strefa nie utworzona).");
+                    continue;
+                }
+                int? h = null;
+                foreach (var l in txt.Split('\n')) if (ParseThk(l) is int hh) { h = hh; break; }
+                if (!h.HasValue) continue;
+                if (h.Value <= slabThickness + 0.5)
+                { msgs?.Add($"„{txt}”: {h} ≤ grubość płyty {F(slabThickness)} — pominięty."); continue; }
+                if (outline != null && outline.Count >= 3 && !Inside(outline, (t.X, t.Y)))
+                { msgs?.Add($"„{txt}” ({F(t.X)}, {F(t.Y)}): poza obrysem płyty — pominięty."); continue; }
+                int best = -1; double bestD = double.MaxValue;
+                for (int i = 0; i < edges.Count; i++)
+                {
+                    var e = edges[i];
+                    double across = e.Vertical ? t.X : t.Y, along = e.Vertical ? t.Y : t.X;
+                    double d = (across - e.C) * e.Inward;
+                    if (d < -5.0 || d > ThkBand || along < e.Lo - 5.0 || along > e.Hi + 5.0) continue;
+                    if (d < bestD) { bestD = d; best = i; }
+                }
+                if (best < 0)
+                { msgs?.Add($"„{txt}” ({F(t.X)}, {F(t.Y)}): poza pasem {F(ThkBand)} mm od linii uskoku nibu — pominięty (detal ręczny / RC_BEAM)."); continue; }
+                var eg = edges[best];
+                double? ld = LineDepth(eg);
+                if (!ld.HasValue && t.Leader)
+                {
+                    msgs?.Add($"„{txt}” (odnośnik): brak linii strefy w GA przy tej krawędzi — pole lokalne (np. styk GB), strefa nie utworzona; " +
+                              "w razie potrzeby RC_BEAM.");
+                    continue;
+                }
+                double depth = ld ?? defaultDepth;
+                double al = eg.Vertical ? t.Y : t.X;
+                var dv = Dividers(eg, depth);
+                double lo = eg.Lo, hi = eg.Hi;
+                foreach (var x in dv) { if (x < al) lo = Math.Max(lo, x); else hi = Math.Min(hi, x); }
+                var key = (best, Math.Round(lo, 3), Math.Round(hi, 3));
+                if (!entries.TryGetValue(key, out var en)) en = (new List<int>(), new List<int>(), depth, ld.HasValue);
+                (t.Leader ? en.hLeader : en.hText).Add(h.Value);
+                entries[key] = en;
+                if (!ld.HasValue)
+                    msgs?.Add($"„{txt}”: brak linii strefy w GA — strefa {F(defaultDepth)} od linii uskoku (do sprawdzenia).");
+            }
+
+            // H przedziałów
+            var zoned = new List<(int e, double lo, double hi, int h, double depth)>();
+            foreach (var kv in entries)
+            {
+                var (ht, hl, depth, _) = kv.Value;
+                int H = ht.Count > 0 ? ht.GroupBy(x => x).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First().Key
+                                     : hl.GroupBy(x => x).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First().Key;
+                if (ht.Count > 0 && hl.Any(x => x != H))
+                    msgs?.Add($"odnośnik „{string.Join("/", hl.Distinct())}THK” w strefie {H}THK — lokalne pogłębienie: detal ręczny (przyjęto {H}).");
+                if (ht.Distinct().Count() > 1) msgs?.Add($"różne wysokości w opisach jednej strefy ({string.Join("/", ht.Distinct())}) — przyjęto {H}.");
+                zoned.Add((kv.Key.e, kv.Key.lo, kv.Key.hi, H, depth));
+            }
+
+            // sąsiednie krawędzie (narożnik L / U) z linią strefy — dołączone z tym samym H
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var z in zoned.ToList())
+                {
+                    var e = edges[z.e];
+                    foreach (double endAlong in new[] { z.lo, z.hi })
+                    {
+                        if (Math.Abs(endAlong - e.Lo) > 1.0 && Math.Abs(endAlong - e.Hi) > 1.0) continue;
+                        for (int j = 0; j < edges.Count; j++)
+                        {
+                            var f = edges[j];
+                            if (f.Vertical == e.Vertical || zoned.Any(x => x.e == j)) continue;
+                            if (Math.Abs(f.C - endAlong) > 1.0) continue;
+                            if (Math.Abs(f.Lo - e.C) > 1.0 && Math.Abs(f.Hi - e.C) > 1.0) continue;
+                            double? fd = LineDepth(f);
+                            if (!fd.HasValue) continue;
+                            var dv = Dividers(f, fd.Value);
+                            bool atLo = Math.Abs(f.Lo - e.C) <= 1.0;
+                            double lo = f.Lo, hi = f.Hi;
+                            if (dv.Count > 0) { if (atLo) hi = dv[0]; else lo = dv[dv.Count - 1]; }
+                            zoned.Add((j, lo, hi, z.h, fd.Value));
+                            msgs?.Add($"krawędź uskoku {(f.Vertical ? "x" : "y")}={F(f.C)}: linia strefy w GA bez opisu — dołączona do strefy {z.h}THK (L / U).");
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            // prostokąty → grupy tego samego H (stykające się) → wielokąt
+            var rects = zoned.Select(z =>
+            {
+                var e = edges[z.e];
+                var p = ZoneFromNibEdge(e.Vertical, e.C, e.Inward, z.lo, z.hi, z.depth);
+                return (z.h, rect: new RectilinearPolygons.Rect(p.Min(q => q.X), p.Min(q => q.Y), p.Max(q => q.X), p.Max(q => q.Y)));
+            }).ToList();
+            var parent = Enumerable.Range(0, rects.Count).ToArray();
+            int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
+            for (int i = 0; i < rects.Count; i++)
+                for (int j = i + 1; j < rects.Count; j++)
+                {
+                    if (rects[i].h != rects[j].h) continue;
+                    var a = rects[i].rect; var b = rects[j].rect;
+                    if (a.X0 <= b.X1 + 1.0 && b.X0 <= a.X1 + 1.0 && a.Y0 <= b.Y1 + 1.0 && b.Y0 <= a.Y1 + 1.0) parent[Find(i)] = Find(j);
+                }
+            foreach (var g in Enumerable.Range(0, rects.Count).GroupBy(Find))
+            {
+                var loops = RectilinearPolygons.Union(g.Select(i => rects[i].rect));
+                if (loops.Count == 0) continue;
+                // Union: pętle zewnętrzne CCW, otwory CW — każda pętla zewnętrzna = osobna strefa (np. prostokąty stykające się
+                // tylko w tolerancji 1 mm); otwór w sumie (U zamknięte w pierścień) — pomijany z komunikatem
+                var outers = loops.Where(l => RectilinearPolygons.SignedArea(l) > 0).ToList();
+                int h = rects[g.First()].h;
+                if (loops.Count > outers.Count) msgs?.Add($"strefa {h}THK: suma prostokątów z otworem — otwór pominięty, sprawdź strefę.");
+                if (outers.Count > 1) msgs?.Add($"strefa {h}THK: {outers.Count} rozłączne części — osobne strefy.");
+                foreach (var o in outers)
+                    res.Add(new ThkZone { Polygon = o, Height = h, Note = g.Count() > 1 ? $"{g.Count()} krawędzie (L / U)" : null });
+            }
+            return res;
         }
 
         /// <summary>Wysokość belki z opisu GA („450THK”, „375 THK”; bez „mm” — to grubość płyty); null gdy brak.</summary>

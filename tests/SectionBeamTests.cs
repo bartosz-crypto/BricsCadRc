@@ -319,6 +319,8 @@ namespace BricsCadRc.Tests
         /// <summary>
         /// Skróty odcisków 5 złotych wejść (z handle rozkładów jak SectionFingerprintTests) policzone kodem HEAD ecaa083 (przed E5) —
         /// brak belek = ten sam odcisk (przekroje narysowane przed E5 na płytach bez belek zostają aktualne).
+        /// Od K6 (SectionPlanner.Version 2) bieżący odcisk różni się od tych skrótów tylko składnikiem META („Ver:2” zamiast „Ver:1”) —
+        /// test podmienia „Ver:2” → „Ver:1” przed porównaniem; skróty HEAD zostają bez zmian (dowód, że reszta odcisku jest ta sama).
         /// </summary>
         private static readonly Dictionary<string, string> HeadHash = new Dictionary<string, string>
         {
@@ -330,7 +332,11 @@ namespace BricsCadRc.Tests
         {
             var make = SectionPlannerGoldenTests.Cases().Single(c => (string)c.Arguments[0]! == name).Arguments[1] as Func<SectionPlanner.Input>;
             var st = StateOf(Tagged(make!()));
-            Assert.That(st.Hash, Is.EqualTo(HeadHash[name]));
+            // K6: SectionPlanner.Version 2 zmienia składnik META (Ver) — poza nim odcisk bez zmian: META z „Ver 1” = dawny skrót
+            var old = new SortedDictionary<string, string>(st.Components);
+            old["META"] = old["META"].Replace("Ver:2", "Ver:1");
+            Assert.That(old["META"], Does.Contain("Ver:1"));
+            Assert.That(SectionFingerprint.Hash(old), Is.EqualTo(HeadHash[name]));
             Assert.That(st.Components.Keys.Any(k => k.StartsWith("BEAM:")), Is.False);
         }
 
@@ -383,6 +389,88 @@ namespace BricsCadRc.Tests
             var v = SectionFingerprint.Compare(a, b);
             Assert.That(v.Stale, Is.False);
             Assert.That(v.Info, Has.Some.Contains("zmieniona belka 000002AA (parametry)"));
+        }
+
+        // ── K6: przekrój z belką narysowany planerem wersji 1 (poprawka recenzji K4–K8, pkt 1) ──
+
+        private const string ParamsV1 = "W600|L10@200|B4x16|T4x16|U16|S51|LAP800|MAX6000|TL2";
+
+        /// <summary>
+        /// Stan zapisany wersją 1: BEAM bez nowych pól „P” (CT…NT), A strzemienia dawnym wzorem (265), META „Ver:1”, wersja 1
+        /// i inny skrót wyniku (planer wersji 1 rysował inaczej).
+        /// </summary>
+        private static SectionFingerprint.State StoredV1(Action<SectionPlanner.Input>? change = null)
+        {
+            var inp = Tagged(SectionPlannerGoldenTests.CaseBeam());
+            inp.Beams[0].Params = ParamsV1; inp.Beams[0].StirrupA = 265;
+            change?.Invoke(inp);
+            var st = StateOf(inp);
+            st.Components["META"] = st.Components["META"].Replace("Ver:2", "Ver:1");
+            st.Hash = SectionFingerprint.Hash(st.Components);
+            st.Version = 1;
+            st.Digest = "wynik-planera-wersji-1";
+            return st;
+        }
+
+        /// <summary>Stan bieżący (wersja 2): parametry z polami rekordu v2, A strzemienia = H − 35 − 50 = 290.</summary>
+        private static SectionFingerprint.State CurrentV2(Action<SectionPlanner.Input>? change = null)
+        {
+            var inp = Tagged(SectionPlannerGoldenTests.CaseBeam());
+            inp.Beams[0].Params = ParamsV1 + "|CT35|SM3|ST450|LM40|AN150|BT1|UD35|CQ0|EO0|SU0|CL1|UX90|SD12|NB10|NT0";
+            inp.Beams[0].StirrupA = 290;
+            change?.Invoke(inp);
+            return StateOf(inp);
+        }
+
+        [Test]
+        public void Compare_V1SectionWithBeam_OnlyProgramVersionChanged_P2()
+        {
+            var stored = StoredV1();
+            var current = CurrentV2();
+            Assert.That(current.Version, Is.GreaterThanOrEqualTo(2));
+            Assert.That(current.Hash, Is.Not.EqualTo(stored.Hash));
+            var v = SectionFingerprint.Compare(stored, current);
+            Assert.That(v.Stale, Is.False, string.Join("; ", v.Reasons));
+            Assert.That(v.NewVersionDiffers, Is.True);
+            Assert.That(v.Info, Has.Some.Contains("nowa wersja programu rysowałaby ten przekrój inaczej"));
+        }
+
+        [Test]
+        public void Compare_V1SectionWithBeam_BeamInputChanged_Stale()
+        {
+            // H belki zmienione po narysowaniu przekroju
+            var v = SectionFingerprint.Compare(StoredV1(), CurrentV2(i => i.Beams[0].Height = 450));
+            Assert.That(v.Stale, Is.True);
+            Assert.That(v.Reasons, Has.Some.StartsWith("zmieniona belka 000002AA (").And.Contains("H 375 → 450"));
+            Assert.That(v.Reasons, Has.None.Contains("wysokość strzemienia"));
+
+            // parametr wersji 1 (szerokość w „P”) zmieniony
+            var p = SectionFingerprint.Compare(StoredV1(), CurrentV2(i => i.Beams[0].Params = i.Beams[0].Params.Replace("W600", "W700")));
+            Assert.That(p.Stale, Is.True);
+            Assert.That(p.Reasons, Has.Some.Contains("zmieniona belka 000002AA (parametry)"));
+
+            // nib belki zmieniony
+            var n = SectionFingerprint.Compare(StoredV1(), CurrentV2(i => i.Beams[0].NibHeight = 200));
+            Assert.That(n.Stale, Is.True);
+            Assert.That(n.Reasons, Has.Some.Contains("wys. nibu 150 → 200"));
+        }
+
+        [Test]
+        public void Compare_V2SectionWithBeam_StirrupAChanged_StillReported()
+        {
+            // przekrój wersji 2: A strzemienia i nowe pola „P” porównywane jak dotąd (pominięcie tylko dla zapisu wersji 1)
+            var a = CurrentV2();
+            var b = CurrentV2(i => { i.Beams[0].StirrupA = 275; i.Beams[0].Params = i.Beams[0].Params.Replace("CT35", "CT50"); });
+            var v = SectionFingerprint.Compare(a, b);
+            Assert.That(v.Reasons.Concat(v.Info), Has.Some.Contains("wysokość strzemienia 290 → 275").And.Contains("parametry"));
+        }
+
+        [Test]
+        public void BeamParamsV1_FirstNineFields()
+        {
+            Assert.That(SectionFingerprint.BeamParamsV1(ParamsV1 + "|CT35|SM3"), Is.EqualTo(ParamsV1));
+            Assert.That(SectionFingerprint.BeamParamsV1(ParamsV1), Is.EqualTo(ParamsV1));
+            Assert.That(SectionFingerprint.BeamParamsV1(null!), Is.EqualTo(""));
         }
 
         [Test]

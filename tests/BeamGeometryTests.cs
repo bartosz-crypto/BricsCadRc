@@ -517,7 +517,7 @@ namespace BricsCadRc.Tests
             Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, 8), Is.EqualTo("2x4"));
             Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, null), Is.EqualTo("4"));
             Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 4, 6), Is.EqualTo("6"), "krotność niecałkowita — liczba");
-            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 4), Is.EqualTo("4"), "BS — jak dotąd (opis K4)");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 4), Is.EqualTo("2x2"), "K4: BS „2x{n}”");
             Assert.That(BarLabelRules.CountText("B1", 31, null), Is.EqualTo("31"));
             Assert.That(BarLabelRules.CountText("B1", 31, 33), Is.EqualTo("33"));
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeBoth), Is.True);

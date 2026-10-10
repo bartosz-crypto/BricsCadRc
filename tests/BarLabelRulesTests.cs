@@ -29,7 +29,11 @@ namespace BricsCadRc.Tests
         [Test]
         public void CountText_OtherCodes_EffectiveCount()
         {
-            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 4), Is.EqualTo("4"), "BS — jak dotąd (opis K4)");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 4), Is.EqualTo("2x2"), "K4: BS „2x{n}” (boki × liczba na bok)");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, 2), Is.EqualTo("2x1"), "K4: także n = 1 (C12 „2x1 H12-13 SIDE”)");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSide, 2, null), Is.EqualTo("2"));
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSideU, 1, 3), Is.EqualTo("3x1"), "K4: UB SIDE „{n}x1”");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeSideU, 1, null), Is.EqualTo("1"));
             Assert.That(BarLabelRules.CountText(BeamGeometry.CodeUBar, 4, null), Is.EqualTo("4"));
             Assert.That(BarLabelRules.CountText("B1", 31, null), Is.EqualTo("31"));
             Assert.That(BarLabelRules.CountText("B1", 31, 33), Is.EqualTo("33"));
@@ -41,6 +45,7 @@ namespace BricsCadRc.Tests
         {
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeBoth), Is.True);
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeSide), Is.True);
+            Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeSideU), Is.True);
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeUBar), Is.False);
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeBottom), Is.False);
             Assert.That(BarLabelRules.KeepsMultiplicity(BeamGeometry.CodeTop), Is.False);
