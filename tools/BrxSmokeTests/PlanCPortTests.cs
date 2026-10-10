@@ -61,6 +61,7 @@ namespace BricsCadRc.BrxSmokeTests
 
         // ---- stan zestawów ----
         private static W2Set _p16a, _p16cSet, _p16bC, _p16bPoly, _p16bBlock, _p16d;
+        private static HashSet<long> _p16cBefore;   // P16C: handle rozkładów / opisów sprzed COPY (pole statyczne — patrz PortP16C)
         private static ObjectId _p16aDistB, _p16bZ, _p16bZLabel, _p16bD, _p16dDistK, _p16dAnnotK;
         private static ObjectId _iA, _iB, _iC, _iD, _iE, _iF;
         private static ObjectId _m1, _m2, _m3;
@@ -235,20 +236,22 @@ namespace BricsCadRc.BrxSmokeTests
                 Check(step, "COPY rozkładu + opisu, usunięcie rozkładu-kopii w tej samej komendzie → opis-kopia usunięty, oryginał bez zmian", () =>
                 {
                     Func<Entity, bool> distOrAnnot = e => e is BlockReference && (Has(e, DistApp2) || Has(e, AnnotApp2));
-                    var before = new HashSet<ObjectId>(ScanMs(db, distOrAnnot));
+                    _p16cBefore = new HashSet<long>(ScanMs(db, distOrAnnot).Select(id => id.Handle.Value));
                     EdZoom(ed, 4);
                     EdCopy(ed, Pw(-100, Y(4) + 1000), Pw(3500, Y(4) + 2100), new Vector3d(0, 4000, 0));
-                    var added = ScanMs(db, distOrAnnot).Where(id => !before.Contains(id)).ToList();
-                    var cDist = added.Where(id => Has(Open(db, id), DistApp2)).ToList();
-                    var cAnnot = added.Where(id => Has(Open(db, id), AnnotApp2)).ToList();
+                    // Po zagnieżdżonym Editor.Command tylko pola statyczne i świeże odczyty: referencje lokalne / domknięcia
+                    // utworzone przed komendą bywały nieważne (NullReferenceException zależny od GC i układu DLL testów).
+                    var db2 = ActiveDb();
+                    var cDist = ScanMs(db2, e => e is BlockReference && Has(e, DistApp2)).Where(id => !_p16cBefore.Contains(id.Handle.Value)).ToList();
+                    var cAnnot = ScanMs(db2, e => e is BlockReference && Has(e, AnnotApp2)).Where(id => !_p16cBefore.Contains(id.Handle.Value)).ToList();
                     if (cDist.Count != 1 || cAnnot.Count != 1)
                         throw new AssertFail($"po COPY: rozkłady-kopie={cDist.Count}, opisy-kopie={cAnnot.Count} (oczekiwano 1 / 1)");
                     // Ścieżka viaClone: opis-klon ma jeszcze [16] → rozkład ORYGINAŁU (przepięcie dopiero w CommandEnded)
-                    Eq("[16] opisu-klonu", Link(db, cAnnot[0], AnnotApp2, 16), Hx(_p16cSet.Dist));
-                    EraseInCode(db, cDist[0]);
+                    Eq("[16] opisu-klonu", Link(db2, cAnnot[0], AnnotApp2, 16), Hx(_p16cSet.Dist));
+                    EraseInCode(db2, cDist[0]);
                     True(cAnnot[0].IsErased, "opis-kopia osierocony (nieusunięty z rozkładem-kopią)");
                     True(!_p16cSet.Annot.IsErased && !_p16cSet.Dist.IsErased, "oryginał naruszony");
-                    return DistAnnotPair(db, _p16cSet.Dist, _p16cSet.Annot);
+                    return DistAnnotPair(db2, _p16cSet.Dist, _p16cSet.Annot);
                 });
             });
         }
@@ -497,12 +500,6 @@ namespace BricsCadRc.BrxSmokeTests
         // ================================================================
         // Pomocnicze PORT
         // ================================================================
-
-        private static Entity Open(Database db, ObjectId id)
-        {
-            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
-                return (Entity)tr.GetObject(id, OpenMode.ForRead);
-        }
 
         /// <summary>Opis [16] → wskazany rozkład (punktowo, 1005) — symulacja starego rekordu (błąd 3b).</summary>
         private static void SetAnnotSource(Database db, ObjectId annot, ObjectId dist)

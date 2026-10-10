@@ -19,6 +19,8 @@ Stara wtyczka kolegi to `BricsCadRc.dll` (te same komendy i XData); wczytana jes
 | Znacznik płyty (AutoRebar) | na rozkładzie | `RC_AUTOREBAR_SLAB` | Handle obrysu płyty, z którego wygenerowano rozkład |
 | Tytuł przekroju (głowa) | `MText` „SECTION A-A” (AP-TEXT) | `RC_SECTION` + Xrecord `NA_RC_SECTION` | Przekrój RC_SECTION: GUID, litera, obrys, odcisk, lista części (sekcja 4g) |
 | Część przekroju | encje rysunku przekroju i znaczniki na rzutach | `RC_SECTION_PART` | Powiązanie z tytułem, rola, klucz, GUID |
+| Strefa belki / pogrubienia | zamknięta `Polyline` na warstwie `RC-BEAM` (kopia `SD-Thickening-Zone` z GA albo RC_BEAM) | `RC_BEAM` | Parametry belki (H, szerokość, nib, strzemiona, pręty), obrys płyty [6] (sekcja 4i) |
+| Znacznik belki | na rozkładzie belki | `RC_AUTOREBAR_BEAM` | Handle strefy belki, dla której wygenerowano rozkład (kody BB / BT / BL) |
 
 Powiązania:
 ```
@@ -27,6 +29,7 @@ Rozkład ──[18] SourceBarHandle──► Pręt
 Rozkład ──[11] AnnotHandle──► Opis rozkładu ──[16] SourceBlockHandle──► Rozkład
 Rozkład ──[19]/[20] LabelPolyHandle/LabelTextHandle
 Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
+Strefa belki ──RC_BEAM [6]──► obrys płyty (tego rzutu);  Rozkład belki ──RC_AUTOREBAR_BEAM [1]──► strefa belki
 Tytuł przekroju ──[4]/[5]──► obrys płyty (wskazany / zewnętrzny); [6] ──► sam tytuł (wykrycie kopii)
 Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──► tytuł   (część potwierdzona = w obu kierunkach + [4] GUID)
 ```
@@ -93,6 +96,12 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 - `RC_SECTION_PART` (część przekroju): [1]tytuł(1005) [2]rola (SLAB, BAR, DOT, PILE, DIM, LBL, LDR, ARW, SSL, MARK,
   MARKTXT, CLOUD) [3]klucz (np. `SEG#0`, `LBL#3|05`, znaczniki `V<rzut>.P1|P2` — V0 = rzut wskazany) [4]GUID przekroju.
   Bez grup (PICKSTYLE). Chmurka (CLOUD) nie jest na liście części w rekordzie.
+- `RC_BEAM` (strefa belki, `BeamStore`, plan belek E1): [1]FormatVersion (Int16, 1) [2]H [3]szerokość [4]szer. nibu [5]wys. nibu
+  (Real) [6]obrys płyty (1005, XLink) [7]Ø strzemion (Int16) [8]rozstaw strzemion (Real) [9]Ø dołem [10]liczba dołem [11]Ø górą
+  [12]liczba górą [13]Ø U-barów (Int16) [14]kod strzemienia (tekst, „51”) [15]zakład [16]maks. długość pręta (Real)
+  [17]góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16). Brak pola = wartość domyślna `BeamParams`.
+- `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
+  punktu w strefie.
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
 
 ## 2. Moduły
@@ -128,7 +137,11 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   nieaktualne (`SectionGuard.ConfirmBeforeOutput`).
 
 - `MenuCommands` — angielskie komendy wstążki: `RC_GENERATE` (wybór w linii poleceń: Mesh / B1 / B2 / T1 / T2 / UB1 /
-  UB2 / UBNib / B3 / Add, ostatni wybór domyślny; B3 = B3 ADD w narożnikach wklęsłych — sekcja 4h), `RC_PREPARE_GA`, `RC_GA_TEXTS`, `RC_OPENING_DETAIL`, `RC_MODEL_3D`.
+  UB2 / UBNib / B3 / Add / Beam, ostatni wybór domyślny; B3 = B3 ADD w narożnikach wklęsłych — sekcja 4h; Beam = pręty belek —
+  sekcja 4i), `RC_PREPARE_GA`, `RC_GA_TEXTS`, `RC_OPENING_DETAIL`, `RC_MODEL_3D`.
+- `BeamCommands` — `RC_BEAM` (strefa belki: wskazanie polilinii albo [Krawedz] — obrys + 2 punkty krawędzi → strefa 600 od linii
+  uskoku; okno `BeamDialog`; zapis na strefach obu rzutów; pręty — opcja okna), `RC_GENERATE_BEAM` (= RC_GENERATE → Beam:
+  obrys rzutu dolnego, górny — Enter = automatycznie, przystający obrys). Sekcja 4i.
   Stare nazwy (RC_GENERUJ_*, RC_PRZYGOTUJ_GA, RC_GA_TEKSTY, RC_DETAL_OTWORU, RC_SIATKA_3D) zostają jako aliasy.
 
 ### Wstążka (`RibbonBuilder`)
@@ -244,6 +257,12 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   `SectionFingerprintTests`, `SectionRecordTests`, `SectionLabelCarryTests`, złoty test planera `SectionPlannerGoldenTests`),
   `SectionStore` (odczyt przekrojów, statusy, chmurki, `CurrentCut`), `SectionGuard` (`ConfirmBeforeOutput` — RC_BBS; etap 2:
   wydruk / PDF / PUBLISH i komunikat przy otwarciu — rejestrowany w `PluginApp`), `SectionUpdater` (RC_SECTION_UPDATE, adopcja).
+- Belki (sekcja 4i): `BeamGeometry` (bez Teigha, testy `tests/BeamGeometryTests.cs` — geometria stref 319 / 528-529 / 539):
+  odcinki strefy (`Analyze`: pary lic osiowych → prostokąty → odcinki; końce Edge / Internal / Corner (L) / Tee; skos / zmienna
+  szerokość = „detal ręczny”), `StirrupLayout`, `PlanBars`, wymiary strzemienia 51, `ParseThk`, `HeightFromLevels`, kody BB / BT / BL;
+  `BeamParams` (parametry z wartościami domyślnymi „do potwierdzenia”). `BeamStore` — rekord RC_BEAM, znacznik RC_AUTOREBAR_BEAM,
+  warstwa RC-BEAM, wyszukiwanie stref płyty i prętów belki, sprzątanie przy ponownym Prepare GA. `AutoRebarEngine.Beam` — generowanie
+  (`GenerateBeams`), RC_BEAM (`PrepareBeamZone`, `CreateZoneFromEdge`, `SaveBeamParams`), rzut partnerski (`FindPartnerView`).
 - `PositionCounter` — **jedyny** przydział numerów pozycji. `PositionReconciler` — numer po zmianie wymiarów.
 - `XLink` — powiązania handle. `NumberParser`, `GeometryHelper`, `LayerManager`, `Log`, `DocumentWatch`.
   `Log.Error` (K2, 96809d3): ten sam błąd (miejsce + typ wyjątku) najwyżej raz na 60 s. `ScriptMode` — tryb bez okien (K4).
@@ -275,7 +294,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   wklejenie ze schowka skopiowanego w tym rysunku = COPY) — wartość obiektu źródłowego; inny rysunek — "". **Znacznik płyty**
   (K5, poprawka 3c): `RC_AUTOREBAR_SLAB` [1] rozkładu i `RC_ADD` [1] wymiaru ADD → klon obrysu płyty, gdy płytę skopiowano
   razem (cel = Polyline); płyta nieskopiowana (COPY samych rozkładów / wymiarów) → "" (decyzja P4b) — przynależność
-  rozstrzyga test punktu w obrysie. **Przekroje** (bezpiecznik, rodzaje SectionHead / SectionPart): tytuł sklonowany z ≥ 1 częścią
+  rozstrzyga test punktu w obrysie. **Belki** (plan belek E1, jak K5): strefa belki (rodzaj BeamZone) `RC_BEAM` [6] → klon obrysu
+  płyty, gdy płytę sklonowano razem, inaczej ""; rozkład belki `RC_AUTOREBAR_BEAM` [1] → klon strefy, inaczej "". **Przekroje** (bezpiecznik, rodzaje SectionHead / SectionPart): tytuł sklonowany z ≥ 1 częścią
   → samodzielny przekrój (nowy GUID, lista części = tylko sklonowane części — handle klonów, [6] = własny handle, [4] / [5] → klon
   obrysu, gdy płytę sklonowano razem, inaczej ten sam rysunek bez zmian / inny ""); tytuł bez części → zwykły tekst (bez
   RC_SECTION i Xrecordu); część z tytułem sklonowanym razem → [1] klon tytułu, [4] jego GUID, bez tytułu → zwykły obiekt (RC_SECTION_PART zdjęte — decyzja P-b; CHECK
@@ -349,6 +369,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 ## 3. Numeracja pozycji
 - **UB zawsze 01 (UB B1), 02 (UB B2) i 03 (UB w nibie).** Numeracja automatyczna od **04** (jak ASD;
   03 zarezerwowane także w płytach bez nibu).
+- Pręty belki (sekcja 4i): dół (BB) i strzemiona (BL) — seria dolna `NextAuto` (≥ 04), góra (BT) — seria górna `NextAutoTop` (101+);
+  identyczny pręt (kształt, Ø, wymiary, seria) → istniejąca pozycja.
 - `PositionCounter.NextAuto(db, used)` = max(licznik w rysunku, max użyty < 500) + 1, min. 4,
   pomija zajęte. Seria **501+** (przebicie) nie podbija licznika.
 - Jeden numer = jeden kształt pręta. Pręt, któremu zmieniono wymiary, a jego numer ma inny pręt
@@ -371,6 +393,13 @@ Ogólne:
 - Opisy rozkładów nie mogą na siebie nachodzić (`PlaceLabel`, odstęp 150 mm); we wszystkich generowaniach tekst nie leży
   na widocznym pręcie, a leader nie biegnie wzdłuż innej linii opisu (≤ 60 mm).
 - **Rozkład z jednym prętem: opis bez rozstawu** (np. `1 H12-01 UB`, nie `1 H12-01-200 UB`) — `ApplySingleBarMark`.
+- **Pręty podłużne belki: opis bez rozstawu także dla > 1 pręta** (`4 H16-05 BEAM B`, `4 H16-103 BEAM T`; `ShowSpacing = false`) —
+  parametr `noSpacingMark` w `GenerateDistributionWithLeaderAtOffset`; strzemiona z rozstawem nominalnym (`52 H10-07-200 LINKS`).
+- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona). Kody belek
+  NIE zaczynają się od „B1/B2/T1/T2”: skany siatki (`ScanOldDistributions`, `EraseOldDistributions`, `FindBottomView`, UB, ADD) porównują
+  kod dokładnie, więc prętów belki nie widzą. Gałęzie `StartsWith("B"/"T")` przejrzane: `BuildBarData` — BT = TOP; `CutBarPositionsAtHole`
+  — bez kodów belek; `SectionPlanner` / `PrepareSection` — pręty belek pomijane (przekrój z belką = E5); `ResolveRepresentativeCollisions`
+  — pręty belek pomijane; `GenerateLayer` / `CreateNewTemplate` / model 3D — tylko kody siatki. Warstwa CAD: BT → RC-SLAB-TOP-01, BB / BL → RC-SLAB-BOT-01.
 
 Dół (B1/B2, Ø10):
 - Zakład 400–650 mm, preferowany **450–550**.
@@ -500,6 +529,12 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   POTEM otwarte kawałki tworzące pętlę łączone w zamkniętą polilinię (`JoinLoops`, tol 1 mm, bez łuków) — kolejność ważna:
   `JoinLoops` sklejał linię uskoku z linią strefy 760 mm w zamknięty pas (PLOT 319).
 - XData RC_GA [PLOT, B|T] — ponowne wywołanie zastępuje płytę.
+- **Belki (plan belek E1):** zamknięta polilinia `SD-Thickening-Zone` → oba rzuty, warstwa `RC-BEAM` + `RC_BEAM` ([6] = obrys tego rzutu)
+  — po domknięciu nibu, przed `JoinLoops`. H z opisu „450THK” w strefie (regex `\d{3,4}\s*THK`, bez „SLAB”; MText przez TextLines;
+  punkt wstawienia albo środek tekstu w strefie); kontrola krzyżowa SSL (opis płyty) − NIB TOC (tekst GA najbliżej strefy) + 150 →
+  ostrzeżenie przy różnicy; brak opisu → H z kontroli; brak obu → H = 0 (RC_BEAM). H spoza siatki 75 — ostrzeżenie. Teksty „…THK” kopiowane
+  jak dotąd (SD-Text). Ponowne wywołanie usuwa też pręty belek starych stref (znacznik albo punkt w strefie). Płyta bez warstwy
+  `SD-Thickening-Zone` — bit w bit bez zmian (test BRX D526). Holbrook P02: strefy tylko w 319 (450), 528-529 (375), 539 (300).
 - Teksty z layoutów GA (`GaTitleEngine` / `GaNotesText`, jak ASD-GAI) — na końcu RC_PRZYGOTUJ_GA (podgląd, „Pomiń”)
   i osobno `RC_GA_TEKSTY`: A1-BL CLIENT_1..3, PROJ_1..3, APPROVED 1:1; TITLE_1 = prefiks GA przed „GENERAL ARRANGEMENT”
   + „REINFORCEMENT DETAILS …”; DRAWING_NUMBER = prefiks GA + RC + numer pierwszego GA (GA0090 → RC0090, RC0091 wg zakładek).
@@ -549,6 +584,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
 - Wskazanie: obrys płyty (rzut dolny albo górny), 2 punkty linii cięcia (pozioma / pionowa wg dłuższej składowej),
   strona patrzenia, okno parametrów (`SectionDialog`), punkt wstawienia = lewy górny narożnik płyty (poziom SSL).
+- Belki: rozkłady belek (BB / BT / BL) i teksty w strefach RC-BEAM (grubość płyty) są w `PrepareSection` pomijane — przekrój z belką = E5.
 - Dane z rysunku (`AutoRebarEngine.PrepareSection`): obrys zewnętrzny (NibDetector), niby, otwory (`FindHoles`),
   pale (`FindPiles`), rozkłady RC_BAR_BLOCK ze WSZYSTKICH rzutów tej płyty (polilinie o tym samym kształcie, przesunięte —
   jak `FindBottomView`), grubość i SSL z opisu płyty („SSL=21.925”, „225mm THK SLAB”). Wszystko do poprawy w oknie;
@@ -658,6 +694,48 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   ramię pionowe (poziome, gdy dwusieczna bez składowej pionowej). Pręt wychodzący poza płytę — komunikat.
 - Detal otworu: 4 narożniki otworu (dwusieczna 45°, na zewnątrz otworu); opis od strony dalszego pręta, ramię pionowe za
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
+
+## 4i. Belki / pogrubienia (downstand) — plan docs/PLAN_BELKI_2026-10-10.md
+Status: **E1 + E3 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika; E4 (narożniki L/T, U-bary,
+koniec wewnętrzny), E5 (RC_SECTION z belką, bezpiecznik), E6 (BBS) — do zrobienia. Wartości domyślne = rozstrzygnięcia 1b / 1c
+planu — **do potwierdzenia przez Bartka** (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
+- **Siatka płyty (Mesh / B1…T2 / UB / B3 / Add) stref belek NIE widzi** — wynik płyt 319 / 528 / 539 jak wzorzec (testy BRX D319 /
+  D528 / D539: zrzut po Prepare GA + Mesh = zrzut wtyczki HEAD; M528: belka, potem Mesh — rozkłady siatki = HEAD z dokładnością
+  do numerów pozycji, opisy siatki mogą się przesunąć). `NibDetector.Detect` pomija warstwy RC-BEAM i `SD-Thickening-Zone`
+  (strefa z GA przed Prepare GA), `FindHoles` — RC-BEAM.
+  Pręty belki (gdy już są) nie są przeszkodą w `ResolveRepresentativeCollisions`; opisy siatki je omijają (zasada „opisy nie nachodzą”).
+- Strefa: `RC-BEAM` + `RC_BEAM` (sekcja 1). Prepare GA (sekcja 4d) albo `RC_BEAM` (polilinia → strefa; [Krawedz] — obrys + 2 punkty
+  → prostokąt od linii uskoku na szerokość 600). Strefa na drugim rzucie (przystający obrys) — znaleziona albo utworzona (kopia).
+  `RC_BEAM` odmawia (`[RC BEAM]`) dla obrysu płyty / uskoku (SD-PILED-RAFT), pręta (polilinia z `RC_SINGLE_BAR`) i otworu (krzyżyk
+  przekątnych jak `FindHoles`). `RC_GENERATE_BEAM`: wskazany jako dolny obrys rzutu górnego (`IsTopView`) → komunikat i przerwanie
+  (także w trybie bez okien).
+- Geometria (`BeamGeometry.Analyze`): pary równoległych lic osiowych 150–1500 mm → odcinki; koniec **Edge** (lico końca ≤ 260 mm od
+  obrysu — nib), **Internal**, **Corner** (L — kwadrat między końcami dwóch prostopadłych odcinków; lico zewnętrzne narożnika),
+  **Tee**; odcinek ze skosem / zmienną szerokością (PLOT 319, zatoka 45°) → „detal ręczny”, bez prętów. Odcinek, którego koniec
+  bez rozpoznanego złącza (Internal / Edge) przylega (wspólny koniec / naroże) do odcinka „detal ręczny”, też jest „detal ręczny”
+  (bez prętów i strzemion, komunikat „przylega do odcinka „detal ręczny”…”) — np. L z krótką nogą 600 × 1200: obie nogi bez prętów;
+  narożnik L / T rozpoznany z odcinkiem ręcznym (PLOT 319) — bez zmian.
+- **Generowanie (E3) wyłącznie na żądanie:** `RC_GENERATE → Beam` / `RC_GENERATE_BEAM` / `RC_BEAM` (opcja okna). Na odcinek osiowy:
+  - strzemiona **51** (BL, rzut dolny, seria < 100): A = H − 35 − dT1 − dT2 − 40 (pod obiema warstwami T, dT = 12; opcja: jedną),
+    B = szer. − 2·40, oba w dół do 5 mm; C = 0 (hak domyślny); w zakresie własnym odcinka (bez kwadratów narożników):
+    n = ceil((L − 2·50)/200) + 1, rozstaw ≤ 200, opis nominalny `nn H10-07-200 LINKS`; gdy wzdłuż odcinka są UB 03 (rozstaw ≤ 200) —
+    położenia UB 03 + 100 (w połowie między U-barami), rozstaw jak UB 03; symbol strzemienia (kółka na obu końcach);
+  - pręty podłużne **4 H16 dołem** (BB, rzut dolny, seria < 100) i **4 H16 górą** (BT, rzut górny — strefa partnerska, 101+): od lica do
+    lica (narożnik L — lico zewnętrzne, T — dalsze lico belki poprzecznej) z otuliną 40, w poprzek otulina + strzemię + d/2 (58 … 542,
+    co 161); plan `BeamGeometry.PlanBars`: ≤ 6000 — jeden pręt w dół do siatki 250, **wyśrodkowany** (równa otulina na obu końcach);
+    dłużej — **zakład w przedziale [lap, lap + 250)** (domyślnie 800 … < 1050; parametr, do potwierdzenia przez Bartka): najpierw pręty
+    równe (jedna pozycja) na siatce 250, ≤ 6000, z N (najmniejsza liczba) — równe zakłady w przedziale; gdy się nie da — N prętów:
+    N − 1 równych (zakład = lap) + ostatni krótszy na siatce (osobna pozycja, zakład w przedziale); dopiero potem N + 1 prętów równych
+    (**mniej zakładów zdecydowanie lepiej**), np. 6251 → 3750 + 3500 (zakład 999, nie 3 × 2750), 6800 → 4000 + 3750 (950),
+    17777 → 3 × 5250 + 4500 (800 / 800 / 873, nie 5 × 4250); zakłady dół / góra w tym samym miejscu (do decyzji); opis `4 H16-05 BEAM B` (bez rozstawu);
+  - rozkłady przez wspólną ścieżkę siatki (`GenerateDistributionWithLeaderAtOffset`: opis bez kolizji, pręt reprezentatywny), bez znacznika
+    płyty, ze znacznikiem `RC_AUTOREBAR_BEAM`; szablony w strefach rebar_bottom / rebar_top pod najniższym prętem strefy.
+  - Komunikaty `[RC BEAM]`: „detal ręczny”, „E4: zamknięcie końców — w przygotowaniu” (końce odcinków bez zamknięcia, narożniki bez
+    prętów L, bez U-barów), brak H, brak strefy na rzucie górnym.
+- Ponowne generowanie belki usuwa tylko jej rozkłady (znacznik = strefa; bez znacznika — punkt w strefie); jedna komenda = jedna grupa UNDO.
+- Testy: jednostkowe `BeamGeometryTests`; BRX `tools/BrxSmokeTests/run-planc-beam.ps1` (najpierw `-Baseline -PluginDll <DLL HEAD>` —
+  zrzuty bazowe D526 / D319 / D528 / D539, potem właściwy: Prepare GA 319 / 528-529 / 539, liczby, numery, UNDO / REDO, COPY / MIRROR / ARRAY / PASTECLIP,
+  ponowne Prepare GA, UB 03, format Blok i Polilinia, M528 — belka, potem Mesh).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

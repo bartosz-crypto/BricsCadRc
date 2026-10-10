@@ -101,6 +101,7 @@ namespace BricsCadRc.Core
                 var dists = new List<(BlockReference br, BarData bar)>();
                 var outlines = new List<Polyline>();
                 var texts = new List<(Point2d p, string t)>();
+                var beamZones = new List<List<Point2d>>();   // strefy belek (RC-BEAM): teksty „450THK” to nie grubość płyty
                 foreach (ObjectId oid in ms)
                 {
                     if (oid.IsErased) continue;
@@ -109,10 +110,15 @@ namespace BricsCadRc.Core
                     {
                         var bar = BarBlockEngine.ReadXData(br);
                         if (bar == null || Math.Abs(br.Rotation) > 1e-6 || Math.Abs(bar.Angle) > 1e-6) continue;
+                        // Pręty belki (BB / BT / BL) — przekrój z belką dopiero w E5 (plan belek); dziś pomijane
+                        if (BeamGeometry.IsBeamCode(bar.LayerCode)) continue;
                         dists.Add((br, bar));
                     }
                     else if (obj is Polyline pl && oid != outerId && GeometryHelper.IsEffectivelyClosed(pl))
+                    {
                         outlines.Add(pl);
+                        if (BeamStore.IsBeamLayer(pl.Layer)) beamZones.Add(GeometryHelper.GetPolylineVertices(pl));
+                    }
                     else if (obj is MText mt)
                         texts.Add((new Point2d(mt.Location.X, mt.Location.Y), string.Join("\n", GaImportEngine.TextLines(mt))));
                     else if (obj is DBText dt)
@@ -180,7 +186,8 @@ namespace BricsCadRc.Core
                 foreach (var (p, t) in texts)
                 {
                     if (!views.Any(v => GeometryHelper.IsPointInsidePolygon(v.poly, p))) continue;
-                    if (ctx.ThicknessSource == null && SectionPlanner.ParseThickness(t) is double thk)
+                    if (ctx.ThicknessSource == null && !beamZones.Any(z => GeometryHelper.IsPointInsidePolygon(z, p))
+                        && SectionPlanner.ParseThickness(t) is double thk)
                     { inp.Thickness = thk; ctx.ThicknessSource = Flat(t); ctx.DescThickness = thk; }
                     if (ctx.SslSource == null && SectionPlanner.ParseSsl(t) is string ssl)
                     { inp.Ssl = ssl; ctx.SslSource = Flat(t); ctx.DescSsl = ssl; }

@@ -49,6 +49,7 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage($"\n{T} {plot.Label}: rzut dolny {r.Bottom} obiektów, rzut górny {r.Top} (z podpisami pali)" +
                     (r.Joined > 0 ? $", połączone kawałki obrysu/uskoku: {r.Joined}" : "") +
                     (r.NibClosed > 0 ? $", nib domknięty: {r.NibClosed}" : "") +
+                    (r.Beams > 0 ? $", strefy belek: {r.Beams} (H = {string.Join("/", r.BeamHeights.Select(h => h > 0 ? h.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?"))}; pręty belki: RC_BEAM / RC_GENERATE → Beam)" : "") +
                     ". Ponowne wywołanie zastąpi płytę.");
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");

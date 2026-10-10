@@ -25,4 +25,8 @@
     </Reference>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Zrzut rysunku S-REG (RegressionDump) — test belek porównuje zrzuty z wtyczką HEAD -->
+    <Compile Include="../RegressionDump/DrawingDump.cs" />
+  </ItemGroup>
 </Project>

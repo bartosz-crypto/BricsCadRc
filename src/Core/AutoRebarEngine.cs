@@ -2034,7 +2034,9 @@ namespace BricsCadRc.Core
             string markSuffix = null,            // sufiks opisu (domyślnie layerCode, np. "T IN NIB")
             Func<Point3d, List<List<Point3d>>> leaderWcsFor = null,   // własne warianty leadera (WCS, kolejność = preferencja)
             double alongMinOverride = double.NaN, double alongMaxOverride = double.NaN,   // zakres linii rozkładu wzdłuż prętów
-            double forcedSpacing = double.NaN)   // rozstaw geometryczny narzucony (np. góra przy nibie = pręty dołu); opis nominalny
+            double forcedSpacing = double.NaN,   // rozstaw geometryczny narzucony (np. góra przy nibie = pręty dołu); opis nominalny
+            bool noSpacingMark = false,          // belka: opis bez rozstawu także dla > 1 pręta („4 H16-05 BEAM B”)
+            string shapeCode = null)             // belka: kod kształtu rozkładu (strzemiona 51 — symbol strzemienia na rzucie)
         {
             bool horizontal = filterDirection == "X";
 
@@ -2097,6 +2099,12 @@ namespace BricsCadRc.Core
             var distBar = BuildBarData(diameter, posNr, length, layerCode);
             string baseMark = BarData.FormatMark(diameter, posNr, spacing, 2);
             distBar.Mark            = $"{baseMark} {markSuffix ?? layerCode}";
+            if (noSpacingMark)
+            {
+                distBar.Mark        = $"{BarData.FormatMark(diameter, posNr, 0, 1)} {markSuffix ?? layerCode}";
+                distBar.ShowSpacing = false;
+            }
+            if (!string.IsNullOrEmpty(shapeCode)) distBar.ShapeCode = shapeCode;
             distBar.Spacing         = effectiveSpacing;
             distBar.Direction       = filterDirection;
             distBar.Count           = 0;
@@ -3069,7 +3077,8 @@ namespace BricsCadRc.Core
                         if (BarBlockEngine.IsBarCut(mine, i * bar.Spacing)) list.Add(sOrig + i * bar.Spacing);
                 }
             }
-            var pick = perLayer.Where(kv => kv.Key.StartsWith("B")).OrderByDescending(kv => kv.Value.Count)
+            // Siatka dołem (B1 / B2 / B3) — bez prętów belki (BB / BL też zaczynają się od „B”)
+            var pick = perLayer.Where(kv => kv.Key.StartsWith("B") && !BeamGeometry.IsBeamCode(kv.Key)).OrderByDescending(kv => kv.Value.Count)
                                .Select(kv => kv.Value).FirstOrDefault()
                     ?? perLayer.Values.OrderByDescending(v => v.Count).FirstOrDefault()
                     ?? new List<double>();
@@ -3241,6 +3250,7 @@ namespace BricsCadRc.Core
                     if (obj is Line ln) { lines.Add((ln.StartPoint, ln.EndPoint)); continue; }
                     if (!(obj is Polyline pl) || pl.NumberOfVertices < 3) continue;
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                    if (BeamStore.IsBeamLayer(pl.Layer)) continue;   // strefa belki (RC-BEAM) nie jest otworem
                     var verts = GeometryHelper.GetPolylineVertices(pl);
                     if (!verts.All(v => GeometryHelper.IsPointInsidePolygon(slabVertices, v))) continue;
                     candidates.Add(new HoleBox { MinX = verts.Min(v => v.X), MinY = verts.Min(v => v.Y),
@@ -3558,6 +3568,8 @@ namespace BricsCadRc.Core
                     if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
                     var bar = BarBlockEngine.ReadXData(br);
                     if (bar == null || Math.Abs(br.Rotation) > 1e-6) continue;
+                    // Pręty belki (BB / BT / BL) — poza siatką: Mesh ich nie przesuwa i nie są przeszkodą (E2 wstrzymany)
+                    if (BeamGeometry.IsBeamCode(bar.LayerCode)) continue;
                     if (!GeometryHelper.IsPointInsidePolygon(verts, new Point2d(br.Position.X, br.Position.Y))) continue;
                     dists.Add((oid, bar, br.Position));
 
@@ -4246,7 +4258,8 @@ namespace BricsCadRc.Core
                 Diameter   = diameter,
                 LengthA    = lengthA,
                 ShapeCode  = "00",
-                Position   = layerCode.StartsWith("B") ? "BOT" : "TOP",
+                // Belka: BT (góra) zaczyna się od „B” — świadomie TOP; BB / BL — BOT (plan belek 1c)
+                Position   = layerCode.StartsWith("B") && layerCode != BeamGeometry.CodeTop ? "BOT" : "TOP",
                 LayerCode  = layerCode,
                 Direction  = "X",       // overridden in distribution path
                 AnnotScale = _annotScaleOverride,

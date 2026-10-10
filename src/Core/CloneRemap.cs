@@ -20,6 +20,8 @@ namespace BricsCadRc.Core
     /// | rozkład [11]          | klon opisu (3b)                                         | ""                         | ""                      |
     /// | opis [16]             | klon rozkładu (3b)                                      | bez zmian                  | ""                      |
     /// | rozkład RC_AUTOREBAR_SLAB [1], wymiar ADD RC_ADD [1] | klon obrysu płyty (Polyline) (K5)  | "" (P4b)                   | ""                      |
+    /// | rozkład RC_AUTOREBAR_BEAM [1] (belka)               | klon strefy belki (Polyline)       | ""                         | ""                      |
+    /// | strefa belki RC_BEAM [6]                           | klon obrysu płyty (Polyline)       | ""                         | ""                      |
     /// „Ten sam rysunek”: COPY/MIRROR/ARRAY albo wklejenie ze schowka skopiowanego w tym rysunku — wtedy wartość „bez zmian”
     /// to wartość obiektu źródłowego (BricsCAD zeruje w schowku odwołania do obiektów spoza schowka; Ctrl+V = COPY, pyt. 4).
     /// Etykieta przypisana więcej niż jednemu prętowi → wszystkim "" (Log.Info).
@@ -34,7 +36,7 @@ namespace BricsCadRc.Core
     /// </summary>
     internal static class CloneRemap
     {
-        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim, SectionHead, SectionPart }
+        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim, SectionHead, SectionPart, BeamZone }
 
         private const int BarLabelIdx   = 13;   // RC_SINGLE_BAR [13] LabelHandle
         private const int LabelBarIdx   = 1;    // RC_BAR_LABEL [1]
@@ -258,9 +260,15 @@ namespace BricsCadRc.Core
                     case Kind.Dist:
                         RelinkDist(tr, db, c, e, clones, Resolve, Keep, relinkedPairs);
                         RelinkSlabTag(tr, db, c, e, AutoRebarEngine.SlabAppName, Resolve);
+                        // Belka (jak K5): znacznik rozkładu belki → klon strefy, gdy strefę sklonowano razem; inaczej ""
+                        RelinkSlabTag(tr, db, c, e, BeamStore.TagApp, Resolve, BeamStore.TagIdx);
                         break;
                     case Kind.AddDim:
                         RelinkSlabTag(tr, db, c, e, AutoRebarEngine.XAddDimApp, Resolve);
+                        break;
+                    case Kind.BeamZone:
+                        // Strefa belki: [6] → klon obrysu płyty (płyta sklonowana razem), inaczej "" (płyta z testu punktu)
+                        RelinkSlabTag(tr, db, c, e, BeamStore.App, Resolve, BeamStore.SlabIdx);
                         break;
                 }
             }
@@ -379,14 +387,15 @@ namespace BricsCadRc.Core
         /// sklonowano w tej komendzie (Cloned / AlreadyClone i cel to Polyline); inaczej "" (P4b: płyta nieskopiowana —
         /// przynależność z testu punktu w obrysie). Brak znacznika albo pusty — bez zmian. Zapis punktowy XLink.Write.
         /// </summary>
-        private static void RelinkSlabTag(Transaction tr, Database db, Clone c, Entity e, string app, ResolveFn resolve)
+        private static void RelinkSlabTag(Transaction tr, Database db, Clone c, Entity e, string app, ResolveFn resolve,
+                                          int idx = SlabTagIdx)
         {
-            var cur = ReadField(e, app, SlabTagIdx);
+            var cur = ReadField(e, app, idx);
             if (string.IsNullOrEmpty(cur.Hex)) return;
             long t = resolve(c, cur, out _);
             bool isSlab = t != 0 && db.TryGetObjectId(new Handle(t), out var sid) && !sid.IsNull && !sid.IsErased
                           && tr.GetObject(sid, OpenMode.ForRead) is Polyline;
-            SetLinkIfChanged(e, app, SlabTagIdx, cur, isSlab ? t.ToString("X8") : "");
+            SetLinkIfChanged(e, app, idx, cur, isSlab ? t.ToString("X8") : "");
         }
 
         private static void RelinkDist(Transaction tr, Database db, Clone c, Entity e, Dictionary<long, Clone> clones,
@@ -443,6 +452,7 @@ namespace BricsCadRc.Core
             if (e == null) return Kind.None;
             if (Has(e, AutoRebarEngine.SectionPartApp)) return Kind.SectionPart;   // bezpiecznik przekrojów
             if (Has(e, AutoRebarEngine.SectionTitleApp)) return Kind.SectionHead;
+            if (e is Polyline && Has(e, BeamStore.App)) return Kind.BeamZone;            // strefa belki (RC_BEAM [6])
             var bk = BarEntity.KindOf(e);
             if (bk == BarKind.Polyline || bk == BarKind.Block) return Kind.Bar;
             if (e is MLeader) return Has(e, SingleBarEngine.XLabelAppName) ? Kind.Label : Kind.None;
@@ -490,6 +500,7 @@ namespace BricsCadRc.Core
                 case Kind.AddDim: return AutoRebarEngine.XAddDimApp;
                 case Kind.SectionHead: return AutoRebarEngine.SectionTitleApp;
                 case Kind.SectionPart: return AutoRebarEngine.SectionPartApp;
+                case Kind.BeamZone: return BeamStore.App;
                 default:         return "";
             }
         }

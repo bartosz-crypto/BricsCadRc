@@ -19,7 +19,9 @@ namespace BricsCadRc.Core
     ///   • dwa rzuty (dolny i górny) obok siebie; tytuły rzutów (S02_TEXT035) pod płytą, na środku, ~2400 mm
     ///     od rysunku płyty; ramki szablonów rebar_bottom / rebar_top po bokach (z zawartością),
     ///   • otwarte kawałki linii (np. uskok narysowany dwiema polilinami) łączone w zamkniętą polilinię,
-    ///   • XData RC_GA [PLOT, B|T] — ponowne wywołanie zastępuje poprzednio wstawioną płytę.
+    ///   • XData RC_GA [PLOT, B|T] — ponowne wywołanie zastępuje poprzednio wstawioną płytę,
+    ///   • strefy pogrubień (SD-Thickening-Zone, zamknięte) → warstwa RC-BEAM + RC_BEAM (H z opisu „450THK”, kontrola
+    ///     SSL − NIB TOC + 150); ponowne wywołanie usuwa też pręty belek starych stref (sekcja 4i).
     /// Wymiary, architektura, poziomy, kanalizacja itp. nie są kopiowane.
     /// </summary>
     public static class GaImportEngine
@@ -147,6 +149,19 @@ namespace BricsCadRc.Core
             public int Bottom, Top, Joined;
             /// <summary>Rzuty, w których automat domknął otwartą linię uskoku (NibAutoClose).</summary>
             public int NibClosed;
+            /// <summary>Strefy belek (SD-Thickening-Zone → RC-BEAM) na rzucie dolnym i ich wysokości H (0 = nieznana).</summary>
+            public int Beams;
+            public List<int> BeamHeights = new List<int>();
+        }
+
+        /// <summary>Warstwa stref pogrubień (belek) w GA — zamknięta polilinia → strefa RC-BEAM (oba rzuty).</summary>
+        public const string ThickeningLayer = "SD-Thickening-Zone";
+
+        /// <summary>Dane GA do kontroli wysokości belki: SSL z opisu płyty i teksty „NIB TOC=…” (układ GA, obszar płyty).</summary>
+        private sealed class BeamGaContext
+        {
+            public double? Ssl;
+            public List<(Point2d p, double toc)> Tocs = new List<(Point2d, double)>();
         }
 
         public static Result Import(Document doc, Source src, GaPlot plot, List<string> warnings)
@@ -157,6 +172,7 @@ namespace BricsCadRc.Core
             // 1. Co kopiujemy (źródło) + zakres rysunku płyty
             var common = new List<ObjectId>();
             var pileLabels = new List<ObjectId>();
+            var beamCtx = new BeamGaContext();
             double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
             using (var tr = src.Db.TransactionManager.StartOpenCloseTransaction())
             {
@@ -170,6 +186,17 @@ namespace BricsCadRc.Core
                     catch { continue; }
                     var c = new Point3d((x.MinPoint.X + x.MaxPoint.X) / 2, (x.MinPoint.Y + x.MaxPoint.Y) / 2, 0);
                     if (!InsideXY(plot.Region, c)) continue;
+
+                    // Belki: „NIB TOC=…” (nie kopiowane) do kontroli krzyżowej wysokości SSL − NIB TOC + 150
+                    if (layer.Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string tt = e is MText tm ? string.Join(" ", TextLines(tm)) : e is DBText td ? td.TextString : null;
+                        if (BeamGeometry.ParseNibToc(tt) is double toc)
+                            beamCtx.Tocs.Add((new Point2d(c.X, c.Y), toc));
+                        if (id == plot.LabelId && e is MText lm)
+                            foreach (var l in TextLines(lm))
+                                if (SectionPlanner.ParseSsl(l) is string ssl && NumberParser.TryParseDouble(ssl, out double sv)) { beamCtx.Ssl = sv; break; }
+                    }
 
                     int kind = Classify(e, layer, id, plot);
                     if (kind == 0) continue;
@@ -205,9 +232,9 @@ namespace BricsCadRc.Core
                 var dT = dB + new Vector3d(w + PlanGap, 0, 0);
 
                 // 3. Kopie
-                res.Bottom = CloneInto(db, src, common, dB, plot, "B", warnings, ref res.Joined, ref res.NibClosed);
+                res.Bottom = CloneInto(db, src, common, dB, plot, "B", warnings, ref res.Joined, ref res.NibClosed, beamCtx, res);
                 var topIds = new List<ObjectId>(common); topIds.AddRange(pileLabels);
-                res.Top = CloneInto(db, src, topIds, dT, plot, "T", warnings, ref res.Joined, ref res.NibClosed);
+                res.Top = CloneInto(db, src, topIds, dT, plot, "T", warnings, ref res.Joined, ref res.NibClosed, beamCtx, res);
 
                 // 4. Tytuł górny pod rzutem górnym (ten sam poziom co dolny), ramki szablonów po bokach
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -248,11 +275,15 @@ namespace BricsCadRc.Core
                 if (t != null && Regex.IsMatch(t, @"NIB\s*TOC", RegexOptions.IgnoreCase)) return 0;
                 return e is MText || e is DBText || e is Polyline || e is Line ? 1 : 0;
             }
+            // Strefa pogrubienia (belka): zamknięta polilinia → oba rzuty, w CloneInto warstwa RC-BEAM + RC_BEAM
+            if (layer.Equals(ThickeningLayer, StringComparison.OrdinalIgnoreCase))
+                return e is Polyline zp && zp.NumberOfVertices >= 3 && GeometryHelper.IsEffectivelyClosed(zp) ? 1 : 0;
             return 0;
         }
 
         private static int CloneInto(Database db, Source src, List<ObjectId> ids, Vector3d d, GaPlot plot,
-                                     string view, List<string> warnings, ref int joined, ref int nibClosed)
+                                     string view, List<string> warnings, ref int joined, ref int nibClosed,
+                                     BeamGaContext beamCtx = null, Result result = null)
         {
             var col = new ObjectIdCollection(ids.ToArray());
             var idMap = new IdMapping();
@@ -264,6 +295,8 @@ namespace BricsCadRc.Core
             var openPl = new List<ObjectId>();
             var nibPieces = new List<ObjectId>();   // kawałki linii uskoku (Polyline / Line / Arc na SlabLayer)
             var textClones = new List<ObjectId>();
+            var zoneClones = new List<ObjectId>();  // strefy pogrubień (belki)
+            var thkTexts = new List<(Point2d ins, Point2d mid, List<string> lines)>();   // teksty SD-Text (wysokość belki „450THK”)
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 EnsureApp(tr, db);
@@ -276,6 +309,19 @@ namespace BricsCadRc.Core
                     e.TransformBy(move);
                     Tag(e, plot.Label, view);
                     n++;
+                    if ((e.Layer ?? "").Equals(ThickeningLayer, StringComparison.OrdinalIgnoreCase) && e is Polyline) zoneClones.Add(e.ObjectId);
+                    if ((e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase) && (e is DBText || e is MText))
+                    {
+                        var lines = e is MText tm ? TextLines(tm) : new List<string> { ((DBText)e).TextString ?? "" };
+                        if (lines.Any(l => BeamGeometry.ParseThk(l) != null))
+                        {
+                            var ins = e is MText im ? im.Location : ((DBText)e).Position;
+                            Point2d mid = new Point2d(ins.X, ins.Y);
+                            try { var ex = e.GeometricExtents; mid = new Point2d((ex.MinPoint.X + ex.MaxPoint.X) / 2, (ex.MinPoint.Y + ex.MaxPoint.Y) / 2); }
+                            catch (System.Exception gex) { Log.Error("GaImport.CloneInto.ThkText", gex); }
+                            thkTexts.Add((new Point2d(ins.X, ins.Y), mid, lines));
+                        }
+                    }
                     if (pair.Key == plot.LabelId) label = e.ObjectId;
                     else if (e is MText && (e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         textClones.Add(e.ObjectId);
@@ -311,6 +357,23 @@ namespace BricsCadRc.Core
                 }
             }
 
+            // Belki (po domknięciu nibu, przed JoinLoops): strefa SD-Thickening-Zone → warstwa RC-BEAM + RC_BEAM (H z opisu)
+            if (zoneClones.Count > 0)
+            {
+                try
+                {
+                    int nz = ProcessBeamZones(db, zoneClones, outline, thkTexts, beamCtx, d, view, warnings);
+                    if (view == "B" && result != null) result.Beams += nz;
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.Beam", ex);
+                    warnings.Add($"[RC BEAM] Błąd strefy belki — {ex.Message} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                }
+                if (view == "B" && result != null && beamCtx != null)
+                    foreach (var zid in zoneClones) result.BeamHeights.Add(HeightOf(db, zid));
+            }
+
             // Otwarte kawałki obrysu/uskoku tworzące pętlę → jedna zamknięta polilinia (NibDetector)
             openPl.RemoveAll(id => id.IsErased);
             if (openPl.Count > 0)
@@ -322,6 +385,109 @@ namespace BricsCadRc.Core
                 }
             }
             return n;
+        }
+
+        /// <summary>
+        /// Strefy pogrubień (belek) skopiowane z GA: warstwa RC-BEAM, rekord RC_BEAM ([6] = obrys płyty tego rzutu), wysokość H
+        /// z opisu „450THK” w strefie (DBText / MText — linie TextLines). Kontrola krzyżowa: SSL − NIB TOC (tekst najbliżej
+        /// strefy, z GA) + 150 — różnica → ostrzeżenie; brak opisu → H z kontroli (ostrzeżenie); brak obu → H = 0 (ustaw w RC_BEAM).
+        /// H spoza siatki 75 → przyjęta z ostrzeżeniem (1b.10). Ostrzeżenia tylko dla rzutu dolnego (bez powtórzeń). Zwraca liczbę stref.
+        /// </summary>
+        private static int ProcessBeamZones(Database db, List<ObjectId> zones, ObjectId outlineId,
+            List<(Point2d ins, Point2d mid, List<string> lines)> texts, BeamGaContext ctx, Vector3d d, string view, List<string> warnings)
+        {
+            bool warn = view == "B";
+            int made = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                BeamStore.EnsureLayer(tr, db, ThickeningLayer);
+                List<(double X, double Y)> outl = null;
+                string slabHandle = "";
+                if (!outlineId.IsNull && tr.GetObject(outlineId, OpenMode.ForRead) is Polyline opl)
+                {
+                    outl = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(opl)).Select(p => (p.X, p.Y)).ToList();
+                    slabHandle = opl.Handle.ToString();
+                }
+                else if (warn) warnings.Add("[RC BEAM] Brak obrysu płyty — strefa belki bez powiązania z płytą.");
+
+                int k = 0;
+                foreach (var zid in zones)
+                {
+                    k++;
+                    if (!(tr.GetObject(zid, OpenMode.ForWrite) is Polyline pl)) continue;
+                    pl.Layer = BeamStore.LayerName;
+                    var verts = GeometryHelper.GetPolylineVertices(pl);
+                    var vxy = verts.Select(p => (p.X, p.Y)).ToList();
+
+                    // H z opisu w strefie (punkt wstawienia albo środek tekstu)
+                    var hs = new List<int>();
+                    foreach (var (ins, mid, lines) in texts)
+                    {
+                        if (!GeometryHelper.IsPointInsidePolygon(verts, ins) && !GeometryHelper.IsPointInsidePolygon(verts, mid)) continue;
+                        foreach (var l in lines) if (BeamGeometry.ParseThk(l) is int h) hs.Add(h);
+                    }
+                    int? hText = hs.Count > 0 ? hs.GroupBy(h => h).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First().Key : (int?)null;
+                    string zName = $"strefa {k}";
+                    if (warn && hs.Distinct().Count() > 1)
+                        warnings.Add($"[RC BEAM] {zName}: różne wysokości w opisach ({string.Join("/", hs.Distinct())}) — przyjęto {hText}.");
+
+                    // Kontrola krzyżowa: SSL − NIB TOC + 150 (NIB TOC najbliżej strefy; współrzędne GA = rzut − przesunięcie)
+                    int? hCheck = null;
+                    if (ctx != null && ctx.Ssl.HasValue && ctx.Tocs.Count > 0)
+                    {
+                        var srcPoly = verts.Select(p => new Point2d(p.X - d.X, p.Y - d.Y)).ToList();
+                        var near = ctx.Tocs.OrderBy(t => DistToPoly(srcPoly, t.p)).First();
+                        hCheck = BeamGeometry.HeightFromLevels(ctx.Ssl.Value, near.toc);
+                    }
+
+                    int H = hText ?? hCheck ?? 0;
+                    if (warn)
+                    {
+                        if (hText.HasValue && hCheck.HasValue && Math.Abs(hText.Value - hCheck.Value) > 1)
+                            warnings.Add($"[RC BEAM] {zName}: wysokość z opisu {hText} ≠ SSL − NIB TOC + 150 = {hCheck} — sprawdź (przyjęto {H}).");
+                        else if (!hText.HasValue && hCheck.HasValue)
+                            warnings.Add($"[RC BEAM] {zName}: brak opisu „…THK” w strefie — wysokość z SSL − NIB TOC + 150 = {hCheck}.");
+                        else if (!hText.HasValue)
+                            warnings.Add($"[RC BEAM] {zName}: brak wysokości (opis „…THK” ani NIB TOC) — ustaw H w RC_BEAM.");
+                        if (H > 0 && H % 75 != 0)
+                            warnings.Add($"[RC BEAM] {zName}: wysokość {H} spoza siatki 75 mm — przyjęta (do potwierdzenia).");
+                    }
+
+                    var an = BeamGeometry.Analyze(vxy, outl);
+                    if (warn)
+                        foreach (var m in an.Messages) warnings.Add($"[RC BEAM] {zName}: {m}");
+                    var p = new BeamParams { Height = H };
+                    if (an.TypicalWidth > 0) p.Width = an.TypicalWidth;
+                    BeamStore.Write(tr, db, pl, p, slabHandle);
+                    made++;
+                }
+                tr.Commit();
+            }
+            return made;
+        }
+
+        private static int HeightOf(Database db, ObjectId zid)
+        {
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var p = BeamStore.Read(tr.GetObject(zid, OpenMode.ForRead) as Entity);
+                return p != null ? (int)Math.Round(p.Height) : 0;
+            }
+            catch (System.Exception ex) { Log.Error("GaImport.HeightOf", ex); return 0; }
+        }
+
+        private static double DistToPoly(List<Point2d> poly, Point2d p)
+        {
+            double best = double.MaxValue;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i]; var b = poly[(i + 1) % poly.Count];
+                var ab = b - a; double len2 = ab.DotProduct(ab);
+                double t = len2 > 1e-12 ? Math.Max(0, Math.Min(1, (p - a).DotProduct(ab) / len2)) : 0;
+                best = Math.Min(best, (a + ab * t).GetDistanceTo(p));
+            }
+            return GeometryHelper.IsPointInsidePolygon(poly, p) ? 0 : best;
         }
 
         /// <summary>
@@ -529,6 +695,7 @@ namespace BricsCadRc.Core
         private static void EraseOld(Database db)
         {
             var old = new List<ObjectId>();
+            var oldZones = new List<ObjectId>();
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
                 var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
@@ -536,11 +703,17 @@ namespace BricsCadRc.Core
                 {
                     if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Entity e)) continue;
                     using var rb = e.GetXDataForApplication(XApp);
-                    if (rb != null) old.Add(id);
+                    if (rb != null)
+                    {
+                        old.Add(id);
+                        if (BeamStore.IsZone(e)) oldZones.Add(id);
+                    }
                 }
                 tr.Commit();
             }
             if (old.Count == 0) return;
+            // Belki: pręty starych stref (znacznik = strefa albo bez znacznika w strefie) — razem ze strefami
+            if (oldZones.Count > 0) BeamStore.EraseGeneratedForZones(db, oldZones);
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 foreach (var id in old)

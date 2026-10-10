@@ -33,6 +33,7 @@ namespace BricsCadRc.Core
                 "T2"  => TopLayer2,
                 "BOT" => BotLayer1,   // nowy format — Bottom Layer
                 "TOP" => TopLayer1,   // nowy format — Top Layer
+                "BT"  => TopLayer1,   // belka — pręty górne (BB / BL: domyślnie jak B1)
                 _     => BotLayer1
             };
         }

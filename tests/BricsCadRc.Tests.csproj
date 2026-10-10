@@ -48,6 +48,7 @@
     <Compile Include="..\src\Core\SectionFingerprint.cs" />
     <Compile Include="..\src\Core\SectionRecord.cs" />
     <Compile Include="..\src\Core\SectionLabelCarry.cs" />
+    <Compile Include="..\src\Core\BeamGeometry.cs" />
   </ItemGroup>
 
 </Project>
