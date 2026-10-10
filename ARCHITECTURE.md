@@ -395,7 +395,8 @@ Ogólne:
 - **Rozkład z jednym prętem: opis bez rozstawu** (np. `1 H12-01 UB`, nie `1 H12-01-200 UB`) — `ApplySingleBarMark`.
 - **Pręty podłużne belki: opis bez rozstawu także dla > 1 pręta** (`4 H16-05 BEAM B`, `4 H16-103 BEAM T`; `ShowSpacing = false`) —
   parametr `noSpacingMark` w `GenerateDistributionWithLeaderAtOffset`; strzemiona z rozstawem nominalnym (`52 H10-07-200 LINKS`).
-- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona). Kody belek
+- **Kody warstw prętów:** siatka B1 / B2 / T1 / T2, B3 ADD — B3, belki — **BB** (dół), **BT** (góra), **BL** (strzemiona); pręty L i U-bary
+  belki (E4) — te same kody BB / BT (rozróżnienie po kształcie [12] rozkładu: 11 / 21), bez nowych kodów. Kody belek
   NIE zaczynają się od „B1/B2/T1/T2”: skany siatki (`ScanOldDistributions`, `EraseOldDistributions`, `FindBottomView`, UB, ADD) porównują
   kod dokładnie, więc prętów belki nie widzą. Gałęzie `StartsWith("B"/"T")` przejrzane: `BuildBarData` — BT = TOP; `CutBarPositionsAtHole`
   — bez kodów belek; `SectionPlanner` / `PrepareSection` — pręty belek pomijane (przekrój z belką = E5); `ResolveRepresentativeCollisions`
@@ -696,9 +697,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
 
 ## 4i. Belki / pogrubienia (downstand) — plan docs/PLAN_BELKI_2026-10-10.md
-Status: **E1 + E3 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika; E4 (narożniki L/T, U-bary,
-koniec wewnętrzny), E5 (RC_SECTION z belką, bezpiecznik), E6 (BBS) — do zrobienia. Wartości domyślne = rozstrzygnięcia 1b / 1c
-planu — **do potwierdzenia przez Bartka** (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
+Status: **E1 + E3 + E4 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika; E5 (RC_SECTION z belką,
+bezpiecznik), E6 (BBS) — do zrobienia. Wartości domyślne = rozstrzygnięcia 1b / 1c planu — **do potwierdzenia przez Bartka**
+(parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
 - **Siatka płyty (Mesh / B1…T2 / UB / B3 / Add) stref belek NIE widzi** — wynik płyt 319 / 528 / 539 jak wzorzec (testy BRX D319 /
   D528 / D539: zrzut po Prepare GA + Mesh = zrzut wtyczki HEAD; M528: belka, potem Mesh — rozkłady siatki = HEAD z dokładnością
   do numerów pozycji, opisy siatki mogą się przesunąć). `NibDetector.Detect` pomija warstwy RC-BEAM i `SD-Thickening-Zone`
@@ -714,14 +715,23 @@ planu — **do potwierdzenia przez Bartka** (parametry w oknie RC_BEAM, stałe w
   **Tee**; odcinek ze skosem / zmienną szerokością (PLOT 319, zatoka 45°) → „detal ręczny”, bez prętów. Odcinek, którego koniec
   bez rozpoznanego złącza (Internal / Edge) przylega (wspólny koniec / naroże) do odcinka „detal ręczny”, też jest „detal ręczny”
   (bez prętów i strzemion, komunikat „przylega do odcinka „detal ręczny”…”) — np. L z krótką nogą 600 × 1200: obie nogi bez prętów;
-  narożnik L / T rozpoznany z odcinkiem ręcznym (PLOT 319) — bez zmian.
-- **Generowanie (E3) wyłącznie na żądanie:** `RC_GENERATE → Beam` / `RC_GENERATE_BEAM` / `RC_BEAM` (opcja okna). Na odcinek osiowy:
+  narożnik L / T rozpoznany z odcinkiem ręcznym (PLOT 319) — bez zmian. Przerwa w licu odcinka (te same lica po obu stronach) wypełniona
+  strefą na całej szerokości (złącze T — w tym miejscu dochodzi belka poprzeczna) = belka ciągła przez węzeł, nie
+  „detal ręczny” (E4; wcześniej belka ciągła złącza T była „detalem ręcznym”). Strefa po OBU stronach przerwy (skrzyżowanie „+”) —
+  oba odcinki „detal ręczny” z komunikatem „skrzyżowanie belek („+”)…” (bez prętów i strzemion — bez dublowania strzemion w węźle). Złącza: `Result.Joints` (narożnik L: A — odcinek wzdłuż X,
+  B — wzdłuż Y; T: A — belka ciągła, B — dochodząca).
+- **Generowanie (E3 + E4) wyłącznie na żądanie:** `RC_GENERATE → Beam` / `RC_GENERATE_BEAM` / `RC_BEAM` (opcja okna). Na odcinek osiowy:
   - strzemiona **51** (BL, rzut dolny, seria < 100): A = H − 35 − dT1 − dT2 − 40 (pod obiema warstwami T, dT = 12; opcja: jedną),
-    B = szer. − 2·40, oba w dół do 5 mm; C = 0 (hak domyślny); w zakresie własnym odcinka (bez kwadratów narożników):
+    B = szer. − 2·40, oba w dół do 5 mm; C = 0 (hak domyślny); w zakresie strzemion odcinka (E4: własny, w narożniku L dłuższy
+    odcinek także w kwadracie narożnika — zob. E4 niżej):
     n = ceil((L − 2·50)/200) + 1, rozstaw ≤ 200, opis nominalny `nn H10-07-200 LINKS`; gdy wzdłuż odcinka są UB 03 (rozstaw ≤ 200) —
-    położenia UB 03 + 100 (w połowie między U-barami), rozstaw jak UB 03; symbol strzemienia (kółka na obu końcach);
-  - pręty podłużne **4 H16 dołem** (BB, rzut dolny, seria < 100) i **4 H16 górą** (BT, rzut górny — strefa partnerska, 101+): od lica do
-    lica (narożnik L — lico zewnętrzne, T — dalsze lico belki poprzecznej) z otuliną 40, w poprzek otulina + strzemię + d/2 (58 … 542,
+    położenia UB 03 + 100 (w połowie między U-barami), rozstaw jak UB 03; symbol strzemienia (kółka na obu końcach); przy końcu
+    z U-barami (E4) pierwsze strzemię za tyłami U-barów z prześwitem 20 (`StirrupEndOffsetAtUBars`: 4 H16 — oś 120 od lica zamiast 50;
+    528: 52 → 51) — tyły U-barów nie leżą w płaszczyźnie strzemienia (do potwierdzenia);
+  - pręty podłużne **4 H16 dołem** (BB, rzut dolny, seria < 100) i **4 H16 górą** (BT, rzut górny — strefa partnerska, 101+): zakres
+    `BeamGeometry.StraightRange` — koniec z U-barami (krawędź, wewnętrzny) i złącze z odcinkiem „detal ręczny” — lico końca z otuliną 40
+    (jak E3: narożnik z odcinkiem ręcznym — lico zewnętrzne narożnika, T — dalsze lico belki ciągłej), narożnik L z prętami L — lico
+    kwadratu narożnika (bez otuliny), złącze T — bliższe lico belki ciągłej (bez otuliny); w poprzek otulina + strzemię + d/2 (58 … 542,
     co 161); plan `BeamGeometry.PlanBars`: ≤ 6000 — jeden pręt w dół do siatki 250, **wyśrodkowany** (równa otulina na obu końcach);
     dłużej — **zakład w przedziale [lap, lap + 250)** (domyślnie 800 … < 1050; parametr, do potwierdzenia przez Bartka): najpierw pręty
     równe (jedna pozycja) na siatce 250, ≤ 6000, z N (najmniejsza liczba) — równe zakłady w przedziale; gdy się nie da — N prętów:
@@ -730,12 +740,44 @@ planu — **do potwierdzenia przez Bartka** (parametry w oknie RC_BEAM, stałe w
     17777 → 3 × 5250 + 4500 (800 / 800 / 873, nie 5 × 4250); zakłady dół / góra w tym samym miejscu (do decyzji); opis `4 H16-05 BEAM B` (bez rozstawu);
   - rozkłady przez wspólną ścieżkę siatki (`GenerateDistributionWithLeaderAtOffset`: opis bez kolizji, pręt reprezentatywny), bez znacznika
     płyty, ze znacznikiem `RC_AUTOREBAR_BEAM`; szablony w strefach rebar_bottom / rebar_top pod najniższym prętem strefy.
-  - Komunikaty `[RC BEAM]`: „detal ręczny”, „E4: zamknięcie końców — w przygotowaniu” (końce odcinków bez zamknięcia, narożniki bez
-    prętów L, bez U-barów), brak H, brak strefy na rzucie górnym.
+  - **E4 — zamknięcie końców** (`BeamGeometry.AssignClosures` / `PlanLayer`; domyślne 1b.6–1b.8, **do potwierdzenia przez Bartka**),
+    osobno dla dołu (BB, rzut dolny, seria < 100) i góry (BT, rzut górny, 101+), numery `NextAuto` / `NextAutoTop`, identyczny pręt →
+    istniejąca pozycja (`FindOrCreateBeamTemplate` porównuje kształt, Ø, A, B, C i serię):
+    - **narożnik L** dwóch odcinków osiowych — pręty L **kształt 11** we WSZYSTKICH rzędach warstwy (od zewnętrznego do wewnętrznego;
+      interpretacja „rząd zewnętrzny i wewnętrzny” — do potwierdzenia), identyczne (jedna pozycja na narożnik i warstwę), przesunięte
+      po przekątnej o rozstaw rzędów (bez krzyżowania); ramiona (zewnętrzne, w górę do 25 mm) z zakładem ≥ zakład (800) z pierwszym
+      prętem prostym każdej nogi (rząd zewnętrzny — zakład najkrótszy), np. 539: 1450 × 1350 i 1375 × 1375; opis `4 H16-08 BEAM CORNER`;
+      strzemiona w kwadracie narożnika — kontynuacja **dłuższego** odcinka (równe — odcinek wzdłuż X) do lica zewnętrznego (`LinkLo/LinkHi`),
+      drugi odcinek — zakres własny (bez zdublowania); narożnik z odcinkiem „detal ręczny” (319 lewy) — bez prętów L, jak E3 + komunikat;
+    - **złącze T** — pręty proste belki dochodzącej do bliższego lica belki ciągłej + pręty L kształt 11: ramię wzdłuż belki dochodzącej
+      (zakład ≥ 800) przez belkę ciągłą do jej rzędów (od dalszego lica), ramię wzdłuż belki ciągłej = zakład (800); rzędy jednej połowy
+      zagięte w jedną stronę, drugiej — w drugą (zagnieżdżone: rząd skrajny najpłycej), jedna pozycja, dwa rozkłady;
+    - **koniec przy krawędzi i koniec wewnętrzny** (tak samo) — U-bary **kształt 21** poziome w rzucie, zagnieżdżone: para rzędów skrajnych,
+      para następnych … (4 pręty → **2 U-bary na warstwę i koniec**; nieparzysta liczba — pręt środkowy bez U-bara + komunikat); tył U
+      na otulinie 40 od lica końca, kolejny (wewnętrzny) U-bar o Ø U-bara + 20 głębiej (prześwit między tyłami ≥ 20, `UBarBackOffset`),
+      A = C z zakładem ≥ 800 z prętami prostymi (w górę do 25 mm; 528: 800 / 775, 539: 825 / 800 przy krawędzi, 900 / 850 wewnętrzny),
+      B = rozstaw osi rzędów + Ø U-bara (w dół do 5 mm: 500 / 175); różne B = osobne pozycje; opis `1 H16-09 BEAM END`;
+      jeden pręt w warstwie — koniec bez U-bara + komunikat;
+    - **ułożenie zakładów (domyślne, do potwierdzenia przez Bartka):** ramiona prętów L / U-barów leżą „piętrowo” względem prętów
+      prostych, z którymi mają zakład — w tym samym rzędzie w rzucie, w styku w pionie (dół: ramię nad prętem prostym, góra: ramię pod
+      prętem prostym); geometria w rzucie bez przesunięcia w poprzek;
+    - w rzucie (rozkład RC_BAR_BLOCK, bez nowych pól): **widoczne jedno ramię** (pręty L — ramię wzdłuż odcinka X / belki dochodzącej,
+      U-bar — ramię przy rzędzie o mniejszej współrzędnej) z symbolem **haka** (SymbolType `Hook`, [13]/[14] strona i kierunek — w stronę
+      drugiego ramienia) na końcu przy zagięciu; pręty L — skos rozkładu ([25]/[26]: przesunięcie po przekątnej); wszystkie pręty widoczne;
+      sposób rysowania — do potwierdzenia (pełny kształt L / U w rzucie wymagałby zmian w `BarBlockEngine`). Ścieżka: opcjonalny
+      `customizeBar` w `GenerateDistributionWithLeaderAtOffset` (domyślnie bez zmian dla siatki).
+  - Komunikaty `[RC BEAM]`: „detal ręczny”, „zamknięcie końców — narożniki L: n, złącza T: n, końce z U-barami: n …”, narożnik / złącze
+    z odcinkiem ręcznym, skrzyżowanie „+”, ramię przycięte (krótki odcinek), ramiona prętów giętych z obu końców nachodzą (krótki odcinek),
+    koniec bez U-bara (jeden pręt / pręt środkowy), pierwsze strzemię odsunięte za U-bary, pręt dłuższy niż maks., brak H, brak strefy na rzucie górnym.
+  - Strefy cięcia przy otworach (`ComputeCutZones`) uwzględniają skos rozkładu (rzeczywisty zasięg prętów L) — tylko ścieżka belki
+    (`customizeBar`); siatka płyt bez zmian. Generowanie belki nie ma dziś listy otworów (`_currentHoles` pusta), więc cięć nie ma.
 - Ponowne generowanie belki usuwa tylko jej rozkłady (znacznik = strefa; bez znacznika — punkt w strefie); jedna komenda = jedna grupa UNDO.
-- Testy: jednostkowe `BeamGeometryTests`; BRX `tools/BrxSmokeTests/run-planc-beam.ps1` (najpierw `-Baseline -PluginDll <DLL HEAD>` —
+- Testy: jednostkowe `BeamGeometryTests` (E4: zamknięcia 319 / 528 / 539 / T, plan warstwy, wymiary prętów L / U-barów, brak krzyżowania,
+  pręty w strefie, długości 11 / 21 wg BS 8666:2020, prześwit tyłów U-barów ≥ 20 i strzemię za nimi, skrzyżowanie „+”, ramiona nachodzące,
+  jeden pręt — bez U-bara, zagięcia złącza T na rzędach belki ciągłej); BRX `tools/BrxSmokeTests/run-planc-beam.ps1` (najpierw `-Baseline -PluginDll <DLL HEAD>` —
   zrzuty bazowe D526 / D319 / D528 / D539, potem właściwy: Prepare GA 319 / 528-529 / 539, liczby, numery, UNDO / REDO, COPY / MIRROR / ARRAY / PASTECLIP,
-  ponowne Prepare GA, UB 03, format Blok i Polilinia, M528 — belka, potem Mesh).
+  ponowne Prepare GA, UB 03, format Blok i Polilinia, M528 — belka, potem Mesh; E4: pręty L / U-bary, wymiary szablonów, skos, hak w stronę
+  drugiego ramienia, linie w strefie).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

@@ -65,7 +65,7 @@ namespace BricsCadRc.Dialogs
             _bCnt = Field("Pręty dołem: liczba", I(_p.BottomCount));
             _tDia = Field("Pręty górą: średnica H", I(_p.TopDia));
             _tCnt = Field("Pręty górą: liczba", I(_p.TopCount));
-            _uDia = Field("U-bary na końcach: średnica H", I(_p.UBarDia), "etap E4");
+            _uDia = Field("U-bary na końcach: średnica H", I(_p.UBarDia), "kształt 21, 2 na warstwę");
             _lap  = Field("Zakład [mm]", F(_p.Lap), "domyślne 800, do potwierdzenia");
             _max  = Field("Maks. długość pręta [mm]", F(_p.MaxLength));
             root.Children.Add(grid);
@@ -81,7 +81,7 @@ namespace BricsCadRc.Dialogs
 
             _generate = new CheckBox
             {
-                Content = "Generuj pręty belki (strzemiona + pręty podłużne; poprzednie pręty tej belki zostaną zastąpione)",
+                Content = "Generuj pręty belki (strzemiona, pręty podłużne, pręty L, U-bary; poprzednie pręty tej belki zostaną zastąpione)",
                 IsChecked = true, Margin = new Thickness(0, 8, 0, 0)
             };
             root.Children.Add(_generate);
@@ -89,7 +89,7 @@ namespace BricsCadRc.Dialogs
             var lines = new List<string>(info ?? new List<string>())
             {
                 "Wartości domyślne (do potwierdzenia): zakład 800, max 6000, strzemię 51 pod obiema warstwami T, H10 co 200.",
-                "Narożniki L/T, U-bary i zamknięcie końców — etap E4 (na razie końce bez zamknięcia)."
+                "Narożniki L / złącza T: pręty L kształt 11 (ramiona z zakładem); końce (krawędź i wewnętrzny): U-bary kształt 21 — domyślne, do potwierdzenia."
             };
             root.Children.Add(new TextBox
             {

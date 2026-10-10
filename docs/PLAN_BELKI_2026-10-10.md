@@ -1,6 +1,6 @@
 # Plan: automatyczne zbrojenie belek / pogrubień (downstand) — NA Smart RC
 
-Status: E1 + E3 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E4–E6 do zrobienia. Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
+Status: E1 + E3 + E4 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E5–E6 do zrobienia. Użytkownik (2026-10-10): „rób do końca, na resztę pytań odpowiem potem” → otwarte pytania rozstrzygnięte DOMYŚLNIE (sekcja 1b), każde jako parametr / łatwe do zmiany. Wszystkie domyślne = **do potwierdzenia przez Bartka**.
 
 ## Status realizacji (2026-10-10, staging — do testów Bartka)
 - **E1 — zrobione:** model (`RC_BEAM` [1]–[17], `RC_AUTOREBAR_BEAM` [1], warstwa `RC-BEAM`; `BeamStore`), czysta `BeamGeometry`
@@ -10,7 +10,19 @@ Status: E1 + E3 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E4–E6 do zrobie
 - **E3 — zrobione:** strzemiona 51 (BL) + 4 + 4 H16 (BB / BT) na odcinkach osiowych, tylko RC_GENERATE → Beam / RC_GENERATE_BEAM /
   RC_BEAM; skos → „detal ręczny”; końce bez zamknięcia + komunikat E4; numery NextAuto / NextAutoTop; jedna grupa UNDO;
   Blok i Polilinia (`run-planc-beam.ps1`; CloneRemap: COPY / MIRROR / ARRAY / PASTECLIP).
-- **E2 — wstrzymany** (siatka przy belce). **E4, E5, E6 — do zrobienia.**
+- **E4 — zrobione:** narożniki L (pręty L kształt 11), złącza T (pręty L zakotwione w belce ciągłej), U-bary kształt 21 na końcach przy
+  krawędzi i wewnętrznych, strzemiona w kwadracie narożnika (kontynuacja dłuższego odcinka); `BeamGeometry.AssignClosures / PlanLayer`
+  (testy jednostkowe 539 / 528 / 319 / T), `AutoRebarEngine.Beam` (BeamBent), BRX `run-planc-beam.ps1` (319: strzemiona 41 / 12,
+  539: 13 / 24 / 52, 2 narożniki × 4 pręty L i 4 U-bary na warstwę, 528: 4 U-bary na warstwę, 2 pozycje); kody BB / BT bez zmian.
+  Komunikat „E4 w przygotowaniu” usunięty.
+- **E2 — wstrzymany** (siatka przy belce). **E5, E6 — do zrobienia.**
+- Odstępstwa E4 (świadome, do potwierdzenia): pręty L we WSZYSTKICH rzędach warstwy (nie tylko zewnętrznym i wewnętrznym — pręty
+  środkowe krzyżowałyby ramiona L w narożniku), identyczne i przesunięte po przekątnej (jedna pozycja na narożnik); pręty proste przy
+  narożniku L kończą się na licu kwadratu narożnika (E3: lico zewnętrzne, krzyżowały się), przy złączu T — na bliższym licu belki ciągłej;
+  319 zmienia się także w prawym górnym narożniku L (pręty L, strzemiona góry przez kwadrat: 38 → 41), nie tylko na prawym końcu;
+  belka ciągła złącza T nie jest już „detalem ręcznym” (przerwa lica wypełniona strefą = belka ciągła); ramiona prętów L / U-barów
+  liczone od rzeczywistych końców prętów prostych (pręt pojedynczy wyśrodkowany → np. 539: U-bary 900 / 850 na końcu wewnętrznym,
+  825 / 800 przy krawędzi — po recenzji tył wewnętrznego o Ø + 20 głębiej; L 1450 × 1350 i 1375 × 1375); rysunek w rzucie — jedno ramię + symbol haka (pełny kształt — zmiana BarBlockEngine).
 - Odstępstwa od tekstu planu (świadome): strzemiona przy UB 03 — położenia UB 03 + 100 i rozstaw UB 03 (zamiast wzoru n — wzór gdy UB 03
   nie ma; liczba może się różnić o 1–2, np. 528: 52 → 50); zakład w przedziale [800, 1050) (po recenzji 2026-10-10, poprawka kolejności: najpierw N prętów
   równych na siatce 250, potem N prętów — N − 1 równych + ostatni krótszy, osobna pozycja; dopiero potem N + 1 równych — mniej zakładów
@@ -32,6 +44,32 @@ Status: E1 + E3 ZROBIONE (staging, 2026-10-10), E2 wstrzymany, E4–E6 do zrobie
 7. Wysokość spoza siatki 75 — przyjęta z ostrzeżeniem; brak opisu „…THK” — H z SSL − NIB TOC + 150.
 8. Kody warstw BB / BT / BL; warstwa CAD BT → RC-SLAB-TOP-01, BB / BL → RC-SLAB-BOT-01; warstwa stref RC-BEAM (kolor jak SD-Thickening-Zone).
 9. RC_BEAM → Krawedz: strefa od linii uskoku (nib z NibDetector) na 600 w głąb.
+10. (E4) Narożnik L: pręty L kształt 11 we wszystkich rzędach dołu i góry, identyczne, przesunięte po przekątnej; ramiona z zakładem
+    ≥ 800 z prętami prostymi każdej nogi (w górę do 25 mm); strzemiona w kwadracie — dłuższy odcinek (równe — odcinek wzdłuż X).
+11. (E4) Złącze T: pręty belki dochodzącej do bliższego lica belki ciągłej; pręty L: ramię przez belkę ciągłą do jej rzędów (zakład ≥ 800
+    z prętami prostymi), ramię wzdłuż belki ciągłej = 800; połowa rzędów zagięta w lewo, połowa w prawo.
+12. (E4) U-bary H16 kształt 21: 2 na warstwę i koniec (zagnieżdżone: rzędy skrajne B = 500, środkowe B = 175), A = C z zakładem ≥ 800,
+    tył na otulinie 40, wewnętrzny o Ø + 20 = 36 głębiej (prześwit między tyłami ≥ 20 — recenzja E4; 528: A = 800 / 775); pierwsze
+    strzemię przy końcu z U-barami za tyłami U-barów z prześwitem 20 (oś 120 od lica zamiast 50; 528: 52 → 51 strzemion); koniec
+    wewnętrzny jak przy krawędzi; nieparzysta liczba prętów — środkowy bez U-bara, jeden pręt — koniec bez U-bara (komunikaty).
+13. (E4) Opisy: `4 H16-08 BEAM CORNER`, `1 H16-09 BEAM END`; kody BB / BT; w rzucie jedno ramię z symbolem haka.
+14. (E4, recenzja) Ułożenie zakładów prętów L / U-barów z prętami prostymi „piętrowo”: ramię w tym samym rzędzie co pręt prosty,
+    w styku w pionie — dołem ramię NAD prętem dolnym, górą POD prętem górnym (w rzucie bez przesunięcia w poprzek).
+15. (E4, recenzja) Skrzyżowanie „+” (strefa po obu stronach przerwy w licu) — oba odcinki „detal ręczny” z komunikatem (bez prętów
+    i strzemion, bez dublowania strzemion w węźle). Krótki odcinek, na którym ramiona z obu końców nachodzą — ostrzeżenie [RC BEAM].
+
+### Do decyzji Bartka przed wydaniem
+- **(a) Rysowanie pręta giętego w rzucie.** Dziś: widoczne jedno ramię + symbol haka 45° na końcu przy zagięciu. Koliduje to
+  z konwencją płyty, gdzie ten symbol oznacza pręt odgięty pionowo (UB, T IN NIB). Warianty:
+  1. ramię zakładu przesunięte w poprzek o d (pręt gięty obok prostego — widać oba) + symbol jak dziś;
+  2. pełny kształt L / U w rzucie (oba ramiona i tył U) — wymaga zmian w `BarBlockEngine` (nowy typ linii pręta w rozkładzie);
+  3. bez zmian (hak 45° — z legendą „pręt gięty w poziomie”).
+- **(b) Ułożenie piętrowe zakładów** (punkt 14) — czy przyjmujemy, czy zakład obok (w poziomie, przesunięcie w poprzek o d).
+- **(c) Ramiona dłuższe niż zakład i pręty L we wszystkich 4 rzędach.** Ramiona prętów L / U-barów liczone od rzeczywistych końców
+  prętów prostych (pręt wyśrodkowany) wychodzą 825–1450 (np. 539: L 1450 × 1350, 1375 × 1375; U-bary 900 / 850, 825 / 800), a nie
+  równo 800; pręty L we wszystkich 4 rzędach (nie tylko zewnętrznym i wewnętrznym). Do decyzji: zostawić, czy pręty proste dosuwać
+  do zamknięcia (ramiona = zakład), i czy rzędy środkowe mają mieć pręty L.
+- Pierwsze strzemię 120 od lica przy końcu z U-barami (punkt 12) i prześwit 20 między tyłami U-barów — potwierdzić.
 
 ## 0. Dane (Holbrook GA P02, CP)
 - Strefa pogrubienia = zamknięta polilinia na warstwie `SD-Thickening-Zone` (po jednej na plot), między linią uskoku a linią 760 mm od krawędzi → 600 mm od lica nad nibem. Wysokość: tekst SD-Text „450THK”/„375THK”/„300THK” w strefie; kontrola krzyżowa `SSL − NIB TOC + 150` (319: 450, 528: 375, 539: 300).

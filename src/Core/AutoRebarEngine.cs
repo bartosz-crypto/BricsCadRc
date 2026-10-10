@@ -2036,7 +2036,8 @@ namespace BricsCadRc.Core
             double alongMinOverride = double.NaN, double alongMaxOverride = double.NaN,   // zakres linii rozkładu wzdłuż prętów
             double forcedSpacing = double.NaN,   // rozstaw geometryczny narzucony (np. góra przy nibie = pręty dołu); opis nominalny
             bool noSpacingMark = false,          // belka: opis bez rozstawu także dla > 1 pręta („4 H16-05 BEAM B”)
-            string shapeCode = null)             // belka: kod kształtu rozkładu (strzemiona 51 — symbol strzemienia na rzucie)
+            string shapeCode = null,             // belka: kod kształtu rozkładu (strzemiona 51 — symbol strzemienia na rzucie)
+            Action<BarData> customizeBar = null) // belka E4: skos rozkładu i symbol zagięcia (pręty L, U-bary) przed utworzeniem bloku
         {
             bool horizontal = filterDirection == "X";
 
@@ -2105,12 +2106,15 @@ namespace BricsCadRc.Core
                 distBar.ShowSpacing = false;
             }
             if (!string.IsNullOrEmpty(shapeCode)) distBar.ShapeCode = shapeCode;
+            customizeBar?.Invoke(distBar);
             distBar.Spacing         = effectiveSpacing;
             distBar.Direction       = filterDirection;
             distBar.Count           = 0;
             distBar.SourceBarHandle = templateBarId.Handle.Value.ToString("X8");
             if (adjustStatus != 0) distBar.IsLabelManual = true;
-            distBar.CutZones = ComputeCutZones(x0, y0, x1, y1, horizontal, effectiveSpacing, diameter);
+            // skos rozkładu tylko ze ścieżki belki (customizeBar) — siatka płyt: skos 0, wynik bit w bit jak dotąd
+            distBar.CutZones = ComputeCutZones(x0, y0, x1, y1, horizontal, effectiveSpacing, diameter,
+                                               customizeBar != null ? distBar.SkewStart : 0, customizeBar != null ? distBar.SkewEnd : 0);
 
             // Step 3: generate distribution block (sets distBar.BarsSpan via reference)
             var barResult = BarBlockEngine.GenerateFromBounds(
@@ -3275,9 +3279,12 @@ namespace BricsCadRc.Core
         /// Strefy cięcia rozkładu (układ lokalny bloku) dla otworów płyty: pręty, których oś
         /// (± d/2) przecina otwór, mają usuniętą część otwór ± otulina.
         /// x0..x1 / y0..y1 jak w GenerateFromBounds (dla prętów X: x = wzdłuż pręta, y = poprzecznie).
+        /// skewStart / skewEnd — skos rozkładu (pręty L belki, E4): pręt i przesunięty wzdłuż o skewStart + frac·(skewEnd − skewStart),
+        /// sprawdzany jest jego rzeczywisty zasięg; 0 / 0 (siatka płyt) — jak dotąd.
         /// </summary>
         private static string ComputeCutZones(double x0, double y0, double x1, double y1,
-                                              bool horizontal, double spacing, int diameter)
+                                              bool horizontal, double spacing, int diameter,
+                                              double skewStart = 0, double skewEnd = 0)
         {
             _lastZoneHoles = new List<int>();
             if (_currentHoles == null || _currentHoles.Count == 0) return "";
@@ -3285,19 +3292,30 @@ namespace BricsCadRc.Core
             double scan0  = horizontal ? y0 : x0, scan1  = horizontal ? y1 : x1;
             double span = scan1 - scan0;
             int count = spacing > 0 ? (int)(span / spacing + 1e-9) + 1 : 1;
+            bool skewed = Math.Abs(skewEnd - skewStart) > 1e-6 || Math.Abs(skewStart) > 1e-6;
+            double SkewOf(int i) => count > 1 ? skewStart + (skewEnd - skewStart) * i / (count - 1) : skewStart;
             var zones = new List<(double, double, double, double)>();
             for (int k = 0; k < _currentHoles.Count; k++)
             {
                 var h = _currentHoles[k];
                 double hAlong0 = horizontal ? h.MinX : h.MinY, hAlong1 = horizontal ? h.MaxX : h.MaxY;
                 double hScan0  = horizontal ? h.MinY : h.MinX, hScan1  = horizontal ? h.MaxY : h.MaxX;
-                if (hAlong1 + DefaultCover <= along0 || hAlong0 - DefaultCover >= along1) continue;
+                double reach0 = along0 + (skewed ? Math.Min(0, Math.Min(skewStart, skewEnd)) : 0);
+                double reach1 = along1 + (skewed ? Math.Max(0, Math.Max(skewStart, skewEnd)) : 0);
+                if (hAlong1 + DefaultCover <= reach0 || hAlong0 - DefaultCover >= reach1) continue;
                 double s0 = hScan0 - diameter / 2.0 - scan0, s1 = hScan1 + diameter / 2.0 - scan0;
                 bool anyBar = false;
                 for (int i = 0; i < count && !anyBar; i++)
                 {
                     double s = i * spacing;
-                    if (s >= s0 && s <= s1) anyBar = true;
+                    if (s < s0 || s > s1) continue;
+                    if (skewed)
+                    {
+                        // rzeczywisty zasięg pręta i wzdłuż (skos)
+                        double b0 = along0 + SkewOf(i), b1 = along1 + SkewOf(i);
+                        if (hAlong1 + DefaultCover <= b0 || hAlong0 - DefaultCover >= b1) continue;
+                    }
+                    anyBar = true;
                 }
                 if (!anyBar) continue;
                 zones.Add((s0, s1, hAlong0 - DefaultCover - along0, hAlong1 + DefaultCover - along0));
