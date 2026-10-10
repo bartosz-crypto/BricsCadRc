@@ -42,6 +42,9 @@ namespace BricsCadRc.Core
         /// <summary>E4b: pręty wzdłuż nibu belki w narożach spinki UB 03 — górą i dołem (0 = brak); po 1 pręcie. Domyślne H10 / H16,
         /// do potwierdzenia przez Bartka.</summary>
         public int NibTopDia = 10, NibBottomDia = 16;
+        /// <summary>Otulina strzemion belki: boczna / czołowa (boki i czoła belki — strzemię, pręty podłużne, boczne, U-bary, pręty L)
+        /// i dolna (spód belki i nibu belki) [mm]. Decyzja użytkownika 2026-10-10: 40 + odchyłka → 45 boki, 50 dół. Górna — 35 (pod siatką T).</summary>
+        public double CoverSide = BeamGeometry.DefaultCoverSide, CoverBottom = BeamGeometry.DefaultCoverBottom;
 
         public BeamParams Clone() => (BeamParams)MemberwiseClone();
     }
@@ -69,6 +72,12 @@ namespace BricsCadRc.Core
 
         public static bool IsBeamCode(string code)
             => code == CodeBottom || code == CodeTop || code == CodeLinks || code == CodeSide || code == CodeNib;
+
+        /// <summary>Otuliny belki (decyzja użytkownika 2026-10-10): boczna / czołowa strzemion 45 (40 + odchyłka), dolna 50, górna 35
+        /// (pod siatką T, bez zmian). Domyślne parametrów BeamParams.CoverSide / CoverBottom.</summary>
+        public const double DefaultCoverSide = 45.0, DefaultCoverBottom = 50.0, DefaultCoverTop = 35.0;
+        /// <summary>Otulina spinki UB 03 od krawędzi płyty (element płyty — bez zmian, 40): położenie prętów BN w poprzek (naroża spinki).</summary>
+        public const double NibUbEdgeCover = 40.0;
 
         public const double MinWidth = 150.0, MaxWidth = 1500.0;
         /// <summary>Krawędź osiowa z tolerancją 4 mm (jak obrys płyty — OutlineAxisRules).</summary>
@@ -598,15 +607,15 @@ namespace BricsCadRc.Core
         /// Lico zewnętrzne tyłu k-tego zagnieżdżonego U-bara (k = 0 — rzędy skrajne) od lica końca: otulina + k·(Ø + prześwit 20)
         /// (recenzja E4: prześwit między tyłami ≥ 20; domyślne, do potwierdzenia).
         /// </summary>
-        public static double UBarBackOffset(int k, int uDia, double cover = 40) => cover + k * (uDia + UBarClearGap);
+        public static double UBarBackOffset(int k, int uDia, double cover = DefaultCoverSide) => cover + k * (uDia + UBarClearGap);
 
         /// <summary>
         /// Oś pierwszego strzemienia od lica końca z U-barami: za licem wewnętrznym najgłębszego tyłu U-bara (count prętów w rzędzie →
         /// count / 2 U-barów) z prześwitem 20 + Ø strzemienia / 2, w górę do 5 mm, nie mniej niż minOffset (50). Tyły U-barów leżą
-        /// wtedy przed płaszczyzną pierwszego strzemienia (bez kolizji z ramionami / narożami strzemienia). 4 H16: 40 + 36 + 16 + 20 + 5
-        /// = 117 → 120. Bez U-barów (count &lt; 2) — minOffset.
+        /// wtedy przed płaszczyzną pierwszego strzemienia (bez kolizji z ramionami / narożami strzemienia). 4 H16 (otulina czołowa 45): 45 + 36 + 16 + 20 + 5
+        /// = 122 → 125. Bez U-barów (count &lt; 2) — minOffset.
         /// </summary>
-        public static double StirrupEndOffsetAtUBars(int count, int uDia, double dLink = 10, double cover = 40, double minOffset = 50)
+        public static double StirrupEndOffsetAtUBars(int count, int uDia, double dLink = 10, double cover = DefaultCoverSide, double minOffset = 50)
         {
             int pairs = count / 2;
             if (pairs <= 0 || uDia <= 0) return minOffset;
@@ -753,7 +762,7 @@ namespace BricsCadRc.Core
         /// Zakres prętów prostych odcinka wzdłuż osi: koniec LBar / Tee — lico własnego zakresu (kwadrat narożnika / bliższe lico
         /// belki ciągłej; pręty L przejmują zakład), inaczej lico końca z otuliną (U-bar, krawędź, złącze z odcinkiem ręcznym — jak E3).
         /// </summary>
-        public static (double Lo, double Hi) StraightRange(Segment s, double cover = 40)
+        public static (double Lo, double Hi) StraightRange(Segment s, double cover = DefaultCoverSide)
         {
             double lo = s.LoClose == Closure.LBar || s.LoClose == Closure.Tee ? s.OwnLo : s.FaceLo + cover;
             double hi = s.HiClose == Closure.LBar || s.HiClose == Closure.Tee ? s.OwnHi : s.FaceHi - cover;
@@ -761,7 +770,7 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Osie prętów warstwy w poprzek odcinka (rosnąco), jak BarsAcross.</summary>
-        public static List<double> RowsAcross(Segment s, int count, double d, double dLink = 10, double cover = 40)
+        public static List<double> RowsAcross(Segment s, int count, double d, double dLink = 10, double cover = DefaultCoverSide)
         {
             var (f, sp) = BarsAcross(s.AcrossLo, s.AcrossHi, count, d, dLink, cover);
             return Enumerable.Range(0, Math.Max(1, count)).Select(i => f + i * sp).ToList();
@@ -788,7 +797,7 @@ namespace BricsCadRc.Core
         ///     z zakładem ≥ lap z prętami prostymi, szerokość B = rozstaw osi rzędów + Ø U-bara (w dół do 5 mm); różne B = osobne pozycje.
         /// </summary>
         public static LayerPlan PlanLayer(Result an, int count, int d, int uDia, double lap, double maxLen,
-                                          double dLink = 10, double cover = 40)
+                                          double dLink = 10, double cover = DefaultCoverSide)
         {
             var lp = new LayerPlan();
             if (an == null || count <= 0 || d <= 0) return lp;
@@ -994,20 +1003,20 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Wysokość strzemienia 51 (wymiar zewnętrzny A, 1b.1): H − otulina górą − dT1 (− dT2 przy topLayers = 2) − otulina dołem,
-        /// zaokrąglona W DÓŁ do 5 mm. Np. 450, H12 + H12: 450 − 35 − 24 − 40 = 351 → 350.
+        /// zaokrąglona W DÓŁ do 5 mm. Np. 450, H12 + H12: 450 − 35 − 24 − 50 = 341 → 340 (otulina dolna 50 — decyzja 2026-10-10).
         /// </summary>
         public static double StirrupHeight(double h, int topLayers = 2, double dT1 = 12, double dT2 = 12,
-                                           double coverTop = 35, double coverBottom = 40)
+                                           double coverTop = DefaultCoverTop, double coverBottom = DefaultCoverBottom)
         {
             double a = h - coverTop - dT1 - (topLayers >= 2 ? dT2 : 0) - coverBottom;
             return a > 0 ? Math.Floor(a / 5.0 + 1e-9) * 5.0 : 0;
         }
 
         /// <summary>
-        /// Szerokość strzemienia 51 (wymiar zewnętrzny B): szerokość − 2 · otulina boczna, w dół do 5 mm (600 → 520; 600.4 → 520 —
+        /// Szerokość strzemienia 51 (wymiar zewnętrzny B): szerokość − 2 · otulina boczna, w dół do 5 mm (600 → 510; 600.4 → 510 —
         /// strefa z GA z szumem rysunku nie daje osobnej pozycji).
         /// </summary>
-        public static double StirrupWidth(double width, double coverSide = 40)
+        public static double StirrupWidth(double width, double coverSide = DefaultCoverSide)
         {
             double b = width - 2 * coverSide;
             return b > 0 ? Math.Floor(b / 5.0 + 1e-9) * 5.0 : 0;
@@ -1015,10 +1024,10 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Pręty podłużne w poprzek belki: pierwszy / ostatni w osi otulina + strzemię + d/2 od lica, liczba prętów równo
-        /// (600, H10, H16: 58 … 542, co 161.3). Zwraca (pierwszy, rozstaw).
+        /// (600, otulina 45, H10, H16: 63 … 537, co 158). Zwraca (pierwszy, rozstaw).
         /// </summary>
         public static (double First, double Spacing) BarsAcross(double lo, double hi, int count, double d,
-                                                                double dLink = 10, double coverSide = 40)
+                                                                double dLink = 10, double coverSide = DefaultCoverSide)
         {
             double off = coverSide + dLink + d / 2.0;
             double a = lo + off, b = hi - off;
@@ -1043,19 +1052,21 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Osie prętów bocznych w poprzek (przy ramionach strzemienia): otulina + strzemię + d/2 od każdego lica.</summary>
-        public static (double Lo, double Hi) SideBarsAcross(Segment s, double d, double dLink = 10, double cover = 40)
+        public static (double Lo, double Hi) SideBarsAcross(Segment s, double d, double dLink = 10, double cover = DefaultCoverSide)
             => (s.AcrossLo + cover + dLink + d / 2.0, s.AcrossHi - cover - dLink - d / 2.0);
 
         /// <summary>Zakład pręta o średnicy d przy zakładzie lap prętów głównych średnicy dMain — ta sama krotność średnicy, w górę do 25 (800 / 16 → H10: 500).</summary>
         public static double LapFor(double lap, int dMain, int d) => dMain > 0 && d > 0 ? Ceil25(lap * d / dMain) : lap;
 
         /// <summary>
-        /// Pręt wzdłuż nibu belki (E4b): oś w poprzek — w narożu spinki UB 03 (krawędź płyty − otulina − Ø spinki − d/2), zakres wzdłuż —
-        /// koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty na końcu z otuliną, koniec wewnętrzny do lica belki z otuliną,
-        /// złącze T — lico własnego zakresu. Null, gdy odcinek nie ma lica przy krawędzi płyty (nib ≤ EdgeEndMaxGap).
+        /// Pręt wzdłuż nibu belki (E4b): oś w poprzek — w narożu spinki UB 03 (krawędź płyty − coverAcross − Ø spinki − d/2; UB 03 to
+        /// element płyty — otulina 40 bez zmian), zakres wzdłuż — koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty na końcu
+        /// z otuliną czołową belki (cover, 45), koniec wewnętrzny do lica belki z otuliną, złącze T — lico własnego zakresu. Null, gdy
+        /// odcinek nie ma lica przy krawędzi płyty (nib ≤ EdgeEndMaxGap).
         /// </summary>
         public static (double Across, double Lo, double Hi)? NibBarLine(Segment s, IList<(double X, double Y)> outline, double d,
-                                                                       double dUb = 10, double cover = 40)
+                                                                       double dUb = 10, double cover = DefaultCoverSide,
+                                                                       double coverAcross = NibUbEdgeCover)
         {
             if (s == null || s.Manual || s.OuterSide == 0 || outline == null || outline.Count < 3) return null;
             var poly = outline.ToList();
@@ -1066,7 +1077,7 @@ namespace BricsCadRc.Core
             var v = s.AlongX ? (0.0, (double)sg) : ((double)sg, 0.0);
             double gap = RayHit(poly, p, v);
             if (double.IsInfinity(gap) || gap > EdgeEndMaxGap || gap < 1.0) return null;
-            double across = face + sg * gap - sg * (cover + dUb + d / 2.0);
+            double across = face + sg * gap - sg * (coverAcross + dUb + d / 2.0);
             double End(bool atLo)
             {
                 var kind = atLo ? s.LoKind : s.HiKind;

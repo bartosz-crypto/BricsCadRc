@@ -74,8 +74,8 @@ namespace BricsCadRc.Core
             public double S0, S1;
             public double Height;
             public double NibWidth = 135, NibHeight = 150;
-            /// <summary>Otulina strzemienia (dół i boki) [mm].</summary>
-            public double Cover = 40;
+            /// <summary>Otulina strzemienia: boczna / czołowa i dolna (spód belki i nibu) [mm] — decyzja użytkownika 2026-10-10: 45 / 50.</summary>
+            public double Cover = BeamGeometry.DefaultCoverSide, CoverBottom = BeamGeometry.DefaultCoverBottom;
             /// <summary>Strzemię: średnica i wysokość zewnętrzna A (ze wzoru generowania; rozkład BL w pasie ma pierwszeństwo).</summary>
             public int StirrupDia = 10;
             public double StirrupA;
@@ -222,7 +222,7 @@ namespace BricsCadRc.Core
             /// <summary>Spinka UB 03 w pasie / nibie belki (poprawka recenzji E4b): osie dolnego i górnego ramienia na wysokości belki
             /// i Ø — pręty BN w jej narożach (wewnątrz U); NaN = brak UB 03 w pasie (poziomy BN ze wzoru).</summary>
             public double UbBot = double.NaN, UbTop = double.NaN, UbDia;
-            public double VLinkBot => -H + Src.Cover;            // spód strzemienia (lico zewnętrzne)
+            public double VLinkBot => -H + Src.CoverBottom;            // spód strzemienia (lico zewnętrzne)
             public double VLinkTop => VLinkBot + LinkA;          // wierzch strzemienia (lico zewnętrzne)
         }
 
@@ -391,6 +391,13 @@ namespace BricsCadRc.Core
                     b.UbBot = vUbBot(d, d.Diameter) + sh;
                     b.UbTop = vUbTop(d, d.Diameter) + sh;
                     b.UbDia = d.Diameter;
+                    // UB 03 to element płyty (otulina dołem płyty + zapas) — pręt BN dołem liczony od niej; mniejsza otulina niż dolna
+                    // otulina belki (50, decyzja 2026-10-10) → ostrzeżenie (raz)
+                    double ubCover = b.UbBot - b.UbDia / 2.0 + b.H;
+                    string ubMsg = string.Format(CultureInfo.InvariantCulture,
+                        "UB 03 płyty w nibie belki: otulina dołem {0:0} < otulina dolna belki {1:0} — pręt BN dołem liczony od UB 03 " +
+                        "(spinka płyty bez zmian); do sprawdzenia.", ubCover, b.Src.CoverBottom);
+                    if (ubCover < b.Src.CoverBottom - 0.5 && !res.Warnings.Contains(ubMsg)) res.Warnings.Add(ubMsg);
                     break;
                 }
             }
@@ -778,7 +785,7 @@ namespace BricsCadRc.Core
                 }
             }
             foreach (var b in bands)
-                if (b.LinkA <= 0) b.LinkA = BeamGeometry.StirrupHeight(b.H, coverBottom: b.Src.Cover);   // brak A — wzór 1b.1
+                if (b.LinkA <= 0) b.LinkA = BeamGeometry.StirrupHeight(b.H, coverBottom: b.Src.CoverBottom);   // brak A — wzór 1b.1
             // średnice prętów dołu / góry pasu (poziomy prętów bocznych E4b)
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam && (x.ShapeCode ?? "00") == "00"
                                                    && (x.LayerCode == BeamGeometry.CodeBottom || x.LayerCode == BeamGeometry.CodeTop)))
@@ -812,7 +819,7 @@ namespace BricsCadRc.Core
                         if (!double.IsNaN(b.UbBot))
                             return new List<double> { IsNibTop(d) ? b.UbTop - b.UbDia / 2.0 - half : b.UbBot + b.UbDia / 2.0 + half };
                         return new List<double> { IsNibTop(d) ? -b.H + b.NibH - inp.CoverNib - BeamNibUbDia - half
-                                                              : -b.H + b.Src.Cover + BeamNibUbDia + half };
+                                                              : -b.H + b.Src.CoverBottom + BeamNibUbDia + half };
                     default: return new List<double> { b.VLinkBot + b.LinkDia + half };
                 }
             }

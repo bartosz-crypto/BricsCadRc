@@ -385,20 +385,25 @@ namespace BricsCadRc.Tests
         [Test]
         public void Stirrup51_Dimensions()
         {
-            Assert.That(BeamGeometry.StirrupHeight(450), Is.EqualTo(350));          // 351 → 350
-            Assert.That(BeamGeometry.StirrupHeight(375), Is.EqualTo(275));          // 276 → 275
-            Assert.That(BeamGeometry.StirrupHeight(300), Is.EqualTo(200));          // 201 → 200
-            Assert.That(BeamGeometry.StirrupHeight(450, topLayers: 1), Is.EqualTo(360));   // 363 → 360
-            Assert.That(BeamGeometry.StirrupWidth(600), Is.EqualTo(520));
-            Assert.That(BeamGeometry.StirrupWidth(600.404), Is.EqualTo(520));   // PLOT 539 — dolna noga
+            // otuliny 2026-10-10: dół 50, boki 45 (górna 35)
+            Assert.That(BeamGeometry.StirrupHeight(450), Is.EqualTo(340));          // 341 → 340
+            Assert.That(BeamGeometry.StirrupHeight(375), Is.EqualTo(265));          // 266 → 265
+            Assert.That(BeamGeometry.StirrupHeight(300), Is.EqualTo(190));          // 191 → 190
+            Assert.That(BeamGeometry.StirrupHeight(450, topLayers: 1), Is.EqualTo(350));   // 353 → 350
+            Assert.That(BeamGeometry.StirrupHeight(450, coverBottom: 40), Is.EqualTo(350));   // dawna otulina 40: 351 → 350
+            Assert.That(BeamGeometry.StirrupWidth(600), Is.EqualTo(510));
+            Assert.That(BeamGeometry.StirrupWidth(600.404), Is.EqualTo(510));   // PLOT 539 — dolna noga
+            Assert.That(BeamGeometry.StirrupWidth(600, 40), Is.EqualTo(520));
+            Assert.That(new BeamParams().CoverSide, Is.EqualTo(45));
+            Assert.That(new BeamParams().CoverBottom, Is.EqualTo(50));
         }
 
         [Test]
         public void BarsAcross_600_FourH16()
         {
             var (first, sp) = BeamGeometry.BarsAcross(0, 600, 4, 16);
-            Assert.That(first, Is.EqualTo(58));
-            Assert.That(sp, Is.EqualTo(484.0 / 3).Within(1e-9));
+            Assert.That(first, Is.EqualTo(63));                       // 45 + 10 + 8
+            Assert.That(sp, Is.EqualTo(158).Within(1e-9));            // 474 / 3
         }
 
         // ── opisy GA ────────────────────────────────────────────────────
@@ -505,9 +510,9 @@ namespace BricsCadRc.Tests
             Assert.That(top.LinkLo, Is.EqualTo(top.OwnLo));
             Assert.That(bottom.LinkLo, Is.EqualTo(bottom.OwnLo));
             Assert.That(BeamGeometry.StirrupLayout(left.LinkLo, left.LinkHi).Count, Is.EqualTo(52));
-            // koniec Hi z U-barami — pierwsze strzemię 120 od lica (liczby bez zmian)
-            Assert.That(BeamGeometry.StirrupLayout(top.LinkLo, top.LinkHi, 200, 50, null, 100, 120).Count, Is.EqualTo(13));
-            Assert.That(BeamGeometry.StirrupLayout(bottom.LinkLo, bottom.LinkHi, 200, 50, null, 100, 120).Count, Is.EqualTo(24));
+            // koniec Hi z U-barami — pierwsze strzemię 125 od lica (otulina czołowa 45; dolna noga 24 → 23)
+            Assert.That(BeamGeometry.StirrupLayout(top.LinkLo, top.LinkHi, 200, 50, null, 100, 125).Count, Is.EqualTo(13));
+            Assert.That(BeamGeometry.StirrupLayout(bottom.LinkLo, bottom.LinkHi, 200, 50, null, 100, 125).Count, Is.EqualTo(23));
         }
 
         [Test]
@@ -520,7 +525,7 @@ namespace BricsCadRc.Tests
             var left = r.Segments.Single(s => !s.AlongX);
             var bottom = r.Segments.Single(s => s.AlongX && s.AcrossLo < 50000);
 
-            // pręty proste: góra od kwadratu narożnika (bez otuliny) do lica końca − 40, lewa między kwadratami
+            // pręty proste: góra od kwadratu narożnika (bez otuliny) do lica końca − 45, lewa między kwadratami
             Assert.That(lp.Straight.Count, Is.EqualTo(4));
             Assert.That(lp.Straight.Where(x => x.Seg == top).Select(x => x.Length), Is.EqualTo(new[] { 2250.0 }));
             Assert.That(lp.Straight.Where(x => x.Seg == left).Select(x => x.Length), Is.EqualTo(new[] { 5000.0, 5000.0 }));
@@ -549,7 +554,7 @@ namespace BricsCadRc.Tests
             var tl = L.Single(b => b.Seg == top);
             Assert.That((tl.A, tl.B), Is.EqualTo((1450.0, 1350.0)));
             var bl = L.Single(b => b.Seg == bottom);
-            Assert.That((bl.A, bl.B), Is.EqualTo((1375.0, 1375.0)));
+            Assert.That((bl.A, bl.B), Is.EqualTo((1375.0, 1350.0)));      // otulina 45 (wcześniej 1375 × 1375)
 
             foreach (var b in U)
             {
@@ -559,11 +564,11 @@ namespace BricsCadRc.Tests
                 Assert.That(b.Overlap, Is.GreaterThanOrEqualTo(800 - 1e-6));
                 AssertInside(Zone539, BarPolylines(b));
             }
-            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 175.0, 175.0, 500.0, 500.0 }));
+            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 170.0, 170.0, 490.0, 490.0 }));   // otulina 45: 158 + 16 → 170, 474 + 16
             // koniec wewnętrzny (góra): pręt prosty wyśrodkowany (84 od otuliny) — ramiona dłuższe
             // (U-bar wewnętrzny — tył o Ø + 20 głębiej, ramię krótsze)
-            Assert.That(U.Where(b => b.Seg == top).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (850.0, 175.0), (900.0, 500.0) }));
-            Assert.That(U.Where(b => b.Seg == bottom).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (800.0, 175.0), (825.0, 500.0) }));
+            Assert.That(U.Where(b => b.Seg == top).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (850.0, 170.0), (900.0, 490.0) }));
+            Assert.That(U.Where(b => b.Seg == bottom).Select(b => (b.A, b.B)).OrderBy(x => x.B), Is.EqualTo(new[] { (800.0, 170.0), (825.0, 490.0) }));
             AssertUBarBackGaps(U);
             // U-bary zagnieżdżone nie krzyżują się
             AssertNoCrossing(U.Where(b => b.Seg == bottom).SelectMany(BarPolylines).ToList());
@@ -578,30 +583,31 @@ namespace BricsCadRc.Tests
             Assert.That(s.LoClose, Is.EqualTo(BeamGeometry.Closure.UBar));
             Assert.That(s.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
             Assert.That(BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi).Count, Is.EqualTo(52), "E3 (strzemię 50 od lica)");
-            Assert.That(BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 120, null, 100, 120).Count, Is.EqualTo(51),
-                        "E4: pierwsze strzemię za tyłami U-barów (120 od lica)");
+            Assert.That(BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 125, null, 100, 125).Count, Is.EqualTo(51),
+                        "E4: pierwsze strzemię za tyłami U-barów (125 od lica)");
             var lp = Plan(r);
             Assert.That(lp.Straight.Select(x => x.Length), Is.EqualTo(new[] { 5500.0, 5500.0 }), "bez zmian względem E3");
-            Assert.That(lp.Straight[0].Start, Is.EqualTo(s.FaceLo + 40).Within(1e-6));
+            Assert.That(lp.Straight[0].Start, Is.EqualTo(s.FaceLo + 45).Within(1e-6));   // otulina czołowa 45
             var U = lp.Bent;
             Assert.That(U.Count, Is.EqualTo(4));
             Assert.That(U.All(b => b.Kind == "U" && b.Shape == "21" && b.C == b.A));
             // zewnętrzny 800, wewnętrzny (tył o Ø + 20 głębiej) 775 — zakład ≥ 800
             Assert.That(U.Select(b => (b.A, b.B)).OrderBy(x => x.B).ThenBy(x => x.A),
-                        Is.EqualTo(new[] { (775.0, 175.0), (775.0, 175.0), (800.0, 500.0), (800.0, 500.0) }));
-            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 175.0, 175.0, 500.0, 500.0 }));
+                        Is.EqualTo(new[] { (775.0, 170.0), (775.0, 170.0), (800.0, 490.0), (800.0, 490.0) }));
+            Assert.That(U.Select(b => b.B).OrderBy(x => x), Is.EqualTo(new[] { 170.0, 170.0, 490.0, 490.0 }));
             Assert.That(U.All(b => b.Overlap >= 800 - 1e-6));
-            // tył U-bara zewnętrznego na otulinie 40 od lica końca, wewnętrzny o Ø 16 + prześwit 20 głębiej
+            // tył U-bara zewnętrznego na otulinie 45 od lica końca, wewnętrzny o Ø 16 + prześwit 20 głębiej
             var lo = U.Where(b => b.BendAtStart).OrderByDescending(b => b.B).ToList();
-            Assert.That(lo[0].Start0, Is.EqualTo(s.FaceLo + 40 + 8).Within(1e-6));
-            Assert.That(lo[1].Start0, Is.EqualTo(s.FaceLo + 40 + 16 + 20 + 8).Within(1e-6));
+            Assert.That(lo[0].Start0, Is.EqualTo(s.FaceLo + 45 + 8).Within(1e-6));
+            Assert.That(lo[1].Start0, Is.EqualTo(s.FaceLo + 45 + 16 + 20 + 8).Within(1e-6));
             AssertUBarBackGaps(U);
-            // pierwsze strzemię za tyłami U-barów (prześwit ≥ 20): 4 H16 → 120 od lica
+            // pierwsze strzemię za tyłami U-barów (prześwit ≥ 20): 4 H16 → 125 od lica (45 + 36 + 16 + 20 + 5 = 122 → 125)
             double offU = BeamGeometry.StirrupEndOffsetAtUBars(4, 16);
-            Assert.That(offU, Is.EqualTo(120));
+            Assert.That(offU, Is.EqualTo(125));
+            Assert.That(BeamGeometry.StirrupEndOffsetAtUBars(4, 16, cover: 40), Is.EqualTo(120), "dawna otulina 40");
             var st = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, offU, null, 100, offU);
-            Assert.That(st.First, Is.EqualTo(s.FaceLo + 120).Within(1e-6));
-            Assert.That(st.First + (st.Count - 1) * st.Step, Is.EqualTo(s.FaceHi - 120).Within(1e-6));
+            Assert.That(st.First, Is.EqualTo(s.FaceLo + 125).Within(1e-6));
+            Assert.That(st.First + (st.Count - 1) * st.Step, Is.EqualTo(s.FaceHi - 125).Within(1e-6));
             double deepestBackInner = lo[1].Start0 + 8;
             Assert.That(st.First - 5 - deepestBackInner, Is.GreaterThanOrEqualTo(20 - 1e-6), "prześwit tył U-bara — strzemię");
             AssertInside(Zone528, U.SelectMany(BarPolylines).ToList());
@@ -620,14 +626,18 @@ namespace BricsCadRc.Tests
             Assert.That(top.LinkLo, Is.EqualTo(top.OwnLo));
             Assert.That(top.LinkHi, Is.EqualTo(top.FaceHi), "góra dłuższa — strzemiona przez kwadrat narożnika");
             Assert.That(BeamGeometry.StirrupLayout(top.LinkLo, top.LinkHi).Count, Is.EqualTo(41));
-            Assert.That(BeamGeometry.StirrupLayout(right.LinkLo, right.LinkHi, 200, 120, null, 100, 50).Count, Is.EqualTo(12));
+            Assert.That(BeamGeometry.StirrupLayout(right.LinkLo, right.LinkHi, 200, 125, null, 100, 50).Count, Is.EqualTo(12));
             var lp = Plan(r);
             TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
             Assert.That(lp.Straight.Where(x => x.Seg == top).Select(x => x.Length), Is.EqualTo(new[] { 4500.0, 4500.0 }));
-            Assert.That(lp.Straight.First(x => x.Seg == top).Start, Is.EqualTo(top.FaceLo + 40).Within(1e-6), "lewy koniec jak E3");
+            Assert.That(lp.Straight.First(x => x.Seg == top).Start, Is.EqualTo(top.FaceLo + 45).Within(1e-6), "lewy koniec jak E3 (otulina 45)");
             Assert.That(lp.Bent.Count(b => b.Kind == "L"), Is.EqualTo(1));
             Assert.That(lp.Bent.Count(b => b.Kind == "U"), Is.EqualTo(2));
-            Assert.That(lp.Messages.Count(m => m.Contains("detal ręczny")), Is.EqualTo(1));
+            // otulina czołowa 45 (2026-10-10): prawa noga — dostępne 2247.5 < 2250 → pręt prosty 2000 (było 2250), ramiona U-barów /
+            // pręta L dłuższe i nachodzą na siebie (93 mm) — dodatkowy komunikat „krótki odcinek”
+            Assert.That(lp.Messages.Count(m => m.Contains("detal ręczny")), Is.EqualTo(2), string.Join(" | ", lp.Messages));
+            Assert.That(lp.Messages.Count(m => m.Contains("nachodzą na siebie (93 mm")), Is.EqualTo(1));
+            Assert.That(lp.Straight.Where(x => x.Seg == right).Select(x => x.Length), Is.EqualTo(new[] { 2000.0 }));
             foreach (var b in lp.Bent)
             {
                 Assert.That(b.Overlap, Is.GreaterThanOrEqualTo(800 - 1e-6));
@@ -655,7 +665,7 @@ namespace BricsCadRc.Tests
             TestContext.WriteLine(string.Join(" | ", lp.Bent) + " || " + string.Join(" | ", lp.Messages));
             // pręty belki dochodzącej od lica belki ciągłej (y = 600), bez otuliny
             Assert.That(BeamGeometry.StraightRange(v).Lo, Is.EqualTo(600).Within(1e-6));
-            Assert.That(BeamGeometry.StraightRange(v).Hi, Is.EqualTo(5000 - 40).Within(1e-6));
+            Assert.That(BeamGeometry.StraightRange(v).Hi, Is.EqualTo(5000 - 45).Within(1e-6));
             var T = lp.Bent.Where(b => b.Kind == "T").ToList();
             Assert.That(T.Count, Is.EqualTo(2));
             Assert.That(T.Sum(b => b.Count), Is.EqualTo(4));
@@ -665,8 +675,8 @@ namespace BricsCadRc.Tests
             var bars = T.SelectMany(BarPolylines).ToList();
             AssertNoCrossing(bars);
             AssertInside(zone, bars);
-            // zagięcia w rzędach belki ciągłej (y 58 … 542)
-            foreach (var b in bars) Assert.That(b[1].Y, Is.InRange(58 - 1e-6, 542 + 1e-6));
+            // zagięcia w rzędach belki ciągłej (y 63 … 537 — otulina 45)
+            foreach (var b in bars) Assert.That(b[1].Y, Is.InRange(63 - 1e-6, 537 + 1e-6));
             Assert.That(lp.Bent.Count(b => b.Kind == "U"), Is.EqualTo(6), "3 końce × 2 U-bary");
         }
 
@@ -685,8 +695,8 @@ namespace BricsCadRc.Tests
         {
             // BS 8666:2020: 11 — A + B − 0.5r − d; 21 — A + B + C − r − 2d (H16: r = 32), w górę do 25 mm
             Assert.That(BarLengthRules.TotalLengthFor("11", new[] { 1450.0, 1350.0 }, 16), Is.EqualTo(2775));   // 2768
-            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 500.0, 800.0 }, 16), Is.EqualTo(2050));   // 2036
-            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 175.0, 800.0 }, 16), Is.EqualTo(1725));   // 1711
+            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 490.0, 800.0 }, 16), Is.EqualTo(2050));   // 2026 (otulina 45)
+            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 800.0, 170.0, 800.0 }, 16), Is.EqualTo(1725));   // 1706
         }
 
         [Test]

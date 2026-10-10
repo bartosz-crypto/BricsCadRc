@@ -31,6 +31,17 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
   cięcia BS 8666:2020; sztuki = suma rozkładów; masa .xls = COUNT — BRX S539BBS). Poprawka: szablony belki z TotalLength wg BS 8666:2020
   (wcześniej TL = 0 → ostrzeżenie RC_BBS dla strzemion 51).
 - **E2 — wstrzymany** (siatka przy belce).
+- **Otuliny belki — decyzja użytkownika 2026-10-10 (zrobione, staging):** „Side cover robimy 40 mm w belkach plus odchyłka — przyjmijmy
+  45 mm otulina dla strzemion (boki), dół 50 mm cover.” Boczna / czołowa 45 (boki i czoła: strzemię, pręty podłużne, boczne BS, U-bary
+  i ich tyły, pręty L, pierwsze strzemię za U-barami — 125 od lica, końce BN), dolna 50 (spód belki i nibu belki), górna 35 bez zmian.
+  Parametry `BeamParams.CoverSide` / `CoverBottom`, okno RC_BEAM, rekord RC_BEAM [22] / [23] — rekord bez tych pól czytany z NOWYMI
+  domyślnymi 45 / 50 (nie dawnymi 40 / 40: ponowne generowanie istniejącej belki daje nowe otuliny). BN w poprzek — od spinki UB 03 płyty
+  (element płyty, otulina 40 bez zmian); UB 03 płyty leży dołem na 45 < 50 — komunikat przy generowaniu i ostrzeżenie w RC_SECTION
+  (BN dołem nadal w narożu UB 03). Odcisk przekroju: otulina boczna `Cv` i dolna `CvB` w składniku BEAM.
+  Skutki: 528 — strzemię 51 A = 265, B = 510; U-bary 800 / 775 × B 490 / 170; strzemiona 51 (bez zmian); 539 — A = 190, B = 510,
+  strzemiona 13 / 23 / 52 (dolna noga 24 → 23), pręt L 1375 × 1350 (było 1375 × 1375), U-bary B 490 / 170; 319 — A = 340,
+  prawa noga: pręt prosty 2000 (było 2250 — dostępne 2247,5), ramiona U-barów / pręta L dłuższe i nachodzą (93 mm) — komunikat
+  „krótki odcinek”; w poprzek 63 … 537 co 158.
 - Poprawki po recenzji E4b + E5 + E6 (2026-10-10): BN w przekroju w narożach spinki UB 03 z pasa (wcześniej nachodziły na jej ramiona),
   bez UB 03 — wzór + komunikat przy generowaniu; T IN NIB w trzonie belki — poziom jak w płycie; T IN NIB nachodzący na BN — odsunięty do styku;
   liczba prętów bocznych od osi (H 750: 3 na bok, nie 2); CountDisplay BS zachowany po gripie.
@@ -66,11 +77,13 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
 0. (E4b) Pręty boczne H10, rozstaw pionowy ≤ 200, liczba na bok ceil(odległość osi dołu i góry / 200) − 1; proste, bez zagięć w narożnikach / na końcach;
    pręty w nibie: górą H10 + dołem H16 (po 1, w narożach spinki UB 03) — interpretacja „brakuje 2 prętów H10 wzdłuż nibu górą oraz dołem
    w narożu nibu też dajmy H16” do potwierdzenia; zakład prętów H10 = 500 (ta sama krotność Ø co 800 / H16).
-1. Strzemię 51 pod OBIEMA warstwami T: A = H − 35 − 12 − 12 − 40, w dół do 5 (450 → 350, 375 → 275, 300 → 200); opcja „jedną warstwą”.
+1. Strzemię 51 pod OBIEMA warstwami T: A = H − 35 − 12 − 12 − 50 (otulina dolna 50 — decyzja 2026-10-10, ustalona), w dół do 5
+   (450 → 340, 375 → 265, 300 → 190); opcja „jedną warstwą” — do potwierdzenia.
 2. Strzemiona H10 co 200 (CP przy palach: LINKS H12@200), 50 od lica końca odcinka, przesunięcie 100 względem UB 03.
 3. Zakład H16 = 800 (≈ 50d), w przedziale [800, 1050), maks. 6000, pręty równe (gdy się nie da — ostatni krótszy, osobna pozycja); zakłady dół / góra w tym samym przekroju, wszystkie 4 pręty w jednym przekroju.
-4. 4 H16 dołem i górą, w poprzek otulina 40 + strzemię 10 + d/2 (58 … 542 co 161).
-5. Pręty podłużne od lica do lica z otuliną 40 (koniec przy krawędzi — lico strefy, czyli linia nibu; pręty dolne nie wchodzą w nib).
+4. 4 H16 dołem i górą, w poprzek otulina 45 (ustalona 2026-10-10) + strzemię 10 + d/2 (63 … 537 co 158).
+5. Pręty podłużne od lica do lica z otuliną czołową 45 (ustalona 2026-10-10; koniec przy krawędzi — lico strefy, czyli linia nibu;
+   pręty dolne nie wchodzą w nib).
 6. Nib 135 × 150, U-bary H16 (zapis w rekordzie; użycie w E4 / E5).
 7. Wysokość spoza siatki 75 — przyjęta z ostrzeżeniem; brak opisu „…THK” — H z SSL − NIB TOC + 150.
 8. Kody warstw BB / BT / BL; warstwa CAD BT → RC-SLAB-TOP-01, BB / BL → RC-SLAB-BOT-01; warstwa stref RC-BEAM (kolor jak SD-Thickening-Zone).
@@ -80,8 +93,9 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
 11. (E4) Złącze T: pręty belki dochodzącej do bliższego lica belki ciągłej; pręty L: ramię przez belkę ciągłą do jej rzędów (zakład ≥ 800
     z prętami prostymi), ramię wzdłuż belki ciągłej = 800; połowa rzędów zagięta w lewo, połowa w prawo.
 12. (E4) U-bary H16 kształt 21: 2 na warstwę i koniec (zagnieżdżone: rzędy skrajne B = 500, środkowe B = 175), A = C z zakładem ≥ 800,
-    tył na otulinie 40, wewnętrzny o Ø + 20 = 36 głębiej (prześwit między tyłami ≥ 20 — recenzja E4; 528: A = 800 / 775); pierwsze
-    strzemię przy końcu z U-barami za tyłami U-barów z prześwitem 20 (oś 120 od lica zamiast 50; 528: 52 → 51 strzemion); koniec
+    tył na otulinie czołowej 45 (ustalona 2026-10-10), wewnętrzny o Ø + 20 = 36 głębiej (prześwit między tyłami ≥ 20 — recenzja E4;
+    528: A = 800 / 775, B = 490 / 170); pierwsze strzemię przy końcu z U-barami za tyłami U-barów z prześwitem 20 (oś 125 od lica
+    zamiast 50; 528: 52 → 51 strzemion); koniec
     wewnętrzny jak przy krawędzi; nieparzysta liczba prętów — środkowy bez U-bara, jeden pręt — koniec bez U-bara (komunikaty).
 13. (E4) Opisy: `4 H16-08 BEAM CORNER`, `1 H16-09 BEAM END`; kody BB / BT; w rzucie jedno ramię z symbolem haka.
 14. (E4, recenzja) Ułożenie zakładów prętów L / U-barów z prętami prostymi „piętrowo”: ramię w tym samym rzędzie co pręt prosty,
@@ -100,7 +114,7 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
   prętów prostych (pręt wyśrodkowany) wychodzą 825–1450 (np. 539: L 1450 × 1350, 1375 × 1375; U-bary 900 / 850, 825 / 800), a nie
   równo 800; pręty L we wszystkich 4 rzędach (nie tylko zewnętrznym i wewnętrznym). Do decyzji: zostawić, czy pręty proste dosuwać
   do zamknięcia (ramiona = zakład), i czy rzędy środkowe mają mieć pręty L.
-- Pierwsze strzemię 120 od lica przy końcu z U-barami (punkt 12) i prześwit 20 między tyłami U-barów — potwierdzić.
+- Pierwsze strzemię 125 od lica przy końcu z U-barami (punkt 12; z otuliny czołowej 45 — ustalonej) i prześwit 20 między tyłami U-barów — potwierdzić.
 
 ## 0. Dane (Holbrook GA P02, CP)
 - Strefa pogrubienia = zamknięta polilinia na warstwie `SD-Thickening-Zone` (po jednej na plot), między linią uskoku a linią 760 mm od krawędzi → 600 mm od lica nad nibem. Wysokość: tekst SD-Text „450THK”/„375THK”/„300THK” w strefie; kontrola krzyżowa `SSL − NIB TOC + 150` (319: 450, 528: 375, 539: 300).
@@ -115,7 +129,7 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
 - Strzemiona tylko w belce, kod 51, równomiernie na całej długości, na razie H10 co 200 (parametr w oknie, bez logiki H10/H12).
 
 ## 1b. Rozstrzygnięcia DOMYŚLNE (do potwierdzenia)
-1. Wysokość strzemienia: góra strzemienia POD obiema warstwami T (wierzch − 35 − dT1 − dT2), dół na otulinie 40 → A = H − 35 − dT1 − dT2 − 40 (450, T H12+H12: 351 → zaokrąglenie wymiaru do 5 mm w dół). Parametr „góra strzemienia pod: obie warstwy T / jedną warstwę”.
+1. Wysokość strzemienia: góra strzemienia POD obiema warstwami T (wierzch − 35 − dT1 − dT2), dół na otulinie 40 → A = H − 35 − dT1 − dT2 − 40 (450, T H12+H12: 351 → zaokrąglenie wymiaru do 5 mm w dół). **Zmienione 2026-10-10 (decyzja użytkownika): dół 50, boki 45 → 450: 341 → 340.** Parametr „góra strzemienia pod: obie warstwy T / jedną warstwę”.
 2. Dolne pręty prostopadłe: prosto, na poziomie siatki płyty, przez strzemiona, koniec na licu belki z otuliną (bez odgięcia); przy 300, gdy wchodzą w nib — koniec na licu nibu z otuliną.
 3. Pierwszy pręt równoległy przy belce: dół — 40 + d od wewnętrznego lica belki; góra — s/2 od linii belki.
 4. UB 01/02 na krawędziach z belką — pominięte; UB 03 w nibie belki — zostaje (610-70-610 jak D04); T IN NIB przy belce — zostaje.
@@ -151,10 +165,10 @@ Status: E1 + E3 + E4 + E4b + E5 + E6 ZROBIONE (staging, 2026-10-10), E2 wstrzyma
                                     lico wewn│ ● ● ● ●  4H16B│   ║
                                        −300 ─┼───────────────┼───╚══╗ NIB TOC
                                              │  UB03 H10 ⊂═══╪══════╗║ nib 135(160)×150
-                                       −450 ─└───────────────┴──────╝╝ 40 ot.
+                                       −450 ─└───────────────┴──────╝╝ 50 ot.
                                              |←── 600 ──────→|←135→|
 ```
-Strzemię 51: B = 600 − 2·40 = 520; 4 H16 w warstwie, osie co ≈ 161; dół 40 + 10 + 8 od spodu.
+Strzemię 51: B = 600 − 2·45 = 510 (otuliny 2026-10-10: boki 45, dół 50); 4 H16 w warstwie, osie co 158; dół 50 + 10 + 8 od spodu.
 
 ## 3. Model danych
 - Strefa: zamknięta polilinia `RC-BEAM` (kopia z `SD-Thickening-Zone`), RegApp `RC_BEAM`: [1] FormatVersion, [2] H, [3] szer., [4] szer. nibu, [5] wys. nibu, [6] obrys płyty (XLink 1005), [7–8] Ø/rozstaw strzemion, [9–10] Ø/liczba dołem, [11–12] Ø/liczba górą, [13] Ø U-barów, [14] kod strzemienia; pola tylko dopisywane, odczyt toleruje krótsze rekordy.

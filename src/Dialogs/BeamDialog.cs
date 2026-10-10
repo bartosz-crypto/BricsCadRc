@@ -15,7 +15,7 @@ namespace BricsCadRc.Dialogs
     {
         private readonly BeamParams _p;
         private readonly TextBox _h, _w, _nibW, _nibH, _sDia, _sSp, _bDia, _bCnt, _tDia, _tCnt, _uDia, _shape, _lap, _max,
-                                 _sideDia, _sideSp, _nibTop, _nibBot;
+                                 _sideDia, _sideSp, _nibTop, _nibBot, _covSide, _covBot;
         private readonly ComboBox _topMode;
         private readonly CheckBox _generate;
 
@@ -59,6 +59,8 @@ namespace BricsCadRc.Dialogs
             _w.IsReadOnly = true;   // pręty liczone z geometrii odcinków strefy
             _nibW = Field("Nib: szerokość [mm]", F(_p.NibWidth), "domyślne 135");
             _nibH = Field("Nib: wysokość [mm]", F(_p.NibHeight), "domyślne 150");
+            _covSide = Field("Otulina boczna / czołowa [mm]", F(_p.CoverSide), "strzemiona, boki i czoła belki; domyślne 45 (40 + odchyłka)");
+            _covBot  = Field("Otulina dolna [mm]", F(_p.CoverBottom), "spód belki i nibu; domyślne 50 (górna 35 — pod siatką T)");
             _sDia = Field("Strzemiona: średnica H", I(_p.StirrupDia), "CP przy palach: H12@200");
             _sSp  = Field("Strzemiona: rozstaw [mm]", F(_p.StirrupSpacing), "domyślne H10 co 200 — decyzja Bartka");
             _shape = Field("Strzemiona: kod kształtu", _p.StirrupShape ?? "51", "51 (zamknięte)");
@@ -94,6 +96,7 @@ namespace BricsCadRc.Dialogs
             var lines = new List<string>(info ?? new List<string>())
             {
                 "Wartości domyślne (do potwierdzenia): zakład 800, max 6000, strzemię 51 pod obiema warstwami T, H10 co 200.",
+                "Otuliny (decyzja 2026-10-10): boczna / czołowa 45, dolna 50, górna 35 (pod siatką T).",
                 "Narożniki L / złącza T: pręty L kształt 11 (ramiona z zakładem); końce (krawędź i wewnętrzny): U-bary kształt 21 — domyślne, do potwierdzenia.",
                 "Pręty boczne (H10 co 200 w pionie) i pręty w nibie (górą H10, dołem H16) — proste, kończą się na licu kwadratu narożnika / przed U-barami z otuliną (bez zagięć) — do potwierdzenia."
             };
@@ -125,6 +128,8 @@ namespace BricsCadRc.Dialogs
             if (!Num(_w, "Szerokość", 150, 1500, out double w)) return;
             if (!Num(_nibW, "Szerokość nibu", 0, 255, out double nw)) return;
             if (!Num(_nibH, "Wysokość nibu", 0, h, out double nh)) return;
+            if (!Num(_covSide, "Otulina boczna / czołowa", 15, 100, out double cs)) return;
+            if (!Num(_covBot, "Otulina dolna", 15, 100, out double cb)) return;
             if (!Num(_sDia, "Średnica strzemion", 6, 25, out double sd)) return;
             if (!Num(_sSp, "Rozstaw strzemion", 50, 400, out double ss)) return;
             if (!Num(_bDia, "Średnica dołem", 8, 40, out double bd)) return;
@@ -155,6 +160,7 @@ namespace BricsCadRc.Dialogs
             r.BottomDia = (int)bd; r.BottomCount = (int)bc; r.TopDia = (int)td; r.TopCount = (int)tc; r.UBarDia = (int)ud;
             r.Lap = lap; r.MaxLength = max; r.StirrupTopLayers = _topMode.SelectedIndex == 1 ? 1 : 2;
             r.SideDia = (int)sdd; r.SideSpacing = sds; r.NibTopDia = (int)ntd; r.NibBottomDia = (int)nbd;
+            r.CoverSide = cs; r.CoverBottom = cb;
             Result = r;
             Generate = _generate.IsChecked == true;
             DialogResult = true;

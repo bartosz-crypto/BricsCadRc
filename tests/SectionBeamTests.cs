@@ -38,10 +38,11 @@ namespace BricsCadRc.Tests
             var bt = r.Dots.Where(d => d.PosNr == "103").OrderBy(d => d.U).ToList();
             Assert.That(bb.Count, Is.EqualTo(4));
             Assert.That(bt.Count, Is.EqualTo(4));
-            // dół: −375 + 40 + 10 + 8 = −317; góra: wierzch strzemienia −375 + 40 + 275 = −60, pod nim −60 − 10 − 8 = −78
-            Assert.That(bb.All(d => Math.Abs(d.V + 317) < 1e-9 && d.Beam && !d.Mesh && !d.Top), Is.True);
+            // otuliny 2026-10-10: dół 50, boki 45 — dół: −375 + 50 + 10 + 8 = −307; góra: wierzch strzemienia −375 + 50 + 265 = −60,
+            // pod nim −60 − 10 − 8 = −78; w poprzek 160 + 45 + 10 + 8 = 223 … 697 co 158
+            Assert.That(bb.All(d => Math.Abs(d.V + 307) < 1e-9 && d.Beam && !d.Mesh && !d.Top), Is.True);
             Assert.That(bt.All(d => Math.Abs(d.V + 78) < 1e-9 && d.Beam && d.Top), Is.True);
-            Assert.That(bb.Select(d => Math.Round(d.U, 1)), Is.EqualTo(new[] { 218.0, 379.3, 540.7, 702.0 }));
+            Assert.That(bb.Select(d => Math.Round(d.U, 1)), Is.EqualTo(new[] { 223.0, 381.0, 539.0, 697.0 }));
             // poziomy siatki płyty bez zmian (dB1 / dT1 tylko z B1 / T1)
             Assert.That(r.LevelDiameters, Is.EqualTo((10.0, 12.0)));
             Assert.That(r.Dots.Where(d => d.PosNr == "12").All(d => Math.Abs(d.V + 165) < 1e-9), Is.True);
@@ -53,10 +54,10 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
             var link = r.Bars.Single(b => b.PosNr == "07");
             Assert.That(link.Kind, Is.EqualTo(SectionPlanner.DistKind.Beam));
-            // oś: lico zewnętrzne na otulinie 40 od lic belki (160 / 760) i od spodu (−375); wysokość zewnętrzna A = 275
-            Assert.That(link.Path.Min(p => p.U), Is.EqualTo(205).Within(1e-6));
-            Assert.That(link.Path.Max(p => p.U), Is.EqualTo(715).Within(1e-6));
-            Assert.That(link.Path.Min(p => p.V), Is.EqualTo(-330).Within(1e-6));
+            // oś: lico zewnętrzne na otulinie 45 od lic belki (160 / 760) i 50 od spodu (−375); wysokość zewnętrzna A = 265, B = 510
+            Assert.That(link.Path.Min(p => p.U), Is.EqualTo(210).Within(1e-6));
+            Assert.That(link.Path.Max(p => p.U), Is.EqualTo(710).Within(1e-6));
+            Assert.That(link.Path.Min(p => p.V), Is.EqualTo(-320).Within(1e-6));
             Assert.That(link.Path.Max(p => p.V), Is.EqualTo(-65).Within(1e-6));
             // haki u góry (koniec osi na górnym ramieniu)
             Assert.That(link.Path.Last().V, Is.EqualTo(-65).Within(1e-6));
@@ -83,14 +84,16 @@ namespace BricsCadRc.Tests
         public void Perpendicular_E4b_SideBars_AndNibBars()
         {
             var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
-            // boczne: po 1 na bok, w połowie między osiami dołu (−317) i góry (−78): −197.5; przy ramionach strzemienia (215 / 705)
+            // boczne: po 1 na bok, w połowie między osiami dołu (−307) i góry (−78): −192.5; przy ramionach strzemienia (220 / 700)
             var side = r.Dots.Where(d => d.PosNr == "20").OrderBy(d => d.U).ToList();
-            Assert.That(side.Select(d => (d.U, d.V)), Is.EqualTo(new[] { (215.0, -197.5), (705.0, -197.5) }));
+            Assert.That(side.Select(d => (d.U, d.V)), Is.EqualTo(new[] { (220.0, -192.5), (700.0, -192.5) }));
             // nib: w narożach spinki UB 03 (ramiona: dół −375 + 45 + 5 = −325, góra −325 + 60 = −265), wewnątrz U:
             // dołem H16 −325 + 5 + 8 = −312, górą H10 −265 − 5 − 5 = −275
             Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-312));
             Assert.That(r.Dots.Single(d => d.PosNr == "21").V, Is.EqualTo(-275));
             Assert.That(r.Dots.Single(d => d.PosNr == "21").U, Is.EqualTo(55));
+            // UB 03 (element płyty) na otulinie dołem 45 < otulina dolna belki 50 — ostrzeżenie (raz), BN dołem nadal od UB 03
+            Assert.That(r.Warnings.Count(w => w.StartsWith("UB 03 płyty w nibie belki: otulina dołem 45 < otulina dolna belki 50")), Is.EqualTo(1));
         }
 
         [Test]
@@ -127,8 +130,9 @@ namespace BricsCadRc.Tests
             var inp = SectionPlannerGoldenTests.CaseBeam();
             inp.Dists.RemoveAll(d => d.Kind == SectionPlanner.DistKind.NibUB);
             var r = SectionPlanner.Plan(inp);
-            // bez UB 03: dołem na otulinie + Ø spinki (−375 + 40 + 10 + 8 = −317), górą pod wierzchem nibu (−225 − 30 − 10 − 5 = −270)
-            Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-317));
+            // bez UB 03: dołem na otulinie dolnej belki + Ø spinki (−375 + 50 + 10 + 8 = −307), górą pod wierzchem nibu (−225 − 30 − 10 − 5 = −270)
+            Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-307));
+            Assert.That(r.Warnings.Any(w => w.StartsWith("UB 03 płyty")), Is.False);
             Assert.That(r.Dots.Single(d => d.PosNr == "21").V, Is.EqualTo(-270));
         }
 
@@ -173,11 +177,12 @@ namespace BricsCadRc.Tests
             var zone = new List<(double X, double Y)> { (160, 160), (760, 160), (760, 3840), (160, 3840) };
             var an = BeamGeometry.Analyze(zone, outline);
             var s = an.Segments.Single();
+            // w poprzek — naroże spinki UB 03 (płyta, otulina 40 bez zmian): 40 + 10 + 8 = 58; wzdłuż — otulina czołowa 45
             var l16 = BeamGeometry.NibBarLine(s, outline, 16);
-            Assert.That(l16, Is.EqualTo((58.0, 40.0, 3960.0)));
+            Assert.That(l16, Is.EqualTo((58.0, 45.0, 3955.0)));
             Assert.That(BeamGeometry.NibBarLine(s, outline, 10)!.Value.Across, Is.EqualTo(55));
             var (c0, c1) = BeamGeometry.SideBarsAcross(s, 10);
-            Assert.That((c0, c1), Is.EqualTo((215.0, 705.0)));
+            Assert.That((c0, c1), Is.EqualTo((220.0, 700.0)));          // 160 + 45 + 10 + 5
         }
 
         [Test]
@@ -230,12 +235,12 @@ namespace BricsCadRc.Tests
                                                     LengthA = 7920, BarsSpan = 3920, Count = 20, Spacing = 200, Diameter = 10 });
             inp.Dists.Add(new SectionPlanner.Dist { Mark = "H10-12-200 B2", PosNr = "12", LayerCode = "B2", AlongX = false, X0 = 40, Y0 = 40,
                                                     LengthA = 3920, BarsSpan = 7920, Count = 40, Spacing = 200, Diameter = 10 });
-            double sp = 484.0 / 3;
-            inp.Dists.Add(SectionPlannerGoldenTests.B("05", "BB", true, 200, 218, 4750, 484, 4, sp, 16));
-            inp.Dists.Add(SectionPlannerGoldenTests.B("103", "BT", true, 200, 218, 4750, 484, 4, sp, 16));
-            var l51 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 200, 520, 0, 0, 0 }, 10);
-            inp.Dists.Add(SectionPlannerGoldenTests.B("07", "BL", false, 280, 200, 520, 4600, 24, 200, 10, "51", l51, new double[] { 200, 520, 0, 0, 0 }));
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000003BB", S0 = 160, S1 = 5000, Height = 300, NibHeight = 150, StirrupDia = 10, StirrupA = 200 });
+            double sp = 474.0 / 3;      // otulina boczna 45: 160 + 63 = 223 … 697 co 158
+            inp.Dists.Add(SectionPlannerGoldenTests.B("05", "BB", true, 200, 223, 4750, 474, 4, sp, 16));
+            inp.Dists.Add(SectionPlannerGoldenTests.B("103", "BT", true, 200, 223, 4750, 474, 4, sp, 16));
+            var l51 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 190, 510, 0, 0, 0 }, 10);
+            inp.Dists.Add(SectionPlannerGoldenTests.B("07", "BL", false, 280, 205, 510, 4600, 24, 200, 10, "51", l51, new double[] { 190, 510, 0, 0, 0 }));
+            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000003BB", S0 = 160, S1 = 5000, Height = 300, NibHeight = 150, StirrupDia = 10, StirrupA = 190 });
             return inp;
         }
 
@@ -256,16 +261,16 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(AlongCase());
             var bb = r.Bars.Single(b => b.PosNr == "05");
             var bt = r.Bars.Single(b => b.PosNr == "103");
-            // dół: −300 + 40 + 10 + 8 = −242; góra: −300 + 40 + 200 − 10 − 8 = −78
-            Assert.That(bb.Path, Is.EqualTo(new[] { (200.0, -242.0), (4950.0, -242.0) }));
+            // dół: −300 + 50 + 10 + 8 = −232; góra: −300 + 50 + 190 − 10 − 8 = −78
+            Assert.That(bb.Path, Is.EqualTo(new[] { (200.0, -232.0), (4950.0, -232.0) }));
             Assert.That(bt.Path, Is.EqualTo(new[] { (200.0, -78.0), (4950.0, -78.0) }));
             var links = r.Bars.Where(b => b.PosNr == "07").ToList();
             Assert.That(links.Count, Is.EqualTo(24));
-            Assert.That(links.All(b => b.Path.Count == 2 && b.Path[0].U == b.Path[1].U && b.Path[0].V == -255 && b.Path[1].V == -65), Is.True);
+            Assert.That(links.All(b => b.Path.Count == 2 && b.Path[0].U == b.Path[1].U && b.Path[0].V == -245 && b.Path[1].V == -65), Is.True);
             // jeden opis strzemion (ze strzałką do ramienia środkowego), pod spodem belki
             var lbl = r.Labels.Where(l => l.Text == "07").ToList();
             Assert.That(lbl.Count, Is.EqualTo(1));
-            Assert.That(lbl[0].HasLeader && lbl[0].V < -300 && Math.Abs(lbl[0].LeaderV - (-255 - 5)) < 1e-9, Is.True);
+            Assert.That(lbl[0].HasLeader && lbl[0].V < -300 && Math.Abs(lbl[0].LeaderV - (-245 - 5)) < 1e-9, Is.True);
             // siatka płyty: B1 w widoku na swoim poziomie (−225 + 40 + 5 + 5 — pręty proste, przez belkę), B2 — kropki
             Assert.That(r.Bars.Single(b => b.PosNr == "11").Path.All(p => p.V == -175), Is.True);
             Assert.That(r.Dots.Where(d => d.PosNr == "12").All(d => d.V == -165), Is.True);
@@ -276,12 +281,12 @@ namespace BricsCadRc.Tests
         {
             // cięcie prostopadłe do belki (wzdłuż Y) przez zakład U-bara z prętem prostym: kropki obu ramion U-bara, „piętrowo” nad prętem prostym
             var inp = SectionPlannerGoldenTests.CaseBeam();
-            inp.Dists.Add(SectionPlannerGoldenTests.B("09", "BB", false, 218, 1500, 792, 0, 1, 200, 16, "21", null, new double[] { 800, 500, 800, 0, 0 }));
-            inp.Dists[inp.Dists.Count - 1].PairOffset = 484;
+            inp.Dists.Add(SectionPlannerGoldenTests.B("09", "BB", false, 223, 1500, 792, 0, 1, 200, 16, "21", null, new double[] { 800, 490, 800, 0, 0 }));
+            inp.Dists[inp.Dists.Count - 1].PairOffset = 474;
             var r = SectionPlanner.Plan(inp);
             var u = r.Dots.Where(d => d.PosNr == "09").OrderBy(d => d.U).ToList();
-            Assert.That(u.Select(d => Math.Round(d.U, 1)), Is.EqualTo(new[] { 218.0, 702.0 }));
-            Assert.That(u.All(d => d.Bent && Math.Abs(d.V - (-317 + 16)) < 1e-9), Is.True);
+            Assert.That(u.Select(d => Math.Round(d.U, 1)), Is.EqualTo(new[] { 223.0, 697.0 }));
+            Assert.That(u.All(d => d.Bent && Math.Abs(d.V - (-307 + 16)) < 1e-9), Is.True);
         }
 
         [Test]
@@ -347,7 +352,7 @@ namespace BricsCadRc.Tests
         {
             var a = StateOf(Tagged(SectionPlannerGoldenTests.CaseBeam()));
             var inp = Tagged(SectionPlannerGoldenTests.CaseBeam());
-            inp.Beams[0].Height = 450; inp.Beams[0].StirrupA = 350;
+            inp.Beams[0].Height = 450; inp.Beams[0].StirrupA = 340;
             var v = SectionFingerprint.Compare(a, StateOf(inp));
             Assert.That(v.Stale, Is.True);
             Assert.That(v.Reasons, Has.Some.StartsWith("zmieniona belka 000002AA (").And.Contains("H 375 → 450"));
@@ -393,13 +398,16 @@ namespace BricsCadRc.Tests
 
         // ── E6: długości cięcia prętów belki (BS 8666:2020, ShapeCodeLibrary) i masa jak RC_COUNT_BBS ──
 
-        [TestCase("51", 10, 275, 520, 0, 1750)]    // 528: 2A + 2B + max(16d, 160)
-        [TestCase("51", 10, 200, 520, 0, 1600)]    // 539
-        [TestCase("51", 10, 350, 520, 0, 1900)]    // 319
+        [TestCase("51", 10, 265, 510, 0, 1725)]    // 528: 2A + 2B + max(16d, 160) = 530 + 1020 + 160 = 1710 → 1725 (otuliny 45 / 50)
+        [TestCase("51", 10, 190, 510, 0, 1575)]    // 539: 1560 → 1575
+        [TestCase("51", 10, 340, 510, 0, 1875)]    // 319: 1860 → 1875
+        [TestCase("51", 10, 275, 520, 0, 1750)]    // dawne otuliny 40 / 40
         [TestCase("11", 16, 1450, 1350, 0, 2775)]  // A + B − 0.5r − d = 2800 − 16 − 16 = 2768 → 2775
         [TestCase("11", 16, 1375, 1375, 0, 2725)]  // 2750 − 32 = 2718 → 2725
-        [TestCase("21", 16, 800, 500, 800, 2050)]  // A + B + C − r − 2d = 2100 − 32 − 32 = 2036 → 2050
-        [TestCase("21", 16, 775, 175, 775, 1675)]  // 1725 − 64 = 1661 → 1675
+        [TestCase("21", 16, 800, 490, 800, 2050)]  // A + B + C − r − 2d = 2090 − 32 − 32 = 2026 → 2050 (528, otulina 45)
+        [TestCase("21", 16, 775, 170, 775, 1675)]  // 1720 − 64 = 1656 → 1675
+        [TestCase("21", 16, 800, 500, 800, 2050)]  // dawne: 2100 − 64 = 2036 → 2050
+        [TestCase("21", 16, 775, 175, 775, 1675)]  // dawne: 1725 − 64 = 1661 → 1675
         [TestCase("00", 16, 5500, 0, 0, 5500)]
         public void BeamBars_CuttingLength_BS8666_2020(string shape, int d, double a, double b, double c, double expected)
         {

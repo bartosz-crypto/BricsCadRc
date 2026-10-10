@@ -12,13 +12,14 @@ namespace BricsCadRc.Core
     /// <summary>
     /// Belki / pogrubienia — generowanie prętów (plan belek E3 + E4, docs/PLAN_BELKI_2026-10-10.md; sekcja 4i ARCHITECTURE.md).
     /// TYLKO na jawne żądanie (RC_GENERATE → Beam, RC_BEAM) — siatka płyty (Mesh / B1…T2 / UB) stref belek nie widzi (E2 wstrzymany).
-    ///   • Strzemiona 51 (kod BL, rzut dolny, seria &lt; 100): A = H − 35 − dT1 − dT2 − 40 (w dół do 5), B = szer. − 2·40,
+    ///   • Strzemiona 51 (kod BL, rzut dolny, seria &lt; 100): A = H − 35 − dT1 − dT2 − otulina dolna (50; w dół do 5),
+    ///     B = szer. − 2 · otulina boczna (45) — decyzja użytkownika 2026-10-10 (parametry BeamParams.CoverSide / CoverBottom),
     ///     n = ceil((L − 100)/200) + 1 w zakresie strzemion odcinka (E4: w narożniku L dłuższy odcinek przez kwadrat narożnika);
     ///     z UB 03 wzdłuż odcinka — przesunięte o 100 względem UB 03; przy końcu z U-barami pierwsze strzemię za tyłami U-barów
-    ///     (prześwit 20: 4 H16 — 120 od lica zamiast 50).
+    ///     (prześwit 20: 4 H16 — 125 od lica zamiast 50).
     ///   • Pręty podłużne: dół 4 H16 (BB, rzut dolny, seria &lt; 100), góra 4 H16 (BT, rzut górny, seria 101+) — proste odcinki
     ///     osiowe, plan BeamGeometry.PlanLayer / PlanBars (maks. 6000, zakład ≥ 800 — parametry), koniec U-bara / krawędzi — lico
-    ///     z otuliną 40, narożnik L / złącze T — lico własnego zakresu. Opis bez rozstawu: „4 H16-05 BEAM B”, „4 H16-103 BEAM T”;
+    ///     z otuliną czołową (45), narożnik L / złącze T — lico własnego zakresu. Opis bez rozstawu: „4 H16-05 BEAM B”, „4 H16-103 BEAM T”;
     ///     strzemiona „52 H10-07-200 LINKS”.
     ///   • E4 (domyślne 1b.6–1b.8, do potwierdzenia): narożnik L — pręty L kształt 11 we wszystkich rzędach (jedna pozycja,
     ///     „4 H16-08 BEAM CORNER”), złącze T — pręty L zakotwione w belce ciągłej, końce (krawędź i wewnętrzny) — U-bary kształt 21
@@ -33,7 +34,11 @@ namespace BricsCadRc.Core
         private const string BeamTag = "[RC BEAM]";
         /// <summary>Średnica siatki górnej płyty (T1 / T2) do wysokości strzemienia (1b.1) — domyślne, do potwierdzenia.</summary>
         public const int BeamSlabTopDia = 12;
-        public const double BeamCoverSide = 40, BeamCoverEnd = 40, BeamStirrupEndOffset = 50, BeamStirrupUb03Shift = 100;
+        /// <summary>Otuliny belki — parametry BeamParams.CoverSide (boki i czoła, 45) / CoverBottom (spód belki i nibu, 50).</summary>
+        public const double BeamStirrupEndOffset = 50, BeamStirrupUb03Shift = 100;
+        /// <summary>Spinka UB 03 płyty w nibie: dolne ramię na otulinie dołem płyty + zapas (40 + 5 — jak SectionPlanner, poziom B1);
+        /// pręt BN dołem leży w jej narożu — gdy otulina dolna belki jest większa, komunikat (UB 03 to element płyty, bez zmian).</summary>
+        public const double BeamSlabUbBottomCover = 45;
         /// <summary>E4b: średnica spinki UB 03 w nibie (pręty w nibie w jej narożach) — H10 (610-70-610).</summary>
         public const int BeamNibUbDia = 10;
 
@@ -290,14 +295,15 @@ namespace BricsCadRc.Core
                 msg($"{name}: brak strefy na rzucie górnym — pręty górne (BEAM T) pominięte.");
 
             double H = p.Height;
-            double A51 = BeamGeometry.StirrupHeight(H, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia);
+            double A51 = BeamGeometry.StirrupHeight(H, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia,
+                                                    BeamGeometry.DefaultCoverTop, p.CoverBottom);
             // koniec z U-barami: pierwsze strzemię za tyłami U-barów (prześwit 20) — tyły nie leżą w płaszczyźnie strzemienia
             double offU = BeamGeometry.StirrupEndOffsetAtUBars(Math.Max(p.BottomCount, p.TopCount), p.UBarDia, p.StirrupDia,
-                                                               BeamCoverSide, BeamStirrupEndOffset);
+                                                               p.CoverSide, BeamStirrupEndOffset);
             bool offUMsg = false;
             foreach (var s in segs)
             {
-                double B51 = BeamGeometry.StirrupWidth(s.Width, BeamCoverSide);
+                double B51 = BeamGeometry.StirrupWidth(s.Width, p.CoverSide);
                 // ── strzemiona (rzut dolny; E4: zakres strzemion — w narożniku L dłuższy odcinek przez kwadrat narożnika) ──
                 if (A51 > 0 && B51 > 0)
                 {
@@ -317,7 +323,7 @@ namespace BricsCadRc.Core
                     if (!tpl.id.IsNull && n > 0)
                     {
                         double last = first + (n - 1) * step;
-                        double c0 = s.AcrossLo + BeamCoverSide, c1 = s.AcrossHi - BeamCoverSide;
+                        double c0 = s.AcrossLo + p.CoverSide, c1 = s.AcrossHi - p.CoverSide;
                         // pręty strzemion prostopadle do osi belki
                         bool barsX = !s.AlongX;
                         double x0 = barsX ? c0 : first, x1 = barsX ? c1 : last;
@@ -334,9 +340,9 @@ namespace BricsCadRc.Core
 
             // ── pręty podłużne, pręty L (narożniki L / złącza T), U-bary (końce) — plan warstwy (E4) ──
             bool withTop = top != null && ztHandle != null;
-            var planB = BeamGeometry.PlanLayer(an, p.BottomCount, p.BottomDia, p.UBarDia, p.Lap, p.MaxLength, p.StirrupDia, BeamCoverSide);
+            var planB = BeamGeometry.PlanLayer(an, p.BottomCount, p.BottomDia, p.UBarDia, p.Lap, p.MaxLength, p.StirrupDia, p.CoverSide);
             var planT = withTop
-                ? BeamGeometry.PlanLayer(an, p.TopCount, p.TopDia, p.UBarDia, p.Lap, p.MaxLength, p.StirrupDia, BeamCoverSide)
+                ? BeamGeometry.PlanLayer(an, p.TopCount, p.TopDia, p.UBarDia, p.Lap, p.MaxLength, p.StirrupDia, p.CoverSide)
                 : null;
             foreach (var m in planB.Messages) msg($"{name}: {m}");
             if (planT != null) foreach (var m in planT.Messages.Where(x => !planB.Messages.Contains(x))) msg($"{name}: góra: {m}");
@@ -351,7 +357,7 @@ namespace BricsCadRc.Core
             {
                 var s = run.Seg;
                 double a0 = run.Start, a1 = run.Start + run.Length;
-                var (f0, sp) = BeamGeometry.BarsAcross(s.AcrossLo, s.AcrossHi, p.BottomCount, p.BottomDia, p.StirrupDia, BeamCoverSide);
+                var (f0, sp) = BeamGeometry.BarsAcross(s.AcrossLo, s.AcrossHi, p.BottomCount, p.BottomDia, p.StirrupDia, p.CoverSide);
                 var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.BottomDia, shape: "00", a: run.Length, b: 0,
                                                    code: BeamGeometry.CodeBottom);
                 if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, s, a0, a1, f0, sp, p.BottomCount, p.BottomDia,
@@ -363,7 +369,7 @@ namespace BricsCadRc.Core
                 {
                     var s = run.Seg;
                     double a0 = run.Start, a1 = run.Start + run.Length;
-                    var (f0, sp) = BeamGeometry.BarsAcross(s.AcrossLo, s.AcrossHi, p.TopCount, p.TopDia, p.StirrupDia, BeamCoverSide);
+                    var (f0, sp) = BeamGeometry.BarsAcross(s.AcrossLo, s.AcrossHi, p.TopCount, p.TopDia, p.StirrupDia, p.CoverSide);
                     var tpl = FindOrCreateBeamTemplate(db, doc.Editor, top.Box, top: true, d: p.TopDia, shape: "00", a: run.Length, b: 0,
                                                        code: BeamGeometry.CodeTop);
                     if (!tpl.id.IsNull && BeamLongitudinal(db, top, tpl, s, a0, a1, f0, sp, p.TopCount, p.TopDia,
@@ -391,8 +397,8 @@ namespace BricsCadRc.Core
                 for (int i = 0; i < segs.Count; i++)
                 {
                     var s = segs[i];
-                    var (lo, hi) = BeamGeometry.StraightRange(s, BeamCoverSide);
-                    var (c0, c1) = BeamGeometry.SideBarsAcross(s, p.SideDia, p.StirrupDia, BeamCoverSide);
+                    var (lo, hi) = BeamGeometry.StraightRange(s, p.CoverSide);
+                    var (c0, c1) = BeamGeometry.SideBarsAcross(s, p.SideDia, p.StirrupDia, p.CoverSide);
                     var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapS);
                     for (int k = 0; k < plan.Count; k++)
                     {
@@ -412,19 +418,28 @@ namespace BricsCadRc.Core
             // T IN NIB płyty (rzut górny, przesunięty do układu rzutu dolnego) — BN górą może je dublować (Mesh nie widzi belek, E2 wstrzymany)
             var tinNib = p.NibTopDia > 0 ? ReadTinNib(db, top ?? bottom, top != null ? delta : new Vector2d()) : null;
             var noUbMsg = new HashSet<int>();
+            bool ubCoverMsg = false;
             foreach (var (nd, suffix) in new[] { (p.NibTopDia, BeamGeometry.SuffixNibTop), (p.NibBottomDia, BeamGeometry.SuffixNibBottom) })
             {
                 if (nd <= 0) continue;
                 double lapN = BeamGeometry.LapFor(p.Lap, p.BottomDia, nd);
                 for (int i = 0; i < segs.Count; i++)
                 {
-                    var line = BeamGeometry.NibBarLine(segs[i], outl, nd, BeamNibUbDia, BeamCoverSide);
+                    var line = BeamGeometry.NibBarLine(segs[i], outl, nd, BeamNibUbDia, p.CoverSide);
                     if (line == null) continue;
                     var (across, lo, hi) = line.Value;
                     // położenie w poprzek = naroże spinki UB 03 (otulina + Ø spinki + d/2) — bez UB 03 wzdłuż nibu: komunikat
                     if (Ub03Along(ub03, segs[i]) == null && noUbMsg.Add(i))
                         msg($"{name}: odcinek {i + 1} — brak UB 03 wzdłuż nibu belki; pręty BN w położeniu naroży spinki " +
-                            $"(krawędź − {BeamCoverSide:F0} − {BeamNibUbDia} − d/2) — do sprawdzenia.");
+                            $"(krawędź − {BeamGeometry.NibUbEdgeCover:F0} − {BeamNibUbDia} − d/2) — do sprawdzenia.");
+                    // BN dołem w narożu UB 03 (element płyty, bez zmian): otulina dołem UB 03 płyty mniejsza niż otulina dolna belki — komunikat
+                    if (suffix == BeamGeometry.SuffixNibBottom && !ubCoverMsg && Ub03Along(ub03, segs[i]) != null
+                        && BeamSlabUbBottomCover < p.CoverBottom - 0.5)
+                    {
+                        ubCoverMsg = true;
+                        msg($"{name}: UB 03 płyty w nibie belki ma otulinę dołem {BeamSlabUbBottomCover:F0} < otulina dolna belki {p.CoverBottom:F0} " +
+                            "— pręt BN dołem liczony od UB 03 (spinka płyty bez zmian); do sprawdzenia.");
+                    }
                     if (suffix == BeamGeometry.SuffixNibTop && TinAlong(tinNib, segs[i], across, lo, hi))
                         msg($"{name}: odcinek {i + 1} — pręt BN górą (H{nd}) może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia " +
                             "(Nib: pręt górą = 0 w oknie RC_BEAM wyłącza BN górą).");

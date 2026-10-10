@@ -17,6 +17,9 @@ namespace BricsCadRc.Core
     ///     [17] góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16)
     ///     [18] Ø prętów bocznych (Int16, 0 = brak) [19] rozstaw pionowy prętów bocznych (Real) [20] Ø pręta w nibie górą
     ///     [21] Ø pręta w nibie dołem (Int16, 0 = brak) — E4b.
+    ///     [22] otulina boczna / czołowa strzemion [23] otulina dolna (Real) — decyzja użytkownika 2026-10-10 (45 / 50); rekord bez
+    ///     tych pól (sprzed decyzji) czytany z NOWYMI domyślnymi 45 / 50 (nie dawnymi 40 / 40 — świadomie: belki generowane ponownie
+    ///     dostają nowe otuliny).
     ///     Nowe pola tylko na końcu; odczyt toleruje krótsze rekordy (brak pola = wartość domyślna BeamParams).
     ///   • Obiekty wygenerowane dla belki (rozkłady RC_BAR_BLOCK) — XData <see cref="TagApp"/> [1] = handle strefy (1005).
     ///     Ponowne generowanie usuwa tylko obiekty tej strefy; kopia samych prętów (CloneRemap → "") — test punktu w strefie.
@@ -65,7 +68,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.SideDia),       // [18] E4b
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.SideSpacing),               // [19]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibTopDia),     // [20]
-                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibBottomDia)); // [21]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)p.NibBottomDia),  // [21]
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverSide),                 // [22] otulina boczna / czołowa
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.CoverBottom));              // [23] otulina dolna
 
         /// <summary>Zapis rekordu strefy (RegApp rejestrowany); encja otwarta do zapisu w transakcji tr.</summary>
         public static void Write(Transaction tr, Database db, Entity zone, BeamParams p, string slabHandle)
@@ -103,6 +108,8 @@ namespace BricsCadRc.Core
             p.SideSpacing = D(19, p.SideSpacing);
             p.NibTopDia = I(20, p.NibTopDia);
             p.NibBottomDia = I(21, p.NibBottomDia);
+            p.CoverSide = D(22, p.CoverSide);       // brak pola (rekord sprzed 2026-10-10) → nowe domyślne 45 / 50
+            p.CoverBottom = D(23, p.CoverBottom);
             return p;
         }
 

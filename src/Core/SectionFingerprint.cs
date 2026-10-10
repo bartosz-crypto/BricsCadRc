@@ -186,7 +186,7 @@ namespace BricsCadRc.Core
                     while (c.ContainsKey(key)) key += "#" + (anonB++).ToString("D3", Inv);
                     c[key] = new FieldList().N("S0", Math.Min(b.S0, b.S1) - ma).N("S1", Math.Max(b.S0, b.S1) - ma).N("H", b.Height)
                         .N("NW", b.NibWidth).N("NH", b.NibHeight).N("Cv", b.Cover).S("LD", b.StirrupDia.ToString(Inv)).N("LA", b.StirrupA)
-                        .S("P", b.Params).ToString();
+                        .S("P", b.Params).N("CvB", b.CoverBottom).ToString();   // CvB — otulina dolna (2026-10-10)
                 }
             }
             return c;
@@ -500,7 +500,7 @@ namespace BricsCadRc.Core
 
         private static readonly (string Field, string Name)[] BeamNames =
         {
-            ("S0", "początek pasa"), ("S1", "koniec pasa"), ("H", "H"), ("NW", "szer. nibu"), ("NH", "wys. nibu"), ("Cv", "otulina"),
+            ("S0", "początek pasa"), ("S1", "koniec pasa"), ("H", "H"), ("NW", "szer. nibu"), ("NH", "wys. nibu"), ("Cv", "otulina boczna"), ("CvB", "otulina dolna"),
             ("LD", "Ø strzemion"), ("LA", "wysokość strzemienia"), ("P", "parametry"),
         };
 

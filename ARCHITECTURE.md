@@ -100,7 +100,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   (Real) [6]obrys płyty (1005, XLink) [7]Ø strzemion (Int16) [8]rozstaw strzemion (Real) [9]Ø dołem [10]liczba dołem [11]Ø górą
   [12]liczba górą [13]Ø U-barów (Int16) [14]kod strzemienia (tekst, „51”) [15]zakład [16]maks. długość pręta (Real)
   [17]góra strzemienia pod: 2 = obiema warstwami T, 1 = jedną (Int16) [18]Ø prętów bocznych (Int16, 0 = brak) [19]rozstaw pionowy
-  prętów bocznych (Real) [20]Ø pręta w nibie górą [21]Ø pręta w nibie dołem (Int16, 0 = brak) — E4b. Brak pola = wartość domyślna `BeamParams`.
+  prętów bocznych (Real) [20]Ø pręta w nibie górą [21]Ø pręta w nibie dołem (Int16, 0 = brak) — E4b [22]otulina boczna / czołowa
+  [23]otulina dolna (Real; decyzja 2026-10-10: 45 / 50). Brak pola = wartość domyślna `BeamParams` (rekord bez [22] / [23] → 45 / 50).
 - `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
   punktu w strefie.
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
@@ -593,7 +594,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   strona patrzenia, okno parametrów (`SectionDialog`), punkt wstawienia = lewy górny narożnik płyty (poziom SSL).
 - **Belki (plan belek E5; wartości domyślne do potwierdzenia przez Bartka):** `PrepareSection` czyta strefy RC_BEAM rzutów płyty (punkt
   wewnątrz strefy w rzucie, przesunięcie do rzutu wskazanego, bez duplikatów dół / góra — pierwszeństwo rzutu wskazanego) i tnie je linią
-  cięcia (`SectionPlanner.CutIntervals`) → `Input.Beams` (`BeamBand`: pas [S0, S1] wzdłuż cięcia, H, nib, otulina 40, Ø strzemion, A strzemienia
+  cięcia (`SectionPlanner.CutIntervals`) → `Input.Beams` (`BeamBand`: pas [S0, S1] wzdłuż cięcia, H, nib, otulina boczna `Cover` (45) i dolna `CoverBottom` (50) z rekordu, Ø strzemion, A strzemienia
   ze wzoru, parametry rekordu). Rozkłady BB / BT / BL / BS / BN → `Dist` rodzaju **`Beam`** (skos prętów L, drugie ramię U-bara 21 —
   `PairOffset` = ±(B − d) w stronę symbolu zagięcia, pręty boczne — `Layers` = CountDisplay / Count); teksty w strefach („450THK”) nie są
   grubością płyty. **Pusta lista `Beams` = wynik planera bit w bit** (5 złotych przypadków bez zmian, `Version` = 1 bez podbicia).
@@ -601,10 +602,10 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   −H…0, nib belki −H…−H + NibH między licem pasu a krawędzią odcinka, gdy krawędź ≤ 260 mm — `BeamNibMaxGap`) i obrys z profilu (urwanie —
   zygzak na lokalnej wysokości); `InConcrete`, spód lokalny (`LocalBottom` — bez belki dokładnie −T), opisy pod spodem belki, pal pod belką
   (`Pile.Base`), tytuł poniżej spodu i wymiarów belki. Pręty belki tylko w pasie (kropki / pręty w widoku poza pasem — pomijane, bez
-  wpływu na odcisk): strzemię 51 na otulinie 40 od spodu i lic, wysokość zewnętrzna A z rozkładu BL w pasie (inaczej wzór 1b.1), dół (BB)
+  wpływu na odcisk): strzemię 51 na otulinie dolnej (50) od spodu (lica — z rozkładu BL, otulina boczna 45), wysokość zewnętrzna A z rozkładu BL w pasie (inaczej wzór 1b.1), dół (BB)
   na strzemieniu, góra (BT) pod jego górnym ramieniem, ramiona prętów giętych 11 / 21 w zakładzie „piętrowo” (dół nad, góra pod prętem
   prostym), pręty boczne (BS) równo między osiami dołu i góry (Layers poziomów, przy ramionach strzemienia), pręty w nibie (BN) w narożach
-  spinki UB 03 (dołem: −H + 40 + 10 + d/2, górą: wierzch nibu − 30 − 10 − d/2). **Cięcie prostopadłe do belki** — kropki 4 H16 dół / góra
+  spinki UB 03 (dołem: −H + otulina dolna 50 + 10 + d/2, górą: wierzch nibu − 30 − 10 − d/2). **Cięcie prostopadłe do belki** — kropki 4 H16 dół / góra
   (+ boczne, nib), strzemię 51 w widoku (kształt pręta wzorcowego, haki u góry). **Cięcie wzdłuż belki** — pręty podłużne w widoku (linie na
   swoich poziomach), strzemiona jako pionowe ramiona (jeden opis pozycji ze strzałką do ramienia środkowego). Kropki belki nie są przesuwane
   przy ramionach prętów w widoku; opis pręta belki w widoku — trzecie przejście bez warunku „strzałka nie tnie opisów” (pod belką gęsto).
@@ -613,8 +614,10 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   T IN NIB w trzonie belki (drugi pręt „150 dalej”, za licem) — poziom jak w płycie (bez przesunięcia do nibu belki i nie pod ramieniem UB 03);
   kropka T IN NIB nachodząca na kropkę pręta belki (BN górą) — odsunięta w poziomie do styku lic (`ResolveTinBeamCollisions`).
   Pręty BN w przekroju: gdy w pasie / nibie belki jest UB 03 — w narożach spinki wewnątrz U (ramię ∓ (Ø spinki / 2 + d / 2), lica w styku);
-  bez UB 03 — wzór (dołem otulina + 10 + d/2 od spodu, górą wierzch nibu − otulina nibu − 10 − d/2). Rozkład belki jest „użyty” (odcisk) tylko,
-  gdy powstała kropka / pręt.
+  bez UB 03 — wzór (dołem otulina dolna belki + 10 + d/2 od spodu, górą wierzch nibu − otulina nibu − 10 − d/2). UB 03 to element płyty
+  (otulina dołem płyty 40 + 5 = 45, bez zmian) — gdy jej otulina dołem w belce jest mniejsza niż otulina dolna belki, ostrzeżenie planera
+  „UB 03 płyty w nibie belki: otulina dołem 45 < otulina dolna belki 50 …” (BN dołem nadal od UB 03). Rozkład belki jest „użyty” (odcisk) tylko,
+  gdy powstała kropka / pręt. Odcisk BEAM: otulina boczna `Cv` i dolna `CvB` (zmiana otuliny → „zmieniona belka …”, rozstrzyga skrót wyniku).
   Wymiary: nib belki (szerokość, uskok H − NibH, wysokość nibu) zamiast nibu płyty, H belki (dalej od krawędzi niż łańcuch), szerokość /
   długość pasa pod belką (`BeamDimBelow` 350); grubość płyty — przy końcu bez belki.
 - Dane z rysunku (`AutoRebarEngine.PrepareSection`): obrys zewnętrzny (NibDetector), niby, otwory (`FindHoles`),
@@ -735,6 +738,13 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) **wstrzymany** do decyzji użytkownika. Wartości
 domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do potwierdzenia przez Bartka**
 (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
+- **Otuliny belki (decyzja użytkownika 2026-10-10 — ustalone):** boczna / czołowa strzemion **45** (40 + odchyłka; boki i czoła belki:
+  strzemię, pręty podłużne, boczne, U-bary i ich tyły, pręty L, pierwsze strzemię za U-barami, końce prętów BN), dolna **50** (spód belki
+  i nibu belki), górna **35** bez zmian (pod siatką T). Parametry `BeamParams.CoverSide` / `CoverBottom` (stałe domyślne
+  `BeamGeometry.DefaultCoverSide` / `DefaultCoverBottom`), okno RC_BEAM („Otulina boczna / czołowa”, „Otulina dolna”), rekord RC_BEAM [22] / [23];
+  rekord bez tych pól (sprzed decyzji) czytany z NOWYMI domyślnymi 45 / 50 (ponowne generowanie belki daje nowe otuliny). Położenie prętów BN
+  w poprzek — od spinki UB 03 płyty (`BeamGeometry.NibUbEdgeCover` = 40, element płyty bez zmian); generowanie zgłasza, gdy UB 03 płyty
+  (otulina dołem 45) leży niżej niż otulina dolna belki. 528: strzemię 51 A = 265, B = 510; U-bary 800 / 775 × B 490 / 170.
 - **Siatka płyty (Mesh / B1…T2 / UB / B3 / Add) stref belek NIE widzi** — wynik płyt 319 / 528 / 539 jak wzorzec (testy BRX D319 /
   D528 / D539: zrzut po Prepare GA + Mesh = zrzut wtyczki HEAD; M528: belka, potem Mesh — rozkłady siatki = HEAD z dokładnością
   do numerów pozycji, opisy siatki mogą się przesunąć). `NibDetector.Detect` pomija warstwy RC-BEAM i `SD-Thickening-Zone`
@@ -756,18 +766,18 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   oba odcinki „detal ręczny” z komunikatem „skrzyżowanie belek („+”)…” (bez prętów i strzemion — bez dublowania strzemion w węźle). Złącza: `Result.Joints` (narożnik L: A — odcinek wzdłuż X,
   B — wzdłuż Y; T: A — belka ciągła, B — dochodząca).
 - **Generowanie (E3 + E4) wyłącznie na żądanie:** `RC_GENERATE → Beam` / `RC_GENERATE_BEAM` / `RC_BEAM` (opcja okna). Na odcinek osiowy:
-  - strzemiona **51** (BL, rzut dolny, seria < 100): A = H − 35 − dT1 − dT2 − 40 (pod obiema warstwami T, dT = 12; opcja: jedną),
-    B = szer. − 2·40, oba w dół do 5 mm; C = 0 (hak domyślny); w zakresie strzemion odcinka (E4: własny, w narożniku L dłuższy
+  - strzemiona **51** (BL, rzut dolny, seria < 100): A = H − 35 − dT1 − dT2 − otulina dolna 50 (pod obiema warstwami T, dT = 12; opcja: jedną;
+    450 → 340, 375 → 265, 300 → 190), B = szer. − 2 · otulina boczna 45 (600 → 510), oba w dół do 5 mm; C = 0 (hak domyślny); w zakresie strzemion odcinka (E4: własny, w narożniku L dłuższy
     odcinek także w kwadracie narożnika — zob. E4 niżej):
     n = ceil((L − 2·50)/200) + 1, rozstaw ≤ 200, opis nominalny `nn H10-07-200 LINKS`; gdy wzdłuż odcinka są UB 03 (rozstaw ≤ 200) —
     położenia UB 03 + 100 (w połowie między U-barami), rozstaw jak UB 03; symbol strzemienia (kółka na obu końcach); przy końcu
-    z U-barami (E4) pierwsze strzemię za tyłami U-barów z prześwitem 20 (`StirrupEndOffsetAtUBars`: 4 H16 — oś 120 od lica zamiast 50;
-    528: 52 → 51) — tyły U-barów nie leżą w płaszczyźnie strzemienia (do potwierdzenia);
+    z U-barami (E4) pierwsze strzemię za tyłami U-barów z prześwitem 20 (`StirrupEndOffsetAtUBars`: 4 H16 — oś 125 od lica zamiast 50
+    (otulina czołowa 45; przy 40 było 120); 528: 52 → 51, 539 dolna noga 24 → 23) — tyły U-barów nie leżą w płaszczyźnie strzemienia (do potwierdzenia);
   - pręty podłużne **4 H16 dołem** (BB, rzut dolny, seria < 100) i **4 H16 górą** (BT, rzut górny — strefa partnerska, 101+): zakres
-    `BeamGeometry.StraightRange` — koniec z U-barami (krawędź, wewnętrzny) i złącze z odcinkiem „detal ręczny” — lico końca z otuliną 40
+    `BeamGeometry.StraightRange` — koniec z U-barami (krawędź, wewnętrzny) i złącze z odcinkiem „detal ręczny” — lico końca z otuliną czołową 45
     (jak E3: narożnik z odcinkiem ręcznym — lico zewnętrzne narożnika, T — dalsze lico belki ciągłej), narożnik L z prętami L — lico
-    kwadratu narożnika (bez otuliny), złącze T — bliższe lico belki ciągłej (bez otuliny); w poprzek otulina + strzemię + d/2 (58 … 542,
-    co 161); plan `BeamGeometry.PlanBars`: ≤ 6000 — jeden pręt w dół do siatki 250, **wyśrodkowany** (równa otulina na obu końcach);
+    kwadratu narożnika (bez otuliny), złącze T — bliższe lico belki ciągłej (bez otuliny); w poprzek otulina + strzemię + d/2 (63 … 537,
+    co 158); plan `BeamGeometry.PlanBars`: ≤ 6000 — jeden pręt w dół do siatki 250, **wyśrodkowany** (równa otulina na obu końcach);
     dłużej — **zakład w przedziale [lap, lap + 250)** (domyślnie 800 … < 1050; parametr, do potwierdzenia przez Bartka): najpierw pręty
     równe (jedna pozycja) na siatce 250, ≤ 6000, z N (najmniejsza liczba) — równe zakłady w przedziale; gdy się nie da — N prętów:
     N − 1 równych (zakład = lap) + ostatni krótszy na siatce (osobna pozycja, zakład w przedziale); dopiero potem N + 1 prętów równych
@@ -781,7 +791,7 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
     - **narożnik L** dwóch odcinków osiowych — pręty L **kształt 11** we WSZYSTKICH rzędach warstwy (od zewnętrznego do wewnętrznego;
       interpretacja „rząd zewnętrzny i wewnętrzny” — do potwierdzenia), identyczne (jedna pozycja na narożnik i warstwę), przesunięte
       po przekątnej o rozstaw rzędów (bez krzyżowania); ramiona (zewnętrzne, w górę do 25 mm) z zakładem ≥ zakład (800) z pierwszym
-      prętem prostym każdej nogi (rząd zewnętrzny — zakład najkrótszy), np. 539: 1450 × 1350 i 1375 × 1375; opis `4 H16-08 BEAM CORNER`;
+      prętem prostym każdej nogi (rząd zewnętrzny — zakład najkrótszy), np. 539: 1450 × 1350 i 1375 × 1350; opis `4 H16-08 BEAM CORNER`;
       strzemiona w kwadracie narożnika — kontynuacja **dłuższego** odcinka (równe — odcinek wzdłuż X) do lica zewnętrznego (`LinkLo/LinkHi`),
       drugi odcinek — zakres własny (bez zdublowania); narożnik z odcinkiem „detal ręczny” (319 lewy) — bez prętów L, jak E3 + komunikat;
     - **złącze T** — pręty proste belki dochodzącej do bliższego lica belki ciągłej + pręty L kształt 11: ramię wzdłuż belki dochodzącej
@@ -789,9 +799,11 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
       zagięte w jedną stronę, drugiej — w drugą (zagnieżdżone: rząd skrajny najpłycej), jedna pozycja, dwa rozkłady;
     - **koniec przy krawędzi i koniec wewnętrzny** (tak samo) — U-bary **kształt 21** poziome w rzucie, zagnieżdżone: para rzędów skrajnych,
       para następnych … (4 pręty → **2 U-bary na warstwę i koniec**; nieparzysta liczba — pręt środkowy bez U-bara + komunikat); tył U
-      na otulinie 40 od lica końca, kolejny (wewnętrzny) U-bar o Ø U-bara + 20 głębiej (prześwit między tyłami ≥ 20, `UBarBackOffset`),
+      na otulinie czołowej 45 od lica końca, kolejny (wewnętrzny) U-bar o Ø U-bara + 20 głębiej (prześwit między tyłami ≥ 20, `UBarBackOffset`),
       A = C z zakładem ≥ 800 z prętami prostymi (w górę do 25 mm; 528: 800 / 775, 539: 825 / 800 przy krawędzi, 900 / 850 wewnętrzny),
-      B = rozstaw osi rzędów + Ø U-bara (w dół do 5 mm: 500 / 175); różne B = osobne pozycje; opis `1 H16-09 BEAM END`;
+      B = rozstaw osi rzędów + Ø U-bara (w dół do 5 mm: 490 / 170); różne B = osobne pozycje; opis `1 H16-09 BEAM END`;
+      319 (prawa noga, otulina 45): pręt prosty 2000 (było 2250 — dostępne 2247,5 < 2250), ramiona U-barów / pręta L dłuższe
+      i nachodzą na siebie o 93 mm — komunikat „krótki odcinek … sprawdź / detal ręczny”;
       jeden pręt w warstwie — koniec bez U-bara + komunikat;
     - **ułożenie zakładów (domyślne, do potwierdzenia przez Bartka):** ramiona prętów L / U-barów leżą „piętrowo” względem prętów
       prostych, z którymi mają zakład — w tym samym rzędzie w rzucie, w styku w pionie (dół: ramię nad prętem prostym, góra: ramię pod
@@ -810,15 +822,16 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
     RC_BEAM i rekordzie [18]–[21]): **BS** — H10 na obu bokach przy ramionach strzemienia (oś: otulina + strzemię + d/2 od lica), rozstaw
     pionowy oś–oś ≤ 200, liczba na bok `BeamGeometry.SideBarCount` = ceil(odległość osi prętów dołu i góry / 200) − 1, min. 0 (H 600 → 2,
     750 → 3, 450 / 375 → 1, 300 → 0); zakres jak pręty proste (`StraightRange`: narożnik L / złącze T — lico kwadratu / własnego zakresu, koniec z U-barami — lico
-    z otuliną 40), bez zagięć; plan `PlanBars` z zakładem tej samej krotności Ø co pręty główne (`LapFor`: 800 / 16 → H10: 500), maks. 6000;
+    z otuliną czołową 45), bez zagięć; plan `PlanBars` z zakładem tej samej krotności Ø co pręty główne (`LapFor`: 800 / 16 → H10: 500), maks. 6000;
     jeden rozkład na pręt planu: w rzucie 2 pręty (po jednym na bok), opis / BBS — wszystkie (`CountDisplay` = 2 × liczba na bok, gdy > 1 na bok;
     zmiana liczby gripem — `RegenerateBarBlock` zachowuje krotność CountDisplay / Count tylko dla kodu BS),
     opis `2 H10-nn BEAM SIDE`; **BN** — po 1 pręcie wzdłuż nibu belki w narożach spinki UB 03 (Ø 10): górą H10 (`… BEAM NIB T`), dołem H16
-    (`… BEAM NIB B`), oś w poprzek = krawędź płyty − 40 − 10 − d/2 (`BeamGeometry.NibBarLine`; odcinek z licem przy krawędzi ≤ 260 mm), wzdłuż —
-    koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty z otuliną 40, koniec wewnętrzny — do lica belki z otuliną, złącze T — lico
+    (`… BEAM NIB B`), oś w poprzek = krawędź płyty − 40 − 10 − d/2 (naroże spinki UB 03 płyty — otulina 40 bez zmian; `BeamGeometry.NibBarLine`;
+    odcinek z licem przy krawędzi ≤ 260 mm), wzdłuż — koniec przy krawędzi i narożnik L (nib zawinięty) do lica płyty z otuliną czołową 45,
+    koniec wewnętrzny — do lica belki z otuliną, złącze T — lico
     własnego zakresu; zakład jak BS (H16: 800, H10: 500). Oba: rzut dolny, seria dolna, znacznik `RC_AUTOREBAR_BEAM`, komunikaty `[RC BEAM]`
     („pręty boczne H10: n na bok …”, „pręty wzdłuż nibu belki … — domyślne, do potwierdzenia”, „brak UB 03 wzdłuż nibu belki …” — gdy odcinek
-    nie ma UB 03, „pręt BN górą … może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia” — gdy na rzucie górnym jest rozkład T IN NIB
+    nie ma UB 03, „UB 03 płyty w nibie belki ma otulinę dołem 45 < otulina dolna belki 50 …” — BN dołem przy UB 03, „pręt BN górą … może dublować T IN NIB wzdłuż tego nibu — do potwierdzenia” — gdy na rzucie górnym jest rozkład T IN NIB
     równoległy, ≤ 250 w poprzek od osi BN, zakresy nachodzą; „Nib: pręt górą = 0” w oknie RC_BEAM wyłącza BN górą). Interpretacja „brakuje 2 prętów H10 wzdłuż nibu
     górą oraz dołem w narożu nibu też dajmy H16” (1 + 1 pręt) — **do potwierdzenia**. Kopia samych prętów BN bez strefy (CloneRemap → "") —
     przynależność z testu punktu w strefie, a BN leżą w nibie (poza strefą) — ograniczenie jak dotąd.

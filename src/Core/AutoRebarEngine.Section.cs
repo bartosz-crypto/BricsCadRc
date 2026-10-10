@@ -213,8 +213,9 @@ namespace BricsCadRc.Core
                             inp.Beams.Add(new SectionPlanner.BeamBand
                             {
                                 Handle = z.handle, S0 = a, S1 = b, Height = p.Height, NibWidth = p.NibWidth, NibHeight = p.NibHeight,
-                                Cover = BeamCoverSide, StirrupDia = p.StirrupDia,
-                                StirrupA = BeamGeometry.StirrupHeight(p.Height, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia),
+                                Cover = p.CoverSide, CoverBottom = p.CoverBottom, StirrupDia = p.StirrupDia,
+                                StirrupA = BeamGeometry.StirrupHeight(p.Height, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia,
+                                                                      BeamGeometry.DefaultCoverTop, p.CoverBottom),
                                 Params = BeamParamsText(p)
                             });
                     }

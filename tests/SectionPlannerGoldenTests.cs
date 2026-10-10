@@ -180,14 +180,15 @@ namespace BricsCadRc.Tests
                 ShapeLocal = local!, SourceDims = dims!
             };
 
-        /// <summary>Oś strzemienia 51 (A = 275, B = 520, H10) — jak pręt wzorcowy z rysunku (geometria bieżąca).</summary>
-        public static List<(double X, double Y)> Link51() => BarGeometryBuilder.GetLocalPoints("51", new double[] { 275, 520, 0, 0, 0 }, 10);
+        /// <summary>Oś strzemienia 51 (A = 265, B = 510, H10 — otuliny 2026-10-10: boki 45, dół 50) — jak pręt wzorcowy z rysunku.</summary>
+        public static List<(double X, double Y)> Link51() => BarGeometryBuilder.GetLocalPoints("51", new double[] { 265, 510, 0, 0, 0 }, 10);
 
         /// <summary>
         /// 6. Belka krawędziowa (plan belek E5, jak 528: H = 375, nib 160 × 150): strefa x 160…760 wzdłuż Y przy lewej krawędzi z nibem,
         /// cięcie poziome y = 2000 prostopadle do belki (koniec w płycie — urwanie), siatka B1 / B2 / T1 / T2, pręty belki 4 H16 dołem
         /// (BB, 05) i górą (BT, 103), strzemiona 51 (BL, 07) w widoku, pal pod belką; E4b: pręty boczne (BS, 20), w nibie (BN, 21 / 22)
         /// w narożach spinki UB 03 (03), T IN NIB (101) — pierwszy w nibie, drugi w trzonie belki.
+        /// Otuliny belki (decyzja 2026-10-10): boczna / czołowa 45, dolna 50 — położenia prętów belki jak z generowania.
         /// </summary>
         public static SectionPlanner.Input CaseBeam()
         {
@@ -202,19 +203,20 @@ namespace BricsCadRc.Tests
             inp.Dists.Add(D("H10-12-200 B2", "B2", false, 40, 40, 3920, 5920, 30, 200, 10));
             inp.Dists.Add(D("H12-111-200 T1", "T1", true, 200, 40, 5760, 3920, 20, 200, 12));
             inp.Dists.Add(D("H12-112-200 T2", "T2", false, 200, 40, 3920, 5760, 29, 200, 12));
-            double sp = (600 - 2 * 58.0) / 3;
-            inp.Dists.Add(B("05", "BB", false, 218, 40, 3920, 3 * sp, 4, sp, 16));
-            inp.Dists.Add(B("103", "BT", false, 218, 40, 3920, 3 * sp, 4, sp, 16));
-            inp.Dists.Add(B("07", "BL", true, 200, 120, 520, 3760, 20, 3760 / 19.0, 10, "51", Link51(), new double[] { 275, 520, 0, 0, 0 }));
-            // E4b: pręty boczne H10 (po 1 na bok przy ramionach strzemienia) i pręty w nibie (górą H10, dołem H16 w narożach spinki UB 03)
-            inp.Dists.Add(B("20", "BS", false, 215, 40, 3920, 490, 2, 490, 10));
-            var nt = B("21", "BN", false, 55, 40, 3920, 0, 1, 200, 10); nt.Mark = "H10-21 BEAM NIB T"; inp.Dists.Add(nt);
-            var nb = B("22", "BN", false, 58, 40, 3920, 0, 1, 200, 16); nb.Mark = "H16-22 BEAM NIB B"; inp.Dists.Add(nb);
+            double sp = (600 - 2 * 63.0) / 3;      // 45 + 10 + 8 = 63 od lic → co 158
+            inp.Dists.Add(B("05", "BB", false, 223, 45, 3910, 3 * sp, 4, sp, 16));
+            inp.Dists.Add(B("103", "BT", false, 223, 45, 3910, 3 * sp, 4, sp, 16));
+            inp.Dists.Add(B("07", "BL", true, 205, 120, 510, 3760, 20, 3760 / 19.0, 10, "51", Link51(), new double[] { 265, 510, 0, 0, 0 }));
+            // E4b: pręty boczne H10 (po 1 na bok przy ramionach strzemienia) i pręty w nibie (górą H10, dołem H16 w narożach spinki UB 03;
+            // w poprzek od spinki płyty — otulina 40 bez zmian, wzdłuż — otulina czołowa 45)
+            inp.Dists.Add(B("20", "BS", false, 220, 45, 3910, 480, 2, 480, 10));
+            var nt = B("21", "BN", false, 55, 45, 3910, 0, 1, 200, 10); nt.Mark = "H10-21 BEAM NIB T"; inp.Dists.Add(nt);
+            var nb = B("22", "BN", false, 58, 45, 3910, 0, 1, 200, 16); nb.Mark = "H16-22 BEAM NIB B"; inp.Dists.Add(nb);
             // poprawki recenzji E4b: spinka UB 03 w nibie belki (pręty BN w jej narożach) i T IN NIB płyty (drugi pręt w trzonie belki)
             inp.Dists.Add(D("20 H10-03-200 UB", "B1", true, 40, 100, 610, 3800, 20, 200, 10, "21", "Left",
                             new List<(double X, double Y)> { (610, 0), (0, 0), (0, 60), (610, 60) }));
             inp.Dists.Add(D("2 H12-101-150 T IN NIB", "T1", false, 40, 40, 3920, 150, 2, 150, 12));
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AA", S0 = 160, S1 = 760, Height = 375, NibHeight = 150, StirrupDia = 10, StirrupA = 275 });
+            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AA", S0 = 160, S1 = 760, Height = 375, NibHeight = 150, StirrupDia = 10, StirrupA = 265 });
             return inp;
         }
 
@@ -237,8 +239,9 @@ namespace BricsCadRc.Tests
             ["vertical"] = "b7d453c9093a86c4321faf50aeeec03595182eb84263d1da37ed2c37b8fb85d2",
             ["fitshape"] = "ba680f87ce1e77fab8b000de66b9268f110cc429365f5f9d13ec973a6fbe284f",
             // plan belek E5 + E4b (2026-10-10): przekrój przez belkę — zapisany po przejrzeniu zrzutu (profil, kropki, strzemię, boczne, nib, wymiary);
-            // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty
-            ["beam"]     = "ac38f28bafa69d8f25717cf6fce0e1d01cf496d4c7d6c29aca5f1542ef65b52f",
+            // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty;
+            // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307, ostrzeżenie o otulinie UB 03
+            ["beam"]     = "644610bd63f9c0af56e08b56a14c0c6490c1af2a5e9d3a097446ddde9d046366",
         };
 
         [TestCaseSource(nameof(Cases))]
