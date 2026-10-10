@@ -282,7 +282,11 @@ namespace BricsCadRc.Tests
             // o Ø do środka, BS / UB SIDE na poziomie bocznym, B IN NIB, odgięcia na rzeczywistych końcach)
             // poprawka recenzji K4–K8 (pkt 4): opisy w odcinku z belką — kropki pręta belki tej samej pozycji obok siebie jednym numerem ze strzałką,
             // T IN NIB nad nibem belki (nad betonem), numery kropek siatki przesuwane w bok ≤ 40 — zmienione tylko linie LBL
-            ["beamK6"]   = "f7f6011bfe46ef801543c83954a0db47be68f6e7dfde1ab013ca101c645f8fd6",
+            // poprawka E2 w przekroju (2026-10-10): AlignMesh nie wstawia kropek siatki B2 / T2 (E2: od 810 / 860) do trzonu belki — pierwsza
+            // kropka za belką z rozkładu, dalej co 200; opisy: T IN NIB i numery siatki nie nachodzą na linie pomocnicze wymiaru nibu belki
+            // (zrzut przejrzany: brak kropek siatki w 160…760, B2 810…2810, T2 860…2860; zmienione linie DOT / LBL); wymiar szerokości pod belką
+            // nie jest przeszkodą dla opisów (schodzi pod najniższy opis) — opis UB 03 (03) w rzędzie nad wymiarem (345, −590) zamiast pod nim
+            ["beamK6"]   = "9d94c5ab38f8476e0f3e6ea0587beed9fc59a11102fabf6dbcc3046233f2bc8c",
         };
 
         [TestCaseSource(nameof(Cases))]

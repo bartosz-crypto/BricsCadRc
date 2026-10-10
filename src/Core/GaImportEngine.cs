@@ -296,7 +296,9 @@ namespace BricsCadRc.Core
                                      BeamGaContext beamCtx = null, Result result = null)
         {
             var col = new ObjectIdCollection(ids.ToArray());
-            var idMap = new IdMapping();
+            // using: mapa żyje do końca metody — bez tego JIT (Release) może ją sfinalizować w trakcie foreach po IdMappingEnumerator
+            // (SEHException w MoveNext, test BRX G528S w pełnym przebiegu run-planc-beam)
+            using var idMap = new IdMapping();
             var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
             src.Db.WblockCloneObjects(col, msId, idMap, DuplicateRecordCloning.Ignore, false);
 

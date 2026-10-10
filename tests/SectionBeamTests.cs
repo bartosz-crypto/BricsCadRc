@@ -276,6 +276,28 @@ namespace BricsCadRc.Tests
             Assert.That(r.Dots.Where(d => d.PosNr == "12").All(d => d.V == -165), Is.True);
         }
 
+        /// <summary>
+        /// Wersja 2 (BarEndTicks): opis strzemion w cięciu wzdłuż belki nad linią wymiaru długości pasu pod belką (nie pod nią),
+        /// strzałka pionowo do dolnego końca jednego z ramion.
+        /// </summary>
+        [Test]
+        public void Along_V2_LinkLabel_AboveLengthDimension()
+        {
+            var inp = AlongCase();
+            inp.BarEndTicks = true;
+            // gęsto pod belką: dodatkowe kropki siatki dołem (opisy w rzędach pod spodem)
+            inp.Dists.Add(new SectionPlanner.Dist { Mark = "H10-13-100 B2", PosNr = "13", LayerCode = "B2", AlongX = false, X0 = 40, Y0 = 90,
+                                                    LengthA = 3920, BarsSpan = 7900, Count = 80, Spacing = 100, Diameter = 10 });
+            // pręt dołu belki (drugi kawałek) — jego opis w rzędzie 2 pod ramieniem środkowym strzemion (u = 2000 + 0,3 · 2267 ≈ 2680)
+            inp.Dists.Add(SectionPlannerGoldenTests.B("06", "BB", true, 2000, 460, 2267, 0, 1, 200, 16));
+            var r = SectionPlanner.Plan(inp);
+            var dim = r.Dims.Single(d => !d.Vertical && d.U1 == 160 && d.U2 == 5000);
+            var lbl = r.Labels.Single(l => l.Text == "07");
+            Assert.That(lbl.HasLeader, Is.True);
+            Assert.That(lbl.V, Is.GreaterThan(dim.LineV + SectionPlanner.TextHeight), $"opis 07 v {lbl.V} — linia wymiaru {dim.LineV}");
+            Assert.That(r.Bars.Any(b => b.PosNr == "07" && Math.Abs(b.Path[0].U - lbl.LeaderU) < 1e-9), Is.True, "strzałka do ramienia");
+        }
+
         [Test]
         public void UBar_PairOffset_SecondArm_And_BentDotOverStraight()
         {

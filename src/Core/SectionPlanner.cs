@@ -575,7 +575,7 @@ namespace BricsCadRc.Core
             // 3a. Siatka w przekroju (schemat jak na rysunkach ASD): dół i góra w TYCH SAMYCH miejscach.
             //     Przy nibie: jeden pręt dołu w nibie (otulina od krawędzi zewnętrznej), pierwszy pręt siatki 150 dalej,
             //     reszta co rozstaw nominalny — jakby nibu nie było. Krawędź bez nibu: pierwszy pręt na otulinie.
-            AlignMesh(res, inp, InConcrete);
+            AlignMesh(res, inp, InConcrete, bands);
 
             // T IN NIB w spince UB 03: tuż pod jej górnym ramieniem (jak na rysunkach ASD)
             foreach (var dot in res.Dots.Where(x => x.TinNib))
@@ -1137,8 +1137,27 @@ namespace BricsCadRc.Core
                     }
                 return 0;
             }
-            foreach (var dm in res.Dims.Where(x => !x.Vertical))
+            // wersja 2, odcinek z belką: wymiar poziomy pod spodem belki (szerokość / długość pasu) — linia wymiaru POD opisami (opisy jej
+            // nie omijają; po rozmieszczeniu opisów linia schodzi pod najniższy opis w swoim zakresie — niżej, na końcu metody)
+            var movable = new HashSet<Dim>();
+            if (beamGroups)
+                foreach (var dm in res.Dims.Where(x => !x.Vertical))
+                {
+                    double a = Math.Min(dm.U1, dm.U2), b = Math.Max(dm.U1, dm.U2);
+                    if (InBeamSegment(res, (a + b) / 2) && dm.LineV < MinBottom(res, a, b, T) - 1.0) movable.Add(dm);
+                }
+            foreach (var dm in res.Dims.Where(x => !x.Vertical && !movable.Contains(x)))
                 occupied.Add((Math.Min(dm.U1, dm.U2) - 20, dm.LineV - 12, Math.Max(dm.U1, dm.U2) + 20, dm.LineV + TextHeight + 30));
+            // wersja 2, odcinek z belką: linie pomocnicze wymiarów poziomych (np. szerokość nibu belki „160”) — opisy na nie nie nachodzą
+            // (wymiar pod belką: linia pomocnicza w dół bez ograniczenia — linia wymiaru zejdzie pod opisy)
+            if (beamGroups)
+                foreach (var dm in res.Dims.Where(x => !x.Vertical))
+                    foreach (var (eu, ev) in new[] { (dm.U1, dm.V1), (dm.U2, dm.V2) })
+                    {
+                        double lv = movable.Contains(dm) ? ev - 3000 : dm.LineV;
+                        if (InBeamSegment(res, eu) && Math.Abs(ev - lv) > 1.0)
+                            occupied.Add((eu - 2, Math.Min(ev, lv), eu + 2, Math.Max(ev, lv)));
+                    }
 
             // T IN NIB: numery w pustym miejscu nad nibem — pierwszy nad nibem (między uskokiem a krawędzią),
             // kolejne dalej na zewnątrz płyty, w jednym rzędzie (jak na rysunkach ASD)
@@ -1291,6 +1310,37 @@ namespace BricsCadRc.Core
                 double w = TextWidth(bar.PosNr);
                 double bot = MinBottom(res, u, u, T);
                 bool done = false;
+                if (beamGroups)
+                {
+                    // wersja 2: opis strzemion nad linią wymiaru długości pasu pod belką (nie pod nią) — ramię środkowe, potem kolejne
+                    // najbliższe środka; rząd 2, 1, 3…; strzałka nie tnie opisów (przejście 0: z zapasem jak opisy prętów, przejście 1:
+                    // strzałka poza samym tekstem opisu — ramka opisu bez marginesu 10 mm z każdej strony)
+                    double mid = (list[0].Path[0].U + list[list.Count - 1].Path[0].U) / 2;
+                    for (int pass = 0; pass < 2 && !done; pass++)
+                    foreach (var cand in list.OrderBy(b => b == bar ? 0 : 1).ThenBy(b => Math.Abs(b.Path[0].U - mid)).ThenBy(b => b.Path[0].U))
+                    {
+                        double cu = cand.Path[0].U, cLow = Math.Min(cand.Path[0].V, cand.Path[1].V);
+                        double cbot = MinBottom(res, cu, cu, T);
+                        // najwyższa linia wymiaru poziomego pod spodem w tym miejscu (strefa zajęta wymiaru: LineV − 12 … LineV + 80)
+                        double limit = res.Dims.Where(dm => !dm.Vertical && !movable.Contains(dm) && dm.LineV < cbot && cu >= Math.Min(dm.U1, dm.U2) - 20 && cu <= Math.Max(dm.U1, dm.U2) + 20)
+                                                .Select(dm => dm.LineV + TextHeight + 30 + 5).DefaultIfEmpty(double.NegativeInfinity).Max();
+                        foreach (int row in new[] { 2, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11 })
+                        {
+                            double vb = cbot - LabelGap - TextHeight - row * LabelRowStep;
+                            if (vb < limit) continue;
+                            if (!Free(cu - w / 2, vb, cu + w / 2, vb + TextHeight)) continue;
+                            double lv0 = vb + TextHeight, lv1 = cLow;
+                            double mg = pass == 0 ? -5 : 10;
+                            if (occupied.Skip(fixedCount).Any(o => cu > o.u0 + mg && cu < o.u1 - mg && lv0 < o.v1 && lv1 > o.v0)) continue;
+                            occupied.Add((cu - w / 2, vb, cu + w / 2, vb + TextHeight));
+                            res.Labels.Add(new Label { Text = cand.PosNr, U = cu, V = vb, Height = TextHeight, HasLeader = true,
+                                                       LeaderU = cu, LeaderV = cLow - cand.Diameter / 2.0 });
+                            done = true;
+                            break;
+                        }
+                        if (done) break;
+                    }
+                }
                 for (int row = 2; row < 12 && !done; row++)
                 {
                     double vb = bot - LabelGap - TextHeight - row * LabelRowStep;
@@ -1300,6 +1350,16 @@ namespace BricsCadRc.Core
                                                LeaderU = u, LeaderV = vLow - bar.Diameter / 2.0 });
                     done = true;
                 }
+            }
+
+            // wersja 2: wymiar pod belką poniżej najniższego opisu w swoim zakresie (tekst wymiaru nad linią: LineV + 80 + 5 ≤ spód opisu)
+            foreach (var dm in movable)
+            {
+                double a = Math.Min(dm.U1, dm.U2) - 20, b = Math.Max(dm.U1, dm.U2) + 20, bot = MinBottom(res, a, b, T);
+                var below = res.Labels.Where(l => l.V < bot && l.U + TextWidth(l.Text) / 2 > a && l.U - TextWidth(l.Text) / 2 < b).ToList();
+                if (below.Count == 0) continue;
+                double need = below.Min(l => l.V) - TextHeight - 30 - 5;
+                if (need < dm.LineV) dm.LineV = need;
             }
         }
 
@@ -1531,10 +1591,13 @@ namespace BricsCadRc.Core
             return d.Spacing > 0 ? d.Spacing : 200;
         }
 
-        private static void AlignMesh(Result res, Input inp, Func<double, double, bool> inConcrete)
+        private static void AlignMesh(Result res, Input inp, Func<double, double, bool> inConcrete, List<BandU> bands = null)
         {
             foreach (var sg in res.Segments)
             {
+                // belka (poprawka E2 w przekroju): pasy belek tego odcinka; bez belek — null (dawny kod bit w bit)
+                var segBands = bands == null ? null : bands.Where(b => b.Seg == sg).ToList();
+                if (segBands != null && segBands.Count == 0) segBands = null;
                 // kotwy siatki przy końcach: krawędź z nibem → pręt w nibie + 150, krawędź / otwór → otulina, urwanie → brak
                 double? nibL = null, nibR = null, anchorL = null, anchorR = null;
                 if (sg.End0 != EndKind.Break)
@@ -1576,6 +1639,21 @@ namespace BricsCadRc.Core
                 {
                     var orig = level.OrderBy(d => d.U).ToList();
                     bool top = orig[0].Top;
+                    if (segBands != null)
+                    {
+                        // E2: pręty siatki równoległe do belki kończą się przed licem — poziom bez żadnej kropki z rozkładu w trzonie
+                        // belki nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem kotwa przy belce = rzeczywisty pierwszy
+                        // pręt rozkładu (nie siatka od kotwy nibu płyty)
+                        var cut = segBands.Where(b => !orig.Any(d => d.U > b.U0 + 0.5 && d.U < b.U1 - 0.5)).ToList();
+                        if (cut.Count > 0)
+                        {
+                            var freshB = MeshLevelBesideBeams(sg, orig, cut, anchorL, anchorR, nibL, nibR, sp, top, inConcrete);
+                            if (freshB.Count == 0) continue;
+                            foreach (var d in orig) res.Dots.Remove(d);
+                            res.Dots.AddRange(freshB);
+                            continue;
+                        }
+                    }
                     var pts = new List<double>(grid);
                     if (!top) { if (nibL.HasValue) pts.Insert(0, nibL.Value); if (nibR.HasValue) pts.Add(nibR.Value); }
                     var fresh = new List<Dot>();
@@ -1591,6 +1669,71 @@ namespace BricsCadRc.Core
                     res.Dots.AddRange(fresh);
                 }
             }
+        }
+
+        /// <summary>
+        /// Siatka w odcinku z belką (poprawka E2 w przekroju): poziom kropek siatki, którego rozkład nie wchodzi w trzon belki (pręty
+        /// równoległe do belki kończą się przed licem — E2). Pas belki (trzon + nib belki do krawędzi) — bez kropek; poza pasem — schemat
+        /// jak <see cref="AlignMesh"/> (rozstaw nominalny, góra i dół od kotew), ale kotwa po stronie belki = rzeczywisty skrajny pręt
+        /// rozkładu przy belce (pierwszy pręt wg E2); kotwy przy krawędzi / otworze / nibie płyty — jak dotąd. Zakres bez kotew (urwanie
+        /// i belka) — położenia z rozkładu.
+        /// </summary>
+        private static List<Dot> MeshLevelBesideBeams(Segment sg, List<Dot> orig, List<BandU> cut, double? anchorL, double? anchorR,
+                                                      double? nibL, double? nibR, double sp, bool top, Func<double, double, bool> inConcrete)
+        {
+            // przedziały zakazane (trzon + nib belki), scalone
+            var forb = new List<(double Lo, double Hi)>();
+            foreach (var b in cut.OrderBy(b => b.U0 - b.Nib0))
+            {
+                double lo = b.U0 - b.Nib0, hi = b.U1 + b.Nib1;
+                if (forb.Count > 0 && lo <= forb[forb.Count - 1].Hi + 1e-6)
+                    forb[forb.Count - 1] = (forb[forb.Count - 1].Lo, Math.Max(forb[forb.Count - 1].Hi, hi));
+                else forb.Add((lo, hi));
+            }
+            var ranges = new List<(double Lo, double Hi, bool SegL, bool SegR)>();
+            double start = sg.U0; bool startSeg = true;
+            foreach (var f in forb)
+            {
+                ranges.Add((start, f.Lo, startSeg, false));
+                start = f.Hi; startSeg = false;
+            }
+            ranges.Add((start, sg.U1, startSeg, true));
+
+            double v = orig[0].V;
+            var fresh = new List<Dot>();
+            foreach (var r in ranges)
+            {
+                if (r.Hi - r.Lo <= 1.0) continue;
+                var inR = orig.Where(d => d.U >= r.Lo - 0.5 && d.U <= r.Hi + 0.5).OrderBy(d => d.U).ToList();
+                if (inR.Count == 0) continue;
+                double? L = r.SegL ? anchorL : inR[0].U;
+                double? R = r.SegR ? anchorR : inR[inR.Count - 1].U;
+                var pts = new List<double>();
+                if (L.HasValue && R.HasValue)
+                {
+                    if (R.Value <= L.Value + 1) pts.Add((L.Value + R.Value) / 2);
+                    else
+                    {
+                        int n = Math.Max(1, (int)Math.Round((R.Value - L.Value) / sp));
+                        for (int i = 0; i <= n; i++) pts.Add(L.Value + (R.Value - L.Value) * i / n);
+                    }
+                }
+                else if (L.HasValue)
+                    for (double p = L.Value; p <= r.Hi - 10; p += sp) pts.Add(p);
+                else if (R.HasValue)
+                    for (double p = R.Value; p >= r.Lo + 10; p -= sp) pts.Insert(0, p);
+                else
+                    pts.AddRange(inR.Select(d => d.U));      // urwanie po obu stronach — położenia z rozkładu
+                if (!top) { if (r.SegL && nibL.HasValue) pts.Insert(0, nibL.Value); if (r.SegR && nibR.HasValue) pts.Add(nibR.Value); }
+                foreach (double u in pts)
+                {
+                    if (u < r.Lo - 0.5 || u > r.Hi + 0.5 || !inConcrete(u, v)) continue;
+                    var near = inR.OrderBy(d => Math.Abs(d.U - u)).First();
+                    fresh.Add(new Dot { U = u, V = near.V, Diameter = near.Diameter, PosNr = near.PosNr, Top = top,
+                                        Mesh = true, NomSpacing = near.NomSpacing });
+                }
+            }
+            return fresh;
         }
 
         /// <summary>Kropka na pionowym ramieniu pręta w widoku (np. UB) → odsunięcie od ramienia po swojej stronie.</summary>

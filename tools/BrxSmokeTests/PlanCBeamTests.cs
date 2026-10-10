@@ -23,6 +23,7 @@
 // G528UB Mesh (225) + belka: strzemiona niezależnie od UB 03 (K2): pierwsze 51 od lica, rozstaw ≤ 200.
 // M528  belka → Mesh: rozkłady siatki (bez kodów belki) = zrzut D528 tego przebiegu (Mesh bez belki; numery i odwołania znormalizowane).
 // S528  RC_SECTION A prostopadle do belki 528: kropki BM dół (−305) i góra (−55), strzemię 51 w widoku (−319 … −41), BN dołem H10.
+//       Poprawka E2 w przekroju (S528, C17): brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu.
 // S528C przekrój „sprzed E5” → NIEAKTUALNY; H 375 → 450 → „zmieniona belka”; RC_SECTION_UPDATE → aktualne.
 // S539  RC_SECTION B wzdłuż belki 539: BM w widoku na obu poziomach (−230 / −55), strzemiona (−244 … −41), profil −300.
 // S539BBS RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls: wszystkie pozycje belki w serii dolnej (BM / BU / BL / BN; 00 / 21 / 51).
@@ -749,6 +750,52 @@ namespace BricsCadRc.BrxSmokeTests
         }
 
         private static List<object> L(object o, string name) => ((System.Collections.IEnumerable)Prop(o, name)).Cast<object>().ToList();
+
+        /// <summary>
+        /// Poprawka E2 w przekroju (AlignMesh przy belce): w trzonie belki (przedział profilu ze spodem poniżej płyty i wierzchem 0)
+        /// brak kropek siatki płyty rozkładów, które w trzon nie wchodzą (pręty równoległe do belki — E2, stop przed licem); pierwsza
+        /// kropka takiego rozkładu za belką = rzeczywisty pręt rozkładu najbliższy belce. Zwraca opis (pozycja: pierwsza kropka).
+        /// </summary>
+        private static string AssertMeshBesideBeam(object ctx, object plan)
+        {
+            var inp = Prop(ctx, "Input");
+            double T = Dv(inp, "Thickness");
+            bool cutX = (bool)Prop(inp, "CutAlongX");
+            int look = Convert.ToInt32(Prop(inp, "LookSign"), Inv);
+            int sign = cutX ? (look >= 0 ? 1 : -1) : (look >= 0 ? -1 : 1);
+            var trunks = new List<(double a, double b)>();
+            foreach (var sg in L(plan, "Segments").Where(x => Prop(x, "Prof") != null))
+                foreach (var p in L(sg, "Prof").Select(p => (ValueTuple<double, double, double, double>)p))
+                    if (p.Item3 < -T - 1 && Math.Abs(p.Item4) < 1e-6) trunks.Add((p.Item1, p.Item2));
+            if (trunks.Count == 0) throw new AssertFail("brak trzonu belki w profilu przekroju");
+            var mesh = L(plan, "Dots").Where(d => (bool)Prop(d, "Mesh")).ToList();
+            var sb = new StringBuilder();
+            foreach (var d in L(inp, "Dists").Where(x => Convert.ToString(Prop(x, "Kind"), Inv) == "Main" && (bool)Prop(x, "AlongX") != cutX))
+            {
+                string pos = (string)Prop(d, "PosNr");
+                int n = Math.Max(1, Convert.ToInt32(Prop(d, "Count"), Inv));
+                double span = Dv(d, "BarsSpan"), sp = n > 1 ? (span > 0 ? span / (n - 1) : Dv(d, "Spacing")) : 0;
+                double q0 = (bool)Prop(d, "AlongX") ? Dv(d, "Y0") : Dv(d, "X0");
+                var real = Enumerable.Range(0, n).Select(i => sign * (q0 + i * sp)).ToList();
+                var dots = mesh.Where(x => (string)Prop(x, "PosNr") == pos).Select(x => Dv(x, "U")).ToList();
+                foreach (var (a, b) in trunks)
+                {
+                    if (real.Any(u => u > a + 0.5 && u < b - 0.5)) continue;     // rozkład przechodzi przez belkę — schemat bez zmian
+                    var inB = dots.Where(u => u > a + 0.5 && u < b - 0.5).ToList();
+                    if (inB.Count > 0) throw new AssertFail($"kropki siatki poz. {pos} w trzonie belki {a:0}..{b:0}: {string.Join(" ", inB.Select(u => u.ToString("0.#", Inv)))}");
+                    foreach (int side in new[] { -1, 1 })
+                    {
+                        double face = side > 0 ? b : a;
+                        var rs = real.Where(u => (u - face) * side > 0).OrderBy(u => Math.Abs(u - face)).ToList();
+                        var ds = dots.Where(u => (u - face) * side > 0 && Math.Abs(u - face) < 400).OrderBy(u => Math.Abs(u - face)).ToList();
+                        if (rs.Count == 0 || ds.Count == 0) continue;
+                        if (Math.Abs(ds[0] - rs[0]) > 0.5) throw new AssertFail($"poz. {pos}: pierwsza kropka za belką u = {ds[0]:0.#}, rozkład {rs[0]:0.#}");
+                        sb.Append($"{pos}: {ds[0]:0.#} (lico {face:0}); ");
+                    }
+                }
+            }
+            return sb.Length > 0 ? sb.ToString() : "brak siatki równoległej przed licem";
+        }
         private static double Dv(object o, string name) => Convert.ToDouble(Prop(o, name), Inv);
 
         private static List<object> CheckAll(Database db) => ((System.Collections.IEnumerable)Call(Store, "CheckAll", db, false)).Cast<object>().ToList();
@@ -849,6 +896,11 @@ namespace BricsCadRc.BrxSmokeTests
                         if (!b2.Any(y => y.pos == x.pos && Math.Abs(y.length - x.length) < 0.5))
                             throw new AssertFail($"B IN NIB {x.mark} L{x.length:0} — brak pręta B2 o tym numerze i długości: " + string.Join(" | ", b2.Select(y => y.mark + " L" + y.length.ToString("0", Inv))));
                     return $"BM poz. {Pos(bot)} ×4 −305 / ×4 −55, BN dołem {Pos(nbD)} {vNb:0.#}, strzemię {Prop(links[0], "PosNr")} −319..−41; BN: {string.Join(", ", bn.Select(x => x.mark))}";
+                });
+                Check(step, "A: siatka E2 — brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu", () =>
+                {
+                    if (plan == null) throw new AssertFail("brak planu");
+                    return AssertMeshBesideBeam(ctx, plan);
                 });
                 Check(step, "RC_SECTION_CHECK: A aktualny; odcisk ma składnik BEAM:<strefa> i pręty belki (DIST Kind:Beam)", () =>
                 {
@@ -1372,18 +1424,20 @@ namespace BricsCadRc.BrxSmokeTests
                     var zb = Box(Verts(db, z)); var sb = Box(Verts(db, b));
                     bool alongX = zb.x1 - zb.x0 > zb.y1 - zb.y0;
                     _tl17 = new Point3d(sb.x0, sb.y0 - 9000, 0);
-                    object plan;
+                    object plan, ctx;
                     if (alongX)
                     {
                         double x = zb.x0 + 0.3 * (zb.x1 - zb.x0);
-                        (_, plan) = DrawSection(db, b, new Point2d(x, sb.y1 + 1000), new Point2d(x, zb.y0 - 3000), new Point2d(x + 100, sb.y1), _tl17, "E");
+                        (ctx, plan) = DrawSection(db, b, new Point2d(x, sb.y1 + 1000), new Point2d(x, zb.y0 - 3000), new Point2d(x + 100, sb.y1), _tl17, "E");
                     }
                     else
                     {
                         double y = zb.y0 + 0.3 * (zb.y1 - zb.y0);
-                        (_, plan) = DrawSection(db, b, new Point2d(sb.x0 - 1000, y), new Point2d(zb.x1 + 3000, y), new Point2d(sb.x0, y + 100), _tl17, "E");
+                        (ctx, plan) = DrawSection(db, b, new Point2d(sb.x0 - 1000, y), new Point2d(zb.x1 + 3000, y), new Point2d(sb.x0, y + 100), _tl17, "E");
                     }
-                    return $"belka: {string.Join(" | ", msgs.Where(m => m.Contains("strzemiona") || m.Contains("B IN NIB") || m.Contains("U-bary pionowe")).Take(4))}; przekrój: pręty {L(plan, "Bars").Count}, kropki {L(plan, "Dots").Count}";
+                    // poprawka E2 w przekroju: brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu
+                    string e2 = AssertMeshBesideBeam(ctx, plan);
+                    return $"belka: {string.Join(" | ", msgs.Where(m => m.Contains("strzemiona") || m.Contains("B IN NIB") || m.Contains("U-bary pionowe")).Take(4))}; przekrój: pręty {L(plan, "Bars").Count}, kropki {L(plan, "Dots").Count}; E2: {e2}";
                 });
             });
         }

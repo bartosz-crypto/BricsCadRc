@@ -96,5 +96,8 @@ Jednostkowe: NibStepRules (321/525 → rozstaw ≈ 200), RectilinearPolygons, U-
 27. (K6) Odgięcie 45° końca pręta w przekroju: 35 + 35 mm (≈ 50 po skosie) dla wszystkich średnic — stała długość czy zależna od Ø?
 28. (K8) MLeader „525THK” bez linii strefy w GA (styk GB w C12 PLOT 17 / 3) — odrzucony (pole lokalne); „975THK” z linią strefy w narożniku PLOT 3 → strefa 600 × 600 (H 975). Poprawnie?
 29. (K8) Prepare GA C12: ramka arkusza na warstwie SD-PILED-RAFT jest „największym obrysem zawierającym opis” (test na kopii GA bez ramek), a krawędź zewnętrzna nibu to otwarte kawałki (JoinLoops skleja je z belką GB) — obrys płyty w RC = linia uskoku (bez nibu, bez UB 03 / B IN NIB). Poprawić Prepare GA dla C12?
+30. (E2 / przekrój) T IN NIB przy belce: drugi pręt „150 dalej” (40 + 150 = 190 od krawędzi) leży w trzonie belki (lico 160) — w przekroju kropka T IN NIB w belce, na poziomie płyty (przykłady belka-H600: 102 przy u = 190). Zostawić (pręt w rysunku), przesunąć za lico belki, czy przy belce T IN NIB = 1 pręt w nibie (bez drugiego)? Do decyzji — bez zmian w kodzie.
+31. (K3) Pręty podłużne BM kończą się ~125 od lica końca (`BeamGeometry.PlanBars`: długość w dół do siatki 250 + wyśrodkowanie, np. 5750 przy belce 6000), a nie ~61 od lica (pierwsze strzemię w osi 51 od lica). Czy pręty proste mają dochodzić do ~61 od lica (długość nie na siatce 250, np. 5878), czy siatka 250 i wyśrodkowanie zostają?
+32. (E5 / przekrój) Nib belki w przekroju: szerokość z linii uskoku (160 — z obrysu / pasa strefy), a parametr okna RC_BEAM „szer. nibu” = 135 (wymiar „160” na rysunku, 135 w rekordzie). Który ma obowiązywać w przekroju (wymiar i profil)? Do decyzji — bez zmian w kodzie.
 
 Kolejność: K1, K2, K3, K5, K4, K6, K7, K8.

@@ -246,5 +246,41 @@ namespace BricsCadRc.Tests
             Assert.That(v10[0], Is.EqualTo(-307.0 + 17.5).Within(1e-9), "B − 35 — symetrycznie 17,5");
             Assert.That(v10[1], Is.EqualTo(-78.0 - 17.5).Within(1e-9));
         }
+
+        // ── poprawka E2 w przekroju (AlignMesh przy belce) ──
+
+        /// <summary>
+        /// Belka + siatka E2 (B2 od 810, T2 od 860 — pręty równoległe do belki przed licem): w przekroju poprzecznym brak kropek siatki
+        /// w trzonie belki [lico 160, lico + 600], pierwsza kropka za belką na pozycji z rozkładu (nie siatka 200 od kotwy nibu 40 + 150).
+        /// </summary>
+        [TestCase(true)]
+        [TestCase(false)]
+        public void E2_BeamSection_NoMeshDotsInBeam_FirstDotFromDistribution(bool endTicks)
+        {
+            var inp = SectionPlannerGoldenTests.CaseBeamK6();
+            inp.BarEndTicks = endTicks;
+            var r = SectionPlanner.Plan(inp);
+            var mesh = r.Dots.Where(d => d.Mesh).ToList();
+            Assert.That(mesh.Where(d => d.U >= 160 - 0.5 && d.U <= 760 + 0.5), Is.Empty,
+                        "kropki siatki w belce: " + string.Join(" ", mesh.Where(d => d.U <= 760.5).Select(d => d.PosNr + "@" + d.U)));
+            var b2 = mesh.Where(d => d.PosNr == "12").OrderBy(d => d.U).ToList();
+            var t2 = mesh.Where(d => d.PosNr == "112").OrderBy(d => d.U).ToList();
+            Assert.That(b2, Is.Not.Empty);
+            Assert.That(t2, Is.Not.Empty);
+            Assert.That(b2[0].U, Is.EqualTo(810.0).Within(1e-9), "pierwszy B2 = rozkład");
+            Assert.That(t2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy T2 = rozkład");
+            // dalej schemat co rozstaw nominalny (200) od pierwszego pręta
+            Assert.That(b2[1].U - b2[0].U, Is.EqualTo(200.0).Within(1e-9));
+            // T IN NIB bez zmian (drugi pręt w trzonie belki — pytanie 30)
+            Assert.That(r.Dots.Count(d => d.TinNib), Is.EqualTo(2));
+        }
+
+        /// <summary>Siatka przechodząca przez belkę (złoty „beam”: B2 od 40) — schemat kropek także w belce (bez zmian).</summary>
+        [Test]
+        public void E2_MeshThroughBeam_SchemeInBeamUnchanged()
+        {
+            var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
+            Assert.That(r.Dots.Any(d => d.Mesh && d.U > 160 && d.U < 760), Is.True);
+        }
     }
 }

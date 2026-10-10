@@ -673,7 +673,10 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   UB SIDE (BC) na poziomach prętów bocznych (drugie ramię `PairOffset`); A strzemienia (wejście, odcisk) = H − otulina górna [24] − dolna;
   `BeamParamsText` z polami v2. **Opisy w odcinku z belką (wersja 2, przy `BarEndTicks`; płyty bez belek i złote wejścia bez zmian):** kropki
   pręta belki tej samej pozycji obok siebie (odstęp ≤ 400) — jeden numer ze strzałką (strzałka omija miejsca numerów siatki), T IN NIB w nibie belki —
-  numer nad swoją kropką nad betonem (nie w rzędzie na zewnątrz), numery kropek siatki mogą przesunąć się w bok ≤ 40. **Zakończenia prętów (wymaganie użytkownika 2026-10-10, POPRAWKI 31):** pręt prosty w widoku, który kończy się
+  numer nad swoją kropką nad betonem (nie w rzędzie na zewnątrz), numery kropek siatki mogą przesunąć się w bok ≤ 40. **Siatka przy belce w przekroju (poprawka E2, bez podbicia `Version`):** poziom kropek siatki, którego rozkład nie ma pręta w trzonie
+  belki (E2 — równoległe stop przed licem), nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem schemat `AlignMesh`, ale kotwa po stronie belki
+  = rzeczywisty pierwszy pręt rozkładu (`MeshLevelBesideBeams`); siatka przechodząca przez belkę i odcinki bez belki — bez zmian. Opisy (wersja 2, belka):
+  nie nachodzą na linie pomocnicze wymiarów poziomych, wymiar szerokości / długości pasu pod belką schodzi pod najniższy opis w swoim zakresie (opisy nigdy pod linią wymiaru), opis strzemion w cięciu wzdłuż — ramię najbliższe środka z wolnym miejscem. **Zakończenia prętów (wymaganie użytkownika 2026-10-10, POPRAWKI 31):** pręt prosty w widoku, który kończy się
   w przekroju (`BarLine.End0 / End1` — koniec kawałka = koniec pręta; nie urwanie, koniec cięcia, otwór), ma odgięcie 45° w głąb elementu
   (35 + 35 mm; górny w dół, pozostałe w górę) — jak rysunki biura (Holbrook 528 / 539 / 321, C12 C-C / E-E; konwencja w planie, sekcja K6);
   `Input.BarEndTicks` = true w RC_SECTION / RC_SECTION_UPDATE (domyślnie false — złote wejścia wzorca bit w bit; złoty `beamK6`). Przekroje
