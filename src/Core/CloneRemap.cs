@@ -34,7 +34,7 @@ namespace BricsCadRc.Core
     /// </summary>
     internal static class CloneRemap
     {
-        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim }
+        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim, SectionHead, SectionPart }
 
         private const int BarLabelIdx   = 13;   // RC_SINGLE_BAR [13] LabelHandle
         private const int LabelBarIdx   = 1;    // RC_BAR_LABEL [1]
@@ -264,6 +264,114 @@ namespace BricsCadRc.Core
                         break;
                 }
             }
+
+            // Przekroje RC_SECTION (bezpiecznik): najpierw tytuły (nowy GUID, lista części), potem części ([1], [4])
+            if (clones.Values.Any(x => x.Kind == Kind.SectionHead || x.Kind == Kind.SectionPart))
+                RelinkSections(tr, db, clones, Resolve, Keep);
+        }
+
+        private const int HeadPickedIdx = 4, HeadOuterIdx = 5, HeadSelfIdx = 6;   // RC_SECTION [4] obrys wskazany, [5] zewnętrzny, [6] tytuł
+        private const int PartTitleIdx = 1, PartGuidIdx = 4;                       // RC_SECTION_PART [1] tytuł, [4] GUID
+
+        /// <summary>
+        /// Bezpiecznik przekrojów: tytuł sklonowany z ≥ 1 częścią (lista części z rekordu) → samodzielny przekrój: nowy GUID, lista
+        /// tylko sklonowanych części (handle klonów), [6] = własny handle, [4] / [5] → klon obrysu (płyta sklonowana razem, cel =
+        /// Polyline), inaczej ten sam rysunek — bez zmian, inny — "". Tytuł sklonowany bez części → zwykły tekst (bez RC_SECTION
+        /// i Xrecordu). Część: tytuł sklonowany razem (z danymi) → [1] = klon tytułu, [4] = jego nowy GUID; inaczej (P-b) bez RC_SECTION_PART — zwykły obiekt.
+        /// </summary>
+        private static void RelinkSections(Transaction tr, Database db, Dictionary<long, Clone> clones, ResolveFn resolve,
+                                           Func<Clone, string, int, Field, long, string> keepFn)
+        {
+            string app = AutoRebarEngine.SectionTitleApp;
+            var guidOfHead = new Dictionary<long, string>();
+            foreach (var c in clones.Values.Where(x => x.Kind == Kind.SectionHead))
+            {
+                try
+                {
+                    var e = (Entity)tr.GetObject(c.Id, OpenMode.ForRead);
+                    var rec = AutoRebarEngine.ReadRecord(tr, e);
+                    var parts = new List<SectionRecord.Part>();
+                    if (rec != null)
+                        foreach (var p in rec.Parts)
+                        {
+                            // lista części to tekst w Xrecordzie — BricsCAD jej nie tłumaczy (jak stare 1000)
+                            long t = resolve(c, new Field { Hex = XLink.Norm(p.Handle), Text = true }, out _);
+                            if (t != 0 && clones.TryGetValue(t, out var pc) && pc.Kind == Kind.SectionPart)
+                                parts.Add(new SectionRecord.Part { Handle = t.ToString("X8"), Role = p.Role, Key = p.Key });
+                        }
+                    if (!e.IsWriteEnabled) e.UpgradeOpen();
+                    if (rec == null || parts.Count == 0)
+                    {
+                        // sam tytuł (albo bez rekordu) — zwykły tekst
+                        e.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, app));
+                        RemoveRecord(tr, e);
+                        Log.Info($"CloneRemap: tytuł przekroju {c.H:X} skopiowany bez części — bez danych przekroju.");
+                        continue;
+                    }
+                    string guid = Guid.NewGuid().ToString("D");
+                    var curPicked = ReadField(e, app, HeadPickedIdx);
+                    var curOuter = ReadField(e, app, HeadOuterIdx);
+                    string picked = SlabOf(tr, db, c, curPicked, resolve, keepFn, HeadPickedIdx);
+                    string outer = SlabOf(tr, db, c, curOuter, resolve, keepFn, HeadOuterIdx);
+                    rec.Guid = guid;
+                    rec.Parts = parts;
+                    e.XData = AutoRebarEngine.TitleXData(guid, rec.Letter, picked, outer, c.H.ToString("X8"));
+                    AutoRebarEngine.WriteRecord(tr, e, rec);
+                    guidOfHead[c.H] = guid;
+                }
+                catch (System.Exception ex) { Log.Error("CloneRemap.RelinkSections.Head", ex); }
+            }
+
+            foreach (var c in clones.Values.Where(x => x.Kind == Kind.SectionPart))
+            {
+                try
+                {
+                    var e = (Entity)tr.GetObject(c.Id, OpenMode.ForRead);
+                    TypedValue[] v;
+                    using (var rb = e.GetXDataForApplication(AutoRebarEngine.SectionPartApp)) v = rb?.AsArray();
+                    if (v == null || v.Length <= PartTitleIdx) continue;
+                    var cur = ReadField(e, AutoRebarEngine.SectionPartApp, PartTitleIdx);
+                    long t = resolve(c, cur, out _);
+                    string nw = t != 0 && guidOfHead.ContainsKey(t) ? t.ToString("X8") : "";
+                    if (nw.Length == 0)
+                    {
+                        // P-b (decyzja użytkownika): część skopiowana bez swojego tytułu → zwykły obiekt (bez RC_SECTION_PART)
+                        if (!e.IsWriteEnabled) e.UpgradeOpen();
+                        e.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, AutoRebarEngine.SectionPartApp));
+                        continue;
+                    }
+                    bool guidChange = nw.Length > 0 && v.Length > PartGuidIdx
+                                      && Convert.ToString(v[PartGuidIdx].Value, System.Globalization.CultureInfo.InvariantCulture) != guidOfHead[t];
+                    if (SameLink(cur.Hex, nw) && !guidChange) continue;
+                    v[PartTitleIdx] = XLink.Write(nw);
+                    if (guidChange) v[PartGuidIdx] = new TypedValue((int)DxfCode.ExtendedDataAsciiString, guidOfHead[t]);
+                    if (!e.IsWriteEnabled) e.UpgradeOpen();
+                    e.XData = new ResultBuffer(v);
+                }
+                catch (System.Exception ex) { Log.Error("CloneRemap.RelinkSections.Part", ex); }
+            }
+        }
+
+        /// <summary>Obrys płyty tytułu-klonu: klon (Cloned / AlreadyClone, cel = Polyline) albo wartość „bez zmian” (keep).</summary>
+        private static string SlabOf(Transaction tr, Database db, Clone c, Field cur, ResolveFn resolve,
+                                     Func<Clone, string, int, Field, long, string> keepFn, int idx)
+        {
+            if (string.IsNullOrEmpty(cur.Hex)) return "";
+            long t = resolve(c, cur, out long keep);
+            if (t != 0 && db.TryGetObjectId(new Handle(t), out var sid) && !sid.IsNull && !sid.IsErased
+                && tr.GetObject(sid, OpenMode.ForRead) is Polyline)
+                return t.ToString("X8");
+            return keepFn(c, AutoRebarEngine.SectionTitleApp, idx, cur, keep);
+        }
+
+        private static void RemoveRecord(Transaction tr, Entity e)
+        {
+            if (e.ExtensionDictionary.IsNull) return;
+            var dict = (DBDictionary)tr.GetObject(e.ExtensionDictionary, OpenMode.ForWrite);
+            if (!dict.Contains(SectionRecord.XrecordName)) return;
+            var id = dict.GetAt(SectionRecord.XrecordName);
+            dict.Remove(SectionRecord.XrecordName);
+            tr.GetObject(id, OpenMode.ForWrite).Erase();
         }
 
         /// <summary>
@@ -333,6 +441,8 @@ namespace BricsCadRc.Core
         private static Kind KindOf(Entity e)
         {
             if (e == null) return Kind.None;
+            if (Has(e, AutoRebarEngine.SectionPartApp)) return Kind.SectionPart;   // bezpiecznik przekrojów
+            if (Has(e, AutoRebarEngine.SectionTitleApp)) return Kind.SectionHead;
             var bk = BarEntity.KindOf(e);
             if (bk == BarKind.Polyline || bk == BarKind.Block) return Kind.Bar;
             if (e is MLeader) return Has(e, SingleBarEngine.XLabelAppName) ? Kind.Label : Kind.None;
@@ -378,6 +488,8 @@ namespace BricsCadRc.Core
                 case Kind.Annot: return AnnotationEngine.AnnotAppName;
                 case Kind.Link:  return SingleBarEngine.XLinkAppName;
                 case Kind.AddDim: return AutoRebarEngine.XAddDimApp;
+                case Kind.SectionHead: return AutoRebarEngine.SectionTitleApp;
+                case Kind.SectionPart: return AutoRebarEngine.SectionPartApp;
                 default:         return "";
             }
         }
@@ -385,7 +497,7 @@ namespace BricsCadRc.Core
         /// <summary>Pole [1] rekordu (Mark / powiązanie) jako tekst — kontrola obiektu źródłowego schowka.</summary>
         private static string Field1(Entity e, Kind k)
         {
-            if (k == Kind.Label || k == Kind.Link || k == Kind.AddDim) return "";   // [1] to powiązanie — wyzerowane w schowku
+            if (k == Kind.Label || k == Kind.Link || k == Kind.AddDim || k == Kind.SectionPart) return "";   // [1] to powiązanie — wyzerowane w schowku
             using (var rb = e?.GetXDataForApplication(AppOf(k)))
             {
                 var v = rb?.AsArray();

@@ -17,6 +17,8 @@ Stara wtyczka kolegi to `BricsCadRc.dll` (te same komendy i XData); wczytana jes
 | Opis rozkładu | `BlockReference` (linia rozkładu + tekst) | `RC_BAR_ANNOT` | Linia rozkładu, strzałka, tekst `H12-03-200 B1` |
 | Towarzysz pręta (stary format) | encje | `RC_BAR_LINK` | Wskazuje główną polilinię pręta |
 | Znacznik płyty (AutoRebar) | na rozkładzie | `RC_AUTOREBAR_SLAB` | Handle obrysu płyty, z którego wygenerowano rozkład |
+| Tytuł przekroju (głowa) | `MText` „SECTION A-A” (AP-TEXT) | `RC_SECTION` + Xrecord `NA_RC_SECTION` | Przekrój RC_SECTION: GUID, litera, obrys, odcisk, lista części (sekcja 4g) |
+| Część przekroju | encje rysunku przekroju i znaczniki na rzutach | `RC_SECTION_PART` | Powiązanie z tytułem, rola, klucz, GUID |
 
 Powiązania:
 ```
@@ -25,6 +27,8 @@ Rozkład ──[18] SourceBarHandle──► Pręt
 Rozkład ──[11] AnnotHandle──► Opis rozkładu ──[16] SourceBlockHandle──► Rozkład
 Rozkład ──[19]/[20] LabelPolyHandle/LabelTextHandle
 Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
+Tytuł przekroju ──[4]/[5]──► obrys płyty (wskazany / zewnętrzny); [6] ──► sam tytuł (wykrycie kopii)
+Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──► tytuł   (część potwierdzona = w obu kierunkach + [4] GUID)
 ```
 
 ### Zasady powiązań (obowiązkowe)
@@ -76,6 +80,16 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   [14]ArmMidY [15]LeaderUp [16]SourceBlockHandle(1005) [17]LeaderPoints [18]SkewEnd …
   (pełna lista: `AnnotationEngine.WriteAnnotXData`)
 - `RC_BAR_LABEL`: [1]bar handle(1005)
+- `RC_SECTION` (tytuł przekroju, bezpiecznik — etap 1): [1]FormatVersion (Int16, 2 — odcisk względem P1 cięcia; 1 = wersja robocza etapu 1) [2]GUID [3]litera [4]SlabPicked(1005)
+  [5]SlabOuter(1005) [6]Self(1005 — własny handle; ≠ handle obiektu = kopia bez przepięcia). Reszta w Xrecordzie
+  `NA_RC_SECTION` w słowniku rozszerzeń tytułu (`SectionRecord`, linie „KLUCZ=wartość”, kod DXF 1): FORMAT, GUID, LETTER,
+  P1 / P2 (bezwzględne, rzut wskazany) i P1REL / P2REL (względem MIN), CUTX, LOOK, LOOKPT, TOPLEFT, MIN (MinPoint obrysu),
+  parametry okna (THK, NIBH, CB, CT, CN, TOL, SSL, PILES), opis płyty (DESCTHK, DESCSSL) + flagi nadpisania (THKOVR, SSLOVR),
+  HASH, DIGEST, VER (SectionPlanner.Version), składniki odcisku `C:klucz=wartość`, części `PART=handle|rola|klucz`.
+  Nowe klucze tylko dopisywane; `SectionRecord.Parse` toleruje starsze / krótsze rekordy (brak klucza = domyślna, nieznane pomijane).
+- `RC_SECTION_PART` (część przekroju): [1]tytuł(1005) [2]rola (SLAB, BAR, DOT, PILE, DIM, LBL, LDR, ARW, SSL, MARK,
+  MARKTXT, CLOUD) [3]klucz (np. `SEG#0`, `LBL#3|05`, znaczniki `V<rzut>.P1|P2` — V0 = rzut wskazany) [4]GUID przekroju.
+  Bez grup (PICKSTYLE). Chmurka (CLOUD) nie jest na liście części w rekordzie.
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
 
 ## 2. Moduły
@@ -105,6 +119,9 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
 - `AutoRebarCommands` — `RC_GENERUJ_B1/B2` (Ø10, strefa szablonów `rebar_bottom`),
   `RC_GENERUJ_T1/T2` (Ø12, `rebar_top`). `AutoRebarUBCommands` — `RC_GENERUJ_UB_B1/B2`.
 - `GenerateCommands` (`RC_GENERATE_SLAB`), `PunchingTagCommands`, `CountCommands`, jigi (`AnnotLeaderJig`, `DistributionJig`).
+- `SectionCommands` — `RC_SECTION` (przekrój z rekordem bezpiecznika, sekcja 4g), `RC_SECTION_CHECK` (aktualność przekrojów:
+  lista ze statusem i przyczynami, chmurki „NIEAKTUALNY”). `BbsCommands` — `RC_BBS` pyta przed oknem BBS, gdy są przekroje
+  nieaktualne (`SectionGuard.ConfirmBeforeOutput`).
 
 - `MenuCommands` — angielskie komendy wstążki: `RC_GENERATE` (wybór w linii poleceń: Mesh / B1 / B2 / T1 / T2 / UB1 /
   UB2 / UBNib / B3 / Add, ostatni wybór domyślny; B3 = B3 ADD w narożnikach wklęsłych — sekcja 4h), `RC_PREPARE_GA`, `RC_GA_TEXTS`, `RC_OPENING_DETAIL`, `RC_MODEL_3D`.
@@ -217,7 +234,11 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   klucz płyty RC_PH (`IsReportPlotKey`), mapa ↔ płyta w AutoRebar Add (`MapPlotMatches`, POPRAWKI 28: prefiks + granica — następny znak nie cyfra ani „-”). `PunchingReport.Parse` (wiersze arkusza → płyty) wydzielone z `Read`.
 - `NibLoopBuilder` (POPRAWKI_WZORCA 23, bez Teigha, testy `NibLoopBuilderTests`) — automat domykania nibu: otwarte kawałki
   linii uskoku + obrys → zamknięta pętla (sekcja 4 „Nib”); `LooksLikeNib` = replika kryteriów `NibDetector` (zmiana kryteriów
-  w jednym miejscu → w obu). `NibAutoClose` — zapis (Teigha): `TryClose` (Prepare GA), `EnsureForCommand` (komendy).
+  w jednym miejscu → w obu). `NibAutoClose` — zapis (Teigha): `TryClose` (Prepare GA), `EnsureForCommand` (komendy);
+  `WouldClose` — ta sama analiza bez zapisu (RC_SECTION_CHECK: otwarty nib do domknięcia).
+- Bezpiecznik przekrojów (sekcja 4g): `SectionFingerprint`, `SectionRecord` (bez Teigha, testy `SectionFingerprintTests`,
+  `SectionRecordTests`, złoty test planera `SectionPlannerGoldenTests`), `SectionStore` (odczyt przekrojów, statusy, chmurki),
+  `SectionGuard` (`ConfirmBeforeOutput` — RC_BBS).
 - `PositionCounter` — **jedyny** przydział numerów pozycji. `PositionReconciler` — numer po zmianie wymiarów.
 - `XLink` — powiązania handle. `NumberParser`, `GeometryHelper`, `LayerManager`, `Log`, `DocumentWatch`.
   `Log.Error` (K2, 96809d3): ten sam błąd (miejsce + typ wyjątku) najwyżej raz na 60 s. `ScriptMode` — tryb bez okien (K4).
@@ -249,7 +270,11 @@ Rozkład ──RC_AUTOREBAR_SLAB──► obrys płyty
   wklejenie ze schowka skopiowanego w tym rysunku = COPY) — wartość obiektu źródłowego; inny rysunek — "". **Znacznik płyty**
   (K5, poprawka 3c): `RC_AUTOREBAR_SLAB` [1] rozkładu i `RC_ADD` [1] wymiaru ADD → klon obrysu płyty, gdy płytę skopiowano
   razem (cel = Polyline); płyta nieskopiowana (COPY samych rozkładów / wymiarów) → "" (decyzja P4b) — przynależność
-  rozstrzyga test punktu w obrysie. Klony w definicjach
+  rozstrzyga test punktu w obrysie. **Przekroje** (bezpiecznik, rodzaje SectionHead / SectionPart): tytuł sklonowany z ≥ 1 częścią
+  → samodzielny przekrój (nowy GUID, lista części = tylko sklonowane części — handle klonów, [6] = własny handle, [4] / [5] → klon
+  obrysu, gdy płytę sklonowano razem, inaczej ten sam rysunek bez zmian / inny ""); tytuł bez części → zwykły tekst (bez
+  RC_SECTION i Xrecordu); część z tytułem sklonowanym razem → [1] klon tytułu, [4] jego GUID, bez tytułu → zwykły obiekt (RC_SECTION_PART zdjęte — decyzja P-b; CHECK
+  „części bez tytułu” tylko po usunięciu tytułu). Lista części w Xrecordzie to tekst — tłumaczona jak stare 1000. Klony w definicjach
   bloków pomijane. Zapis: pręt — `BarEntity.Write`, rozkład — `BarBlockEngine.WriteXData`, opis / etykieta / RC_BAR_LINK —
   punktowa podmiana pola `XLink.Write`. Pary przepięte po komendach kopiowania — `BarCopyWatcher.NormalizeAndRebuildPair`
   (odbicie → skala +1, przebudowa linii rozkładu, jak wzorzec).
@@ -553,6 +578,31 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   s-Slab, s-Pile, 0-25TEXT, AP-TEXT, DIM, SD-SECTION (znaczniki), RC-SECTION-BARS (pręty). Numery pozycji nad / pod
   kropkami (kolejne rzędy przy kolizji), pręty w widoku — numer ze strzałką. Znaczniki przekroju na wszystkich rzutach płyty.
 - Etap 2 (do zrobienia): kształty prętów w widoku wg kodu kształtu (haki, odgięcia), zakłady, ponowne generowanie przekroju.
+- **Bezpiecznik aktualności przekrojów** (docs/PLAN_BEZPIECZNIK_PRZEKROJOW_2026-10-10.md; etap 0 = spike, etap 1 zrobiony):
+  - Geometria przekroju bit w bit jak wzorzec — dochodzą tylko dane (XData `RC_SECTION` / `RC_SECTION_PART`, Xrecord, sekcja 1)
+    i chmurka. `DrawSection(…, rec)` znakuje części w chwili dodania (kolejność obiektów bez zmian); `rec = null` = dawny rysunek.
+  - Planer oznacza „istotne wejście” bez wpływu na wynik: `Result.UsedDists` (rozkłady z ≥ 1 kropką / prętem w widoku, w chwili
+    dodania — przed AlignMesh, referencją), `UsedPiles`, `LevelDiameters` (dB1, dT1); `Dist.SourceHandle / SourceDims /
+    SourceBarHandle` (PrepareSection). **`SectionPlanner.Version`** — podbić przy KAŻDEJ zmianie wyniku planera dla tego samego
+    wejścia (złoty test `SectionPlannerGoldenTests` — 5 wejść, pełny Result bit w bit); starszy przekrój = „aktualny (nowa wersja
+    rysowałaby inaczej)” (P2).
+  - Odcisk (`SectionFingerprint`): składniki META, VIEWS (zbiór przesunięć rzutów; nowy / usunięty rzut z przesunięciem), CUT (tylko kierunek, strona i długość), LETTER, PARAM, SRC (opis płyty + flagi
+    nadpisania), SEG#i, LVL, DIST:<handle>, PILE:<x,y>; współrzędne względem P1 — punktu cięcia na rzucie wskazanym (nie MinPoint obrysu: STRETCH krawędzi daleko od cięcia bez alarmu, MOVE rzutu ze znacznikami bez alarmu; przesunięcie cięcia względem płyty wyłapują DIST / SEG i skrót wyniku); liczby `Math.Round(x, 1)` „0.0” Invariant (−0 → 0), SHA-256; skrót wyniku
+    (ResultDigest, U − UMin) = rozjemca. Werdykt: hash równy → aktualny; VIEWS / CUT / LETTER różne → zawsze NIEAKTUALNY; inne
+    różnice (tolerancja 0,15 mm, rozkłady dopasowane po handle, zapasowo po pozycji / warstwie / rodzaju / kierunku i najbliższym
+    położeniu) przy równym skrócie wyniku → aktualny („zmiany bez wpływu na rysunek”), przy różnym → NIEAKTUALNY z przyczynami.
+  - Przeliczenie (`AutoRebarEngine.RecomputeSection`, tylko odczyt): cięcie ze znaczników rzutu wskazanego (`V0.P1/P2`, wierzchołek
+    [2]; brak → wartości bezwzględne z rekordu), ta sama droga co tworzenie (PrepareSection → Plan), grubość / SSL z bieżącego
+    opisu płyty, chyba że w oknie nadpisane ręcznie (P1); otwarty nib do domknięcia (`NibAutoClose.WouldClose`) → NIEAKTUALNY.
+  - Statusy (`SectionStore`): aktualny, NIEAKTUALNY, osierocony (obrys usunięty; podpowiedź obrysu w tym samym miejscu), nieznany
+    (stary tytuł „SECTION X-X” bez danych), kopia ([6] ≠ handle albo ten sam GUID co tytuł o mniejszym handle — PASTECLIP / INSERT tłumaczą [6]; części kopii wg [1]), części bez tytułu (tytuł usunięty — ERASE), uszkodzony; ostrzeżenia: litera w tytule ≠ [3],
+    „litera X użyta n×” (przekrój bez znaczników na rzucie: „kopia przekroju X (bez znaczników na rzucie) — litera użyta n×”). `ReadAll` — jeden przebieg; bez RegApp przekrojów (i bez szukania starych tytułów) — szybkie wyjście.
+    Bez cache (etap 1) — czas w logu (`SectionStore.CheckAll`); pomiar Holbrook PLOT 321 (1408 obiektów, 4 przekroje): CheckAll 45 ms, RC_SECTION 70–280 ms.
+  - Chmurka „NIEAKTUALNY”: polilinia z łukami + MText na warstwie `RC-SECTION-STATUS` (kolor 1, **Plottable = false** — spike:
+    nie trafia do -PLOT ani EXPORTPDF), części roli CLOUD. Ustawiają ją RC_SECTION_CHECK, RC_SECTION (wszystkie przekroje) i RC_BBS;
+    zapis tylko przy zmianie stanu (CHECK bez zmian = zero zapisów).
+  - RC_BBS: `SectionGuard.ConfirmBeforeOutput` przed oknem BBS — okno Tak / Nie w komendzie; ScriptMode — komunikat i dalej.
+    Wydruk / PDF / PUBLISH (DocumentLockModeChanged + Veto, wyniki spiku w planie) — etap 2; RC_SECTION_UPDATE — etap 3.
 
 ## 4h. B3 ADD — pręty ukośne w narożnikach wklęsłych (AutoRebarEngine.B3.cs)
 - Wymaganie użytkownika: w każdym narożniku wklęsłym (kąt wewnętrzny > 180°) **2 H10 co 100, L = 1250**, opis

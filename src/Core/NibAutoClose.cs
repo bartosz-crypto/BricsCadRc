@@ -25,17 +25,47 @@ namespace BricsCadRc.Core
         /// </summary>
         public static bool TryClose(Database db, ObjectId outlineId, IList<ObjectId> pieceIds, Action<Entity> tag, List<string> msgs)
         {
-            if (db == null || outlineId.IsNull || outlineId.IsErased) return false;
-            if (NibDetector.Detect(db, outlineId) != null) return false;   // bramka: zamknięty nib — bez zmian
+            var r = Analyze(db, outlineId, pieceIds, out var ids, out string layer, out double elevation);
+            if (r == null) return false;
+            if (!r.Ok)
+            {
+                if (r.InBand == 0) return false;   // brak linii uskoku przy krawędzi — cisza
+                msgs.Add("Nib: nie domknięto — " + (r.Problems.FirstOrDefault() ?? "nieznany powód.") + " Płyta bez nibu.");
+                foreach (var p in r.Problems.Skip(1)) msgs.Add("Nib: " + p);
+                return false;
+            }
+            return Write(db, outlineId, r, ids, layer, elevation, tag, msgs);
+        }
+
+        /// <summary>
+        /// Bezpiecznik przekrojów (RC_SECTION_CHECK): czy automat DOMKNĄŁBY nib tego obrysu (otwarta linia uskoku przy krawędzi,
+        /// <see cref="TryClose"/> zakończyłby się zapisem). Tylko odczyt — bez zapisu i bez komunikatów.
+        /// </summary>
+        public static bool WouldClose(Database db, ObjectId outlineId)
+        {
+            var r = Analyze(db, outlineId, null, out _, out _, out _);
+            return r != null && r.Ok;
+        }
+
+        /// <summary>
+        /// Część tylko do odczytu automatu: bramka (zamknięty nib → null), kawałki na warstwie obrysu, NibLoopBuilder.Build.
+        /// null = nic do zrobienia (brak obrysu / nib zamknięty / brak kawałków).
+        /// </summary>
+        private static NibLoopBuilder.Result Analyze(Database db, ObjectId outlineId, IList<ObjectId> pieceIds,
+                                                     out List<ObjectId> ids, out string layer, out double elevation)
+        {
+            ids = new List<ObjectId>();
+            layer = null; elevation = 0;
+            if (db == null || outlineId.IsNull || outlineId.IsErased) return null;
+            if (NibDetector.Detect(db, outlineId) != null) return null;   // bramka: zamknięty nib — bez zmian
 
             List<(double X, double Y)> outline; List<double> outlineBulges;
-            string layer; double elevation; Extents3d oext;
-            var ids = new List<ObjectId>();
+            Extents3d oext;
             var pieces = new List<NibLoopBuilder.Piece>();
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
-                if (!(tr.GetObject(outlineId, OpenMode.ForRead) is Polyline pl)) return false;
-                if (!GeometryHelper.IsEffectivelyClosed(pl) || pl.Normal.Z < 0.999) return false;
+                if (!(tr.GetObject(outlineId, OpenMode.ForRead) is Polyline pl)) return null;
+                if (!GeometryHelper.IsEffectivelyClosed(pl) || pl.Normal.Z < 0.999) return null;
                 outline = new List<(double X, double Y)>(); outlineBulges = new List<double>();
                 for (int i = 0; i < pl.NumberOfVertices; i++)
                 {
@@ -68,17 +98,14 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
             }
-            if (pieces.Count == 0) return false;
+            if (pieces.Count == 0) return null;
 
-            var r = NibLoopBuilder.Build(outline, outlineBulges, pieces, NibDetector.MinNibWidth, NibDetector.MaxNibWidth);
-            if (!r.Ok)
-            {
-                if (r.InBand == 0) return false;   // brak linii uskoku przy krawędzi — cisza
-                msgs.Add("Nib: nie domknięto — " + (r.Problems.FirstOrDefault() ?? "nieznany powód.") + " Płyta bez nibu.");
-                foreach (var p in r.Problems.Skip(1)) msgs.Add("Nib: " + p);
-                return false;
-            }
+            return NibLoopBuilder.Build(outline, outlineBulges, pieces, NibDetector.MinNibWidth, NibDetector.MaxNibWidth);
+        }
 
+        private static bool Write(Database db, ObjectId outlineId, NibLoopBuilder.Result r, List<ObjectId> ids, string layer,
+                                  double elevation, Action<Entity> tag, List<string> msgs)
+        {
             // Zapis: jedna transakcja — nowa zamknięta polilinia, użyte kawałki usunięte
             var used = r.Used.Select(i => ids[i]).ToList();
             ObjectId newId;

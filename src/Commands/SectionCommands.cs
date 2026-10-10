@@ -67,16 +67,67 @@ namespace BricsCadRc.Commands
 
                 int n;
                 using (doc.LockDocument())
-                    n = AutoRebarEngine.DrawSection(db, ctx, plan, pi.Value, dlg.Letter);
+                    n = AutoRebarEngine.DrawSectionRecorded(db, ctx, plan, pi.Value, dlg.Letter);
 
                 int top = plan.Dots.Count(d => d.Top), bot = plan.Dots.Count - top;
                 ed.WriteMessage($"\n{T} Przekrój {dlg.Letter}-{dlg.Letter}: długość {plan.UMax - plan.UMin:F0} mm, " +
                                 $"pręty w przekroju: {bot} dołem / {top} górą, w widoku: {plan.Bars.Count}, pale: {plan.Piles.Count}; " +
                                 $"znaczniki na {ctx.Views.Count} rzucie(ach) ({n} obiektów).\n");
+
+                // bezpiecznik (P3): chmurki „NIEAKTUALNY” wszystkich przekrojów rysunku — zapis tylko przy zmianie stanu
+                using (doc.LockDocument())
+                {
+                    var infos = SectionStore.CheckAll(db, includeLegacy: false);
+                    var (added, removed) = SectionStore.SyncClouds(db, infos);
+                    int stale = infos.Count(s => s.Status == SectionStatus.Nieaktualny);
+                    if (stale > 0 || added + removed > 0)
+                        ed.WriteMessage($"\n{T} Inne przekroje NIEAKTUALNE: {stale} (chmurki: +{added} / −{removed}) — szczegóły: RC_SECTION_CHECK.\n");
+                }
             }
             catch (System.Exception ex)
             {
                 Log.Error("SectionCommands.Section", ex);
+                ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
+
+        /// <summary>
+        /// RC_SECTION_CHECK — aktualność przekrojów rysunku (bezpiecznik, etap 1): lista ze statusem i przyczynami, synchronizacja
+        /// chmurek „NIEAKTUALNY” (warstwa niedrukowana RC-SECTION-STATUS; zapis tylko przy zmianie stanu). Przeliczenie tylko do odczytu.
+        /// </summary>
+        [CommandMethod("RC_SECTION_CHECK", CommandFlags.Modal)]
+        public static void SectionCheck()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            var db = doc.Database;
+            const string T = "[RC SECTION]";
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var infos = SectionStore.CheckAll(db, includeLegacy: true);
+                sw.Stop();
+                if (infos.Count == 0) { ed.WriteMessage($"\n{T} Brak przekrojów w rysunku.\n"); return; }
+
+                var counts = infos.GroupBy(s => s.Status).OrderBy(g => g.Key)
+                                  .Select(g => $"{SectionStore.StatusText(g.Key)} {g.Count()}");
+                ed.WriteMessage($"\n{T} Przekroje: {infos.Count} ({string.Join(", ", counts)}) — sprawdzono w {sw.ElapsedMilliseconds} ms.");
+                foreach (var s in infos)
+                {
+                    string head = s.TitleId.IsNull ? $"(GUID {(s.Guid.Length > 0 ? s.Guid : "—")})" : s.Label;
+                    ed.WriteMessage($"\n{T} {head}: {SectionStore.StatusText(s.Status)}" +
+                                    (s.Reasons.Count > 0 ? " — " + string.Join("; ", s.Reasons) : "") + ".");
+                    foreach (var i in s.Info) ed.WriteMessage($"\n{T}     info: {i}");
+                    foreach (var w in s.Warnings) ed.WriteMessage($"\n{T}     uwaga: {w}");
+                }
+                var (added, removed) = SectionStore.SyncClouds(db, infos);
+                if (added + removed > 0) ed.WriteMessage($"\n{T} Chmurki „NIEAKTUALNY”: dodano {added}, usunięto {removed} (warstwa {AutoRebarEngine.SectionStatusLayer}, niedrukowana).");
+                ed.WriteMessage("\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("SectionCommands.SectionCheck", ex);
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
             }
         }

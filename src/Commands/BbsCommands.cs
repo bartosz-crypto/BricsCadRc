@@ -74,14 +74,17 @@ namespace BricsCadRc.Commands
                 hint += " HYSTOOLS: " + (notes.HystoolsType != null ? "typ z notatki rysunku."
                                         : notes.ThicknessMm.HasValue ? $"typ z grubości płyty {notes.ThicknessMm} mm." : "typ domyślny.");
 
-                // 4) dialog
+                // 4) bezpiecznik przekrojów: nieaktualne przekroje → pytanie Tak / Nie (tryb bez okien: komunikat)
+                if (!SectionGuard.ConfirmBeforeOutput(doc, "BBS")) { ed.WriteMessage($"\n{T} Anulowano.\n"); return; }
+
+                // 5) dialog
                 string suggested = BbsXlsGenerator.SuggestOutputPath(doc.Name);
                 var dlg = new BbsGeneratorDialog(ctx, bars.Rows, bars.Warnings, suggested, BbsSettings.TemplatePath, hint);
                 if (Application.ShowModalWindow(dlg) != true) { ed.WriteMessage($"\n{T} Anulowano.\n"); return; }
 
                 BbsSettings.TemplatePath = dlg.TemplatePath;
 
-                // 5) zapis
+                // 6) zapis
                 BbsGenerateResult res;
                 try
                 {

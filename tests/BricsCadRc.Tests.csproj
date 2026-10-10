@@ -44,6 +44,9 @@
     <Compile Include="..\src\Core\MTextParagraphs.cs" />
     <Compile Include="..\src\Core\OutlineAxisRules.cs" />
     <Compile Include="..\src\Core\BbsCountRules.cs" />
+    <Compile Include="..\src\Core\SectionPlanner.cs" />
+    <Compile Include="..\src\Core\SectionFingerprint.cs" />
+    <Compile Include="..\src\Core\SectionRecord.cs" />
   </ItemGroup>
 
 </Project>

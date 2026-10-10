@@ -1,3 +1,4 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -13,6 +14,13 @@ namespace BricsCadRc.Core
     /// </summary>
     public static class SectionPlanner
     {
+        /// <summary>
+        /// Wersja logiki planera (bezpiecznik przekrojów, SectionFingerprint): podbić przy KAŻDEJ zmianie wyniku dla tego samego
+        /// wejścia (złoty test tests/SectionPlannerGoldenTests). Przekrój narysowany starszą wersją: „aktualny (nowa wersja
+        /// rysowałaby inaczej)” — decyzja użytkownika P2.
+        /// </summary>
+        public const int Version = 1;
+
         // ── wejście ─────────────────────────────────────────────────────────
 
         public enum DistKind { Main, UB, NibUB, TInNib, Add }
@@ -34,6 +42,14 @@ namespace BricsCadRc.Core
             public string SymbolSide = "";   // UB: "Left" — krawędź przy początku pręta, "Right" — przy końcu
             /// <summary>Oś pręta wzorcowego (RC_SINGLE_BAR) w układzie lokalnym kształtu — „kopia pręta” w widoku; null = schemat.</summary>
             public List<(double X, double Y)> ShapeLocal;
+
+            // ── źródło (bezpiecznik przekrojów; nie wpływa na wynik planera) ──
+            /// <summary>Handle rozkładu RC_BAR_BLOCK („X8”), z którego pochodzi wpis; "" gdy brak.</summary>
+            public string SourceHandle = "";
+            /// <summary>Wymiary A–E pręta wzorcowego (RC_SINGLE_BAR); null gdy brak pręta.</summary>
+            public double[] SourceDims;
+            /// <summary>Handle pręta wzorcowego rozkładu („X8”); "" gdy brak.</summary>
+            public string SourceBarHandle = "";
         }
 
         public sealed class NibEdge
@@ -120,6 +136,21 @@ namespace BricsCadRc.Core
             public double UMin, UMax;
             public double NibTop;                     // v wierzchu nibu (0 gdy brak)
             public List<string> Warnings = new List<string>();
+
+            // ── istotne wejście (bezpiecznik przekrojów; nie wpływa na rysunek) ──
+            /// <summary>Rozkłady, które dały ≥ 1 kropkę albo pręt w widoku (oznaczane w chwili dodania, przed AlignMesh), kolejność wejścia.</summary>
+            public List<Dist> UsedDists = new List<Dist>();
+            /// <summary>Pale narysowane w przekroju (wejście X, Y, R), kolejność wejścia.</summary>
+            public List<(double X, double Y, double R)> UsedPiles = new List<(double X, double Y, double R)>();
+            /// <summary>Średnice wyznaczające poziomy B2 / T2 (dB1, dT1 — ze WSZYSTKICH rozkładów Main warstwy).</summary>
+            public (double B1, double T1) LevelDiameters;
+        }
+
+        /// <summary>Oznacza rozkład jako użyty (raz, referencja).</summary>
+        private static void MarkUsed(Result res, Dist d)
+        {
+            foreach (var u in res.UsedDists) if (ReferenceEquals(u, d)) return;
+            res.UsedDists.Add(d);
         }
 
         public const double TextHeight   = 50.0;   // 2.5 mm w 1:20
@@ -179,6 +210,7 @@ namespace BricsCadRc.Core
             double DiaOf(string code) => inp.Dists.Where(d => d.LayerCode == code && d.Kind == DistKind.Main)
                                                   .Select(d => (double)d.Diameter).DefaultIfEmpty(code.StartsWith("T") ? 12 : 10).Max();
             double dB1 = DiaOf("B1"), dT1 = DiaOf("T1");
+            res.LevelDiameters = (dB1, dT1);
             double cbT = inp.CoverBottom + inp.UbTolerance, ctT = inp.CoverTop + inp.UbTolerance;
             string Dir(string code) => code != null && code.Length > 1 ? code.Substring(1) : "1";
             double Level(string code, double d)
@@ -239,6 +271,7 @@ namespace BricsCadRc.Core
                             if (!InConcrete(U(s), v)) continue;
                             res.Dots.Add(new Dot { U = U(s), V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = top,
                                                    Mesh = d.Kind == DistKind.Main, TinNib = d.Kind == DistKind.TInNib, NomSpacing = NominalSpacing(d) });
+                            MarkUsed(res, d);
                         }
                     }
                 }
@@ -297,6 +330,7 @@ namespace BricsCadRc.Core
                             {
                                 res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, dia),
                                                            Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Kind = d.Kind });
+                                MarkUsed(res, d);
                                 continue;
                             }
                         }
@@ -306,8 +340,11 @@ namespace BricsCadRc.Core
                             var up = piece.Select(p => (U(p.s), p.v)).ToList();
                             foreach (var part in SplitByConcrete(up, InConcrete))
                                 if (part.Count >= 2)
+                                {
                                     res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, dia),
                                                                Diameter = d.Diameter, PosNr = d.PosNr, Top = top });
+                                    MarkUsed(res, d);
+                                }
                         }
                     }
                 }
@@ -344,6 +381,7 @@ namespace BricsCadRc.Core
                     double u = U(along);
                     if (!InConcrete(u, -T + 1.0)) continue;
                     res.Piles.Add(new Pile { U = u, Width = 2 * hw, Top = -T + PileEmbed, Bottom = -T - PileDepth });
+                    res.UsedPiles.Add((px, py, r));
                 }
 
             // 5. Wymiary: grubość przy lewym końcu, nib (szerokość, uskok, wysokość) przy każdym końcu z nibem
