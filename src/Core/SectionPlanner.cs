@@ -18,8 +18,29 @@ namespace BricsCadRc.Core
         /// Wersja logiki planera (bezpiecznik przekrojów, SectionFingerprint): podbić przy KAŻDEJ zmianie wyniku dla tego samego
         /// wejścia (złoty test tests/SectionPlannerGoldenTests). Przekrój narysowany starszą wersją: „aktualny (nowa wersja
         /// rysowałaby inaczej)” — decyzja użytkownika P2.
+        /// 3 (decyzja użytkownika 2026-10-11, zasady Z1–Z6): symbole zakończeń prętów w widoku (<see cref="Input.EndStyle"/>) —
+        /// rzeczywiste końce prętów prostych i wolne końce ramion prętów giętych, zakład z odsunięciem w poprzek; płyty i belki.
+        /// (2 — cofnięte K6, nie używać ponownie.)
         /// </summary>
-        public const int Version = 1;
+        public const int Version = 3;
+
+        /// <summary>
+        /// Styl symbolu zakończenia pręta w widoku (Z1–Z6, decyzja użytkownika 2026-10-11): None — bez symboli (dawny rysunek, złote testy
+        /// wzorca bit w bit), Tick (S1 „UK tick”, decyzja użytkownika 2026-10-11) — kreska 45° do wnętrza przekroju, cała w betonie, długości
+        /// <see cref="DefaultEndSymbolLength"/>. Styl NIE jest zapisywany w przekroju — w programie jeden styl (<see cref="DefaultEndStyle"/>).
+        /// </summary>
+        public enum EndStyle { None = 0, Tick = 1 }
+
+        /// <summary>Styl zakończeń prętów w RC_SECTION / RC_SECTION_UPDATE / RC_SECTION_CHECK (PrepareSection) — jeden w programie.</summary>
+        public const EndStyle DefaultEndStyle = EndStyle.Tick;
+
+        /// <summary>Krótka nazwa stylu zakończeń do komunikatów: „S1” / „brak”.</summary>
+        public static string EndStyleShort(EndStyle e) => e == EndStyle.Tick ? "S1" : "brak";
+
+        /// <summary>Z1: długość kreski zakończenia [mm] — na stałe 30 (decyzja użytkownika 2026-10-11; w 1:20 = 1,5 mm na papierze).</summary>
+        public const double DefaultEndSymbolLength = 30.0;
+        /// <summary>Z2: odsunięcie pręta zakładu w poprzek (do wnętrza przekroju) [mm].</summary>
+        public const double LapOffset = 25.0;
 
         // ── wejście ─────────────────────────────────────────────────────────
 
@@ -115,6 +136,11 @@ namespace BricsCadRc.Core
             public double UbTolerance = 5;
             public string Ssl;               // np. "21.925" (null = bez znacznika)
             public bool   DrawPiles = true;
+            /// <summary>
+            /// Z1–Z6 (wersja 3): styl symboli zakończeń prętów w widoku. None = bez symboli i bez odsunięcia zakładów (wynik bit w bit
+            /// jak wersja 1 — złote testy wzorca); PrepareSection ustawia <see cref="DefaultEndStyle"/>.
+            /// </summary>
+            public EndStyle EndStyle = EndStyle.None;
         }
 
         // ── wyjście ─────────────────────────────────────────────────────────
@@ -146,6 +172,13 @@ namespace BricsCadRc.Core
             public List<(double U, double V)> Path = new List<(double, double)>();
             public int Diameter; public string PosNr; public bool Top;
             public DistKind Kind;
+            /// <summary>
+            /// Z1 / Z3 (wersja 3): początek / koniec ścieżki to rzeczywisty koniec pręta (pręt prosty) albo wolny koniec ramienia
+            /// (pręt gięty) — nie urwanie, nie koniec cięcia, nie zagięcie (Z4). Symbol zakończenia tylko przy <see cref="Input.EndStyle"/> ≠ None.
+            /// </summary>
+            public bool End0, End1;
+            /// <summary>Wersja 3: droga pręta sprzed symboli zakończeń (do położenia opisu); null = bez symboli (Path).</summary>
+            internal List<(double U, double V)> LabelPath;
             /// <summary>Obrys pręta z grubością (zamknięty), jak pręt w elewacji.</summary>
             public List<(double U, double V)> Outline;
         }
@@ -496,21 +529,26 @@ namespace BricsCadRc.Core
                             var axis = FitShape(d.ShapeLocal, target, isU, top, alignTop: false);
                             if (axis != null && axis.Any(p => p.Item1 >= Math.Min(U(s0), U(s1)) - 1 && p.Item1 <= Math.Max(U(s0), U(s1)) + 1))
                             {
+                                // Z3: wolne końce ramion pręta giętego (kształt otwarty)
+                                bool open = Dist2(axis[0], axis[axis.Count - 1]) > 1.0;
                                 res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, dia),
-                                                           Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Kind = d.Kind });
+                                                           Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Kind = d.Kind,
+                                                           End0 = open, End1 = open });
                                 MarkUsed(res, d);
                                 continue;
                             }
                         }
                         // przytnij do zakresu cięcia i betonu (otwory, końce cięcia)
+                        var endA = (U: U(path[0].s), V: path[0].v);
+                        var endB = (U: U(path[path.Count - 1].s), V: path[path.Count - 1].v);
                         foreach (var piece in ClipPath(path, s0, s1))
                         {
                             var up = piece.Select(p => (U(p.s), p.v)).ToList();
                             foreach (var part in SplitByConcrete(up, InConcrete))
                                 if (part.Count >= 2)
                                 {
-                                    res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, dia),
-                                                               Diameter = d.Diameter, PosNr = d.PosNr, Top = top });
+                                    res.Bars.Add(RealEnds(new BarLine { Path = part, Outline = OutlineOf(part, dia),
+                                                                        Diameter = d.Diameter, PosNr = d.PosNr, Top = top }, endA, endB));
                                     MarkUsed(res, d);
                                 }
                         }
@@ -601,8 +639,12 @@ namespace BricsCadRc.Core
                 res.SslText = inp.Ssl.Trim();
             }
 
-            // 7. Opisy
-            PlaceLabels(res, T);
+            // 6a. Z1–Z6 (wersja 3): zakład — odsunięcie w poprzek, symbole zakończeń prętów w widoku; styl None — dawny rysunek
+            List<(double u0, double v0, double u1, double v1)> symbolBoxes = null;
+            if (inp.EndStyle != EndStyle.None) symbolBoxes = ApplyEndSymbols(res, DefaultEndSymbolLength, InConcrete);
+
+            // 7. Opisy (wersja 3: symbole zakończeń jako przeszkody)
+            PlaceLabels(res, T, symbolBoxes);
             return res;
         }
 
@@ -923,8 +965,11 @@ namespace BricsCadRc.Core
                             foreach (var part in SplitByConcrete(up, inConcrete))
                                 if (part.Count >= 2)
                                 {
-                                    res.Bars.Add(new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
-                                                               PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam });
+                                    var bl = new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
+                                                           PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam };
+                                    // Z1: rzeczywiste końce pręta prostego belki; ramię pręta giętego (11 / 21) rysowane jako linia — bez
+                                    // rozróżnienia końca wolnego i zagięcia, więc bez symbolu
+                                    res.Bars.Add(bent ? bl : RealEnds(bl, (U(a), v), (U(bEnd), v)));
                                     MarkUsed(res, d);
                                 }
                         }
@@ -936,6 +981,153 @@ namespace BricsCadRc.Core
             foreach (var dt in res.Dots.Where(x => x.Beam && x.Bent).ToList())
                 if (res.Dots.Any(o => o != dt && o.Beam && !o.Bent && o.Top == dt.Top && Math.Abs(o.U - dt.U) < 1.0 && Math.Abs(o.V - dt.V) < 1.0))
                     dt.V += dt.Top ? -dt.Diameter : dt.Diameter;
+        }
+
+        // ── zakończenia prętów w widoku (wersja 3, zasady Z1–Z6) ──────────────
+
+        private static double Dist2((double U, double V) a, (double U, double V) b)
+            => Math.Sqrt((a.U - b.U) * (a.U - b.U) + (a.V - b.V) * (a.V - b.V));
+
+        private static bool Near((double U, double V) a, (double U, double V) b) => Math.Abs(a.U - b.U) < 0.5 && Math.Abs(a.V - b.V) < 0.5;
+
+        /// <summary>
+        /// Z1 / Z4: końce kawałka pręta (po przycięciu do zakresu cięcia i betonu) będące rzeczywistymi końcami pręta (<paramref name="endA"/>,
+        /// <paramref name="endB"/> — końce ścieżki pręta w u, v). Koniec na urwaniu, na końcu cięcia albo przycięty do betonu — bez flagi.
+        /// </summary>
+        private static BarLine RealEnds(BarLine b, (double U, double V) endA, (double U, double V) endB)
+        {
+            if (b.Path.Count >= 2)
+            {
+                var a = b.Path[0]; var z = b.Path[b.Path.Count - 1];
+                b.End0 = Near(a, endA) || Near(a, endB);
+                b.End1 = Near(z, endA) || Near(z, endB);
+            }
+            return b;
+        }
+
+        /// <summary>Pręt zamknięty (strzemię w widoku) — bez symboli i bez zakładu.</summary>
+        private static bool IsClosed(BarLine b) => b.Path.Count >= 3 && Dist2(b.Path[0], b.Path[b.Path.Count - 1]) <= 1.0;
+
+        /// <summary>Odcinek ścieżki przy końcu (początek / koniec) jest poziomy (pręt w widoku leży wzdłuż cięcia).</summary>
+        private static bool EndHorizontal(BarLine b, bool atStart, out (double U, double V) end)
+        {
+            int n = b.Path.Count;
+            var p = atStart ? b.Path[0] : b.Path[n - 1];
+            var q = atStart ? b.Path[1] : b.Path[n - 2];
+            end = p;
+            return Math.Abs(p.V - q.V) < 0.5 && Math.Abs(p.U - q.U) > 1.0;
+        }
+
+        /// <summary>
+        /// Z2: zakład — dwa pręty na tym samym poziomie, z których co najmniej jeden kończy się (rzeczywisty koniec, odcinek poziomy)
+        /// wewnątrz poziomego odcinka drugiego. Jeden z nich odsunięty w poprzek o <see cref="LapOffset"/> do wnętrza przekroju (górny —
+        /// w dół, dolny — w górę): prosty obok giętego (UB / L) — prosty; dwa proste — leżący dalej w prawo (większe u początku);
+        /// dwa gięte — bez odsunięcia. Każdy pręt odsuwany najwyżej raz; odsunięcie wychodzące z betonu — pominięte.
+        /// </summary>
+        private static void OffsetLaps(Result res, Func<double, double, bool> inConcrete)
+        {
+            var shifted = new HashSet<BarLine>();
+            var bars = res.Bars.Where(b => b.Path.Count >= 2 && !IsClosed(b)).ToList();
+            bool HorizSegAt(BarLine y, double u, double v)
+            {
+                var p = y.Path;
+                for (int i = 0; i + 1 < p.Count; i++)
+                {
+                    if (Math.Abs(p[i].V - p[i + 1].V) > 0.5 || Math.Abs(p[i].V - v) > 0.5) continue;
+                    double lo = Math.Min(p[i].U, p[i + 1].U), hi = Math.Max(p[i].U, p[i + 1].U);
+                    if (u > lo + 1.0 && u < hi - 1.0) return true;
+                }
+                return false;
+            }
+            foreach (var x in bars)
+                foreach (bool atStart in new[] { true, false })
+                {
+                    if (!(atStart ? x.End0 : x.End1)) continue;
+                    if (!EndHorizontal(x, atStart, out var e)) continue;
+                    foreach (var y in bars)
+                    {
+                        if (ReferenceEquals(x, y) || !HorizSegAt(y, e.U, e.V)) continue;
+                        bool sx = x.Path.Count == 2, sy = y.Path.Count == 2;
+                        BarLine mv;
+                        if (sx && !sy) mv = x;
+                        else if (sy && !sx) mv = y;
+                        else if (sx && sy) mv = y.Path.Min(q => q.U) > x.Path.Min(q => q.U) ? y : x;
+                        else continue;
+                        if (shifted.Contains(x) || shifted.Contains(y)) continue;
+                        double dv = (mv.Top ? -1 : 1) * LapOffset;
+                        var np = mv.Path.Select(q => (q.U, q.V + dv)).ToList();
+                        if (!np.All(q => inConcrete(q.Item1, q.Item2))) continue;
+                        mv.Path = np;
+                        mv.Outline = OutlineOf(np, mv.Diameter);
+                        shifted.Add(mv);
+                    }
+                }
+        }
+
+        /// <summary>
+        /// Z1–Z6 (wersja 3): zakłady (<see cref="OffsetLaps"/>), potem symbol na każdym oznaczonym końcu (<see cref="BarLine.End0"/> /
+        /// <see cref="BarLine.End1"/>) — do wnętrza przekroju (pręt prosty: górny w dół, dolny w górę; pręt gięty: prostopadle do ramienia
+        /// w stronę środka obwiedni pręta), CAŁY w betonie i bez wychodzenia poza koniec pręta:
+        /// S1 „UK tick” — ramię skrócone o s = L / √2 (L = <paramref name="L"/>, <see cref="DefaultEndSymbolLength"/> = 30 mm), kreska 45° od skróconego
+        /// końca do punktu koniec + s · n (zasięg pręta bez zmian).
+        /// Ramię krótsze niż s + 1 (kreska) albo symbol poza betonem — bez symbolu. Zwraca prostokąty symboli (przeszkody dla opisów;
+        /// strona przy pręcie bez marginesu, żeby nie blokować strzałki opisu samego pręta).
+        /// </summary>
+        private static List<(double u0, double v0, double u1, double v1)> ApplyEndSymbols(Result res, double L, Func<double, double, bool> inConcrete)
+        {
+            OffsetLaps(res, inConcrete);
+            var boxes = new List<(double u0, double v0, double u1, double v1)>();
+            double s = L / Math.Sqrt(2.0);
+            foreach (var b in res.Bars)
+            {
+                if (!(b.End0 || b.End1) || b.Path.Count < 2 || IsClosed(b)) continue;
+                var p = new List<(double U, double V)>(b.Path);
+                bool straight = p.Count == 2 && Math.Abs(p[0].V - p[1].V) < 0.5;
+                double cu = (p.Min(q => q.U) + p.Max(q => q.U)) / 2, cv = (p.Min(q => q.V) + p.Max(q => q.V)) / 2;
+                bool changed = false;
+                foreach (bool atStart in new[] { false, true })
+                {
+                    if (!(atStart ? b.End0 : b.End1)) continue;
+                    int n = p.Count;
+                    var P = atStart ? p[0] : p[n - 1];
+                    var prev = atStart ? p[1] : p[n - 2];
+                    double len = Dist2(P, prev);
+                    if (len < 1e-6) continue;
+                    double tu = (P.U - prev.U) / len, tv = (P.V - prev.V) / len;      // kierunek wzdłuż ramienia, na zewnątrz pręta
+                    // normalna do wnętrza: pręt prosty — wg warstwy; gięty — w stronę środka obwiedni pręta
+                    var cands = new List<(double U, double V)>();
+                    if (straight) cands.Add((0, b.Top ? -1 : 1));
+                    else
+                    {
+                        var n1 = (U: -tv, V: tu);
+                        double dot = n1.U * (cu - P.U) + n1.V * (cv - P.V);
+                        if (Math.Abs(dot) < 1e-6) dot = b.Top ? -n1.V : n1.V;
+                        var nIn = dot >= 0 ? n1 : (U: -n1.U, V: -n1.V);
+                        cands.Add(nIn); cands.Add((-nIn.U, -nIn.V));
+                    }
+                    if (len < s + 1.0) continue;
+                    foreach (var nn in cands)
+                    {
+                        var tip = (U: P.U + s * nn.U, V: P.V + s * nn.V);
+                        var root = (U: P.U - s * tu, V: P.V - s * tv);
+                        var mid = (U: (root.U + tip.U) / 2, V: (root.V + tip.V) / 2);
+                        if (!inConcrete(tip.U, tip.V) || !inConcrete(mid.U, mid.V)) continue;
+                        if (atStart) { p[0] = root; p.Insert(0, tip); }
+                        else { p[n - 1] = root; p.Add(tip); }
+                        // prostokąt symbolu: margines 5 mm poza stroną przy pręcie
+                        double u0 = Math.Min(root.U, tip.U) - 5, u1 = Math.Max(root.U, tip.U) + 5;
+                        double v0 = Math.Min(root.V, tip.V), v1 = Math.Max(root.V, tip.V);
+                        if (nn.V > 0.5) v1 += 5;
+                        else if (nn.V < -0.5) v0 -= 5;
+                        else { v0 -= 5; v1 += 5; }
+                        boxes.Add((u0, v0, u1, v1));
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed) { b.LabelPath = b.Path; b.Path = p; b.Outline = OutlineOf(p, b.Diameter); }
+            }
+            return boxes;
         }
 
         private static void AddNibDims(Result res, double uEdge, int inward, double w, double T, double vNibTop)
@@ -975,7 +1167,7 @@ namespace BricsCadRc.Core
 
         private static double TextWidth(string t) => Math.Max(1, t.Length) * TextHeight * 0.8 + 10;
 
-        private static void PlaceLabels(Result res, double T)
+        private static void PlaceLabels(Result res, double T, List<(double u0, double v0, double u1, double v1)> obstacles = null)
         {
             var occupied = new List<(double u0, double v0, double u1, double v1)>();
             bool Free(double u0, double v0, double u1, double v1)
@@ -1007,6 +1199,8 @@ namespace BricsCadRc.Core
             }
             foreach (var dm in res.Dims.Where(x => !x.Vertical))
                 occupied.Add((Math.Min(dm.U1, dm.U2) - 20, dm.LineV - 12, Math.Max(dm.U1, dm.U2) + 20, dm.LineV + TextHeight + 30));
+            // wersja 3: symbole zakończeń prętów — przeszkody (strzałka opisu nie przechodzi przez symbol); bez symboli — bez zmian
+            if (obstacles != null) occupied.AddRange(obstacles);
 
             // T IN NIB: numery w pustym miejscu nad nibem — pierwszy nad nibem (między uskokiem a krawędzią),
             // kolejne dalej na zewnątrz płyty, w jednym rzędzie (jak na rysunkach ASD)
@@ -1048,9 +1242,11 @@ namespace BricsCadRc.Core
             foreach (var bar in res.Bars)
             {
                 var horiz = new List<(double u0, double u1, double v)>();
-                for (int i = 0; i + 1 < bar.Path.Count; i++)
-                    if (Math.Abs(bar.Path[i].V - bar.Path[i + 1].V) < 0.5 && Math.Abs(bar.Path[i].U - bar.Path[i + 1].U) > 60)
-                        horiz.Add((Math.Min(bar.Path[i].U, bar.Path[i + 1].U), Math.Max(bar.Path[i].U, bar.Path[i + 1].U), bar.Path[i].V));
+                // wersja 3: położenia opisu liczone z drogi pręta sprzed symboli zakończeń (te same kandydaty co bez symboli)
+                var lp = bar.LabelPath ?? bar.Path;
+                for (int i = 0; i + 1 < lp.Count; i++)
+                    if (Math.Abs(lp[i].V - lp[i + 1].V) < 0.5 && Math.Abs(lp[i].U - lp[i + 1].U) > 60)
+                        horiz.Add((Math.Min(lp[i].U, lp[i + 1].U), Math.Max(lp[i].U, lp[i + 1].U), lp[i].V));
                 if (horiz.Count == 0) continue;
                 var seg = bar.Top ? horiz.OrderByDescending(h => h.v).First() : horiz.OrderBy(h => h.v).First();
                 double w = TextWidth(bar.PosNr);
@@ -1066,6 +1262,8 @@ namespace BricsCadRc.Core
                         // spód betonu pod opisem (belka E5: pod spodem belki); bez belki = −T
                         double vb = bar.Top ? LabelGap + row * LabelRowStep : LocalBottom(res, u, T) - LabelGap - TextHeight - row * LabelRowStep;
                         if (!Free(u - w / 2, vb, u + w / 2, vb + TextHeight)) continue;
+                        // wersja 3: grot na rysowanej części pręta (nie na skróconym końcu pod kreską zakończenia)
+                        if (bar.LabelPath != null && !OnHorizontal(bar, u, seg.v, 1.0)) continue;
                         // grot tylko tam, gdzie pręt jest jednoznaczny (żaden inny pręt w widoku nie leży obok)
                         if (pass == 0 && res.Bars.Any(o => o != bar && OnHorizontal(o, u, seg.v, 25.0))) continue;
                         // pas pod/nad tekstem do pręta nie może ciąć innych opisów

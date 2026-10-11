@@ -228,6 +228,26 @@ namespace BricsCadRc.Tests
             yield return new TestCaseData("vertical", (Func<SectionPlanner.Input>)CaseVertical);
             yield return new TestCaseData("fitshape", (Func<SectionPlanner.Input>)CaseFitShape);
             yield return new TestCaseData("beam", (Func<SectionPlanner.Input>)CaseBeam);
+            // wersja 3 (zakończenia prętów Z1–Z6, decyzja użytkownika 2026-10-11): te same wejścia w stylu S1 „UK tick” (kreska 30 mm, decyzja 2026-10-11)
+            foreach (var (name, make) in new (string, Func<SectionPlanner.Input>)[]
+                     { ("nib", CaseNib), ("hole", CaseHole), ("fitshape", CaseFitShape), ("beam", CaseBeam), ("along", CaseBeamAlong) })
+                yield return new TestCaseData(name + "-" + SectionPlanner.EndStyleShort(SectionPlanner.EndStyle.Tick), Styled(make, SectionPlanner.EndStyle.Tick));
+        }
+
+        /// <summary>Wejście w stylu zakończeń <paramref name="st"/>.</summary>
+        public static Func<SectionPlanner.Input> Styled(Func<SectionPlanner.Input> make, SectionPlanner.EndStyle st)
+            => () => { var i = make(); i.EndStyle = st; return i; };
+
+        /// <summary>
+        /// 7. (tylko style wersji 3) Przekrój WZDŁUŻ belki krawędziowej (jak CaseBeam, cięcie pionowe x = 460 w trzonie belki, pas belki na całej długości cięcia):
+        /// pręty belki w widoku z rzeczywistymi końcami (BB / BT — 45 od lica końca), strzemiona jako pionowe ramiona, płyta urwana.
+        /// </summary>
+        public static SectionPlanner.Input CaseBeamAlong()
+        {
+            var inp = CaseBeam();
+            inp.CutAlongX = false; inp.CutCoord = 460; inp.S0 = -200; inp.S1 = 2500; inp.LookSign = -1;
+            inp.Beams[0].S0 = 0; inp.Beams[0].S1 = 4000;      // strefa belki wzdłuż krawędzi — pas na całej linii cięcia
+            return inp;
         }
 
         /// <summary>Skróty zapisane na niezmienionym kodzie SectionPlanner (przed polami Used* / Source*).</summary>
@@ -243,6 +263,15 @@ namespace BricsCadRc.Tests
             // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
             // ostrzeżenia o otulinie UB 03 (jedyna różnica względem 644610bd… — sprawdzone: zrzut + dawna linia WARN = dawny skrót)
             ["beam"]     = "c91b74cce076eb448eda7a576c97af960d0d34d1f694a57e3c679d2f659a67ce",
+            // wersja 3 (zakończenia prętów Z1–Z6, decyzja użytkownika 2026-10-11) — zapisane po przejrzeniu zrzutów (render: kreski
+            // do wnętrza, w betonie, zasięg prętów bez zmian, zakład T1 104 / B1 05 odsunięty o 25, UB 01 / 03 — symbole na wolnych końcach,
+            // strzemię bez symboli); „hole” w stylach = „hole” bez stylu (Z4: pręty przechodzą przez otwór / urwanie);
+            // kreska 30 mm (2026-10-11): względem 50 mm zmieniają się tylko linie BAR z kreskami (ramię skrócone o 30/√2), opisy bez zmian
+            ["nib-S1"]      = "e81a1897ff9368bed99fb0b5c8fe25c71effb7a1a2193c1de28bc38d43664abc",
+            ["hole-S1"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
+            ["fitshape-S1"] = "92cac570eaefcbd2391b55a5e5fcfc1b8feb4e38fb8ec309629d495b2fd6b3b9",
+            ["beam-S1"]     = "7008be454337ee42b8d7ec232c832a93dea2afbe62ef45654d0db5839ee9f10e",
+            ["along-S1"]    = "6f338ab9f0944a04348a286c900a61f552a5a9f6daaa8c1cab6603ab75e143ab",
         };
 
         [TestCaseSource(nameof(Cases))]
@@ -250,11 +279,12 @@ namespace BricsCadRc.Tests
         {
             var dump = Dump(SectionPlanner.Plan(make()));
             string sha = Sha(dump);
-            if (sha != Golden[name])
+            string gold = Golden.TryGetValue(name, out var g) ? g : "(brak)";
+            if (sha != gold)
             {
                 string path = Path.Combine(Path.GetTempPath(), "section-golden-" + name + ".txt");
                 File.WriteAllText(path, dump);
-                Assert.Fail($"{name}: SHA {sha} ≠ złoty {Golden[name]} (zrzut: {path})");
+                Assert.Fail($"{name}: SHA {sha} ≠ złoty {gold} (zrzut: {path})");
             }
         }
 

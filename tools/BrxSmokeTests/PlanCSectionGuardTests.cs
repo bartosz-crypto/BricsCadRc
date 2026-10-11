@@ -472,6 +472,54 @@ namespace BricsCadRc.BrxSmokeTests
         }
 
         // ================================================================
+        // SG17 — przekrój narysowany wersją 1 planera (bez symboli zakończeń) → aktualny + P2, bez chmurki (Z6, 2026-10-11)
+        // ================================================================
+
+        [CommandMethod("RCSMOKE_SG_SG17", CommandFlags.Modal)]
+        public void SG17()
+        {
+            const string step = "SG17";
+            Run(step, db =>
+            {
+                Check(step, "rekord A przerobiony na wersję 1 (VER=1, META „Ver:1”, skrót wyniku planera bez symboli zakończeń) → Aktualny, info „nowa wersja programu rysowałaby …”, bez przyczyn; po przywróceniu rekordu — bez informacji", () =>
+                {
+                    object saved;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var title = (MText)tr.GetObject(_titleA, OpenMode.ForWrite);
+                        saved = Call(Engine, "ReadRecord", tr, title);
+                        var rec = Call(Engine, "ReadRecord", tr, title);
+                        var comps = (System.Collections.Generic.SortedDictionary<string, string>)Prop(rec, "Components");
+                        int ver = (int)Plugin.GetType(Planner, true).GetField("Version").GetValue(null);
+                        comps["META"] = comps["META"].Replace("Ver:" + ver, "Ver:1");
+                        Plugin.GetType("BricsCadRc.Core.SectionRecord", true).GetField("Version").SetValue(rec, 1);
+                        Plugin.GetType("BricsCadRc.Core.SectionRecord", true).GetField("Hash").SetValue(rec, Call("BricsCadRc.Core.SectionFingerprint", "Hash", comps));
+                        // wynik planera wersji 1 = ten sam przekrój bez symboli zakończeń (styl None)
+                        var ctx = Ctx(db, 2000);
+                        var inp = Prop(ctx, "Input");
+                        var fi = inp.GetType().GetField("EndStyle");
+                        fi.SetValue(inp, Enum.Parse(fi.FieldType, "None"));
+                        string dig = (string)Call("BricsCadRc.Core.SectionFingerprint", "ResultDigest", PlanOf(ctx));
+                        Plugin.GetType("BricsCadRc.Core.SectionRecord", true).GetField("ResultDigest").SetValue(rec, dig);
+                        Call(Engine, "WriteRecord", tr, title, rec);
+                        tr.Commit();
+                    }
+                    var a = SectionA(db, true);
+                    var info = ((IEnumerable)Prop(a, "Info")).Cast<string>().ToList();
+                    string r = Eq("status", Status(a), "Aktualny") + "; " + Eq("przyczyny", Reasons(a).Count, 0) + "; "
+                             + Eq("P2", (bool)Prop(a, "NewVersionDiffers"), true) + "; info: " + string.Join(" | ", info);
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        Call(Engine, "WriteRecord", tr, (MText)tr.GetObject(_titleA, OpenMode.ForWrite), saved);
+                        tr.Commit();
+                    }
+                    var b = SectionA(db, true);
+                    return r + "; " + Eq("po przywróceniu", Status(b), "Aktualny") + "; " + Eq("P2 po przywróceniu", (bool)Prop(b, "NewVersionDiffers"), false);
+                });
+            });
+        }
+
+        // ================================================================
         // SG8 — COPY przekroju / samego opisu / samego tytułu
         // ================================================================
 

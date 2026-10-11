@@ -185,7 +185,8 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(inp);
             Assert.That(r.Dots.Any(d => d.PosNr == "09" || d.PosNr == "10"), Is.False);
             Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
-            Assert.That(SectionPlanner.Version, Is.EqualTo(1));
+            // wersja 3 (zakończenia prętów Z1–Z6, 2026-10-11); BC / BU nadal pominięte
+            Assert.That(SectionPlanner.Version, Is.EqualTo(3));
         }
     }
 }

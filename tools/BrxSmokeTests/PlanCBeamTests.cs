@@ -31,6 +31,7 @@
 // K4    G528S: H 528 → 600 — pręty boczne BS H12 „2x2 H12-nn SIDE” i UB SIDE (BC, kształt 21, B 485) „2x1 H12-nn UB SIDE” na końcach.
 // K5    S528: B IN NIB (BN dołem H10 „1 H10-nn B IN NIB”) — numer i długości jak rozkład siatki B2 najbliższy belce (Mesh przed Beam).
 // K6    cofnięte 2026-10-11 (przekrój jak e1644bd, SectionPlanner.Version 1): BU i UB SIDE (BC) pominięte w przekroju, bez odgięć 45°.
+// Z1–Z6 2026-10-11 (SectionPlanner.Version 3): symbole zakończeń prętów S1 (kreska 45° 30 mm do wnętrza), zakład odsunięty o 25 mm.
 // K8    C17 / C3: Prepare GA C12 (kopie GA P06 bez ramek arkusza SD-PILED-RAFT; folder RC_BEAM_C12) — strefy z opisów „xxxTHK”
 //       (PLOT 17: 450; PLOT 3: 600 / 675 / 975), C17PDF — kopia z przekrojem przez belkę do PDF; S319 / S319PDF — przekrój przez prawą nogę 319.
 
@@ -1044,13 +1045,13 @@ namespace BricsCadRc.BrxSmokeTests
                     return $"odcinek {(ax ? "X" : "Y")} {Dv(seg, "FaceLo"):0}..{Dv(seg, "FaceHi"):0} oś {axis:0.#}; pasy: " +
                            string.Join(", ", beams.Select(x => $"{Dv(x, "S0"):0}..{Dv(x, "S1"):0} H={Dv(x, "Height"):0}"));
                 });
-                Check(step, "B: pręty belki w widoku — BM liniami dół (−230) i góra (−55, warstwa górna), strzemiona 51 jako pionowe ramiona (−244…−41), profil −300; U-bary BU pominięte (K6)", () =>
+                Check(step, "B: pręty belki w widoku — BM liniami dół (−230) i góra (−55, warstwa górna; zakład +/− 25, symbole zakończeń S1 — wersja 3), strzemiona 51 jako pionowe ramiona (−244…−41), profil −300; U-bary BU pominięte (K6)", () =>
                 {
                     if (plan == null) throw new AssertFail("brak planu");
                     var pos = BeamPositions(db);
                     var bars = L(plan, "Bars").Where(b => Convert.ToString(Prop(b, "Kind"), Inv) == "Beam").ToList();
                     List<(double U, double V)> P(object b) => ((System.Collections.IEnumerable)Prop(b, "Path")).Cast<object>().Select(p => (ValueTuple<double, double>)p).Select(p => (p.Item1, p.Item2)).ToList();
-                    int nb = 0, nt = 0, nl = 0;
+                    int nb = 0, nt = 0, nl = 0, nlap = 0, nsym = 0;
                     foreach (var b in bars)
                     {
                         var pth = P(b);
@@ -1067,7 +1068,15 @@ namespace BricsCadRc.BrxSmokeTests
                         {
                             bool topL = (bool)Prop(b, "Top");
                             double v = topL ? -55 : -230;
-                            if (pth.Any(p => Math.Abs(p.V - v) > 0.01)) throw new AssertFail($"pręt {pnr} (BM, góra={topL}) v={pth[0].V:0.#}, oczekiwano {v}");
+                            // wersja 3 (zakończenia Z1–Z2): poziom = najdłuższy odcinek poziomy; pręt zakładu odsunięty o 25 do wnętrza
+                            // (góra w dół, dół w górę); symbole na końcach — odcinki ukośne / pionowe poza poziomem
+                            var hs = Enumerable.Range(0, pth.Count - 1).Where(i => Math.Abs(pth[i].V - pth[i + 1].V) < 0.01)
+                                               .OrderByDescending(i => Math.Abs(pth[i + 1].U - pth[i].U)).ToList();
+                            if (hs.Count == 0) throw new AssertFail($"pręt {pnr} (BM) bez odcinka poziomego");
+                            double hv = pth[hs[0]].V, lapV = v + (topL ? -25 : 25);
+                            if (Math.Abs(hv - v) > 0.01 && Math.Abs(hv - lapV) > 0.01) throw new AssertFail($"pręt {pnr} (BM, góra={topL}) v={hv:0.#}, oczekiwano {v} albo {lapV} (zakład)");
+                            if (Math.Abs(hv - lapV) <= 0.01) nlap++;
+                            if (pth.Count > 2) nsym++;
                             if (topL) nt++; else nb++;
                         }
                     }
@@ -1076,7 +1085,8 @@ namespace BricsCadRc.BrxSmokeTests
                     if (!prof.Any(p => Math.Abs(p.Item3 + 300) < 1e-6 && p.Item4 == 0)) throw new AssertFail("brak trzonu −300: " + string.Join(" ", prof));
                     int lbl = L(plan, "Labels").Count(l => pos.Any(kv => kv.Value.code == "BL" && kv.Key.ToString("00", Inv) == (string)Prop(l, "Text")));
                     if (lbl != 1) throw new AssertFail("opisy strzemion: " + lbl);
-                    return $"BM: dół {nb} linii (−230), góra {nt} (−55), strzemiona {nl} pionowych ramion, opis strzemion 1";
+                    if (nsym < 1) throw new AssertFail("wersja 3: brak symboli zakończeń na prętach BM w widoku");
+                    return $"BM: dół {nb} linii (−230), góra {nt} (−55), w tym odsuniętych w zakładzie {nlap}, z symbolem zakończenia {nsym}; strzemiona {nl} pionowych ramion, opis strzemion 1";
                 });
                 Check(step, "RC_SECTION_CHECK: B aktualny, BEAM w odcisku; RC_SECTION_UPDATE bez zmian rysunku — nadal aktualny", () =>
                 {

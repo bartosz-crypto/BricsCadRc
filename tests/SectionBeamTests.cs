@@ -330,7 +330,12 @@ namespace BricsCadRc.Tests
         {
             var make = SectionPlannerGoldenTests.Cases().Single(c => (string)c.Arguments[0]! == name).Arguments[1] as Func<SectionPlanner.Input>;
             var st = StateOf(Tagged(make!()));
-            Assert.That(st.Hash, Is.EqualTo(HeadHash[name]));
+            // wersja 3 (zakończenia prętów Z1–Z6, 2026-10-11) zmienia tylko składnik META (Ver) — przy stylu None reszta odcisku
+            // bez zmian: META z „Ver:1” = dawny skrót HEAD
+            var old = new SortedDictionary<string, string>(st.Components);
+            old["META"] = old["META"].Replace("Ver:" + SectionPlanner.Version, "Ver:1");
+            Assert.That(old["META"], Does.Contain("Ver:1"));
+            Assert.That(SectionFingerprint.Hash(old), Is.EqualTo(HeadHash[name]));
             Assert.That(st.Components.Keys.Any(k => k.StartsWith("BEAM:")), Is.False);
         }
 

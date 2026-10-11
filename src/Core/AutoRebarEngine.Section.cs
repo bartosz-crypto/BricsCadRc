@@ -57,6 +57,8 @@ namespace BricsCadRc.Core
             ObjectId outerId = nib != null ? nib.OuterId : slabId;
             var ctx = new SectionContext();
             var inp = ctx.Input;
+            // wersja 3 (Z1–Z6): jeden styl zakończeń prętów w programie (stała planera); przeliczenie (RecomputeSection) idzie tą samą drogą
+            inp.EndStyle = SectionPlanner.DefaultEndStyle;
 
             List<Point2d> verts;
             string outerHandle;

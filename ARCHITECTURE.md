@@ -674,6 +674,16 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (`StirrupHeight`, nadpisywane wymiarem A rozkładu BL), `BeamParamsText` bez pól v2. Cofnięta też poprawka siatki przy belce
   w przekroju (b5d7e7f, `MeshLevelBesideBeams`): przy siatce E2 kropki siatki płyty mogą znów wypaść w trzonie belki — pozycja
   katalogu do decyzji użytkownika (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md, POPRAWKI_WZORCA 31). Generowanie (K1–K5, K7, K8) bez zmian.
+- **Zakończenia prętów w widoku (zasady Z1–Z6, decyzja użytkownika 2026-10-11; `SectionPlanner.Version` 3, POPRAWKI_WZORCA 32):** `Input.EndStyle`
+  — tylko None / Tick (None = dawny rysunek — złote wejścia wzorca bit w bit; `PrepareSection` ustawia `SectionPlanner.DefaultEndStyle` = S1 „UK tick”
+  — JEDEN styl w programie, wybrany przez użytkownika 2026-10-11; bez pola w oknie i bez zapisu w rekordzie / odcisku; style S2 „krótki hak” / S3 „kreska + kropka”
+  odrzucone i usunięte z kodu). Kreska 45° (długość na stałe `SectionPlanner.DefaultEndSymbolLength` = 30 mm — wybrane przez użytkownika 2026-10-11 z arkusza
+  porównawczego 50 / 40 / 30; bez pola w oknie, bez parametru wejścia i bez zapisu) na rzeczywistym końcu pręta prostego i wolnych końcach ramion pręta giętego (`BarLine.End0 / End1`),
+  do wnętrza (górny w dół, dolny w górę; gięty — w stronę środka obwiedni pręta), cały w betonie, zasięg pręta bez zmian (kreska kończy się na końcu
+  pręta — ramię skrócone o L/√2); urwanie / koniec cięcia / przycięcie do betonu — bez symbolu; strzemiona, kropki, ramiona prętów giętych belki — bez.
+  Zakład (koniec pręta wewnątrz poziomego odcinka innego pręta na tym samym poziomie): pręt prosty odsunięty o `LapOffset` 25 mm do wnętrza
+  (`ApplyEndSymbols` / `OffsetLaps`, po kolizjach kropek, przed opisami). Opisy: kandydaci położenia z drogi sprzed symboli (`BarLine.LabelPath`),
+  symbole — przeszkody dla strzałek. Przekroje wersji 1 / 2 → P2 („nowa wersja rysowałaby inaczej”), bez alarmu.
 - Dane z rysunku (`AutoRebarEngine.PrepareSection`): obrys zewnętrzny (NibDetector), niby, otwory (`FindHoles`),
   pale (`FindPiles`), rozkłady RC_BAR_BLOCK ze WSZYSTKICH rzutów tej płyty (polilinie o tym samym kształcie, przesunięte —
   jak `FindBottomView`), grubość i SSL z opisu płyty („SSL=21.925”, „225mm THK SLAB”). Wszystko do poprawy w oknie;
