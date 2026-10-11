@@ -23,7 +23,11 @@ namespace BricsCadRc.Core
         /// (2 — cofnięte K6, nie używać ponownie.)
         /// 4 (decyzja użytkownika 2026-10-11 „pręty płyty nie wchodzą w belkę”, „w nibie 2 pręty górą i 1 dołem”): kropki siatki płyty
         /// poziomu, którego rozkład nie wchodzi w trzon belki, nie są dorysowywane w pasie belki (trzon + nib belki) — AlignMesh /
-        /// MeshLevelBesideBeams; bez belek wynik bez zmian.
+        /// MeshLevelBesideBeams; bez belek wynik bez zmian. Decyzja 2026-10-11 „pręty prostopadłe płyty wchodzą w belkę do 40mm side
+        /// cover” zmienia tylko WEJŚCIE (rozkłady siatki prostopadłe do belki krawędziowej sięgają 40 od lica zewnętrznego — kropki /
+        /// pręty w widoku w trzonie belki z rzeczywistych rozkładów; poziom z kropkami w trzonie — schemat jak bez belki), logika bez
+        /// zmian — wersja nadal 4 (przekrój ze starymi rozkładami wykrywa odcisk DIST). Decyzja 2026-10-11 „jedna pozycja bottom in nib
+        /// i top” — nowy rodzaj rozkładu BN „2+1 … T+B IN NIB” (3 kropki); rozkłady starsze (T IN NIB, B IN NIB) bez zmian — wersja nadal 4.
         /// </summary>
         public const int Version = 4;
 
@@ -81,7 +85,9 @@ namespace BricsCadRc.Core
             public double SkewStart, SkewEnd;
             /// <summary>U-bar (kształt 21): drugie ramię w odległości PairOffset (oś–oś, ze znakiem) wzdłuż osi rozkładu; 0 = brak.</summary>
             public double PairOffset;
-            /// <summary>E4b: pręty boczne (BS) — liczba prętów na bok (poziomy między prętami dołu i góry); 1 = jeden poziom.</summary>
+            /// <summary>E4b: pręty boczne (BS) — liczba prętów na bok (poziomy między prętami dołu i góry); 1 = jeden poziom.
+            /// Strzemiona BL (decyzja użytkownika 2026-10-11): 2 = 4-cięte — dwa identyczne strzemiona przy obu licach (rozkład na całą
+            /// szerokość, pręt wzorcowy węższy); 1 = jedno strzemię (jak dotąd).</summary>
             public int Layers = 1;
         }
 
@@ -184,6 +190,8 @@ namespace BricsCadRc.Core
             internal List<(double U, double V)> LabelPath;
             /// <summary>Obrys pręta z grubością (zamknięty), jak pręt w elewacji.</summary>
             public List<(double U, double V)> Outline;
+            /// <summary>Bez własnego opisu (drugie strzemię 4-cięte — jeden opis pozycji; decyzja użytkownika 2026-10-11).</summary>
+            internal bool NoLabel;
         }
 
         public sealed class Pile
@@ -237,6 +245,10 @@ namespace BricsCadRc.Core
 
         /// <summary>E4b: pręt w nibie górą („… BEAM NIB T”); inaczej dołem.</summary>
         private static bool IsNibTop(Dist d) => (d.Mark ?? "").TrimEnd().EndsWith(BeamGeometry.SuffixNibTop, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Decyzja użytkownika 2026-10-11: pręty w nibie jedną pozycją („2+1 … T+B IN NIB”) — w rzucie 2 pręty górą, w przekroju
+        /// 3 kropki: obie górą pod górnym ramieniem spinki UB 03, trzecia dołem w dolnym narożu (pod prętem bliższym krawędzi płyty).</summary>
+        private static bool IsNibPair(Dist d) => (d.Mark ?? "").TrimEnd().EndsWith(BeamGeometry.SuffixNibBoth, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Nib belki: krawędź płyty najwyżej tyle od lica pasu belki (jak BeamGeometry.EdgeEndMaxGap) [mm].</summary>
         public const double BeamNibMaxGap = 260.0;
@@ -860,6 +872,11 @@ namespace BricsCadRc.Core
                     }
                     case BeamGeometry.CodeNib:
                         // naroża spinki UB 03 w pasie (wewnątrz U): ramię ∓ (Ø spinki / 2 + d / 2) — lica w styku, bez nakładania
+                        // pręty w nibie 2T+1B (decyzja 2026-10-11): oba poziomy — [0] górą, [1] dołem (dołem tylko pręt bliższy krawędzi)
+                        if (IsNibPair(d))
+                            return !double.IsNaN(b.UbBot)
+                                ? new List<double> { b.UbTop - b.UbDia / 2.0 - half, b.UbBot + b.UbDia / 2.0 + half }
+                                : new List<double> { -b.H + b.NibH - inp.CoverNib - BeamNibUbDia - half, -b.H + b.Src.CoverBottom + BeamNibUbDia + half };
                         if (!double.IsNaN(b.UbBot))
                             return new List<double> { IsNibTop(d) ? b.UbTop - b.UbDia / 2.0 - half : b.UbBot + b.UbDia / 2.0 + half };
                         return new List<double> { IsNibTop(d) ? -b.H + b.NibH - inp.CoverNib - BeamNibUbDia - half
@@ -884,6 +901,7 @@ namespace BricsCadRc.Core
                 bool link = IsLink(d);
                 bool nib = d.LayerCode == BeamGeometry.CodeNib;
                 bool top = d.LayerCode == BeamGeometry.CodeTop || (nib && IsNibTop(d));
+                bool nibPair = nib && IsNibPair(d);
                 bool bent = (d.ShapeCode ?? "00") != "00" && !link;
                 int n = Math.Max(1, d.Count);
                 double sp = Sp(d, n);
@@ -891,6 +909,20 @@ namespace BricsCadRc.Core
                 if (perpendicular)
                 {
                     double p0 = d.AlongX ? d.X0 : d.Y0, q0 = d.AlongX ? d.Y0 : d.X0;
+                    // pręty w nibie 2T+1B: pręt dołem pod prętem górą najdalej od trzonu belki (w narożu spinki UB 03, przy krawędzi płyty)
+                    int outerIdx = -1;
+                    if (nibPair)
+                    {
+                        double far = double.MinValue;
+                        for (int i = 0; i < n; i++)
+                        {
+                            double u = U(q0 + i * sp);
+                            var bb = BandAtNib(u);
+                            if (bb == null) continue;
+                            double o = Math.Max(bb.U0 - u, u - bb.U1);
+                            if (o > far) { far = o; outerIdx = i; }
+                        }
+                    }
                     for (int i = 0; i < n; i++)
                     {
                         double sk = Skew(d, i, n);
@@ -914,10 +946,14 @@ namespace BricsCadRc.Core
                             }
                             else
                             {
-                                foreach (double v in Levels(b, d))
+                                var lv = Levels(b, d);
+                                for (int li = 0; li < lv.Count; li++)
                                 {
+                                    double v = lv[li];
+                                    if (nibPair && li > 0 && i != outerIdx) continue;     // 2T+1B: dołem tylko pod prętem przy krawędzi
                                     if (!inConcrete(u, v)) continue;
-                                    res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = top || IsBothTop(b, d, v),
+                                    res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr,
+                                                           Top = top || IsBothTop(b, d, v) || (nibPair && li == 0),
                                                            Beam = true, Bent = bent, NomSpacing = NominalSpacing(d) });
                                     MarkUsed(res, d);      // tylko gdy kropka powstała (poza betonem — rozkład nieużyty)
                                 }
@@ -954,12 +990,26 @@ namespace BricsCadRc.Core
                             axis = new List<(double U, double V)> { (uLo, vBot), (uHi, vBot), (uHi, vTop), (uLo, vTop), (uLo, vBot) };
                         res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, band.LinkDia), Diameter = d.Diameter,
                                                    PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
+                        // strzemiona 4-cięte (Layers 2, decyzja użytkownika 2026-10-11): drugie identyczne strzemię przy drugim licu (zachodzące),
+                        // bez własnego opisu; tylko gdy pręt wzorcowy węższy od rozkładu
+                        if (d.Layers == 2 && axis.Count >= 2)
+                        {
+                            double ax0 = axis.Min(p => p.U), ax1 = axis.Max(p => p.U);
+                            double sh = uHi - ax1;
+                            if (sh > 1.0 && ax0 + sh > uLo + 1.0)
+                            {
+                                var axis2 = axis.Select(p => (U: p.U + sh, p.V)).ToList();
+                                res.Bars.Add(new BarLine { Path = axis2, Outline = OutlineOf(axis2, band.LinkDia), Diameter = d.Diameter,
+                                                           PosNr = d.PosNr, Top = false, Kind = DistKind.Beam, NoLabel = true });
+                            }
+                        }
                         MarkUsed(res, d);
                         continue;
                     }
-                    foreach (double v0 in Levels(band, d))
+                    var lvs = Levels(band, d);
+                    for (int li = 0; li < lvs.Count; li++)
                     {
-                        double v = v0;
+                        double v0 = lvs[li], v = v0;
                         if (bent) v += top ? -d.Diameter : d.Diameter;      // ramię pręta giętego „piętrowo” nad / pod prętem prostym
                         var pathS = new List<(double s, double v)> { (a, v), (bEnd, v) };
                         foreach (var piece in ClipPath(pathS, s0, s1))
@@ -969,7 +1019,8 @@ namespace BricsCadRc.Core
                                 if (part.Count >= 2)
                                 {
                                     var bl = new BarLine { Path = part, Outline = OutlineOf(part, d.Diameter), Diameter = d.Diameter,
-                                                           PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0), Kind = DistKind.Beam };
+                                                           PosNr = d.PosNr, Top = top || IsBothTop(band, d, v0) || (nibPair && li == 0),
+                                                           Kind = DistKind.Beam };
                                     // Z1: rzeczywiste końce pręta prostego belki; ramię pręta giętego (11 / 21) rysowane jako linia — bez
                                     // rozróżnienia końca wolnego i zagięcia, więc bez symbolu
                                     res.Bars.Add(bent ? bl : RealEnds(bl, (U(a), v), (U(bEnd), v)));
@@ -1244,6 +1295,7 @@ namespace BricsCadRc.Core
             // pręty w widoku: numer ze strzałką, nad płytą (góra) albo pod płytą (dół)
             foreach (var bar in res.Bars)
             {
+                if (bar.NoLabel) continue;
                 var horiz = new List<(double u0, double u1, double v)>();
                 // wersja 3: położenia opisu liczone z drogi pręta sprzed symboli zakończeń (te same kandydaty co bez symboli)
                 var lp = bar.LabelPath ?? bar.Path;
@@ -1512,7 +1564,7 @@ namespace BricsCadRc.Core
         {
             foreach (var sg in res.Segments)
             {
-                // belka (wersja 4, decyzja 2026-10-11 „pręty płyty nie wchodzą w belkę”): pasy belek tego odcinka; bez belek — null
+                // belka (wersja 4; E2 — pręty siatki RÓWNOLEGŁE do belki nie wchodzą w belkę): pasy belek tego odcinka; bez belek — null
                 // (dawny kod bit w bit)
                 var segBands = bands == null ? null : bands.Where(b => b.Seg == sg).ToList();
                 if (segBands != null && segBands.Count == 0) segBands = null;
@@ -1559,7 +1611,7 @@ namespace BricsCadRc.Core
                     bool top = orig[0].Top;
                     if (segBands != null)
                     {
-                        // siatka płyty nie wchodzi w belkę (E2 / decyzja 2026-10-11): poziom bez żadnej kropki z rozkładu w trzonie belki
+                        // siatka równoległa do belki nie wchodzi w belkę (E2): poziom bez żadnej kropki z rozkładu w trzonie belki
                         // nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem kotwa przy belce = rzeczywisty pierwszy pręt
                         // rozkładu (nie siatka od kotwy nibu płyty)
                         var cut = segBands.Where(b => !orig.Any(d => d.U > b.U0 + 0.5 && d.U < b.U1 - 0.5)).ToList();
@@ -1591,7 +1643,8 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Siatka w odcinku z belką (wersja 4; jak poprawka b5d7e7f cofnięta z K6 — przywrócona decyzją użytkownika 2026-10-11): poziom
-        /// kropek siatki, którego rozkład nie wchodzi w trzon belki (pręty płyty nie wchodzą w belkę). Pas belki (trzon + nib belki do
+        /// kropek siatki, którego rozkład nie wchodzi w trzon belki (E2 — pręty równoległe do belki; prostopadłe do belki krawędziowej
+        /// wchodzą w nią do 40 od lica zewnętrznego — decyzja 2026-10-11 — i ich poziom ma kropki w trzonie). Pas belki (trzon + nib belki do
         /// krawędzi) — bez kropek; poza pasem — schemat jak <see cref="AlignMesh"/> (rozstaw nominalny, góra i dół od kotew), ale kotwa po
         /// stronie belki = rzeczywisty skrajny pręt rozkładu przy belce; kotwy przy krawędzi / otworze / nibie płyty — jak dotąd. Zakres
         /// bez kotew (urwanie i belka) — położenia z rozkładu.

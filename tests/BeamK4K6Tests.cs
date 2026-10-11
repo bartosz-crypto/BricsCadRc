@@ -185,34 +185,38 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(inp);
             Assert.That(r.Dots.Any(d => d.PosNr == "09" || d.PosNr == "10"), Is.False);
             Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
-            // wersja 4 (2026-10-11: siatka płyty nie wchodzi w belkę — bez kropek w trzonie); BC / BU nadal pominięte
+            // wersja 4 (2026-10-11: siatka równoległa do belki nie wchodzi w belkę — bez kropek w trzonie; decyzja „do 40mm side cover”
+            // zmienia tylko wejście — wersja bez zmian); BC / BU nadal pominięte
             Assert.That(SectionPlanner.Version, Is.EqualTo(4));
         }
 
-        // ── decyzja użytkownika 2026-10-11: pręty płyty nie wchodzą w belkę; w nibie 2 pręty górą (T IN NIB) i 1 dołem (B IN NIB) ──
+        // ── decyzje użytkownika 2026-10-11: pręty płyty RÓWNOLEGŁE do belki nie wchodzą w belkę (E2), PROSTOPADŁE wchodzą w belkę
+        //    „jak normalnie do 40mm side cover” (40 od lica zewnętrznego); w nibie jedna pozycja — 3 pręty: 2 górą i 1 dołem
+        //    („jedna pozycja bottom in nib i top”, BN „2+1 H10-nn T+B IN NIB”) ──
 
         /// <summary>
-        /// Wejście jak złoty „beam” (belka 160…760, nib 160), ale siatka wg decyzji 2026-10-11: B1 / T1 (prostopadłe do belki) od lica
-        /// wewnętrznego 760, B2 / T2 (równoległe) od 810 / 860, T IN NIB — oba pręty w nibie (56 i 120 od krawędzi, opis bez rozstawu),
-        /// B IN NIB H10 w dolnym narożu UB 03 (55), bez BN górą.
+        /// Wejście jak złoty „beam” (belka 160…760, nib 160), ale siatka wg decyzji 2026-10-11: B1 / T1 (prostopadłe do belki) przez
+        /// belkę od 200 (lico zewnętrzne 160 + 40), B2 / T2 (równoległe) od 810 / 860; w nibie bez T IN NIB i B IN NIB — jedna pozycja
+        /// BN „H10-22 T+B IN NIB”: w rzucie 2 pręty (55 i 120 od krawędzi — BeamGeometry.NibPairAcross), w przekroju 3 kropki; bez BN górą.
         /// </summary>
-        private static SectionPlanner.Input CaseBeamNoMeshInBeam()
+        internal static SectionPlanner.Input CaseBeamNoMeshInBeam()
         {
             var inp = SectionPlannerGoldenTests.CaseBeam();
             SectionPlanner.Dist P(string pos) => inp.Dists.First(d => d.PosNr == pos);
-            var b1 = P("11"); b1.X0 = 760; b1.LengthA = 5200;
-            var t1 = P("111"); t1.X0 = 760; t1.LengthA = 5200;
+            var b1 = P("11"); b1.X0 = 160 + BeamGeometry.MeshBeamSideCover; b1.LengthA = 5960 - b1.X0;
+            var t1 = P("111"); t1.X0 = 160 + BeamGeometry.MeshBeamSideCover; t1.LengthA = 5960 - t1.X0;
             var b2 = P("12"); b2.X0 = 810; b2.Count = 26; b2.BarsSpan = 5000;
             var t2 = P("112"); t2.X0 = 860; t2.Count = 25; t2.BarsSpan = 4800;
-            var tin = P("101"); tin.Mark = "2 H12-101 T IN NIB"; tin.X0 = 56; tin.BarsSpan = 64; tin.Spacing = 64;
+            inp.Dists.Remove(P("101"));
             inp.Dists.Remove(P("21"));
-            var bn = P("22"); bn.Mark = "H10-22 B IN NIB"; bn.Diameter = 10; bn.X0 = 55;
+            var bn = P("22"); bn.Mark = "H12-22 " + BeamGeometry.SuffixNibBoth; bn.Diameter = 10; bn.X0 = 55;
+            bn.Count = 2; bn.BarsSpan = 65; bn.Spacing = 65;
             return inp;
         }
 
         [TestCase(SectionPlanner.EndStyle.None)]
         [TestCase(SectionPlanner.EndStyle.Tick)]
-        public void D20261011_NoMeshDotsInBeam_TinBothInNib(SectionPlanner.EndStyle st)
+        public void D20261011_NoMeshDotsInBeam_NibPair2T1B(SectionPlanner.EndStyle st)
         {
             var inp = CaseBeamNoMeshInBeam();
             inp.EndStyle = st;
@@ -224,25 +228,49 @@ namespace BricsCadRc.Tests
             var t2 = mesh.Where(d => d.PosNr == "112").OrderBy(d => d.U).ToList();
             Assert.That(b2[0].U, Is.EqualTo(810.0).Within(1e-9), "pierwszy B2 = rozkład");
             Assert.That(t2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy T2 = rozkład");
-            // pręty prostopadłe do belki (B1 / T1 w widoku) zaczynają się na licu wewnętrznym — nie wchodzą w belkę
+            // pręty prostopadłe do belki (B1 / T1 w widoku) wchodzą w belkę — koniec 40 od lica zewnętrznego (160 + 40 = 200)
             foreach (var pos in new[] { "11", "111" })
             {
                 var bars = r.Bars.Where(b => b.PosNr == pos).ToList();
                 Assert.That(bars, Is.Not.Empty, pos);
-                Assert.That(bars.Min(b => b.Path.Min(q => q.U)), Is.GreaterThanOrEqualTo(760.0 - 1e-6), pos);
+                Assert.That(bars.Min(b => b.Path.Min(q => q.U)), Is.EqualTo(200.0).Within(0.5), pos);
             }
-            // T IN NIB: oba pręty w nibie (0…160), pod górnym ramieniem UB 03 (ten sam poziom)
-            var tin = r.Dots.Where(d => d.TinNib).ToList();
-            Assert.That(tin.Count, Is.EqualTo(2));
-            Assert.That(tin.All(d => d.U > 0 && d.U < 160), Is.True, string.Join(" ", tin.Select(d => d.U + "," + d.V)));
-            Assert.That(Math.Abs(tin[0].V - tin[1].V), Is.LessThan(1e-9));
+            // bez T IN NIB płyty w nibie belki
+            Assert.That(r.Dots.Any(d => d.TinNib), Is.False);
+            // pręty w nibie 2T+1B: jedna pozycja (22), 3 kropki w nibie (0…160) — 2 górą pod górnym ramieniem UB 03 (ten sam poziom),
+            // 1 dołem nad dolnym ramieniem UB 03, pod prętem górą przy krawędzi (55)
+            var nib = r.Dots.Where(d => d.PosNr == "22").ToList();
+            Assert.That(nib.Count, Is.EqualTo(3), string.Join(" ", nib.Select(d => d.U + "," + d.V)));
+            Assert.That(nib.All(d => d.U > 0 && d.U < 160 && d.Beam), Is.True, string.Join(" ", nib.Select(d => d.U + "," + d.V)));
             var ub3 = r.Bars.First(b => b.Kind == SectionPlanner.DistKind.NibUB);
-            Assert.That(tin[0].V, Is.LessThan(ub3.Path.Max(q => q.V)), "pod górnym ramieniem UB 03");
-            // B IN NIB: jedna kropka w nibie, w dolnym narożu UB 03
-            var bin = r.Dots.Where(d => d.PosNr == "22").ToList();
-            Assert.That(bin.Count, Is.EqualTo(1));
-            Assert.That(bin[0].U, Is.LessThan(160));
-            Assert.That(bin[0].V, Is.GreaterThan(ub3.Path.Min(q => q.V)), "nad dolnym ramieniem UB 03");
+            var topN = nib.Where(d => d.Top).OrderBy(d => d.U).ToList();
+            var botN = nib.Where(d => !d.Top).ToList();
+            Assert.That(topN.Count, Is.EqualTo(2));
+            Assert.That(botN.Count, Is.EqualTo(1));
+            Assert.That(topN[0].U, Is.EqualTo(55.0).Within(0.5));
+            Assert.That(topN[1].U, Is.EqualTo(120.0).Within(0.5));
+            Assert.That(Math.Abs(topN[0].V - topN[1].V), Is.LessThan(1e-9));
+            Assert.That(topN[0].V, Is.LessThan(ub3.Path.Max(q => q.V)), "pod górnym ramieniem UB 03");
+            Assert.That(botN[0].U, Is.EqualTo(55.0).Within(0.5), "dołem pod prętem przy krawędzi");
+            Assert.That(botN[0].V, Is.GreaterThan(ub3.Path.Min(q => q.V)), "nad dolnym ramieniem UB 03");
+            Assert.That(botN[0].V, Is.LessThan(topN[0].V));
+        }
+
+        /// <summary>
+        /// Przekrój WZDŁUŻ belki (cięcie x = 460 w trzonie) z siatką wg decyzji 2026-10-11: pręty B1 / T1 (prostopadłe do belki) wchodzą
+        /// w belkę do 40 od lica zewnętrznego — ich kropki są w trzonie belki (schemat jak bez belki), B2 / T2 (równoległe, od 810 / 860)
+        /// w trzonie nie występują.
+        /// </summary>
+        [Test]
+        public void D20261011_AlongBeam_PerpendicularMeshDotsInTrunk()
+        {
+            var inp = CaseBeamNoMeshInBeam();
+            inp.CutAlongX = false; inp.CutCoord = 460; inp.S0 = -200; inp.S1 = 2500; inp.LookSign = -1;
+            inp.Beams[0].S0 = 0; inp.Beams[0].S1 = 4000;
+            var r = SectionPlanner.Plan(inp);
+            Assert.That(r.Dots.Count(d => d.Mesh && d.PosNr == "11"), Is.GreaterThan(5), "kropki B1 w trzonie belki");
+            Assert.That(r.Dots.Count(d => d.Mesh && d.PosNr == "111"), Is.GreaterThan(5), "kropki T1 w trzonie belki");
+            Assert.That(r.Bars.Any(b => b.PosNr == "12" || b.PosNr == "112"), Is.False, "równoległe do belki — nie w trzonie");
         }
 
         /// <summary>Siatka przechodząca przez belkę (złoty „beam”: B2 od 40 — rysunek sprzed decyzji) — schemat kropek także w belce (bez zmian).</summary>

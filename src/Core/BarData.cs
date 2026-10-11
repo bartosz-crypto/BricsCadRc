@@ -202,7 +202,7 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Współczynnik skali wizualnej anotacji (tekst, doty, strzałki, zakończenia prętów).
-        /// 1.0 = skala domyślna 1:50. 2.0 = 1:25 (dwa razy większy). 0.5 = 1:100 (dwa razy mniejszy).
+        /// 1.0 = skala domyślna 1:50; współczynnik = mianownik skali / 50: 0.5 = 1:25 (o połowę mniejszy w modelu), 2.0 = 1:100.
         /// NIE skaluje: ArmLength, BarsSpan, pozycje prętów, LengthA.
         /// </summary>
         public double AnnotScale { get; set; } = 1.0;

@@ -944,7 +944,7 @@ namespace BricsCadRc.Commands
 
         /// <summary>
         /// RC_SCALE_ANNOT — ustawia wizualną skalę opisu rozkładu (tekst, doty, strzałki, zakończenia prętów).
-        /// Skala 1:50 = factor 1.0 (domyślna). 1:25 = 2.0 (dwa razy większy). 1:100 = 0.5.
+        /// Skala 1:50 = factor 1.0 (domyślna). Factor = mianownik / 50: 1:25 = 0.5 (opis o połowę mniejszy w modelu — na papierze 1:25 ten sam), 1:100 = 2.0.
         /// </summary>
         [CommandMethod("RC_SCALE_ANNOT", CommandFlags.Modal)]
         public void RcScaleAnnot()

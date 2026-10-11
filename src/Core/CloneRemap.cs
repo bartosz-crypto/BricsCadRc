@@ -22,6 +22,7 @@ namespace BricsCadRc.Core
     /// | rozkład RC_AUTOREBAR_SLAB [1], wymiar ADD RC_ADD [1] | klon obrysu płyty (Polyline) (K5)  | "" (P4b)                   | ""                      |
     /// | rozkład RC_AUTOREBAR_BEAM [1] (belka)               | klon strefy belki (Polyline)       | ""                         | ""                      |
     /// | strefa belki RC_BEAM [6]                           | klon obrysu płyty (Polyline)       | ""                         | ""                      |
+    /// | obiekt detalu belki RC_BEAM_DETAIL [2] (K9)        | klon strefy belki (Polyline)       | ""                         | ""                      |
     /// „Ten sam rysunek”: COPY/MIRROR/ARRAY albo wklejenie ze schowka skopiowanego w tym rysunku — wtedy wartość „bez zmian”
     /// to wartość obiektu źródłowego (BricsCAD zeruje w schowku odwołania do obiektów spoza schowka; Ctrl+V = COPY, pyt. 4).
     /// Etykieta przypisana więcej niż jednemu prętowi → wszystkim "" (Log.Info).
@@ -36,7 +37,7 @@ namespace BricsCadRc.Core
     /// </summary>
     internal static class CloneRemap
     {
-        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim, SectionHead, SectionPart, BeamZone }
+        private enum Kind { None, Bar, Label, Dist, Annot, Link, AddDim, SectionHead, SectionPart, BeamZone, BeamDetail, BeamManual }
 
         private const int BarLabelIdx   = 13;   // RC_SINGLE_BAR [13] LabelHandle
         private const int LabelBarIdx   = 1;    // RC_BAR_LABEL [1]
@@ -270,6 +271,16 @@ namespace BricsCadRc.Core
                         // Strefa belki: [6] → klon obrysu płyty (płyta sklonowana razem), inaczej "" (płyta z testu punktu)
                         RelinkSlabTag(tr, db, c, e, BeamStore.App, Resolve, BeamStore.SlabIdx);
                         break;
+                    case Kind.BeamDetail:
+                        // K9: obiekt detalu belki 1:25 — [2] → klon strefy (strefa sklonowana razem), inaczej "" (detal bez strefy)
+                        RelinkSlabTag(tr, db, c, e, BeamStore.DetailApp, Resolve, BeamStore.DetailZoneIdx);
+                        break;
+                    case Kind.BeamManual:
+                        // Polilinia ręczna belki (RC-BEAM-MANUAL, decyzja 2026-10-11): [2] / [3] → klony stref (skopiowane razem), inaczej ""
+                        // — kopia samej polilinii jest nieprzetworzona (nowe strefy przy Prepare GA / Beam), nie przejmuje stref oryginału
+                        RelinkSlabTag(tr, db, c, e, BeamStore.ManualApp, Resolve, BeamStore.ManualZoneIdx);
+                        RelinkSlabTag(tr, db, c, e, BeamStore.ManualApp, Resolve, BeamStore.ManualPartnerIdx);
+                        break;
                 }
             }
 
@@ -453,6 +464,8 @@ namespace BricsCadRc.Core
             if (Has(e, AutoRebarEngine.SectionPartApp)) return Kind.SectionPart;   // bezpiecznik przekrojów
             if (Has(e, AutoRebarEngine.SectionTitleApp)) return Kind.SectionHead;
             if (e is Polyline && Has(e, BeamStore.App)) return Kind.BeamZone;            // strefa belki (RC_BEAM [6])
+            if (Has(e, BeamStore.DetailApp)) return Kind.BeamDetail;                    // K9: obiekt detalu belki (RC_BEAM_DETAIL [2])
+            if (e is Polyline && Has(e, BeamStore.ManualApp)) return Kind.BeamManual;   // polilinia ręczna belki (RC_BEAM_MANUAL [2] / [3])
             var bk = BarEntity.KindOf(e);
             if (bk == BarKind.Polyline || bk == BarKind.Block) return Kind.Bar;
             if (e is MLeader) return Has(e, SingleBarEngine.XLabelAppName) ? Kind.Label : Kind.None;
@@ -501,6 +514,8 @@ namespace BricsCadRc.Core
                 case Kind.SectionHead: return AutoRebarEngine.SectionTitleApp;
                 case Kind.SectionPart: return AutoRebarEngine.SectionPartApp;
                 case Kind.BeamZone: return BeamStore.App;
+                case Kind.BeamDetail: return BeamStore.DetailApp;
+                case Kind.BeamManual: return BeamStore.ManualApp;
                 default:         return "";
             }
         }

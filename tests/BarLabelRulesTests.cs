@@ -17,6 +17,15 @@ namespace BricsCadRc.Tests
             Assert.That(BarLabelRules.CountText(BeamGeometry.CodeBoth, 5, 10), Is.EqualTo("2x5"));
         }
 
+        /// <summary>Decyzja użytkownika 2026-10-11: pręty w nibie jedną pozycją — w rzucie 2 pręty górą, CountDisplay 3 → „2+1 H10-nn T+B IN NIB”.</summary>
+        [Test]
+        public void CountText_NibPair_TwoPlusOne()
+        {
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeNib, 2, 3), Is.EqualTo("2+1"));
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeNib, 1, null), Is.EqualTo("1"), "BN górą / stare B IN NIB — liczba");
+            Assert.That(BarLabelRules.CountText(BeamGeometry.CodeNib, 2, 2), Is.EqualTo("2"));
+        }
+
         [Test]
         public void CountText_BothOneMark_NoMultiplicity_PlainNumber()
         {

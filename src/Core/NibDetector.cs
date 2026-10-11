@@ -50,6 +50,8 @@ namespace BricsCadRc.Core
             public List<Point2d> Outer;
             public List<Point2d> Inner;
             public List<NibEdge> Edges = new List<NibEdge>();
+            /// <summary>Nib bez części przy belkach BEZ nibu (rekord RC_BEAM [38] — AutoRebarEngine.WithoutBeamNibs): Inner i Edges zmienione.</summary>
+            public bool BeamNibsRemoved;
         }
 
         /// <summary>
@@ -74,8 +76,9 @@ namespace BricsCadRc.Core
                     if (oid.IsErased || oid == slabId) continue;
                     if (!(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl) || pl.NumberOfVertices < 3) continue;
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
-                    // strefa belki (RC-BEAM) ani strefa pogrubienia z GA (SD-Thickening-Zone) nie jest linią uskoku
-                    if (BeamStore.IsBeamLayer(pl.Layer)
+                    // strefa belki (RC-BEAM), polilinia ręczna belki (RC-BEAM-MANUAL) ani strefa pogrubienia z GA (SD-Thickening-Zone)
+                    // nie jest linią uskoku
+                    if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)
                         || string.Equals(pl.Layer, GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase)) continue;
                     var q = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
                     if (q.Count < 3) continue;

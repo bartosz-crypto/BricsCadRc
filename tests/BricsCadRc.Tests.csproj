@@ -52,6 +52,7 @@
     <Compile Include="..\src\Core\NibStepRules.cs" />
     <Compile Include="..\src\Core\BarLabelRules.cs" />
     <Compile Include="..\src\Core\RectilinearPolygons.cs" />
+    <Compile Include="..\src\Core\BeamDetailRules.cs" />
   </ItemGroup>
 
 </Project>

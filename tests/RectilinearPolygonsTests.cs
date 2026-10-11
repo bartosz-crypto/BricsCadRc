@@ -116,30 +116,44 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void MeshCut_528_BottomPerpendicular_ToInnerFace()
+        public void MeshCut_528_BottomPerpendicular_IntoBeamTo40FromOuterFace()
         {
-            // B1 (pręty X, prostopadłe; decyzja 2026-10-11 — nie wchodzą w belkę): odjęta strefa + nib → granica pasu lico wewnętrzne
-            // (1327524) − 40, pręt od granicy + 40 = koniec na licu wewnętrznym (bez otuliny)
+            // B1 (pręty X, prostopadłe; decyzja 2026-10-11 „wchodzą w belkę jak normalnie do 40mm side cover”): odjęty tylko nib przed
+            // belką → granica pasu = lico zewnętrzne (= linia uskoku 1326924), pręt od granicy + 40 = 40 od lica zewnętrznego, w belce
             var rs = BeamGeometry.MeshCutRects(An528(), top: false, barsAlongX: true, d: 10);
             Assert.That(rs.Count, Is.EqualTo(1));
             Assert.That(rs[0].X0, Is.EqualTo(1326924 - BeamGeometry.MeshCutReach).Within(1e-9));
-            Assert.That(rs[0].X1, Is.EqualTo(1327524 - 40).Within(1e-9));
+            Assert.That(rs[0].X1, Is.EqualTo(1326924).Within(1e-9));
             var reg = RectilinearPolygons.Subtract(Box(1326764, 49647, 1337395, 60150), rs);
             Assert.That(reg.Count, Is.EqualTo(1));
-            Assert.That(reg[0].Min(p => p.X) + 40, Is.EqualTo(1327524).Within(1e-9), "koniec pręta B1 na licu wewnętrznym");
-            Assert.That(reg[0].Count, Is.EqualTo(4), "cały pas belki z nibem lewej krawędzi (z narożnikami) odcięty — prostokąt");
+            Assert.That(reg[0].Min(p => p.X) + 40, Is.EqualTo(1326924 + BeamGeometry.MeshBeamSideCover).Within(1e-9),
+                        "koniec pręta B1 40 od lica zewnętrznego belki");
+            Assert.That(reg[0].Count, Is.EqualTo(4), "cały nib lewej krawędzi (z narożnikami) odcięty — prostokąt");
         }
 
         [Test]
-        public void MeshCut_528_Top_ParallelHalfSpacing_PerpendicularToInnerFace()
+        public void MeshCut_528_Perpendicular_MeshCoverOtherThan40_StillEnds40FromOuterFace()
+        {
+            // otulina siatki 30: granica pasu przesunięta o 40 − 30 w belkę — koniec pręta nadal 40 od lica zewnętrznego
+            var rs = BeamGeometry.MeshCutRects(An528(), top: false, barsAlongX: true, d: 10, cover: 30);
+            Assert.That(rs.Count, Is.EqualTo(1));
+            Assert.That(rs[0].X1 + 30, Is.EqualTo(1326924 + 40).Within(1e-9));
+        }
+
+        [Test]
+        public void MeshCut_528_Top_ParallelHalfSpacing_PerpendicularIntoBeam()
         {
             var t2 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: false, d: 12);
             Assert.That(t2.Count, Is.EqualTo(1));
             Assert.That(t2[0].X1, Is.EqualTo(1327524 + 60).Within(1e-9), "pierwszy pręt T2 = lico + s/2");
-            // T1 prostopadłe (decyzja 2026-10-11): też do lica wewnętrznego (wcześniej do linii uskoku)
+            // T1 prostopadłe (decyzja 2026-10-11 „do 40mm side cover”): przez belkę, 40 od lica zewnętrznego (= linia uskoku — jak dawniej)
             var t1 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: true, d: 12);
             Assert.That(t1.Count, Is.EqualTo(1));
-            Assert.That(t1[0].X1 + 40, Is.EqualTo(1327524).Within(1e-9), "koniec pręta T1 na licu wewnętrznym");
+            Assert.That(t1[0].X1 + 40, Is.EqualTo(1326924 + 40).Within(1e-9), "koniec pręta T1 40 od lica zewnętrznego");
+            // wielokąt góry = linia uskoku (1326924): odcięcie leży w nibie — pas T1 bez zmian względem K7 sprzed 60e8a9c
+            var reg = RectilinearPolygons.Subtract(Box(1326924, 49807, 1337235, 59990), t1);
+            Assert.That(reg.Count, Is.EqualTo(1));
+            Assert.That(reg[0].Min(p => p.X), Is.EqualTo(1326924).Within(1e-9));
         }
 
         [Test]
@@ -175,6 +189,9 @@ namespace BricsCadRc.Tests
             Assert.That(RectilinearPolygons.Inside(b1, 1552000, 57706), Is.True);
             // dolna noga przy krawędzi (x 1555451): odcięcie wydłużone za koniec (nib zawinięty po prawej)
             Assert.That(RectilinearPolygons.Inside(b1, 1555550, 48300), Is.True);
+            // lewa noga (pionowa, lico zewnętrzne 1550278): B1 prostopadłe przez belkę — odcięty tylko nib przed belką (decyzja 2026-10-11)
+            Assert.That(RectilinearPolygons.Inside(b1, 1550200, 53000), Is.True, "nib przed belką odcięty");
+            Assert.That(RectilinearPolygons.Inside(b1, 1550300, 53000), Is.False, "trzon belki — pręty B1 wchodzą do 40 od lica zewnętrznego");
         }
     }
 }

@@ -68,6 +68,23 @@ namespace BricsCadRc.Core
             return Trace(xs, ys, (cx, cy) => rs.Any(r => r.Contains(cx, cy)));
         }
 
+        /// <summary>
+        /// Wielokąt osiowy plus prostokąty, przycięte do wielokąta osiowego <paramref name="clip"/> → pętle (pierwsza — największa pętla
+        /// zewnętrzna). Belka bez nibu (rekord RC_BEAM [38]): linia uskoku + pas nibu przy belce, w obrysie płyty. Bez prostokątów —
+        /// wielokąt przycięty (te same wierzchołki, gdy leży w clip).
+        /// </summary>
+        public static List<List<(double X, double Y)>> AddClipped(IList<(double X, double Y)> poly, IEnumerable<Rect> add,
+                                                                 IList<(double X, double Y)> clip)
+        {
+            var rs = (add ?? Enumerable.Empty<Rect>()).Where(r => !r.IsEmpty).ToList();
+            var xs = Unique(poly.Select(p => p.X).Concat(clip.Select(p => p.X)).Concat(rs.SelectMany(r => new[] { r.X0, r.X1 })));
+            var ys = Unique(poly.Select(p => p.Y).Concat(clip.Select(p => p.Y)).Concat(rs.SelectMany(r => new[] { r.Y0, r.Y1 })));
+            double minX = clip.Min(p => p.X), maxX = clip.Max(p => p.X), minY = clip.Min(p => p.Y), maxY = clip.Max(p => p.Y);
+            xs = xs.Where(x => x >= minX && x <= maxX).ToList();
+            ys = ys.Where(y => y >= minY && y <= maxY).ToList();
+            return Trace(xs, ys, (cx, cy) => Inside(clip, cx, cy) && (Inside(poly, cx, cy) || rs.Any(r => r.Contains(cx, cy))));
+        }
+
         /// <summary>Punkt w zbiorze pętli (parzystość — otwory odejmują się same).</summary>
         public static bool Inside(IList<List<(double X, double Y)>> loops, double x, double y)
         {

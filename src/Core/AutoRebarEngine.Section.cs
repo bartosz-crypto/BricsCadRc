@@ -53,7 +53,8 @@ namespace BricsCadRc.Core
         /// </summary>
         public static SectionContext PrepareSection(Database db, ObjectId slabId, Point2d p1, Point2d p2, Point2d lookPt)
         {
-            var nib = NibDetector.Detect(db, slabId);
+            // rekord RC_BEAM [38] „bez nibu” (decyzja użytkownika 2026-10-11): nib płyty bez części przy takich belkach (profil bez nibu)
+            var nib = WithoutBeamNibs(db, NibDetector.Detect(db, slabId));
             ObjectId outerId = nib != null ? nib.OuterId : slabId;
             var ctx = new SectionContext();
             var inp = ctx.Input;
@@ -106,6 +107,8 @@ namespace BricsCadRc.Core
                 var beamZones = new List<List<Point2d>>();   // strefy belek (RC-BEAM): teksty „450THK” to nie grubość płyty
                 // strefy belek z rekordem RC_BEAM (plan belek E5): handle, wierzchołki, punkt wewnątrz, parametry
                 var zoneRecs = new List<(string handle, List<Point2d> verts, Point2d inside, BeamParams p)>();
+                // K9: detale belek 1:25 — ANCHOR (kopia strefy): strefa, numer, wierzchołki
+                var anchors = new List<(string zone, int nr, List<Point2d> verts)>();
                 foreach (ObjectId oid in ms)
                 {
                     if (oid.IsErased) continue;
@@ -120,8 +123,16 @@ namespace BricsCadRc.Core
                     }
                     else if (obj is Polyline pl && oid != outerId && GeometryHelper.IsEffectivelyClosed(pl))
                     {
+                        // K9: ANCHOR detalu belki — nie obrys rzutu
+                        if (BeamStore.ReadDetail(pl) is var dd && dd != null)
+                        {
+                            if (dd.Value.role == BeamStore.RoleAnchor && !string.IsNullOrEmpty(dd.Value.zone))
+                                anchors.Add((dd.Value.zone, dd.Value.nr, GeometryHelper.GetPolylineVertices(pl)));
+                            continue;
+                        }
                         outlines.Add(pl);
-                        if (BeamStore.IsBeamLayer(pl.Layer)) beamZones.Add(GeometryHelper.GetPolylineVertices(pl));
+                        // strefa belki (RC-BEAM) albo polilinia ręczna belki (RC-BEAM-MANUAL, przed zamianą na strefę) — „450THK” w niej to nie grubość płyty
+                        if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)) beamZones.Add(GeometryHelper.GetPolylineVertices(pl));
                         if (BeamStore.IsZone(pl) && BeamStore.Read(pl) is BeamParams bp)
                         {
                             try { zoneRecs.Add((XLink.Norm(pl.Handle.ToString()), GeometryHelper.GetPolylineVertices(pl), BeamStore.Centroid(pl), bp)); }
@@ -146,11 +157,42 @@ namespace BricsCadRc.Core
                     views.Add((delta, pl.Handle.ToString(), v));
                 }
 
+                // K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 — rozkład ze znacznikiem strefy ANCHOR-a i środkiem w oknie
+                // detalu liczony w położeniu rzutu (pos − Shift); dalej jak rozkład na rzucie (− przesunięcie rzutu strefy). ctx.Views bez
+                // zmian — wejście planera jak z prętami na rzucie. ANCHOR nieprzystający do strefy (strefa zmieniona po detalu) — pominięty.
+                var detailOf = new Dictionary<string, (Vector2d shift, BeamDetailRules.Rect win)>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (zh, anr, av) in anchors)
+                {
+                    var z = zoneRecs.FirstOrDefault(r => XLink.Same(r.handle, zh));
+                    if (z.verts == null) continue;
+                    var zview = views.FirstOrDefault(v => GeometryHelper.IsPointInsidePolygon(v.poly, z.inside));
+                    if (zview.poly == null) continue;   // strefa innej płyty
+                    // ANCHOR = strefa efektywna (rekord [38] „bez nibu” — przesunięta do krawędzi rzutu strefy)
+                    var zt = EffectiveZoneVerts(z.verts, z.p, zview.poly).Select(v => (v.X, v.Y)).ToList();
+                    var at = av.Select(v => (v.X, v.Y)).ToList();
+                    var s = BeamDetailRules.ShiftOf(at, zt);
+                    if (!BeamDetailRules.Congruent(at, zt, s))
+                    {
+                        ctx.Info.Add($"Detal belki {anr} nie pasuje do strefy {XLink.Norm(zh)} — ponów Beam; pręty tego detalu pominięte.");
+                        continue;
+                    }
+                    var w = BeamDetailRules.Window(zt, zview.poly.Select(v => (v.X, v.Y)).ToList()).Offset(s.X, s.Y).Inflate(BeamDetailRules.Margin);
+                    detailOf[XLink.Norm(zh)] = (new Vector2d(s.X, s.Y), w);
+                }
+
                 int nDist = 0;
                 var shapes = new Dictionary<string, (List<(double X, double Y)> pts, string code, double[] dims)?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (br, bar) in dists)
                 {
                     var pos = new Point2d(br.Position.X, br.Position.Y);
+                    // decyzja 2026-10-11: UB 03 przy belce w detalu (znacznik strefy) — tak samo jak pręty belki
+                    if (detailOf.Count > 0 && (BeamGeometry.IsBeamCode(bar.LayerCode) || SingleBarEngine.ExtractPosNr((bar.Mark ?? "").Split(' ')[0]) == NibUBPosNr)
+                        && BeamStore.ReadTag(br) is string btag && btag.Length > 0
+                        && detailOf.TryGetValue(XLink.Norm(btag), out var det))
+                    {
+                        var mid = BeamStore.MidOf(br, bar);
+                        if (det.win.Contains(mid.X, mid.Y)) pos -= det.shift;
+                    }
                     string tag = ReadSlabTag(br);
                     foreach (var (delta, handle, poly) in views)
                     {
@@ -187,6 +229,10 @@ namespace BricsCadRc.Core
                             // E4b: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok
                             if (bar.LayerCode == BeamGeometry.CodeSide && bar.Count > 0)
                                 last.Layers = Math.Max(1, bar.EffectiveCount / bar.Count);
+                            // strzemiona 4-cięte (decyzja użytkownika 2026-10-11): CountDisplay = 2 × Count → Layers 2 (dwa strzemiona w widoku);
+                            // 2-cięte (bez CountDisplay) — Layers 1, jak dotąd
+                            if (bar.LayerCode == BeamGeometry.CodeLinks && bar.Count > 0 && bar.EffectiveCount == 2 * bar.Count)
+                                last.Layers = 2;
                             // K3: pionowe U-bary (BU) — bez drugiego ramienia w poprzek (przekrój U-barów pionowych: krok K6)
                             if (last.ShapeCode == "21" && bar.LayerCode != BeamGeometry.CodeUBar
                                 && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
@@ -213,6 +259,8 @@ namespace BricsCadRc.Core
                         if (placed.Any(o => o.Count == zv.Count && zv.All(v => o.Any(w => w.GetDistanceTo(v) < 1.0)))) continue;
                         placed.Add(zv);
                         var p = z.p;
+                        // rekord [38] „bez nibu”: pas belki do krawędzi płyty (bez nibu belki); domyślnie strefa bez zmian
+                        if (p.NoNib) zv = EffectiveZoneVerts(zv, p, verts);
                         foreach (var (a, b) in SectionPlanner.CutIntervals(zv.Select(v => (v.X, v.Y)).ToList(), inp.CutAlongX, inp.CutCoord))
                             inp.Beams.Add(new SectionPlanner.BeamBand
                             {

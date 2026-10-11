@@ -182,6 +182,9 @@ namespace BricsCadRc.Core
             {
                 nib.Outer = GeometryHelper.SquaredOrSame(nib.Outer);
                 nib.Inner = GeometryHelper.SquaredOrSame(nib.Inner);
+                // rekord RC_BEAM [38] „bez nibu” (decyzja użytkownika 2026-10-11): przy takiej belce nibu nie ma — siatka górna do krawędzi
+                // płyty, bez UB 03 / T IN NIB / reguły UB 01/02 na uskoku; bez takich belek — ten sam obiekt (bit w bit)
+                nib = WithoutBeamNibs(db, nib);
             }
             return nib;
         }
@@ -244,12 +247,8 @@ namespace BricsCadRc.Core
                                 (layerCode.StartsWith("T")
                                     ? "równoległe od s/2 od lica wewnętrznego"
                                     : $"równoległe od 40 + {diameter} od lica wewnętrznego") +
-                                ", prostopadłe do lica wewnętrznego belki (nie wchodzą w belkę — decyzja 2026-10-11)" +
-                                "; krawędzie przy belce bez UB 01/02.\n" +
-                                (layerCode.StartsWith("B")
-                                    ? "[AutoRebar] Płyta ma strefy belek — po zmianie siatki dolnej ponów Beam (RC_GENERATE → Beam): " +
-                                      "B IN NIB bierze podział i numer pozycji z siatki dolnej.\n"
-                                    : ""));
+                                $", prostopadłe przez belkę do {BeamGeometry.MeshBeamSideCover:F0} od lica zewnętrznego belki (decyzja 2026-10-11)" +
+                                "; krawędzie przy belce bez UB 01/02.\n");
             List<StripBounds> strips = horizontal
                 ? DecomposeStrips(plan.SlabVertices, e2?.Cuts, scanIsY: true)
                 : DecomposeStrips(plan.SlabVertices, e2?.Cuts, scanIsY: false);
@@ -780,12 +779,6 @@ namespace BricsCadRc.Core
             if (e2 != null && nib == null && meshDia == null)
                 ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Płyta ma strefy belek, a nie ma siatki {(isUBB1 ? "B1" : "B2")} — " +
                                 $"pasy UB przy belce liczone dla Ø{MeshBottomDia} (40 + {MeshBottomDia} od lica); wygeneruj siatkę przed UB.\n");
-            // UB 03 przy belce (decyzja 2026-10-11: pręty dołu prostopadłe kończą się na licu wewnętrznym belki, nie dochodzą do nibu):
-            // liczba i położenia UB 03 = pręty siatki dolnej tego kierunku na długości nibu, szukane do lica wewnętrznego belki
-            // (obszar UbCuts strefy); bez stref — null (bit w bit)
-            var ub03Beams = nibUB
-                ? BeamMeshRegion(db, slabPolyId, nib.Outer, top: false, barsAlongX: isUBB1, d: MeshBottomDia, spacing: spacing, cover: cover)
-                : null;
 
             // Edge enumeration — classify all polyline edges
             var edges = GeometryHelper.EnumerateAxisAlignedEdges(slabVertices);
@@ -821,6 +814,10 @@ namespace BricsCadRc.Core
             // Filter by min length and compute SymbolSide per segment
             var validSegments = new List<(double edgeCoord, double segLow, double segHigh, string symbolSide)>();
             int tooShortCount = 0;
+            // UB 03 przy belce w detalu 1:25 (decyzja użytkownika 2026-10-11): cel rysowania krawędzi (równolegle do validSegments;
+            // null — rzut jak dotąd). Płyta bez stref belek — pusta lista stref, wszystkie null (bit w bit).
+            var ubZones = nibUB ? NibUbZones(db, slabPolyId, nib.Outer) : null;
+            var segTargets = new List<NibUbTarget>();
 
             foreach (var seg in candidates)
             {
@@ -849,12 +846,14 @@ namespace BricsCadRc.Core
                 }
 
                 // UB 03: tylko krawędzie z nibem, w zakresie nibu
+                NibUbTarget ubTarget = null;
                 if (nibUB)
                 {
                     var ne = nib.Edges.FirstOrDefault(nz => nz.Vertical == isUBB1 && Math.Abs(nz.OuterCoord - edgeCoord) < 1.0
                                                           && Math.Min(nz.Hi, segHigh) - Math.Max(nz.Lo, segLow) > 1.0);
                     if (ne == null) continue;
                     segLow = Math.Max(segLow, ne.Lo); segHigh = Math.Min(segHigh, ne.Hi);
+                    if (ubZones.Count > 0) ubTarget = NibUbTargetFor(ubZones, isUBB1, edgeCoord, ne.InnerCoord, segLow, segHigh, ed);
                 }
 
                 // Auto-detect inward direction: sample point slightly OFFSET from edge midpoint
@@ -874,11 +873,12 @@ namespace BricsCadRc.Core
                         ed.WriteMessage($"\n[AutoRebar UB] Belka: krawędź {edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] przy belce — UB 01/02 " +
                                         (keep.Count == 0 ? "pominięte (E2).\n"
                                                          : "tylko na " + string.Join(", ", keep.Select(k => $"[{k.Lo:F0}..{k.Hi:F0}]")) + " (E2).\n"));
-                    foreach (var (klo, khi) in keep) validSegments.Add((edgeCoord, klo, khi, symbolSide));
+                    foreach (var (klo, khi) in keep) { validSegments.Add((edgeCoord, klo, khi, symbolSide)); segTargets.Add(null); }
                     continue;
                 }
 
                 validSegments.Add((edgeCoord, segLow, segHigh, symbolSide));
+                segTargets.Add(ubTarget);
             }
 
             ed.WriteMessage($"\n[AutoRebar UB] Segments ({filterDirection}): {candidates.Count} total, " +
@@ -886,6 +886,14 @@ namespace BricsCadRc.Core
 
             if (validSegments.Count == 0)
             {
+                // rekord RC_BEAM [38] „bez nibu”: wszystkie krawędzie nibu tego kierunku przy belkach bez nibu — stare UB 03 usuwane
+                if (nibUB && nib.BeamNibsRemoved && oldUBs.Count > 0)
+                {
+                    using (doc.LockDocument()) EraseOldDistributions(db, oldUBs);
+                    ed.WriteMessage($"\n[AutoRebar UB] UB 03 ({filterDirection}): krawędzie z nibem tylko przy belkach bez nibu — usunięto " +
+                                    $"poprzednie UB 03 ({oldUBs.Count}).\n");
+                    return 0;
+                }
                 ed.WriteMessage($"\n[AutoRebar UB] No valid segments — abort.\n");
                 return -1;
             }
@@ -943,8 +951,11 @@ namespace BricsCadRc.Core
                 var nibPlan = nib != null && !nibUB
                     ? PlanNibStepBars(nib, mainStrips, isUBB1, ubBottom, cover, spacing, e2) : null;
 
+                var detailZones = new List<string>();
+                int segIdx = -1;
                 foreach (var (edgeCoord, segLow, segHigh, symbolSide) in validSegments)
                 {
+                    var ubTarget = segTargets[++segIdx];
                     var parts = new List<(double lo, double hi, double lowOff, double highOff, SpacingMode mode, bool lowExt, bool highExt)>();
 
                     foreach (var st in mainStrips)
@@ -1061,13 +1072,11 @@ namespace BricsCadRc.Core
                     }
                     if (!stepDone && ubBottom != null)
                     {
-                        // UB 03 przy belce: pręty dołu kończą się na licu wewnętrznym belki — okno wydłużone o głębokość strefy
-                        double reach = ub03Beams != null ? BeamReachFromEdge(ub03Beams, isUBB1, edgeCoord, segLow, segHigh) : 0.0;
-                        if (reach > 0)
-                            ed.WriteMessage($"\n[AutoRebar UB] UB 03: krawędź {edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] przy belce — liczba UB 03 " +
-                                            $"z prętów dołu kończących się na licu wewnętrznym belki ({reach:F0} od krawędzi).\n");
+                        // UB 03 przy belce krawędziowej (decyzja 2026-10-11 „do 40mm side cover”): pręty dołu prostopadłe przechodzą przez
+                        // belkę i kończą się 40 od lica zewnętrznego (= linia uskoku; nib ≤ 260 → koniec ≤ 300 od krawędzi) — okno ± 300 jak
+                        // bez belki (jak K7 przed 60e8a9c)
                         var kept = BottomPositionsIn(ubBottom, segLow + cover - 0.5, segHigh - cover + 0.5,
-                                                     edgeCoord - 300.0 - reach, edgeCoord + 300.0 + reach, out _);
+                                                     edgeCoord - 300.0, edgeCoord + 300.0, out _);
                         if (kept.Count >= 1)
                         {
                             totalCount = kept.Count;
@@ -1086,30 +1095,61 @@ namespace BricsCadRc.Core
                         ed.WriteMessage($"\n*** WARNING *** [AutoRebar UB] Edge={edgeCoord:F0}: rozstaw UB {uSpacing:F1} mm < " +
                                         $"{NibStepRules.MinSaneSpacing:F0} mm — sprawdź krawędź (nib zawinięty?).\n");
 
+                    // UB 03 przy belce w detalu 1:25: położenie rzutu + Shift, linie odniesienia za oknem detalu, skala opisów detalu
+                    double dEdge = 0, dAlong = 0, acrossMin = slabAcrossMin, acrossMax = slabAcrossMax, annotScale = 1.0;
+                    if (ubTarget != null)
+                    {
+                        var z = ubTarget.Zone;
+                        dEdge = isUBB1 ? z.Shift.X : z.Shift.Y;
+                        dAlong = isUBB1 ? z.Shift.Y : z.Shift.X;
+                        acrossMin = isUBB1 ? z.Box.MinPoint.Y : z.Box.MinPoint.X;
+                        acrossMax = isUBB1 ? z.Box.MaxPoint.Y : z.Box.MaxPoint.X;
+                        annotScale = BeamDetailAnnotScale;
+                        _annotScaleOverride = annotScale;
+                        _leaderArmOverride = LeaderArmExtension * annotScale;
+                    }
                     try
                     {
                         bool ok = GenerateUBDistribution(
-                            db, edgeCoord, distLow, distHigh, 0.0, 0.0,
+                            db, edgeCoord + dEdge, distLow + dAlong, distHigh + dAlong, 0.0, 0.0,
                             templateBarId, templateBar,
                             ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
                             SpacingMode.Nominal,
-                            slabAcrossMin, slabAcrossMax,
+                            acrossMin, acrossMax,
                             ubPosNr, ubShapeCode, filterDirection,
                             forcedSpacing: uSpacing,
                             representativeOnly: representativeOnly,
                             diameter: ubDia,
                             // UB 03: linia rozkładu poza płytą, przed krawędzią zewnętrzną
                             annotAlongWorld: nibUB
-                                ? edgeCoord + (symbolSide == "Left" ? -NibUBAnnotOutside : NibUBAnnotOutside)
+                                ? edgeCoord + dEdge + (symbolSide == "Left" ? -NibUBAnnotOutside : NibUBAnnotOutside) * annotScale
                                 : (double?)null);
                         if (ok) generated++;
+                        if (ok && ubTarget != null && !_lastDistId.IsNull)
+                        {
+                            // znacznik strefy (jak pręty belki w detalu): RC_SECTION liczy rozkład w położeniu rzutu, ponowne Prepare GA usuwa
+                            using (var trT = db.TransactionManager.StartTransaction())
+                            {
+                                BeamStore.Tag(trT, db, (Entity)trT.GetObject(_lastDistId, OpenMode.ForWrite), ubTarget.Zone.Zone);
+                                trT.Commit();
+                            }
+                            if (!detailZones.Contains(ubTarget.Zone.Zone)) detailZones.Add(ubTarget.Zone.Zone);
+                            ed.WriteMessage($"\n[AutoRebar UB] UB 03: krawędź {(isUBB1 ? "x" : "y")}={edgeCoord:F0} przy belce {ubTarget.Zone.Zone} — " +
+                                            $"{totalCount} UB 03 w detalu 1:25 (na rzucie bez UB 03; decyzja 2026-10-11).\n");
+                        }
                     }
                     catch (System.Exception ex)
                     {
                         Log.Error($"AutoRebar UB edge={edgeCoord:F0}", ex);
                         ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] Edge={edgeCoord:F0} failed: {ex.Message}\n");
                     }
+                    finally
+                    {
+                        if (ubTarget != null) ResetBeamDetailOverrides();
+                    }
                 }
+                // tytuł detalu pod UB 03 dodanymi po Beam (tylko obniżany)
+                foreach (var zh in detailZones) UpdateBeamDetailTitle(db, zh);
             }
 
             ed.WriteMessage(
@@ -1954,7 +1994,11 @@ namespace BricsCadRc.Core
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
                 if (bar.Direction != filterDirection) continue;
-                if (keepPos != null && !keepPos(SingleBarEngine.ExtractPosNr(bar.Mark))) continue;
+                int pnr = SingleBarEngine.ExtractPosNr(bar.Mark);
+                // UB 03 w detalu belki (znacznik strefy, decyzja 2026-10-11): rozkład z 1 prętem „1 H10-03 UB” (opis bez rozstawu) — numer z pierwszego
+                // członu opisu (ExtractPosNr daje 0); rozkłady bez znacznika strefy — jak dotąd (bit w bit)
+                if (pnr == 0 && !string.IsNullOrEmpty(BeamStore.ReadTag(br))) pnr = SingleBarEngine.ExtractPosNr(bar.Mark.Split(' ')[0]);
+                if (keepPos != null && !keepPos(pnr)) continue;
                 if (!BelongsToCurrentSlab(br, slabVertices)) continue;
 
                 ObjectId annotId = ObjectId.Null;
@@ -2528,8 +2572,6 @@ namespace BricsCadRc.Core
         public const double NibTopLabelExtra = 200.0;
         /// <summary>Załamanie opisu T IN NIB na zewnątrz krawędzi, gdy opis idzie wzdłuż krawędzi.</summary>
         public const double NibTopLabelKink = 200.0;
-        /// <summary>T IN NIB przy belce (decyzja 2026-10-11): minimalny odstęp osi dwóch prętów w nibie (H12: prześwit 28 mm).</summary>
-        public const double NibTopBeamMinGap = 40.0;
         /// <summary>Linia rozkładu UB 03 poza płytą (jak na rysunkach ASD).</summary>
         public const double NibUBAnnotOutside = 250.0;
 
@@ -2538,11 +2580,10 @@ namespace BricsCadRc.Core
         /// (otulina od krawędzi zewnętrznej), drugi 150 dalej, za uskokiem. Długości jak góra (siatka 250,
         /// maks. 6000, zakłady 500–700), pozycje wspólne z serią górną 101+.
         /// T1 (pręty X) → krawędzie poziome, T2 (pręty Y) → krawędzie pionowe.
-        /// Krawędź przy belce (decyzja użytkownika 2026-10-11 „w nibie 2 pręty w górze nibu”; <paramref name="e2"/> — obszar
-        /// <see cref="BeamMeshRegion"/>, linia uskoku w &gt; 50 % przy belce jak w PlanNibStepBars): OBA pręty w nibie, pod górnym ramieniem
-        /// UB 03 — pierwszy w narożu zagięcia UB 03 (krawędź + otulina 40 + Ø UB 03 + d/2 = 56; nad prętem B IN NIB w dolnym narożu),
-        /// drugi przy licu belki (linia uskoku − otulina 40), odstęp min. <see cref="NibTopBeamMinGap"/>; opis bez rozstawu
-        /// („2 H12-nn T IN NIB”). Bez stref belek (e2 = null) i krawędzie bez belki — dawny układ bit w bit.
+        /// Krawędź przy belce (<paramref name="e2"/> — obszar <see cref="BeamMeshRegion"/>, linia uskoku w &gt; 50 % przy belce jak
+        /// w PlanNibStepBars) — bez T IN NIB: decyzja użytkownika 2026-10-11 „jedna pozycja bottom in nib i top” — pręty w nibie belki
+        /// generuje RC_GENERATE → Beam jedną pozycją „2+1 H10-nn T+B IN NIB” (BeamGeometry.NibPairAcross; zastępuje 2 × T IN NIB
+        /// w nibie z 60e8a9c i B IN NIB). Bez stref belek (e2 = null) i krawędzie bez belki — dawny układ bit w bit.
         /// </summary>
         private static int GenerateNibTopBars(Database db, Editor ed, NibDetector.NibInfo nib, Phase1Result plan,
             string layerCode, string filterDirection, bool representativeOnly, BeamMeshCuts e2 = null)
@@ -2569,17 +2610,15 @@ namespace BricsCadRc.Core
             {
                 double p1 = e.OuterCoord + e.InwardSign * cover;            // pręt w nibie
                 double p2 = p1 + e.InwardSign * NibTopSpacing;               // pręt za uskokiem
-                // decyzja 2026-10-11: przy belce oba pręty w nibie (drugi „150 dalej” leżałby w trzonie belki)
+                // decyzja 2026-10-11 „jedna pozycja bottom in nib i top”: przy belce pręty w nibie (2 górą + 1 dołem) — jedną pozycją z belki
                 bool atBeam = e2 != null && e.Hi - e.Lo > 1e-6
                     && EdgePartsOutsideBeams(e2, e.Vertical, e.InnerCoord, e.Lo, e.Hi).Sum(p => p.Hi - p.Lo) < 0.5 * (e.Hi - e.Lo);
                 if (atBeam)
                 {
-                    double corner = BeamGeometry.NibUbEdgeCover + NibUBDiameter + NibTopDiameter / 2.0;   // naroże zagięcia UB 03
-                    p1 = e.OuterCoord + e.InwardSign * corner;
-                    p2 = p1 + e.InwardSign * Math.Max(e.Width - cover - corner, NibTopBeamMinGap);   // przy licu belki (uskok − 40)
-                    ed.WriteMessage($"\n[AutoRebar] {NibTopSuffix}: krawędź {(e.Vertical ? "x" : "y")}={e.OuterCoord:F0} przy belce — " +
-                                    $"oba pręty w nibie ({corner:F0} i {Math.Abs(p2 - e.OuterCoord):F0} od krawędzi, nib {e.Width:F0}; " +
-                                    "dołem B IN NIB z RC_GENERATE → Beam).\n");
+                    ed.WriteMessage($"\n[AutoRebar] {NibTopSuffix}: krawędź {(e.Vertical ? "x" : "y")}={e.OuterCoord:F0} przy belce — bez " +
+                                    $"T IN NIB; pręty w nibie jedną pozycją „2+1 H10-nn {BeamGeometry.SuffixNibBoth}” z RC_GENERATE → Beam " +
+                                    "(decyzja 2026-10-11).\n");
+                    continue;
                 }
                 double sLo = Math.Min(p1, p2), sHi = Math.Max(p1, p2);
 
@@ -2667,7 +2706,7 @@ namespace BricsCadRc.Core
                 };
 
                 ed.WriteMessage($"\n[AutoRebar] {NibTopSuffix}: krawędź {(e.Vertical ? "x" : "y")}={e.OuterCoord:F0} " +
-                                $"[{e.Lo:F0}..{e.Hi:F0}], nib {e.Width:F0} mm → {segs.Count} rozkład(y) 2 H12 co {(atBeam ? sHi - sLo : NibTopSpacing):F0}, " +
+                                $"[{e.Lo:F0}..{e.Hi:F0}], nib {e.Width:F0} mm → {segs.Count} rozkład(y) 2 H12 co 150, " +
                                 "długości " + string.Join(",", segs.Select(s => s.length.ToString("F0"))) + "\n");
 
                 for (int segIdx = 0; segIdx < segs.Count; segIdx++)
@@ -2689,13 +2728,12 @@ namespace BricsCadRc.Core
                     bool ok;
                     try
                     {
-                        // przy belce: rozstaw = odstęp prętów w nibie (2 pręty), opis bez rozstawu
                         ok = GenerateDistributionWithLeaderAtOffset(
                             db, x0, y0, x1, y1, tid, tb,
-                            NibTopDiameter, length, atBeam ? sHi - sLo : NibTopSpacing, layerCode, filterDirection,
+                            NibTopDiameter, length, NibTopSpacing, layerCode, filterDirection,
                             cover, sHi - sLo, SpacingMode.Nominal, slabMin, slabMax,
                             representativeOnly ? segIdx : -1, markSuffix: NibTopSuffix, leaderWcsFor: leaderFor,
-                            alongMinOverride: nLo, alongMaxOverride: nHi, noSpacingMark: atBeam);
+                            alongMinOverride: nLo, alongMaxOverride: nHi);
                     }
                     finally { _annotAlongOverride = prevAlong; }
                     if (ok) generated++;
@@ -3397,7 +3435,7 @@ namespace BricsCadRc.Core
                     if (obj is Line ln) { lines.Add((ln.StartPoint, ln.EndPoint)); continue; }
                     if (!(obj is Polyline pl) || pl.NumberOfVertices < 3) continue;
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
-                    if (BeamStore.IsBeamLayer(pl.Layer)) continue;   // strefa belki (RC-BEAM) nie jest otworem
+                    if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)) continue;   // strefa belki (RC-BEAM / RC-BEAM-MANUAL) nie jest otworem
                     var verts = GeometryHelper.GetPolylineVertices(pl);
                     if (!verts.All(v => GeometryHelper.IsPointInsidePolygon(slabVertices, v))) continue;
                     candidates.Add(new HoleBox { MinX = verts.Min(v => v.X), MinY = verts.Min(v => v.Y),

@@ -30,7 +30,14 @@ namespace BricsCadRc.Commands
             var msgs = new List<string>();
             try
             {
-                var peo = new PromptEntityOptions("\nWskaż strefę belki (zamkniętą polilinię) albo [Krawedz]: ");
+                // decyzja 2026-10-11 (punkt D): warstwa RC-BEAM-MANUAL do ręcznego rysowania belek
+                using (doc.LockDocument())
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    BeamStore.EnsureManualLayer(tr, db);
+                    tr.Commit();
+                }
+                var peo = new PromptEntityOptions($"\nWskaż strefę belki (zamkniętą polilinię, np. na warstwie {BeamStore.ManualLayer}) albo [Krawedz]: ");
                 peo.SetRejectMessage("\nTo nie jest polilinia.");
                 peo.AddAllowedClass(typeof(Polyline), true);
                 peo.Keywords.Add("Krawedz");
@@ -57,14 +64,16 @@ namespace BricsCadRc.Commands
                 }
                 else
                 {
-                    var dlg = new BeamDialog(ctx.Params, ctx.HeightSource, ctx.Info);
+                    var dlg = new BeamDialog(ctx.Params, ctx.HeightSource, ctx.Info, ctx.NibGeometry, ctx.NibGap);
                     if (Application.ShowModalWindow(dlg) != true) { ed.WriteMessage($"\n{T} Anulowano (strefa zostaje).\n"); return; }
                     ctx.Params = dlg.Result;
                     generate = dlg.Generate;
                 }
                 using (doc.LockDocument()) AutoRebarEngine.SaveBeamParams(db, ctx);
                 ed.WriteMessage($"\n{T} Parametry zapisane: H = {ctx.Params.Height:F0}, {ctx.Params.BottomCount} H{ctx.Params.BottomDia} + " +
-                                $"{ctx.Params.TopCount} H{ctx.Params.TopDia}, strzemiona H{ctx.Params.StirrupDia} co {ctx.Params.StirrupSpacing:F0}.");
+                                $"{ctx.Params.TopCount} H{ctx.Params.TopDia}, strzemiona H{ctx.Params.StirrupDia} co {ctx.Params.StirrupSpacing:F0} " +
+                                $"({BeamParams.LegsText(ctx.Params.StirrupLegs)}), U-bary H{ctx.Params.UBarDia}" +
+                                (ctx.NibGeometry && ctx.Params.NoNib ? ", BEZ nibu (lico zewnętrzne = krawędź płyty)" : "") + ".");
                 if (generate)
                 {
                     if (ctx.ZoneBottom.IsNull)

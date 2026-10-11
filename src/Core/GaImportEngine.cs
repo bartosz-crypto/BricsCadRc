@@ -154,6 +154,10 @@ namespace BricsCadRc.Core
             /// <summary>Strefy belek (SD-Thickening-Zone → RC-BEAM) na rzucie dolnym i ich wysokości H (0 = nieznana).</summary>
             public int Beams;
             public List<int> BeamHeights = new List<int>();
+            /// <summary>Decyzja 2026-10-11 (punkt D): nowe strefy z polilinii ręcznych (RC-BEAM-MANUAL) — oba rzuty razem.</summary>
+            public int ManualBeams;
+            /// <summary>Obrysy płyty wstawione na rzutach (dolny / górny; Null — brak).</summary>
+            public ObjectId OutlineBottom = ObjectId.Null, OutlineTop = ObjectId.Null;
         }
 
         /// <summary>Warstwa stref pogrubień (belek) w GA — zamknięta polilinia → strefa RC-BEAM (oba rzuty).</summary>
@@ -258,7 +262,30 @@ namespace BricsCadRc.Core
                     double planTop = y1 + dB.Y;
                     PlaceFrame(tr, db, frameB, "rebar_bottom", warnings, top: planTop, rightEdge: planB0 - PlanGap);
                     PlaceFrame(tr, db, frameT, "rebar_top", warnings, top: planTop, leftEdge: planT1 + PlanGap);
+                    // decyzja 2026-10-11 (punkt D): warstwa do ręcznego rysowania belek
+                    BeamStore.EnsureManualLayer(tr, db);
                     tr.Commit();
+                }
+
+                // 5. Polilinie ręczne belek (RC-BEAM-MANUAL) w obrysach wstawionej płyty → strefy RC-BEAM na obu rzutach (polilinie zostają)
+                try
+                {
+                    var polys = new List<List<Point2d>>();
+                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        foreach (var oid in new[] { res.OutlineBottom, res.OutlineTop })
+                            if (!oid.IsNull && !oid.IsErased && tr.GetObject(oid, OpenMode.ForRead) is Polyline opl)
+                                polys.Add(GeometryHelper.GetPolylineVertices(opl));
+                        tr.Commit();
+                    }
+                    if (polys.Count > 0)
+                        res.ManualBeams = AutoRebarEngine.ConvertManualBeams(db, pt => polys.Any(pp => GeometryHelper.IsPointInsidePolygon(pp, pt)),
+                                                                             m => warnings.Add("[RC BEAM] " + m));
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.Import.ManualBeams", ex);
+                    warnings.Add($"[RC BEAM] Błąd polilinii ręcznych belek — {ex.Message}");
                 }
             }
             return res;
@@ -354,7 +381,11 @@ namespace BricsCadRc.Core
                     else if (e is MText && (e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         textClones.Add(e.ObjectId);
                     else if (pair.Key == plot.LabelBoxId) box = e.ObjectId;
-                    else if (pair.Key == plot.OutlineId) outline = e.ObjectId;
+                    else if (pair.Key == plot.OutlineId)
+                    {
+                        outline = e.ObjectId;
+                        if (result != null) { if (view == "B") result.OutlineBottom = outline; else result.OutlineTop = outline; }
+                    }
                     else if ((e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase))
                     {
                         if (e is Polyline pl && !GeometryHelper.IsEffectivelyClosed(pl)) openPl.Add(e.ObjectId);

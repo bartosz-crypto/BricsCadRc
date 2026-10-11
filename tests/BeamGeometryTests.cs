@@ -461,7 +461,7 @@ namespace BricsCadRc.Tests
             Assert.That(p.CoverTop, Is.EqualTo(35));
             Assert.That(p.SideMode, Is.EqualTo(3));
             Assert.That(p.NibTopDia, Is.EqualTo(0));
-            Assert.That(p.NibBottomDia, Is.EqualTo(10));
+            Assert.That(p.NibBottomDia, Is.EqualTo(10), "pręty w nibie 2T+1B — H10 (decyzja 2026-10-11)");
             Assert.That(p.UsesBothMark, Is.True);
             // zakład 40·Ø (nota 12 biura): H10 400, H12 500, H16 650
             Assert.That(p.LapFor(10), Is.EqualTo(400));
@@ -507,7 +507,7 @@ namespace BricsCadRc.Tests
             Assert.That(n.MigrationNote, Does.Contain("H10 → H12"));
             Assert.That(n.MigrationNote, Does.Contain("zakład 800"));
             Assert.That(n.MigrationNote, Does.Contain("nib górą H10 → brak"));
-            Assert.That(n.MigrationNote, Does.Contain("nib dołem H16 → H10"));
+            Assert.That(n.MigrationNote, Does.Contain("nib dołem H16 → pręty w nibie 2T+1B H10"));
             Assert.That(n.MigrationNote, Does.Contain("tryb B3"));
         }
 
@@ -560,6 +560,7 @@ namespace BricsCadRc.Tests
             foreach (var u in us)
             {
                 Assert.That(u.Kind, Is.EqualTo("E"));
+                // liczba U-barów = liczba kolumn prętów głównych (korekta użytkownika 2026-10-11 „tyle samo co prętów głównych”)
                 Assert.That(u.Count, Is.EqualTo(4), "4 U-bary w kolumnach prętów");
                 Assert.That((u.A, u.B, u.C), Is.EqualTo((750.0, 265.0, 750.0)), "A = Ceil25(650 + 90), B = 290 − 24 → 265 (Holbrook 770-265-770)");
                 Assert.That(u.Dropped, Is.False);

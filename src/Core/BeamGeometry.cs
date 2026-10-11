@@ -44,7 +44,8 @@ namespace BricsCadRc.Core
         /// <summary>Pręty boczne (BS): średnica (0 = brak) i rozstaw pionowy. K2: H12 (C12); tryb <see cref="SideMode"/>.</summary>
         public int SideDia = 12;
         public double SideSpacing = 200;
-        /// <summary>Pręty wzdłuż nibu belki (BN): górą (0 = brak — K2: dubluje T IN NIB płyty) i dołem (H10 „B IN NIB” — K5).</summary>
+        /// <summary>Pręty wzdłuż nibu belki (BN): górą (0 = brak — K2: dubluje pręty w nibie) i [21] — pręty w nibie jedną pozycją
+        /// (decyzje użytkownika 2026-10-11: 3 identyczne pręty H10, 2 górą + 1 dołem, „2+1 H10-nn T+B IN NIB”; dawniej K5 — 1 H10 „B IN NIB”).</summary>
         public int NibTopDia = 0, NibBottomDia = 10;
         /// <summary>Otulina strzemion belki: boczna / czołowa i dolna [mm] (decyzja użytkownika 2026-10-10: 45 / 50).</summary>
         public double CoverSide = BeamGeometry.DefaultCoverSide, CoverBottom = BeamGeometry.DefaultCoverBottom;
@@ -75,6 +76,43 @@ namespace BricsCadRc.Core
         public bool CornerSquareLinks = true;
         /// <summary>[35] Ramię U-bara końca: A = Ceil25(zakład + naddatek) [mm] (90: C12 740, Holbrook 770 — pytanie 14).</summary>
         public double UBarArmExtra = 90;
+        /// <summary>[36] K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 (osobny widok w modelu; true — domyślne) albo
+        /// na rzucie dolnym 1:50 (false — jak przed K9). Brak pola w rekordzie = detal.</summary>
+        public bool DetailView = true;
+        /// <summary>[37] Cięcie strzemion (decyzja użytkownika 2026-10-11): 0 = Auto (EN 1992-1-1 §9.2.2(8): rozstaw poprzeczny ramion
+        /// ≤ 0,75·d ≤ 600 — <see cref="BeamGeometry.PlanLinkLegs"/>; domyślne, także brak pola w rekordzie), 2 = 2-cięte (jedno strzemię 51),
+        /// 4 = 4-cięte (dwa identyczne zachodzące strzemiona 51 jedną pozycją, opis „2x29 H12-nn-200 LINKS”).</summary>
+        public int StirrupLegs = LegsAuto;
+        /// <summary>[38] Nib przy belce (decyzja użytkownika 2026-10-11 „opcja dodania lub nie dodawania nibu, bo czasem może nie być”):
+        /// false — wg geometrii (domyślne, także brak pola: linia uskoku przed licem zewnętrznym belki → belka z nibem, strefa przy krawędzi
+        /// płyty → bez nibu; wynik jak dotąd), true — belka BEZ nibu mimo linii uskoku: lico zewnętrzne belki = krawędź płyty
+        /// (<see cref="BeamGeometry.ZoneWithoutNib"/>), bez UB 03 / T IN NIB / prętów w nibie przy tej belce.</summary>
+        public bool NoNib;
+
+        public const int LegsAuto = 0, Legs2 = 2, Legs4 = 4;
+
+        /// <summary>Okno RC_BEAM (decyzja użytkownika 2026-10-11): średnice prętów głównych dołem / górą i pionowych U-barów — lista.</summary>
+        public static readonly int[] MainDiameters = { 12, 16, 20, 22, 25, 32 };
+        /// <summary>Okno RC_BEAM: średnice strzemion — lista.</summary>
+        public static readonly int[] LinkDiameters = { 10, 12 };
+
+        /// <summary>
+        /// Pozycje listy rozwijanej średnic: lista + wartość bieżąca spoza listy jako „H{n} (nietypowa)” (stary rekord — wartość pokazana,
+        /// nie zmieniana po cichu). Wynik posortowany rosnąco; current ≤ 0 — bez dopisku.
+        /// </summary>
+        public static List<(int Dia, string Text)> DiameterItems(IList<int> list, int current)
+        {
+            var res = list.Select(d => (d, "H" + d.ToString(CultureInfo.InvariantCulture))).ToList();
+            if (current > 0 && !list.Contains(current))
+                res.Add((current, "H" + current.ToString(CultureInfo.InvariantCulture) + " (nietypowa)"));
+            return res.OrderBy(x => x.Item1).ToList();
+        }
+
+        /// <summary>Normalizacja pola [37] (nieznana wartość → Auto).</summary>
+        public static int NormalizeLegs(int v) => v == Legs2 || v == Legs4 ? v : LegsAuto;
+
+        /// <summary>Tekst trybu cięcia strzemion: „Auto” / „2-cięte” / „4-cięte”.</summary>
+        public static string LegsText(int v) => v == Legs2 ? "2-cięte" : v == Legs4 ? "4-cięte" : "Auto";
 
         /// <summary>Odczytano rekord v1 (wersje testowe) — parametry zbrojenia zastąpione nowymi domyślnymi w pamięci (niezapisywane).</summary>
         public bool MigratedFromV1;
@@ -125,7 +163,7 @@ namespace BricsCadRc.Core
                 ? $"pręty boczne H{I(v1.SideDia)} → tryb B3 (H ≤ {F(n.SideThreshold)} brak, wyżej H{I(n.SideDia)})"
                 : $"pręty boczne: brak → tryb B3 (H ≤ {F(n.SideThreshold)} brak, wyżej H{I(n.SideDia)})");
             if (v1.NibTopDia != n.NibTopDia) ch.Add($"nib górą H{I(v1.NibTopDia)} → {(n.NibTopDia > 0 ? "H" + I(n.NibTopDia) : "brak")}");
-            if (v1.NibBottomDia != n.NibBottomDia) ch.Add($"nib dołem H{I(v1.NibBottomDia)} → H{I(n.NibBottomDia)}");
+            if (v1.NibBottomDia != n.NibBottomDia) ch.Add($"nib dołem H{I(v1.NibBottomDia)} → pręty w nibie 2T+1B H{I(n.NibBottomDia)}");
             ch.Add($"strzemię A = H − {F(n.CoverTop)} − {F(n.CoverBottom)} (otulina górna A1)");
             n.MigrationNote = "rekord RC_BEAM v1 (wersja testowa) — parametry zbrojenia zastąpione nowymi domyślnymi (do potwierdzenia): "
                               + string.Join("; ", ch) + ". Zapis przy OK w RC_BEAM albo przy generowaniu.";
@@ -157,8 +195,10 @@ namespace BricsCadRc.Core
         /// „29 H12-nn-200 LINKS”, „4 H16-nn-150 UB” (BU — kod BU, nie UB płyty: skany UB płyty porównują kod B1 / B2).</summary>
         public const string SuffixBoth = "B+T", SuffixBottom = "B", SuffixTop = "T", SuffixLinks = "LINKS", SuffixUBar = "UB";
         /// <summary>Opisy prętów bocznych i w nibie: K4 — „2x1 H12-nn SIDE” (BS); E4b — „1 H10-11 BEAM NIB T” (BN górą, domyślnie brak);
-        /// K5 — „1 H10-nn B IN NIB” (BN dołem, podział i numer jak pręt siatki dolnej).</summary>
-        public const string SuffixSide = "SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "B IN NIB";
+        /// K5 — „1 H10-nn B IN NIB” (BN dołem; rysunki sprzed decyzji 2026-10-11); od decyzji użytkownika 2026-10-11 — „2+1 H10-nn T+B IN NIB”
+        /// (BN: jedna pozycja w nibie, 3 identyczne pręty — 2 górą pod górnym ramieniem UB 03 + 1 dołem w dolnym narożu UB 03; liczba „2+1”
+        /// — BarLabelRules.CountText).</summary>
+        public const string SuffixSide = "SIDE", SuffixNibTop = "BEAM NIB T", SuffixNibBottom = "B IN NIB", SuffixNibBoth = "T+B IN NIB";
 
         /// <summary>Kod rozkładu belki (także stare BB / BT / BS / BN z wersji testowych) — pręty belki, nie siatki płyty.</summary>
         public static bool IsBeamCode(string code)
@@ -1029,6 +1069,163 @@ namespace BricsCadRc.Core
             return b > 0 ? Math.Floor(b / 5.0 + 1e-9) * 5.0 : 0;
         }
 
+        // ── strzemiona 4-cięte (decyzja użytkownika 2026-10-11) ─────────────
+
+        /// <summary>
+        /// Strzemiona 4-cięte: dwa identyczne strzemiona 51 zachodzące na siebie — pierwsze obejmuje pręty 1..k, drugie (n − k + 1)..n
+        /// (symetrycznie). Reguła: k = round(1 + 2(n − 1)/3) — ramiona wewnętrzne możliwie blisko 1/3 i 2/3 szerokości — z warunkiem
+        /// zachodzenia na co najmniej 1 pręt (n − k + 1 ≤ k) i k &lt; n: n = 3 → 2 (1–2, 2–3), 4 → 3 (1–3, 2–4), 5 → 4, 6 → 4 (1–4, 3–6),
+        /// 7 → 5, 8 → 6. 0 — 4-cięte niemożliwe (n ≤ 2).
+        /// </summary>
+        public static int FourLegK(int n)
+        {
+            if (n < 3) return 0;
+            int k = (int)Math.Round(1 + 2.0 * (n - 1) / 3.0, MidpointRounding.AwayFromZero);
+            int kMin = (n + 2) / 2;          // ceil((n + 1) / 2): n − k + 1 ≤ k
+            if (k < kMin) k = kMin;
+            if (k >= n) k = n - 1;
+            return k >= kMin ? k : 0;
+        }
+
+        /// <summary>
+        /// Szerokość zewnętrzna B strzemienia 4-ciętego (wymiar zewnętrzny BS 8666) obejmującego pręty 1..k warstwy n prętów Ø d
+        /// (rzędy jak <see cref="BarsAcross"/>: oś pierwszego = otulina + Ø strzemienia + d/2 od lica): oś pręta k − oś pręta 1 + d + 2·Ø
+        /// strzemienia, w górę do 5 mm. 600, 4 H16, H12, otulina 45: (470/3)·2 + 16 + 24 = 353,3 → 355. 0 — gdy k = 0.
+        /// </summary>
+        public static double FourLegWidth(double width, int n, int d, int k, int dLink, double coverSide = DefaultCoverSide)
+        {
+            if (k <= 0 || n < 2) return 0;
+            double off = coverSide + dLink + d / 2.0;
+            double span = width - 2 * off;
+            if (span <= 0) return 0;
+            double sp = span / (n - 1);
+            return Math.Ceiling(((k - 1) * sp + d + 2.0 * dLink) / 5.0 - 1e-6) * 5.0;
+        }
+
+        /// <summary>
+        /// Największy rozstaw poprzeczny ramion (oś–oś) strzemion o szerokości zewnętrznej bOuter (2-cięte) albo dwóch strzemion b4
+        /// przy obu licach (4-cięte, b4 &gt; 0): ramiona w osiach dLink/2 od lica zewnętrznego strzemienia.
+        /// 2-cięte: bOuter − dLink (510, H12 → 498). 4-cięte 510 / 355: 6, 161, 349, 504 → 188.
+        /// </summary>
+        public static double LegSpacing(double bOuter, double b4, int dLink)
+        {
+            double h = dLink / 2.0;
+            if (b4 <= 0) return bOuter - dLink;
+            var legs = new List<double> { h, b4 - h, bOuter - b4 + h, bOuter - h };
+            legs.Sort();
+            double max = 0;
+            for (int i = 1; i < legs.Count; i++) max = Math.Max(max, legs[i] - legs[i - 1]);
+            return max;
+        }
+
+        /// <summary>
+        /// EN 1992-1-1 §9.2.2(8) (UK NA — wartość zalecana): największy rozstaw poprzeczny ramion strzemion s_t,max = 0,75·d ≤ 600 mm;
+        /// d = H − otulina dolna − Ø strzemienia − Ø/2 pręta głównego dołem. 600 × 600 (50, H12, H16): d = 530, s_t,max = 397,5.
+        /// </summary>
+        public static (double D, double StMax) LinkLegLimit(double h, double coverBottom, int dLink, int dMain)
+        {
+            double d = h - coverBottom - dLink - dMain / 2.0;
+            return (d, Math.Max(0, Math.Min(0.75 * d, 600.0)));
+        }
+
+        /// <summary>Wynik wyboru cięcia strzemion odcinka belki (<see cref="PlanLinkLegs"/>).</summary>
+        public sealed class LinkLegsPlan
+        {
+            /// <summary>Wybrane cięcie: 2 albo 4.</summary>
+            public int Legs = 2;
+            /// <summary>Tryb z rekordu [37] (0 Auto / 2 / 4).</summary>
+            public int Mode;
+            /// <summary>Belka krawędziowa (OuterSide ≠ 0) — próg normy w trybie Auto; belka w płycie — Auto zawsze 2-cięte.</summary>
+            public bool EdgeBeam = true;
+            public double D, StMax;
+            /// <summary>B strzemienia 2-ciętego (zewnętrzne) i rozstaw jego ramion (B − Ø strzemienia).</summary>
+            public double BOuter, Spacing2;
+            /// <summary>4-cięte: k (pręty 1..k i n−k+1..n warstwy dolnej), B jednego strzemienia, największy rozstaw ramion; K = 0 — niemożliwe.</summary>
+            public int K, N;
+            public double B4, Spacing4;
+            /// <summary>Rozstaw ramion wybranego cięcia &gt; s_t,max — ostrzeżenie (nie blokada).</summary>
+            public bool Exceeded;
+            /// <summary>Komunikat do linii poleceń (bez prefiksu).</summary>
+            public string Note;
+            /// <summary>B strzemienia (szablonu): 2-cięte — BOuter, 4-cięte — B4.</summary>
+            public double TemplateB => Legs == 4 ? B4 : BOuter;
+        }
+
+        /// <summary>
+        /// Cięcie strzemion odcinka belki szerokości width i wysokości h (decyzja użytkownika 2026-10-11, punkt C): s_t,max z
+        /// <see cref="LinkLegLimit"/>; 2-cięte — rozstaw ramion B − Ø strzemienia; Auto: &gt; s_t,max → 4-cięte (rozstaw ramion 4-ciętych też
+        /// sprawdzany — ostrzeżenie, gdy nadal &gt; s_t,max). Ręczne 2-cięte przy przekroczeniu — ostrzeżenie; ręczne 4-cięte przy n ≤ 2 —
+        /// 2-cięte z komunikatem. layers — (liczba, Ø) prętów warstw (dół pierwszy): B 4-ciętego obejmuje pręty 1..k każdej warstwy (max).
+        /// Doprecyzowanie użytkownika 2026-10-11: próg normy w trybie Auto tylko dla belek krawędziowych (edgeBeam — OuterSide ≠ 0); belka
+        /// w płycie — Auto zawsze 2-cięte (komunikat informacyjny, bez ostrzeżenia); ręczne 2 / 4 nadpisuje Auto (ostrzeżenie tylko krawędziowej).
+        /// </summary>
+        public static LinkLegsPlan PlanLinkLegs(int mode, double h, double width, double coverSide, double coverBottom, int dLink,
+                                                IList<(int n, int d)> layers, bool edgeBeam = true)
+        {
+            var r = new LinkLegsPlan { Mode = BeamParams.NormalizeLegs(mode), EdgeBeam = edgeBeam };
+            int dB = layers != null && layers.Count > 0 ? layers[0].d : 16;
+            (r.D, r.StMax) = LinkLegLimit(h, coverBottom, dLink, dB);
+            r.BOuter = StirrupWidth(width, coverSide);
+            r.Spacing2 = LegSpacing(r.BOuter, 0, dLink);
+            if (layers != null && layers.Count > 0)
+            {
+                r.N = layers[0].n;
+                r.K = FourLegK(r.N);
+                double b4 = 0;
+                foreach (var (n, d) in layers)
+                {
+                    int k = FourLegK(n);
+                    if (k <= 0) { b4 = 0; r.K = 0; break; }
+                    b4 = Math.Max(b4, FourLegWidth(width, n, d, k, dLink, coverSide));
+                }
+                if (r.K > 0 && b4 > 0 && b4 < r.BOuter - 2.0 * dLink)
+                {
+                    r.B4 = b4;
+                    r.Spacing4 = LegSpacing(r.BOuter, b4, dLink);
+                }
+                else r.K = 0;
+            }
+            string F(double x) => x.ToString("0.#", CultureInfo.InvariantCulture);
+            string head = $"{F(width)}×{F(h)}: d = {F(r.D)}, s_t,max = 0,75·d = {F(r.StMax)} (EN 1992-1-1 §9.2.2(8)), rozstaw ramion 2-ciętych {F(r.Spacing2)}";
+            bool over2 = r.Spacing2 > r.StMax + 1e-6;
+            // doprecyzowanie użytkownika 2026-10-11: belka w płycie (OuterSide = 0) — Auto zawsze 2-cięte, bez ostrzeżenia normowego
+            if (!edgeBeam && r.Mode != BeamParams.Legs4)
+            {
+                r.Legs = 2;
+                r.Note = $"{F(width)}×{F(h)}: belka w płycie — 2-cięte" + (r.Mode == BeamParams.Legs2 ? " (wybór ręczny)." : " (Auto: próg normy tylko dla belek krawędziowych).");
+                return r;
+            }
+            if (r.Mode == BeamParams.Legs2)
+            {
+                r.Legs = 2;
+                r.Exceeded = over2;
+                r.Note = head + (over2 ? $" > {F(r.StMax)} — wybrano 2-cięte ręcznie: *** OSTRZEŻENIE *** rozstaw ramion przekracza s_t,max (rozważ 4-cięte)."
+                                       : $" ≤ {F(r.StMax)} → 2-cięte (wybór ręczny).");
+                return r;
+            }
+            bool manual4 = r.Mode == BeamParams.Legs4;
+            if (!edgeBeam) head = $"{F(width)}×{F(h)}: belka w płycie";
+            bool want4 = manual4 || over2;
+            string how = manual4 ? "; 4-cięte (wybór ręczny)" : (over2 ? $" > {F(r.StMax)} → 4-cięte" : $" ≤ {F(r.StMax)} → 2-cięte (Auto)");
+            if (!want4) { r.Legs = 2; r.Note = head + how + "."; return r; }
+            if (r.K <= 0)
+            {
+                r.Legs = 2;
+                r.Exceeded = over2 && edgeBeam;
+                r.Note = head + how + $" niemożliwe ({r.N} pręty w warstwie — potrzeba ≥ 3) — 2-cięte"
+                         + (r.Exceeded ? ": *** OSTRZEŻENIE *** rozstaw ramion przekracza s_t,max." : ".");
+                return r;
+            }
+            r.Legs = 4;
+            r.Exceeded = edgeBeam && r.Spacing4 > r.StMax + 1e-6;
+            string kk = r.K.ToString(CultureInfo.InvariantCulture), n2 = (r.N - r.K + 1).ToString(CultureInfo.InvariantCulture),
+                   nn = r.N.ToString(CultureInfo.InvariantCulture);
+            r.Note = head + how
+                     + $" (2 × strzemię 51 B = {F(r.B4)} obejmujące pręty 1–{kk} i {n2}–{nn}, jedna pozycja; rozstaw ramion {F(r.Spacing4)}"
+                     + (!edgeBeam ? ")." : r.Exceeded ? $" > {F(r.StMax)} — *** OSTRZEŻENIE *** nadal przekracza s_t,max)." : $" ≤ {F(r.StMax)}).");
+            return r;
+        }
+
         /// <summary>
         /// Pręty podłużne w poprzek belki: pierwszy / ostatni w osi otulina + strzemię + d/2 od lica, liczba prętów równo
         /// (600, otulina 45, H10, H16: 63 … 537, co 158). Zwraca (pierwszy, rozstaw).
@@ -1173,10 +1370,37 @@ namespace BricsCadRc.Core
             return hi - lo > 100 ? (across, lo, hi) : ((double, double, double)?)null;
         }
 
+        /// <summary>Pręty w nibie jedną pozycją (decyzja 2026-10-11): oś drugiego pręta górą od lica zewnętrznego belki (linia uskoku − 40)
+        /// i minimalny odstęp osi dwóch prętów górą (H10: prześwit 30 mm).</summary>
+        public const double NibPairFaceCover = 40.0, NibPairMinGap = 40.0;
+
+        /// <summary>
+        /// Pręty w nibie jedną pozycją (decyzja użytkownika 2026-10-11 „jedna pozycja bottom in nib i top — 3 pręty te same”): osie
+        /// w poprzek dwóch prętów górą (w rzucie rysowane 2 pręty, opis / BBS 3). <paramref name="across1"/> — oś pręta w narożu spinki UB 03
+        /// (<see cref="NibBarLine"/>; pod nim, w dolnym narożu, trzeci pręt dołem); drugi pręt górą przy licu zewnętrznym belki (lico
+        /// zewnętrzne + <see cref="NibPairFaceCover"/> w stronę krawędzi płyty), odstęp osi min. <see cref="NibPairMinGap"/>.
+        /// Wynik: Outer — pręt w narożu (z prętem dołem), Inner — pręt przy licu belki.
+        /// </summary>
+        public static (double Outer, double Inner) NibPairAcross(Segment s, double across1)
+        {
+            double face = s.OuterSide < 0 ? s.AcrossLo : s.AcrossHi;
+            int sg = s.OuterSide < 0 ? -1 : 1;
+            double fromFace = (across1 - face) * sg;                     // oś pręta narożnego od lica zewnętrznego (w stronę krawędzi)
+            double gap = Math.Max(fromFace - NibPairFaceCover, NibPairMinGap);
+            return (across1, across1 - sg * gap);
+        }
+
         // ── K7 (E2): siatka płyty przy belce (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne, do potwierdzenia — pytanie 11) ──
 
         /// <summary>Zasięg odcięcia poza lico belki (nib przed belką / nib zawinięty na końcu): nib ≤ EdgeEndMaxGap + 5.</summary>
         public const double MeshCutReach = EdgeEndMaxGap + 5.0;
+
+        /// <summary>
+        /// Otulina boczna belki dla końców prętów siatki płyty PROSTOPADŁYCH do belki krawędziowej (decyzja użytkownika 2026-10-11 „pręty
+        /// prostopadłe płyty powinny wchodzić w belkę jak normalnie do 40mm side cover”): pręt B / T przechodzi przez belkę i kończy się
+        /// 40 mm od lica zewnętrznego belki. Element siatki płyty — inna wartość niż otulina boczna strzemion belki (<see cref="DefaultCoverSide"/> 45).
+        /// </summary>
+        public const double MeshBeamSideCover = 40.0;
 
         /// <summary>
         /// Prostokąty odejmowane od wielokąta siatki płyty (E2) dla warstwy dolnej (top = false, wielokąt = obrys zewnętrzny) albo
@@ -1185,10 +1409,14 @@ namespace BricsCadRc.Core
         ///   • pręty RÓWNOLEGŁE do odcinka — dół: od strony krawędzi płyty (nib przed belką) do lica wewnętrznego + d (pierwszy pręt
         ///     40 + d od lica), góra: do lica wewnętrznego + (s/2 − otulina) (pierwszy pręt s/2 od lica); belka bez krawędzi płyty
         ///     (OuterSide = 0) — oba lica;
-        ///   • pręty PROSTOPADŁE (decyzja użytkownika 2026-10-11 „pręty górne i dolne płyty nie powinny wchodzić w belkę”; wcześniej
-        ///     dół do linii uskoku − otulina, góra do linii uskoku) — dół i góra: odjęta cała strefa belki i nib przed nią, pręty kończą
-        ///     się NA LICU WEWNĘTRZNYM belki (bez otuliny — beton ciągły): granica odcięcia = lico wewnętrzne ∓ otulina, bo pas daje
-        ///     koniec pręta na granicy pasa ± otulina; belka bez krawędzi płyty (OuterSide = 0) — bez zmian (pręty przez belkę).
+        ///   • pręty PROSTOPADŁE (decyzja użytkownika 2026-10-11 „pręty prostopadłe płyty powinny wchodzić w belkę jak normalnie do
+        ///     40 mm side cover” — zastępuje decyzję z 60e8a9c „do lica wewnętrznego”) — dół i góra: przez belkę, koniec
+        ///     <see cref="MeshBeamSideCover"/> (40) od LICA ZEWNĘTRZNEGO belki (strona krawędzi płyty): odjęty tylko nib przed belką,
+        ///     granica odcięcia = lico zewnętrzne ± (40 − otulina siatki), bo pas daje koniec pręta na granicy pasa ± otulina. Lico
+        ///     zewnętrzne ogranicza pręt na obu poziomach: przed nim jest tylko nib belki przy jej spodzie (profil RC_SECTION), a górą
+        ///     linia uskoku (wielokąt siatki górnej) pokrywa się z licem zewnętrznym (Holbrook 528 / 539) — góra wychodzi jak dawniej
+        ///     (do linii uskoku − 40), dół jak K7 przed 60e8a9c (do linii uskoku − 40); belka bez krawędzi płyty (OuterSide = 0) — bez
+        ///     odcięcia (pręty przez belkę).
         /// Wzdłuż: lica końców odcinka (FaceLo..FaceHi), na końcu przy krawędzi i w narożniku L dalej o <see cref="MeshCutReach"/>
         /// (nib zawinięty / nib narożnika). d — średnica prętów warstwy, spacing — rozstaw nominalny, cover — otulina siatki.
         /// </summary>
@@ -1213,9 +1441,11 @@ namespace BricsCadRc.Core
                 else
                 {
                     if (s.OuterSide == 0) continue;
-                    // koniec pręta na licu wewnętrznym: granica pasu = lico ∓ otulina (pas: pręt od granicy + otulina)
-                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossHi - cover; }
-                    else { cLo = s.AcrossLo + cover; cHi = s.AcrossHi + MeshCutReach; }
+                    // koniec pręta 40 od lica zewnętrznego (w belce): granica pasu = lico zewnętrzne ± (40 − otulina) (pas: pręt od granicy
+                    // + otulina); przy otulinie siatki 40 — dokładnie lico zewnętrzne (= linia uskoku, jak K7 przed 60e8a9c)
+                    double inBeam = MeshBeamSideCover - cover;
+                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossLo + inBeam; }
+                    else { cLo = s.AcrossHi - inBeam; cHi = s.AcrossHi + MeshCutReach; }
                 }
                 res.Add(s.AlongX ? new RectilinearPolygons.Rect(eLo, cLo, eHi, cHi) : new RectilinearPolygons.Rect(cLo, eLo, cHi, eHi));
             }
@@ -1240,6 +1470,134 @@ namespace BricsCadRc.Core
                 double cLo = s.AcrossLo - (s.OuterSide < 0 ? MeshCutReach : 0);
                 double cHi = s.AcrossHi + (s.OuterSide > 0 ? MeshCutReach : 0);
                 res.Add(s.AlongX ? new RectilinearPolygons.Rect(eLo, cLo, eHi, cHi) : new RectilinearPolygons.Rect(cLo, eLo, cHi, eHi));
+            }
+            return res;
+        }
+
+        // ── Nib przy belce — opcja okna RC_BEAM, rekord [38] (decyzja użytkownika 2026-10-11 „opcja dodania lub nie dodawania nibu”) ──
+
+        /// <summary>
+        /// Odległość lica zewnętrznego odcinka (strona <see cref="Segment.OuterSide"/>) od obrysu płyty w połowie długości odcinka —
+        /// szerokość nibu przed belką (0: odcinek bez lica przy krawędzi albo lico na obrysie). Jak <see cref="NibBarLine"/>.
+        /// </summary>
+        public static double OuterGap(Segment s, IList<(double X, double Y)> outline)
+        {
+            if (s == null || s.OuterSide == 0 || outline == null || outline.Count < 3) return 0;
+            double mid = (s.OwnLo + s.OwnHi) / 2;
+            double face = s.OuterSide < 0 ? s.AcrossLo : s.AcrossHi;
+            var p = s.AlongX ? (mid, face) : (face, mid);
+            var v = s.AlongX ? (0.0, (double)s.OuterSide) : ((double)s.OuterSide, 0.0);
+            double g = RayHit(outline.ToList(), p, v);
+            return double.IsInfinity(g) ? 0 : g;
+        }
+
+        /// <summary>
+        /// Geometria strefy ma nib (domyślne pola „Nib przy belce” w oknie RC_BEAM): odcinek osiowy z licem zewnętrznym w odległości
+        /// 1 … <see cref="EdgeEndMaxGap"/> od obrysu płyty (kryterium jak <see cref="NibBarLine"/> — pręty w nibie). Strefa przy samej krawędzi
+        /// (RC-BEAM-MANUAL bez linii uskoku) albo belka w płycie — false.
+        /// </summary>
+        public static bool HasNibGeometry(Result an, IList<(double X, double Y)> outline)
+            => an != null && an.Segments.Any(s => !s.Manual && OuterGap(s, outline) is double g && g >= 1.0 && g <= EdgeEndMaxGap);
+
+        /// <summary>
+        /// Strefa belki BEZ nibu (rekord [38] — <see cref="BeamParams.NoNib"/>; decyzja użytkownika 2026-10-11 „zostaw szerokość 600, chyba że
+        /// będzie inaczej na GA”): każda krawędź osiowa strefy, której normalna zewnętrzna trafia w obrys płyty w odległości 1 … <see cref="EdgeEndMaxGap"/>
+        /// (lico zewnętrzne przed nibem, lico końca przy nibie zawiniętym), przesunięta do obrysu — lico zewnętrzne belki = krawędź płyty.
+        /// Lico boczne PRZESUWA całą nogę: lico wewnętrzne tej nogi (krawędź równoległa, zwrócona przeciwnie, w odległości szerokości
+        /// <see cref="MinWidth"/> … <see cref="MaxWidth"/>, zakresy nachodzą) przesuwa się o to samo — szerokość z GA bez zmian (528: 600 przy
+        /// krawędzi). Lico końca przy nibie zawiniętym — koniec belki do krawędzi płyty (bez pary: przeciwny koniec dalej niż szerokość). Krawędź
+        /// z różną odległością na długości (obrys z uskokiem) — bez zmian + komunikat w <paramref name="msgs"/>. Strefa bez takich krawędzi —
+        /// kopia wejścia (geometria bez zmian).
+        /// </summary>
+        public static List<(double X, double Y)> ZoneWithoutNib(IList<(double X, double Y)> zone, IList<(double X, double Y)> outline,
+                                                                List<string> msgs = null)
+        {
+            var poly = Clean(zone);
+            if (poly.Count < 4 || outline == null || outline.Count < 3) return zone.ToList();
+            var outl = outline.ToList();
+            bool ccw = SignedArea(poly) > 0;
+            int n = poly.Count;
+            // krawędzie osiowe: orientacja, współrzędna, zakres, normalna zewnętrzna
+            var hor = new bool[n]; var ax = new bool[n]; var c = new double[n]; var lo = new double[n]; var hi = new double[n]; var sg = new int[n];
+            var move = new double?[n];
+            for (int i = 0; i < n; i++)
+            {
+                var a = poly[i]; var b = poly[(i + 1) % n];
+                double dx = b.X - a.X, dy = b.Y - a.Y;
+                bool h = Math.Abs(dy) <= AxisTol && Math.Abs(dx) > AxisTol;
+                bool v = Math.Abs(dx) <= AxisTol && Math.Abs(dy) > AxisTol;
+                if (!h && !v) continue;
+                ax[i] = true; hor[i] = h;
+                c[i] = h ? (a.Y + b.Y) / 2 : (a.X + b.X) / 2;
+                lo[i] = h ? Math.Min(a.X, b.X) : Math.Min(a.Y, b.Y);
+                hi[i] = h ? Math.Max(a.X, b.X) : Math.Max(a.Y, b.Y);
+                // normalna zewnętrzna (CCW: wnętrze po lewej, na zewnątrz po prawej), osiowa
+                sg[i] = v ? Math.Sign(dy) * (ccw ? 1 : -1) : -Math.Sign(dx) * (ccw ? 1 : -1);
+                var dir = h ? (0.0, (double)sg[i]) : ((double)sg[i], 0.0);
+                var gaps = new[] { 0.25, 0.5, 0.75 }.Select(t => RayHit(outl, (a.X + t * dx, a.Y + t * dy), dir)).ToList();
+                double g = gaps[1];
+                if (double.IsInfinity(g) || g < 1.0 || g > EdgeEndMaxGap) continue;
+                if (gaps.Any(x => double.IsInfinity(x) || Math.Abs(x - g) > 1.0))
+                {
+                    msgs?.Add(string.Format(CultureInfo.InvariantCulture,
+                        "belka bez nibu: lico ({0:0},{1:0})–({2:0},{3:0}) w różnej odległości od krawędzi płyty ({4}) — bez zmian, sprawdź.",
+                        a.X, a.Y, b.X, b.Y, string.Join(" / ", gaps.Select(x => double.IsInfinity(x) ? "∞" : x.ToString("0", CultureInfo.InvariantCulture)))));
+                    continue;
+                }
+                move[i] = sg[i] * g;
+            }
+            if (move.All(m => m == null)) return zone.ToList();
+            // lico wewnętrzne nogi — przesunięcie razem z licem zewnętrznym (szerokość z GA bez zmian)
+            var outer = Enumerable.Range(0, n).Where(i => move[i] != null).ToList();
+            foreach (int i in outer)
+            {
+                int best = -1; double bestD = double.MaxValue;
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == i || !ax[j] || hor[j] != hor[i] || sg[j] != -sg[i] || move[j] != null) continue;
+                    double d = (c[i] - c[j]) * sg[i];
+                    if (d < MinWidth - JoinTol || d > MaxWidth + JoinTol) continue;
+                    if (Math.Min(hi[i], hi[j]) - Math.Max(lo[i], lo[j]) <= 1.0) continue;
+                    if (hi[i] - lo[i] < d) continue;             // lico końca (krótsze niż szerokość) — koniec belki, bez pary
+                    if (d < bestD) { bestD = d; best = j; }
+                }
+                if (best >= 0) move[best] = move[i];
+            }
+            var xs = poly.Select(p => p.X).ToArray();
+            var ys = poly.Select(p => p.Y).ToArray();
+            for (int i = 0; i < n; i++)
+            {
+                if (move[i] == null) continue;
+                double nc = c[i] + move[i].Value;
+                if (hor[i]) ys[i] = ys[(i + 1) % n] = nc; else xs[i] = xs[(i + 1) % n] = nc;
+            }
+            return Clean(Enumerable.Range(0, n).Select(i => (xs[i], ys[i])).ToList());
+        }
+
+        /// <summary>Krawędź nibu płyty (kopia NibDetector.NibEdge bez Teigha): krawędź zewnętrzna, linia uskoku, zakres wzdłuż, strona wnętrza.</summary>
+        public sealed class NibSpan
+        {
+            public bool Vertical;
+            public double OuterCoord, InnerCoord, Lo, Hi;
+            public int InwardSign;
+        }
+
+        /// <summary>
+        /// Krawędzie nibu płyty bez części przy belkach BEZ nibu (rekord [38]): zakres krawędzi minus pokrycie pasa nibu (prosta w połowie
+        /// szerokości nibu) przez pętle <paramref name="beamLoops"/> (suma <see cref="UbExclusionRects"/> tych belek — kryterium „krawędź
+        /// przy belce” jak UB 01/02, T IN NIB, UB 03 w detalu). Kawałki krótsze niż 1 mm pomijane; bez pętli — kopia wejścia.
+        /// </summary>
+        public static List<NibSpan> NibSpansOutside(IList<NibSpan> spans, IList<List<(double X, double Y)>> beamLoops)
+        {
+            var res = new List<NibSpan>();
+            foreach (var e in spans ?? new List<NibSpan>())
+            {
+                double c = (e.OuterCoord + e.InnerCoord) / 2;
+                var parts = beamLoops == null || beamLoops.Count == 0
+                    ? new List<(double Lo, double Hi)> { (e.Lo, e.Hi) }
+                    : RectilinearPolygons.UncoveredParts(e.Lo, e.Hi, beamLoops, horizontal: !e.Vertical, c);
+                foreach (var (lo, hi) in parts)
+                    res.Add(new NibSpan { Vertical = e.Vertical, OuterCoord = e.OuterCoord, InnerCoord = e.InnerCoord, Lo = lo, Hi = hi, InwardSign = e.InwardSign });
             }
             return res;
         }
