@@ -27,7 +27,7 @@ namespace BricsCadRc.Core
 
         public sealed class SectionContext
         {
-            public SectionPlanner.Input Input = new SectionPlanner.Input { BarEndTicks = true };   // K6: zakończenia prętów jak rysunki biura
+            public SectionPlanner.Input Input = new SectionPlanner.Input();
             /// <summary>Przesunięcia rzutów tej płyty względem wskazanego (rzut = wskazany + delta), z (0,0).</summary>
             public List<Vector2d> Views = new List<Vector2d>();
             public Point2d P1, P2;
@@ -182,12 +182,10 @@ namespace BricsCadRc.Core
                             // (pręty X: „Up” = +Y; pręty Y: „Up” = −X — jak BeamBent)
                             var last = inp.Dists[inp.Dists.Count - 1];
                             last.SkewStart = bar.SkewStart; last.SkewEnd = bar.SkewEnd;
-                            // E4b / K4: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok; UB SIDE (BC) —
-                            // w rzucie 1, CountDisplay = liczba poziomów
-                            if ((bar.LayerCode == BeamGeometry.CodeSide || bar.LayerCode == BeamGeometry.CodeSideU) && bar.Count > 0)
+                            // E4b: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok
+                            if (bar.LayerCode == BeamGeometry.CodeSide && bar.Count > 0)
                                 last.Layers = Math.Max(1, bar.EffectiveCount / bar.Count);
-                            // K6: pionowe U-bary (BU) — bez drugiego ramienia w poprzek (ramiona w płaszczyźnie przekroju belki — SectionPlanner);
-                            // UB SIDE (BC, poziomy U) — drugie ramię o B − d w stronę symbolu zagięcia
+                            // K3: pionowe U-bary (BU) — bez drugiego ramienia w poprzek (przekrój U-barów pionowych: krok K6)
                             if (last.ShapeCode == "21" && bar.LayerCode != BeamGeometry.CodeUBar
                                 && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
                             {
@@ -218,8 +216,8 @@ namespace BricsCadRc.Core
                             {
                                 Handle = z.handle, S0 = a, S1 = b, Height = p.Height, NibWidth = p.NibWidth, NibHeight = p.NibHeight,
                                 Cover = p.CoverSide, CoverBottom = p.CoverBottom, StirrupDia = p.StirrupDia,
-                                // K6: A = H − otulina górna [24] − otulina dolna (jak generowanie, K2)
-                                StirrupA = BeamGeometry.StirrupHeightCovers(p.Height, p.CoverTop, p.CoverBottom),
+                                StirrupA = BeamGeometry.StirrupHeight(p.Height, p.StirrupTopLayers, BeamSlabTopDia, BeamSlabTopDia,
+                                                                      BeamGeometry.DefaultCoverTop, p.CoverBottom),
                                 Params = BeamParamsText(p)
                             });
                     }
@@ -283,12 +281,7 @@ namespace BricsCadRc.Core
         private static string BeamParamsText(BeamParams p)
             => string.Format(CultureInfo.InvariantCulture, "W{0:0.#}|L{1}@{2:0.#}|B{3}x{4}|T{5}x{6}|U{7}|S{8}|LAP{9:0.#}|MAX{10:0.#}|TL{11}",
                              p.Width, p.StirrupDia, p.StirrupSpacing, p.BottomCount, p.BottomDia, p.TopCount, p.TopDia, p.UBarDia,
-                             p.StirrupShape ?? "", p.Lap, p.MaxLength, p.StirrupTopLayers)
-               // K6: pola rekordu v2 (K2) — bez wpływu na rysunek poza A strzemienia (CT)
-               + string.Format(CultureInfo.InvariantCulture, "|CT{0:0.#}|SM{1}|ST{2:0.#}|LM{3:0.#}|AN{4:0.#}|BT{5}|UD{6:0.#}|CQ{7}|EO{8:0.#}|SU{9}|CL{10}|UX{11:0.#}|SD{12}|NB{13}|NT{14}",
-                             p.CoverTop, p.SideMode, p.SideThreshold, p.LapMultiple, p.AcrossNominal, p.BothOneMark ? 1 : 0, p.UBarDrop,
-                             p.CornerStraightIntoSquare ? 1 : 0, p.StraightEndOffset, p.StirrupsAtUb03 ? 1 : 0, p.CornerSquareLinks ? 1 : 0,
-                             p.UBarArmExtra, p.SideDia, p.NibBottomDia, p.NibTopDia);
+                             p.StirrupShape ?? "", p.Lap, p.MaxLength, p.StirrupTopLayers);
 
         private static string Flat(string t) => System.Text.RegularExpressions.Regex.Replace(t ?? "", @"\s+", " ").Trim();
 

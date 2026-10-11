@@ -3,7 +3,7 @@ using BricsCadRc.Core;
 namespace BricsCadRc.Tests
 {
     /// <summary>
-    /// K4 (pręty boczne + UB SIDE) i K6 (przekrój: zakończenia prętów 45°, pionowe U-bary BU) planu
+    /// K4 (pręty boczne + UB SIDE) i K8 planu (K6 — przekrój — cofnięte 2026-10-11)
     /// docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; wartości domyślne do potwierdzenia przez Bartka.
     /// </summary>
     public class BeamK4K6Tests
@@ -170,117 +170,22 @@ namespace BricsCadRc.Tests
             Assert.That(msgs.Any(m => m.Contains("poza obrysem")), Is.True);
         }
 
-        // ── K6: przekrój ──
+        // ── przekrój (K6 cofnięte 2026-10-11): UB SIDE (BC) i pionowe U-bary (BU) pominięte w przekroju ──
 
-        [Test]
-        public void K6_EndTicks_Slab_RealEndsOnly()
-        {
-            var inp = SectionPlannerGoldenTests.CaseNib();
-            inp.BarEndTicks = true;
-            var r = SectionPlanner.Plan(inp);
-            var b1 = r.Bars.Where(b => b.PosNr == "05").ToList();
-            Assert.That(b1.Count, Is.EqualTo(1));
-            Assert.That(b1[0].Path.Count, Is.EqualTo(4), "oba końce B1 w przekroju — odgięcia");
-            Assert.That(b1[0].Path[0].V - b1[0].Path[1].V, Is.EqualTo(SectionPlanner.BarEndTick).Within(1e-9), "dół — odgięcie w górę");
-            var t1 = r.Bars.First(b => b.PosNr == "104");
-            Assert.That(t1.Path[0].V - t1.Path[1].V, Is.EqualTo(-SectionPlanner.BarEndTick).Within(1e-9), "góra — odgięcie w dół");
-            Assert.That(Math.Abs(t1.Path[0].U - t1.Path[1].U), Is.EqualTo(SectionPlanner.BarEndTick).Within(1e-9), "45°");
-
-            // urwanie / koniec cięcia (przypadek hole: cięcie 1000…7000 w płycie) — bez odgięć na końcach cięcia
-            var h = SectionPlannerGoldenTests.CaseHole();
-            h.BarEndTicks = true;
-            var rh = SectionPlanner.Plan(h);
-            foreach (var b in rh.Bars.Where(b => b.Kind == SectionPlanner.DistKind.Main))
-                Assert.That(b.Path.Count, Is.EqualTo(2), b.PosNr);
-        }
-
-        [Test]
-        public void K6_EndTicks_Off_GoldenUnchanged()
-        {
-            var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseNib());
-            Assert.That(r.Bars.Where(b => b.PosNr == "05").All(b => b.Path.Count == 2), Is.True);
-            Assert.That(SectionPlanner.Version, Is.EqualTo(2));
-        }
-
-        [Test]
-        public void K6_VerticalUBar_CrossCut_DotsShiftedByDiameter()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Section_BcAndBu_Skipped(bool alongX)
         {
             var inp = SectionPlannerGoldenTests.CaseBeam();
+            var bc = SectionPlannerGoldenTests.B("09", "BC", alongX, 223, 205, 525, 0, 1, 200, 12, "21", null, new double[] { 525, 485, 525, 0, 0 });
+            bc.PairOffset = 474; inp.Dists.Add(bc);
             double sp = (600 - 2 * 63.0) / 3;
-            var bu = SectionPlannerGoldenTests.B("09", "BU", false, 223, 1500, 750, 3 * sp, 4, sp, 16, "21", null, new double[] { 750, 245, 750, 0, 0 });
-            bu.SymbolSide = "Left";
-            inp.Dists.Add(bu);
+            var bu = SectionPlannerGoldenTests.B("10", "BU", alongX, 223, 205, 750, 3 * sp, 4, sp, 16, "21", null, new double[] { 750, 245, 750, 0, 0 });
+            bu.SymbolSide = "Left"; inp.Dists.Add(bu);
             var r = SectionPlanner.Plan(inp);
-            var dots = r.Dots.Where(d => d.PosNr == "09").ToList();
-            Assert.That(dots.Count, Is.EqualTo(8), "4 kolumny × dół / góra");
-            Assert.That(dots.Count(d => Math.Abs(d.U - (223 + 16)) < 1e-6), Is.EqualTo(2), "kolumna 223 → 239 (do środka o Ø)");
-            Assert.That(dots.Count(d => Math.Abs(d.U - (697 - 16)) < 1e-6), Is.EqualTo(2), "kolumna 697 → 681");
-            Assert.That(dots.Where(d => !d.Top).All(d => Math.Abs(d.V - (-375 + 50 + 10 + 8)) < 1e-6), Is.True);
-            Assert.That(dots.Where(d => d.Top).All(d => Math.Abs(d.V - (-375 + 50 + 265 - 10 - 8)) < 1e-6), Is.True);
-        }
-
-        [Test]
-        public void K6_VerticalUBar_AlongCut_ShapeABA_AndDrop()
-        {
-            var inp = new SectionPlanner.Input
-            {
-                Outline = Box(0, 0, 6000, 4000), CutAlongX = false, CutCoord = 460, S0 = -100, S1 = 4100, LookSign = 1, Thickness = 225
-            };
-            inp.Nibs.Add(new SectionPlanner.NibEdge { Vertical = true, OuterCoord = 0, InnerCoord = 160, Lo = 0, Hi = 4000 });
-            double sp = (600 - 2 * 63.0) / 3;
-            var bu = SectionPlannerGoldenTests.B("09", "BU", false, 223, 45, 750, 3 * sp, 4, sp, 16, "21", null, new double[] { 750, 245, 750, 0, 0 });
-            bu.SymbolSide = "Left";
-            inp.Dists.Add(bu);
-            var dropped = SectionPlannerGoldenTests.B("10", "BU", false, 223, 3205, 750, 3 * sp, 4, sp, 16, "21", null, new double[] { 750, 210, 750, 0, 0 });
-            dropped.SymbolSide = "Right";
-            inp.Dists.Add(dropped);
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AB", S0 = 0, S1 = 4000, Height = 375, StirrupDia = 10, StirrupA = 265 });
-            var r = SectionPlanner.Plan(inp);
-            var u9 = r.Bars.Single(b => b.PosNr == "09");
-            Assert.That(u9.Path.Count, Is.EqualTo(4), "A–B–A");
-            var vs = u9.Path.Select(p => p.V).Distinct().OrderBy(v => v).ToList();
-            Assert.That(vs, Is.EqualTo(new[] { -307.0, -78.0 }));
-            Assert.That(u9.Path[1].U, Is.EqualTo(u9.Path[2].U).Within(1e-9), "tył U pionowo");
-            var u10 = r.Bars.Single(b => b.PosNr == "10");
-            var v10 = u10.Path.Select(p => p.V).Distinct().OrderBy(v => v).ToList();
-            Assert.That(v10[0], Is.EqualTo(-307.0 + 17.5).Within(1e-9), "B − 35 — symetrycznie 17,5");
-            Assert.That(v10[1], Is.EqualTo(-78.0 - 17.5).Within(1e-9));
-        }
-
-        // ── poprawka E2 w przekroju (AlignMesh przy belce) ──
-
-        /// <summary>
-        /// Belka + siatka E2 (B2 od 810, T2 od 860 — pręty równoległe do belki przed licem): w przekroju poprzecznym brak kropek siatki
-        /// w trzonie belki [lico 160, lico + 600], pierwsza kropka za belką na pozycji z rozkładu (nie siatka 200 od kotwy nibu 40 + 150).
-        /// </summary>
-        [TestCase(true)]
-        [TestCase(false)]
-        public void E2_BeamSection_NoMeshDotsInBeam_FirstDotFromDistribution(bool endTicks)
-        {
-            var inp = SectionPlannerGoldenTests.CaseBeamK6();
-            inp.BarEndTicks = endTicks;
-            var r = SectionPlanner.Plan(inp);
-            var mesh = r.Dots.Where(d => d.Mesh).ToList();
-            Assert.That(mesh.Where(d => d.U >= 160 - 0.5 && d.U <= 760 + 0.5), Is.Empty,
-                        "kropki siatki w belce: " + string.Join(" ", mesh.Where(d => d.U <= 760.5).Select(d => d.PosNr + "@" + d.U)));
-            var b2 = mesh.Where(d => d.PosNr == "12").OrderBy(d => d.U).ToList();
-            var t2 = mesh.Where(d => d.PosNr == "112").OrderBy(d => d.U).ToList();
-            Assert.That(b2, Is.Not.Empty);
-            Assert.That(t2, Is.Not.Empty);
-            Assert.That(b2[0].U, Is.EqualTo(810.0).Within(1e-9), "pierwszy B2 = rozkład");
-            Assert.That(t2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy T2 = rozkład");
-            // dalej schemat co rozstaw nominalny (200) od pierwszego pręta
-            Assert.That(b2[1].U - b2[0].U, Is.EqualTo(200.0).Within(1e-9));
-            // T IN NIB bez zmian (drugi pręt w trzonie belki — pytanie 30)
-            Assert.That(r.Dots.Count(d => d.TinNib), Is.EqualTo(2));
-        }
-
-        /// <summary>Siatka przechodząca przez belkę (złoty „beam”: B2 od 40) — schemat kropek także w belce (bez zmian).</summary>
-        [Test]
-        public void E2_MeshThroughBeam_SchemeInBeamUnchanged()
-        {
-            var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
-            Assert.That(r.Dots.Any(d => d.Mesh && d.U > 160 && d.U < 760), Is.True);
+            Assert.That(r.Dots.Any(d => d.PosNr == "09" || d.PosNr == "10"), Is.False);
+            Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
+            Assert.That(SectionPlanner.Version, Is.EqualTo(1));
         }
     }
 }

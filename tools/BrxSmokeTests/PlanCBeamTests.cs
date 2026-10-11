@@ -23,14 +23,14 @@
 // G528UB Mesh (225) + belka: strzemiona niezależnie od UB 03 (K2): pierwsze 51 od lica, rozstaw ≤ 200.
 // M528  belka → Mesh: rozkłady siatki (bez kodów belki) = zrzut D528 tego przebiegu (Mesh bez belki; numery i odwołania znormalizowane).
 // S528  RC_SECTION A prostopadle do belki 528: kropki BM dół (−305) i góra (−55), strzemię 51 w widoku (−319 … −41), BN dołem H10.
-//       Poprawka E2 w przekroju (S528, C17): brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu.
+//       Poprawka E2 w przekroju (S528, C17) cofnięta 2026-10-11 — tylko INFORMACJA (kropki siatki w trzonie belki mogą wrócić).
 // S528C przekrój „sprzed E5” → NIEAKTUALNY; H 375 → 450 → „zmieniona belka”; RC_SECTION_UPDATE → aktualne.
 // S539  RC_SECTION B wzdłuż belki 539: BM w widoku na obu poziomach (−230 / −55), strzemiona (−244 … −41), profil −300.
 // S539BBS RC_BBS / RC_SCHEDULE / RC_COUNT_BBS / .xls: wszystkie pozycje belki w serii dolnej (BM / BU / BL / BN; 00 / 21 / 51).
 // G528V1 rekord RC_BEAM v1 (wersja testowa) → generowanie: komunikat migracji, rekord zapisany jako v2, strzemiona H12.
 // K4    G528S: H 528 → 600 — pręty boczne BS H12 „2x2 H12-nn SIDE” i UB SIDE (BC, kształt 21, B 485) „2x1 H12-nn UB SIDE” na końcach.
 // K5    S528: B IN NIB (BN dołem H10 „1 H10-nn B IN NIB”) — numer i długości jak rozkład siatki B2 najbliższy belce (Mesh przed Beam).
-// K6    S539: pionowe U-bary BU w cięciu wzdłuż — kształt A–B–A; RC_SECTION — zakończenia prętów odgięciem 45° (SectionPlanner.Version 2).
+// K6    cofnięte 2026-10-11 (przekrój jak e1644bd, SectionPlanner.Version 1): BU i UB SIDE (BC) pominięte w przekroju, bez odgięć 45°.
 // K8    C17 / C3: Prepare GA C12 (kopie GA P06 bez ramek arkusza SD-PILED-RAFT; folder RC_BEAM_C12) — strefy z opisów „xxxTHK”
 //       (PLOT 17: 450; PLOT 3: 600 / 675 / 975), C17PDF — kopia z przekrojem przez belkę do PDF; S319 / S319PDF — przekrój przez prawą nogę 319.
 
@@ -796,6 +796,13 @@ namespace BricsCadRc.BrxSmokeTests
             }
             return sb.Length > 0 ? sb.ToString() : "brak siatki równoległej przed licem";
         }
+        /// <summary>Jak <see cref="AssertMeshBesideBeam"/>, ale bez błędu: przekrój przy belce cofnięty do e1644bd (2026-10-11) — wynik informacyjnie.</summary>
+        private static string MeshBesideBeamInfo(object ctx, object plan)
+        {
+            try { return AssertMeshBesideBeam(ctx, plan); }
+            catch (AssertFail ex) { return "INFORMACJA — jak e1644bd (do decyzji, katalog): " + ex.Message; }
+        }
+
         private static double Dv(object o, string name) => Convert.ToDouble(Prop(o, name), Inv);
 
         private static List<object> CheckAll(Database db) => ((System.Collections.IEnumerable)Call(Store, "CheckAll", db, false)).Cast<object>().ToList();
@@ -897,10 +904,10 @@ namespace BricsCadRc.BrxSmokeTests
                             throw new AssertFail($"B IN NIB {x.mark} L{x.length:0} — brak pręta B2 o tym numerze i długości: " + string.Join(" | ", b2.Select(y => y.mark + " L" + y.length.ToString("0", Inv))));
                     return $"BM poz. {Pos(bot)} ×4 −305 / ×4 −55, BN dołem {Pos(nbD)} {vNb:0.#}, strzemię {Prop(links[0], "PosNr")} −319..−41; BN: {string.Join(", ", bn.Select(x => x.mark))}";
                 });
-                Check(step, "A: siatka E2 — brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu", () =>
+                Check(step, "INFORMACJA (poprawka E2 w przekroju cofnięta 2026-10-11): kropki siatki w trzonie belki", () =>
                 {
                     if (plan == null) throw new AssertFail("brak planu");
-                    return AssertMeshBesideBeam(ctx, plan);
+                    return MeshBesideBeamInfo(ctx, plan);
                 });
                 Check(step, "RC_SECTION_CHECK: A aktualny; odcisk ma składnik BEAM:<strefa> i pręty belki (DIST Kind:Beam)", () =>
                 {
@@ -1037,26 +1044,19 @@ namespace BricsCadRc.BrxSmokeTests
                     return $"odcinek {(ax ? "X" : "Y")} {Dv(seg, "FaceLo"):0}..{Dv(seg, "FaceHi"):0} oś {axis:0.#}; pasy: " +
                            string.Join(", ", beams.Select(x => $"{Dv(x, "S0"):0}..{Dv(x, "S1"):0} H={Dv(x, "Height"):0}"));
                 });
-                Check(step, "B: pręty belki w widoku — BM liniami dół (−230) i góra (−55, warstwa górna, odgięcia 45° — K6), strzemiona 51 jako pionowe ramiona (−244…−41), profil −300; U-bary BU A–B–A (K6)", () =>
+                Check(step, "B: pręty belki w widoku — BM liniami dół (−230) i góra (−55, warstwa górna), strzemiona 51 jako pionowe ramiona (−244…−41), profil −300; U-bary BU pominięte (K6)", () =>
                 {
                     if (plan == null) throw new AssertFail("brak planu");
                     var pos = BeamPositions(db);
                     var bars = L(plan, "Bars").Where(b => Convert.ToString(Prop(b, "Kind"), Inv) == "Beam").ToList();
                     List<(double U, double V)> P(object b) => ((System.Collections.IEnumerable)Prop(b, "Path")).Cast<object>().Select(p => (ValueTuple<double, double>)p).Select(p => (p.Item1, p.Item2)).ToList();
-                    int nb = 0, nt = 0, nl = 0, nu = 0, nTick = 0;
+                    int nb = 0, nt = 0, nl = 0;
                     foreach (var b in bars)
                     {
                         var pth = P(b);
                         int pnr = int.Parse((string)Prop(b, "PosNr"), Inv);
                         if (!pos.TryGetValue(pnr, out var tp)) throw new AssertFail("pręt w widoku poz. " + pnr + " nie jest pozycją belki");
-                        if (tp.code == "BU")
-                        {
-                            // K6: pionowy U-bar w cięciu wzdłuż belki — kształt A–B–A (tył pionowo, ramiona dół / góra)
-                            if (pth.Count != 4 || Math.Abs(pth[1].U - pth[2].U) > 0.01 || Math.Abs(pth[0].V - pth[1].V) > 0.01)
-                                throw new AssertFail("U-bar " + pnr + ": " + string.Join(" ", pth.Select(p => $"{p.U:0.#},{p.V:0.#}")));
-                            nu++;
-                            continue;
-                        }
+                        if (tp.code == "BU") throw new AssertFail("U-bar BU w przekroju przed K6");
                         if (tp.code == "BL")
                         {
                             if (pth.Count != 2 || Math.Abs(pth[0].U - pth[1].U) > 0.01 || Math.Abs(pth.Min(p => p.V) + 244) > 0.01 || Math.Abs(pth.Max(p => p.V) + 41) > 0.01)
@@ -1067,21 +1067,16 @@ namespace BricsCadRc.BrxSmokeTests
                         {
                             bool topL = (bool)Prop(b, "Top");
                             double v = topL ? -55 : -230;
-                            // K6: odgięcie 45° na rzeczywistych końcach — poziom pręta = odcinek poziomy ścieżki
-                            var horiz = pth.Where((p, k) => k + 1 < pth.Count && Math.Abs(p.V - pth[k + 1].V) < 0.01).ToList();
-                            if (horiz.Count == 0 || horiz.Any(p => Math.Abs(p.V - v) > 0.01)) throw new AssertFail($"pręt {pnr} (BM, góra={topL}) v={pth[0].V:0.#}, oczekiwano {v}");
-                            if (pth.Count > 2) nTick++;
+                            if (pth.Any(p => Math.Abs(p.V - v) > 0.01)) throw new AssertFail($"pręt {pnr} (BM, góra={topL}) v={pth[0].V:0.#}, oczekiwano {v}");
                             if (topL) nt++; else nb++;
                         }
                     }
                     if (nb < 1 || nt < 1 || nl < 10) throw new AssertFail($"w widoku: dół {nb}, góra {nt}, strzemiona {nl}");
-                    if (nu < 1) throw new AssertFail("brak pionowych U-barów BU w widoku (cięcie wzdłuż belki przez koniec)");
-                    if (nTick < 1) throw new AssertFail("brak odgięć 45° na końcach prętów BM (K6)");
                     var prof = L(plan, "Segments").Where(s => Prop(s, "Prof") != null).SelectMany(s => L(s, "Prof")).Select(p => (ValueTuple<double, double, double, double>)p).ToList();
                     if (!prof.Any(p => Math.Abs(p.Item3 + 300) < 1e-6 && p.Item4 == 0)) throw new AssertFail("brak trzonu −300: " + string.Join(" ", prof));
                     int lbl = L(plan, "Labels").Count(l => pos.Any(kv => kv.Value.code == "BL" && kv.Key.ToString("00", Inv) == (string)Prop(l, "Text")));
                     if (lbl != 1) throw new AssertFail("opisy strzemion: " + lbl);
-                    return $"BM: dół {nb} linii (−230), góra {nt} (−55), odgięcia 45° na {nTick}; U-bary BU A–B–A: {nu}; strzemiona {nl} pionowych ramion, opis strzemion 1";
+                    return $"BM: dół {nb} linii (−230), góra {nt} (−55), strzemiona {nl} pionowych ramion, opis strzemion 1";
                 });
                 Check(step, "RC_SECTION_CHECK: B aktualny, BEAM w odcisku; RC_SECTION_UPDATE bez zmian rysunku — nadal aktualny", () =>
                 {
@@ -1355,7 +1350,7 @@ namespace BricsCadRc.BrxSmokeTests
         {
             const string step = "S319PDF";
             Run(step, db => Check(step, "kopia rysunku z layoutem „BELKA 319” (rzut dolny + przekrój D) do PDF", () =>
-                SavePdfCopy(db, "BELKA 319", "PLOT 319 — siatka przy belce (E2), belka K2–K6, RC_SECTION D-D — NA Smart RC (do testów)", _b319, _tl319, "belka-319.dwg")));
+                SavePdfCopy(db, "BELKA 319", "PLOT 319 — siatka przy belce (E2), belka K2–K5, RC_SECTION D-D — NA Smart RC (do testów)", _b319, _tl319, "belka-319.dwg")));
         }
 
         private static string C12Dir => Environment.GetEnvironmentVariable("RC_BEAM_C12") is string d && d.Length > 0 ? d
@@ -1435,8 +1430,8 @@ namespace BricsCadRc.BrxSmokeTests
                         double y = zb.y0 + 0.3 * (zb.y1 - zb.y0);
                         (ctx, plan) = DrawSection(db, b, new Point2d(sb.x0 - 1000, y), new Point2d(zb.x1 + 3000, y), new Point2d(sb.x0, y + 100), _tl17, "E");
                     }
-                    // poprawka E2 w przekroju: brak kropek siatki w trzonie belki, pierwsza kropka za belką z rozkładu
-                    string e2 = AssertMeshBesideBeam(ctx, plan);
+                    // poprawka E2 w przekroju cofnięta 2026-10-11 — tylko informacja
+                    string e2 = MeshBesideBeamInfo(ctx, plan);
                     return $"belka: {string.Join(" | ", msgs.Where(m => m.Contains("strzemiona") || m.Contains("B IN NIB") || m.Contains("U-bary pionowe")).Take(4))}; przekrój: pręty {L(plan, "Bars").Count}, kropki {L(plan, "Dots").Count}; E2: {e2}";
                 });
             });

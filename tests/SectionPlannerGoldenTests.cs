@@ -220,40 +220,6 @@ namespace BricsCadRc.Tests
             return inp;
         }
 
-        /// <summary>
-        /// 7. K6 (PLAN_BELKI_PRAKTYKA, SectionPlanner.Version 2): belka 528 wg praktyki biura — BM „2x4 B+T” (kropki dół i góra), strzemię 51
-        /// H12 A = 290 (H − 85), pionowe U-bary BU przy końcu (kropki przesunięte o Ø do środka), pręty boczne BS i UB SIDE (BC), B IN NIB H10,
-        /// UB 03, T IN NIB; zakończenia prętów w widoku z odgięciem 45° (BarEndTicks).
-        /// </summary>
-        public static SectionPlanner.Input CaseBeamK6()
-        {
-            var inp = new SectionPlanner.Input
-            {
-                Outline = Rect(0, 0, 6000, 4000), CutAlongX = true, CutCoord = 600, S0 = -500, S1 = 3000, LookSign = 1,
-                Thickness = 225, NibHeight = 150, Ssl = "21.925", BarEndTicks = true
-            };
-            inp.Nibs.Add(new SectionPlanner.NibEdge { Vertical = true, OuterCoord = 0, InnerCoord = 160, Lo = 0, Hi = 4000 });
-            inp.Dists.Add(D("H10-11-200 B1", "B1", true, 200, 40, 5760, 3920, 20, 200, 10));
-            inp.Dists.Add(D("H10-12-200 B2", "B2", false, 810, 40, 3920, 5150, 26, 200, 10));
-            inp.Dists.Add(D("H12-111-200 T1", "T1", true, 200, 40, 5760, 3920, 20, 200, 12));
-            inp.Dists.Add(D("H12-112-200 T2", "T2", false, 860, 40, 3920, 5100, 26, 200, 12));
-            double sp = (600 - 2 * 65.0) / 3;      // 45 + 12 + 8 = 65 od lic
-            var bm = B("05", "BM", false, 225, 61, 3878, 3 * sp, 4, sp, 16); bm.Mark = "H16-05-150 B+T"; inp.Dists.Add(bm);
-            var bu = B("06", "BU", false, 225, 205, 750, 3 * sp, 4, sp, 16, "21", null, new double[] { 750, 265, 750, 0, 0 });
-            bu.SymbolSide = "Left"; bu.Mark = "H16-06-150 UB"; inp.Dists.Add(bu);
-            inp.Dists.Add(B("07", "BL", true, 205, 211, 510, 3578, 19, 3578 / 18.0, 12, "51",
-                            BarGeometryBuilder.GetLocalPoints("51", new double[] { 290, 510, 0, 0, 0 }, 12), new double[] { 290, 510, 0, 0, 0 }));
-            var bs = B("08", "BS", false, 223, 217, 3566, 474, 2, 474, 12); bs.Mark = "H12-08 SIDE"; bs.Layers = 1; inp.Dists.Add(bs);
-            var bc = B("09", "BC", false, 223, 205, 525, 0, 1, 200, 12, "21", null, new double[] { 525, 485, 525, 0, 0 });
-            bc.Mark = "H12-09 UB SIDE"; bc.PairOffset = 474; inp.Dists.Add(bc);
-            var bn = B("12", "BN", false, 58, 45, 3910, 0, 1, 200, 10); bn.Mark = "H10-12 B IN NIB"; inp.Dists.Add(bn);
-            inp.Dists.Add(D("20 H10-03-200 UB", "B1", true, 40, 100, 610, 3800, 20, 200, 10, "21", "Left",
-                            new List<(double X, double Y)> { (610, 0), (0, 0), (0, 60), (610, 60) }));
-            inp.Dists.Add(D("2 H12-101-150 T IN NIB", "T1", false, 40, 40, 3920, 150, 2, 150, 12));
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AC", S0 = 160, S1 = 760, Height = 375, NibHeight = 150, StirrupDia = 12, StirrupA = 290 });
-            return inp;
-        }
-
         public static IEnumerable<TestCaseData> Cases()
         {
             yield return new TestCaseData("nib", (Func<SectionPlanner.Input>)CaseNib);
@@ -262,7 +228,6 @@ namespace BricsCadRc.Tests
             yield return new TestCaseData("vertical", (Func<SectionPlanner.Input>)CaseVertical);
             yield return new TestCaseData("fitshape", (Func<SectionPlanner.Input>)CaseFitShape);
             yield return new TestCaseData("beam", (Func<SectionPlanner.Input>)CaseBeam);
-            yield return new TestCaseData("beamK6", (Func<SectionPlanner.Input>)CaseBeamK6);
         }
 
         /// <summary>Skróty zapisane na niezmienionym kodzie SectionPlanner (przed polami Used* / Source*).</summary>
@@ -278,15 +243,6 @@ namespace BricsCadRc.Tests
             // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
             // ostrzeżenia o otulinie UB 03 (jedyna różnica względem 644610bd… — sprawdzone: zrzut + dawna linia WARN = dawny skrót)
             ["beam"]     = "c91b74cce076eb448eda7a576c97af960d0d34d1f694a57e3c679d2f659a67ce",
-            // K6 (Version 2, 2026-10-10): belka wg praktyki biura + odgięcia 45° — zapisany po przejrzeniu zrzutu (BM dół / góra, BU przesunięte
-            // o Ø do środka, BS / UB SIDE na poziomie bocznym, B IN NIB, odgięcia na rzeczywistych końcach)
-            // poprawka recenzji K4–K8 (pkt 4): opisy w odcinku z belką — kropki pręta belki tej samej pozycji obok siebie jednym numerem ze strzałką,
-            // T IN NIB nad nibem belki (nad betonem), numery kropek siatki przesuwane w bok ≤ 40 — zmienione tylko linie LBL
-            // poprawka E2 w przekroju (2026-10-10): AlignMesh nie wstawia kropek siatki B2 / T2 (E2: od 810 / 860) do trzonu belki — pierwsza
-            // kropka za belką z rozkładu, dalej co 200; opisy: T IN NIB i numery siatki nie nachodzą na linie pomocnicze wymiaru nibu belki
-            // (zrzut przejrzany: brak kropek siatki w 160…760, B2 810…2810, T2 860…2860; zmienione linie DOT / LBL); wymiar szerokości pod belką
-            // nie jest przeszkodą dla opisów (schodzi pod najniższy opis) — opis UB 03 (03) w rzędzie nad wymiarem (345, −590) zamiast pod nim
-            ["beamK6"]   = "9d94c5ab38f8476e0f3e6ea0587beed9fc59a11102fabf6dbcc3046233f2bc8c",
         };
 
         [TestCaseSource(nameof(Cases))]

@@ -108,7 +108,7 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   (Int16 0 / 1) [30]obniżenie U-barów drugiego kierunku (Real, 35) [31]pręty proste w kwadrat narożnika (Int16 0 / 1; 0 — przed kwadratem)
   [32]koniec pręta prostego przy U-barze od lica (Real; 0 = auto: otulina + Ø U-bara) [33]strzemiona przy UB 03 +100 (Int16 0 / 1; 0 —
   niezależnie) [34]strzemiona w kwadracie narożnika (Int16 0 / 1; 1 — dłuższa noga) [35]naddatek ramienia U-bara końca (Real, 90).
-  Od v2: [15] = Ceil25(krotność · Ø dołem) (tylko dla starej wtyczki), [17] nieużywane (od K6 także w RC_SECTION — A strzemienia z otuliny górnej [24]; zapis bez zmian dla starej wtyczki).
+  Od v2: [15] = Ceil25(krotność · Ø dołem) (tylko dla starej wtyczki), [17] nieużywane w generowaniu (zostaje dla RC_SECTION — A strzemienia w przekroju dawnym wzorem; K6 cofnięte 2026-10-11).
   **Rekord v1** ([1] < 2 — tylko wersje testowe): `BeamStore.Read` → `BeamParams.MigrateV1` W PAMIĘCI (geometria i otuliny bez zmian,
   parametry zbrojenia = nowe domyślne, komunikat z listą zmian); zapis v2 dopiero przy OK w RC_BEAM albo przy generowaniu (ta sama grupa UNDO).
 - `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
@@ -667,21 +667,13 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   gdy powstała kropka / pręt. Odcisk BEAM: otulina boczna `Cv` i dolna `CvB` (zmiana otuliny → „zmieniona belka …”, rozstrzyga skrót wyniku).
   Wymiary: nib belki (szerokość, uskok H − NibH, wysokość nibu) zamiast nibu płyty, H belki (dalej od krawędzi niż łańcuch), szerokość /
   długość pasa pod belką (`BeamDimBelow` 350); grubość płyty — przy końcu bez belki.
-- **K6 (SectionPlanner.Version 2, plan PLAN_BELKI_PRAKTYKA):** pionowe U-bary belki BU — w cięciu poprzecznym kropki na poziomach prętów
-  podłużnych przesunięte w poprzek o Ø do środka belki, w cięciu wzdłuż kolumna najbliższa linii cięcia jako kształt A–B–A (tył przy symbolu
-  zagięcia rozkładu, ramiona dół / góra); B mniejsze od nominalnego (noga Y narożnika, belka dochodząca T: B − 35) — ramiona zsunięte symetrycznie;
-  UB SIDE (BC) na poziomach prętów bocznych (drugie ramię `PairOffset`); A strzemienia (wejście, odcisk) = H − otulina górna [24] − dolna;
-  `BeamParamsText` z polami v2. **Opisy w odcinku z belką (wersja 2, przy `BarEndTicks`; płyty bez belek i złote wejścia bez zmian):** kropki
-  pręta belki tej samej pozycji obok siebie (odstęp ≤ 400) — jeden numer ze strzałką (strzałka omija miejsca numerów siatki), T IN NIB w nibie belki —
-  numer nad swoją kropką nad betonem (nie w rzędzie na zewnątrz), numery kropek siatki mogą przesunąć się w bok ≤ 40. **Siatka przy belce w przekroju (poprawka E2, bez podbicia `Version`):** poziom kropek siatki, którego rozkład nie ma pręta w trzonie
-  belki (E2 — równoległe stop przed licem), nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem schemat `AlignMesh`, ale kotwa po stronie belki
-  = rzeczywisty pierwszy pręt rozkładu (`MeshLevelBesideBeams`); siatka przechodząca przez belkę i odcinki bez belki — bez zmian. Opisy (wersja 2, belka):
-  nie nachodzą na linie pomocnicze wymiarów poziomych, wymiar szerokości / długości pasu pod belką schodzi pod najniższy opis w swoim zakresie (opisy nigdy pod linią wymiaru), opis strzemion w cięciu wzdłuż — ramię najbliższe środka z wolnym miejscem. **Zakończenia prętów (wymaganie użytkownika 2026-10-10, POPRAWKI 31):** pręt prosty w widoku, który kończy się
-  w przekroju (`BarLine.End0 / End1` — koniec kawałka = koniec pręta; nie urwanie, koniec cięcia, otwór), ma odgięcie 45° w głąb elementu
-  (35 + 35 mm; górny w dół, pozostałe w górę) — jak rysunki biura (Holbrook 528 / 539 / 321, C12 C-C / E-E; konwencja w planie, sekcja K6);
-  `Input.BarEndTicks` = true w RC_SECTION / RC_SECTION_UPDATE (domyślnie false — złote wejścia wzorca bit w bit; złoty `beamK6`). Przekroje
-  wersji 1 — RC_SECTION_CHECK: aktualny „nowa wersja programu rysowałaby ten przekrój inaczej” (P2); z belką — przy zapisie wersji 1 porównanie BEAM pomija
-  „LA” (nowy wzór A strzemienia) i nowe pola „P” (rekord v2), parametry wersji 1 (pierwsze 9 pól „P”), H, nib, otuliny, Ø strzemion — jak dotąd (zmiana → NIEAKTUALNY).
+- **K6 — COFNIĘTE 2026-10-11 (decyzja użytkownika: „przekroje teraz źle wychodzą”):** RC_SECTION wrócił do stanu e1644bd
+  (`SectionPlanner.Version` = 1): bez odgięć 45° na końcach prętów, bez rysowania pionowych U-barów BU (pominięte w przekroju),
+  UB SIDE (BC, kod z generowania K4) — też pominięty (bezpiecznie: bez kropek w złych miejscach), opisy przy belce i wymiary jak
+  w e1644bd (bez grupowania ze strzałką, bez przesuwania wymiaru pod belką), A strzemienia w przekroju dawnym wzorem
+  (`StirrupHeight`, nadpisywane wymiarem A rozkładu BL), `BeamParamsText` bez pól v2. Cofnięta też poprawka siatki przy belce
+  w przekroju (b5d7e7f, `MeshLevelBesideBeams`): przy siatce E2 kropki siatki płyty mogą znów wypaść w trzonie belki — pozycja
+  katalogu do decyzji użytkownika (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md, POPRAWKI_WZORCA 31). Generowanie (K1–K5, K7, K8) bez zmian.
 - Dane z rysunku (`AutoRebarEngine.PrepareSection`): obrys zewnętrzny (NibDetector), niby, otwory (`FindHoles`),
   pale (`FindPiles`), rozkłady RC_BAR_BLOCK ze WSZYSTKICH rzutów tej płyty (polilinie o tym samym kształcie, przesunięte —
   jak `FindBottomView`), grubość i SSL z opisu płyty („SSL=21.925”, „225mm THK SLAB”). Wszystko do poprawy w oknie;
@@ -820,7 +812,7 @@ HISTORYCZNY tam, gdzie K2 / K3 go zmieniają (strzemiona, pręty podłużne, zam
     Ceil25(max(zakład + 90 [35], tył → pręt prosty + zakład)) = 750, narożnik / T — Ceil25(tył → początek prętów prostych nogi + zakład)
     (539: 1225 / 1300, 319: 1225 / 1325); ramię przycinane do zakresu prętów prostych + komunikat; ramiona z obu końców nachodzą — komunikat;
     opis `4 H16-nn-150 UB`; w rzucie linia ramienia od tyłu U w głąb belki z **kółkiem na zagięciu** (SymbolType Circle, jak UB płyty);
-  - pręty L (11) i poziome U-bary E4 **usunięte**; RC_SECTION: BM — kropki na obu poziomach (górne z flagą warstwy górnej), BU i A strzemienia — od K6 (sekcja 4g).
+  - pręty L (11) i poziome U-bary E4 **usunięte**; RC_SECTION: BM — kropki na obu poziomach (górne z flagą warstwy górnej), BU i BC — pominięte, A strzemienia — dawny wzór (K6 cofnięte 2026-10-11, sekcja 4g).
 domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do potwierdzenia przez Bartka**
 (parametry w oknie RC_BEAM, stałe w `BeamParams` / `AutoRebarEngine.Beam`).
 - **Otuliny belki (decyzja użytkownika 2026-10-10 — ustalone):** boczna / czołowa strzemion **45** (40 + odchyłka; boki i czoła belki:
@@ -959,9 +951,9 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   (rekord v1 → komunikat migracji, zapis v2); przebieg bazowy `-Baseline` z DLL **HEAD + K1** (K1 zmienia siatkę płyt z nibem zawiniętym —
   zrzuty D319 / D528 / D539); jednostkowe `BeamGeometryTests` K2_* / K3_* (A1 / A2, zakłady, tryby BS, migracja v1, `CountText`, U-bary
   Holbrook / C12, 528 / 539 / 319 / T / krótki odcinek). **K4–K8:** D319 / D528 / D539 — asercje E2 (zamiast równości z HEAD), M528 — porównanie
-  z D528 tego przebiegu, S528 — B IN NIB = pręt B2 (numer, długość), S539 — BU A–B–A i odgięcia 45°, G528S (H 600: BS / UB SIDE), S319 / S319PDF,
+  z D528 tego przebiegu, S528 — B IN NIB = pręt B2 (numer, długość), S539 — jak e1644bd (BU pominięte, bez odgięć; K6 cofnięte 2026-10-11; siatka w trzonie belki S528 / C17 — tylko INFORMACJA), G528S (H 600: BS / UB SIDE), S319 / S319PDF,
   C17 / C17PDF / C3 (K8 na kopiach GA C12 — folder `RC_BEAM_C12`, domyślnie scratchpad `c12ga`); jednostkowe `RectilinearPolygonsTests`,
-  `BeamK4K6Tests` (K4 UB SIDE, K6 odgięcia / BU, K8 PLOT 17 / 3), złoty `beamK6`.
+  `BeamK4K6Tests` (K4 UB SIDE, K8 PLOT 17 / 3, BC / BU pominięte w przekroju); złoty `beamK6` usunięty (K6 cofnięte).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

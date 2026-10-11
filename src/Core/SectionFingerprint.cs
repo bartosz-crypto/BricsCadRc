@@ -301,7 +301,7 @@ namespace BricsCadRc.Core
             CompareLevels(Get(s, "LVL"), Get(c, "LVL"), soft);
             CompareDists(s, c, soft);
             ComparePiles(s, c, soft);
-            CompareBeams(s, c, hard, soft, stored.Version < 2 && current.Version >= 2);
+            CompareBeams(s, c, hard, soft);
 
             if (hard.Count > 0)
             {
@@ -508,13 +508,8 @@ namespace BricsCadRc.Core
         /// Belki: zapisany odcisk bez żadnego składnika BEAM, a bieżący z belką na linii cięcia → NIEAKTUALNY zawsze („belka
         /// nieuwzględniona” — przekrój narysowany przed E5 albo belka dodana później); inne różnice (zmieniona / usunięta / nowa belka)
         /// rozstrzyga skrót wyniku. Dopasowanie po handle strefy, zapasowo — najbliższy pas (S0).
-        /// <paramref name="fromV1"/> (przekrój narysowany planerem wersji 1, bieżący ≥ 2 — K6): pola zmienione wyłącznie przez wersję
-        /// programu nie są przyczyną — „LA” (A strzemienia nowym wzorem: H − otulina górna [24] − dolna) i nowe pola „P” (rekord v2:
-        /// CT, SM, …, NT); porównywane tylko pola parametrów wersji 1 (<see cref="BeamParamsV1"/>). Gdy dane wejściowe belki (H, nib,
-        /// otuliny, Ø strzemion, parametry v1, pas) są bez zmian — brak przyczyn, werdykt P2 („nowa wersja rysowałaby inaczej”).
         /// </summary>
-        private static void CompareBeams(SortedDictionary<string, string> s, SortedDictionary<string, string> c, List<string> hard, List<string> soft,
-                                         bool fromV1 = false)
+        private static void CompareBeams(SortedDictionary<string, string> s, SortedDictionary<string, string> c, List<string> hard, List<string> soft)
         {
             var sk = s.Keys.Where(k => k.StartsWith("BEAM:", StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal).ToList();
             var ck = c.Keys.Where(k => k.StartsWith("BEAM:", StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal).ToList();
@@ -545,8 +540,6 @@ namespace BricsCadRc.Core
                 foreach (var (field, name) in BeamNames)
                 {
                     string x = F(fa, field), y = F(fb, field);
-                    if (fromV1 && field == "LA") continue;                                   // K6: nowy wzór A strzemienia
-                    if (fromV1 && field == "P") { x = BeamParamsV1(x); y = BeamParamsV1(y); }   // K6: nowe pola rekordu v2
                     if (x == y || NumEq(x, y)) continue;
                     diffs.Add(field == "P" ? name : $"{name} {Disp(x)} → {Disp(y)}");
                 }
@@ -555,13 +548,6 @@ namespace BricsCadRc.Core
             foreach (var a in sk) soft.Add($"usunięta {Name(a)} (albo już nie przecina linii cięcia)");
             foreach (var b in ck) soft.Add($"nowa {Name(b)} na linii cięcia");
         }
-
-        /// <summary>Liczba pól „P” zapisywanych przez planer wersji 1 (W, L@, B, T, U, S, LAP, MAX, TL — AutoRebarEngine.BeamParamsText).</summary>
-        private const int BeamParamsV1Fields = 9;
-
-        /// <summary>Pola parametrów belki wersji 1 (pierwsze <see cref="BeamParamsV1Fields"/> pól „|”) — bez pól dopisanych w K6.</summary>
-        public static string BeamParamsV1(string p)
-            => string.Join("|", (p ?? "").Split('|').Take(BeamParamsV1Fields));
 
         // ── pale ────────────────────────────────────────────────────────
 
