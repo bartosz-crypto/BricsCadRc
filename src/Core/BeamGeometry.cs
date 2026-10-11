@@ -1185,8 +1185,10 @@ namespace BricsCadRc.Core
         ///   • pręty RÓWNOLEGŁE do odcinka — dół: od strony krawędzi płyty (nib przed belką) do lica wewnętrznego + d (pierwszy pręt
         ///     40 + d od lica), góra: do lica wewnętrznego + (s/2 − otulina) (pierwszy pręt s/2 od lica); belka bez krawędzi płyty
         ///     (OuterSide = 0) — oba lica;
-        ///   • pręty PROSTOPADŁE — dół: odjęty pas nibu przed belką (pręty do linii uskoku − otulina, prosto do lica zewnętrznego belki),
-        ///     góra: bez zmian (już do linii uskoku).
+        ///   • pręty PROSTOPADŁE (decyzja użytkownika 2026-10-11 „pręty górne i dolne płyty nie powinny wchodzić w belkę”; wcześniej
+        ///     dół do linii uskoku − otulina, góra do linii uskoku) — dół i góra: odjęta cała strefa belki i nib przed nią, pręty kończą
+        ///     się NA LICU WEWNĘTRZNYM belki (bez otuliny — beton ciągły): granica odcięcia = lico wewnętrzne ∓ otulina, bo pas daje
+        ///     koniec pręta na granicy pasa ± otulina; belka bez krawędzi płyty (OuterSide = 0) — bez zmian (pręty przez belkę).
         /// Wzdłuż: lica końców odcinka (FaceLo..FaceHi), na końcu przy krawędzi i w narożniku L dalej o <see cref="MeshCutReach"/>
         /// (nib zawinięty / nib narożnika). d — średnica prętów warstwy, spacing — rozstaw nominalny, cover — otulina siatki.
         /// </summary>
@@ -1210,9 +1212,10 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
-                    if (top || s.OuterSide == 0) continue;
-                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossLo; }
-                    else { cLo = s.AcrossHi; cHi = s.AcrossHi + MeshCutReach; }
+                    if (s.OuterSide == 0) continue;
+                    // koniec pręta na licu wewnętrznym: granica pasu = lico ∓ otulina (pas: pręt od granicy + otulina)
+                    if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossHi - cover; }
+                    else { cLo = s.AcrossLo + cover; cHi = s.AcrossHi + MeshCutReach; }
                 }
                 res.Add(s.AlongX ? new RectilinearPolygons.Rect(eLo, cLo, eHi, cHi) : new RectilinearPolygons.Rect(cLo, eLo, cHi, eHi));
             }

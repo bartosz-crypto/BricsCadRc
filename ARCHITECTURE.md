@@ -506,6 +506,11 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - **T IN NIB** (z T1/T2): przy każdej krawędzi z nibem 2 pręty H12 co 150 wzdłuż krawędzi — pierwszy w nibie
   (otulina 40 od krawędzi zewnętrznej), drugi 150 dalej, za uskokiem. Długości jak góra (siatka 250, maks. 6000,
   zakłady 500–700), pozycje wspólne z serią 101+. Opis `2 H12-101-150 T IN NIB`.
+  **Przy belce (decyzja użytkownika 2026-10-11, „w nibie 2 pręty w górze nibu i 1 na dole”):** krawędź, której linia uskoku leży w > 50 %
+  w obszarze belki (`BeamMeshRegion` / `UbCuts`, kryterium jak `PlanNibStepBars`) — OBA pręty w nibie pod górnym ramieniem UB 03:
+  pierwszy w narożu zagięcia UB 03 (krawędź + 40 + Ø UB 03 10 + d/2 = 56, nad prętem B IN NIB w dolnym narożu), drugi przy licu belki
+  (linia uskoku − 40; odstęp min. 40 — `NibTopBeamMinGap`), opis bez rozstawu `2 H12-1nn T IN NIB`; dołem 1 pręt B IN NIB H10 (RC_GENERATE → Beam,
+  sekcja 4i K5). Płyty bez stref belek i krawędzie bez belki — bit w bit jak dotąd.
   Za końcem nibu pręty wchodzą **600 mm w płytę** (liczone od końca nibu), jeśli płyta tam jest (narożnik wklęsły);
   przy narożniku wypukłym pręt zaczyna się na otulinie 40. Jeden pręt: długość siatka 250 **w górę** (lepiej za długi),
   **min. 1500** (twardo 1250), nie dłuższy niż miejsce w płycie. Opis na zewnątrz krawędzi, ramię **o 200 mm dłuższe**
@@ -656,9 +661,13 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (+ boczne, nib), strzemię 51 w widoku (kształt pręta wzorcowego, haki u góry). **Cięcie wzdłuż belki** — pręty podłużne w widoku (linie na
   swoich poziomach), strzemiona jako pionowe ramiona (jeden opis pozycji ze strzałką do ramienia środkowego). Kropki belki nie są przesuwane
   przy ramionach prętów w widoku; opis pręta belki w widoku — trzecie przejście bez warunku „strzałka nie tnie opisów” (pod belką gęsto).
-  Siatka płyty przy belce = to, co jest w rysunku (od K7 — E2: prostopadłe do linii uskoku, równoległe przed licem belki): pręty siatki proste na swoich poziomach przez belkę (przycięte do betonu),
-  schemat kropek siatki także w belce; UB 03 / T IN NIB w pasie albo nibie belki — poziomy względem spodu belki / wierzchu nibu belki;
-  T IN NIB w trzonie belki (drugi pręt „150 dalej”, za licem) — poziom jak w płycie (bez przesunięcia do nibu belki i nie pod ramieniem UB 03);
+  Siatka płyty przy belce = to, co jest w rysunku (od decyzji 2026-10-11: prostopadłe i równoległe kończą się przed / na licu wewnętrznym
+  belki — nie wchodzą w belkę): pręty siatki proste na swoich poziomach (przycięte do betonu); **kropki siatki (schemat AlignMesh) nie są
+  dorysowywane w pasie belki (trzon + nib belki), gdy rozkład poziomu nie ma pręta w trzonie** — kotwa przy belce = rzeczywisty pierwszy
+  pręt rozkładu (`MeshLevelBesideBeams`, `SectionPlanner.Version` 4; rysunek ze siatką przez belkę — schemat jak dotąd);
+  UB 03 / T IN NIB w pasie albo nibie belki — poziomy względem spodu belki / wierzchu nibu belki; T IN NIB przy belce — oba pręty w nibie
+  pod górnym ramieniem UB 03, B IN NIB w dolnym narożu;
+  T IN NIB w trzonie belki (rysunki sprzed 2026-10-11: drugi pręt „150 dalej”, za licem) — poziom jak w płycie (bez przesunięcia do nibu belki i nie pod ramieniem UB 03);
   kropka T IN NIB nachodząca na kropkę pręta belki (BN górą) — odsunięta w poziomie do styku lic (`ResolveTinBeamCollisions`).
   Pręty BN w przekroju: gdy w pasie / nibie belki jest UB 03 — w narożach spinki wewnątrz U (ramię ∓ (Ø spinki / 2 + d / 2), lica w styku);
   bez UB 03 — wzór (dołem otulina dolna belki + 10 + d/2 od spodu, górą wierzch nibu − otulina nibu − 10 − d/2). UB 03 to element płyty
@@ -671,9 +680,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (`SectionPlanner.Version` = 1): bez odgięć 45° na końcach prętów, bez rysowania pionowych U-barów BU (pominięte w przekroju),
   UB SIDE (BC, kod z generowania K4) — też pominięty (bezpiecznie: bez kropek w złych miejscach), opisy przy belce i wymiary jak
   w e1644bd (bez grupowania ze strzałką, bez przesuwania wymiaru pod belką), A strzemienia w przekroju dawnym wzorem
-  (`StirrupHeight`, nadpisywane wymiarem A rozkładu BL), `BeamParamsText` bez pól v2. Cofnięta też poprawka siatki przy belce
-  w przekroju (b5d7e7f, `MeshLevelBesideBeams`): przy siatce E2 kropki siatki płyty mogą znów wypaść w trzonie belki — pozycja
-  katalogu do decyzji użytkownika (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md, POPRAWKI_WZORCA 31). Generowanie (K1–K5, K7, K8) bez zmian.
+  (`StirrupHeight`, nadpisywane wymiarem A rozkładu BL), `BeamParamsText` bez pól v2. Poprawka siatki przy belce w przekroju
+  (b5d7e7f, `MeshLevelBesideBeams`) — cofnięta razem z K6, **przywrócona decyzją użytkownika 2026-10-11** („bez kropek siatki w trzonie
+  belki”, `SectionPlanner.Version` 4). Generowanie (K1–K5, K7, K8) bez zmian.
 - **Zakończenia prętów w widoku (zasady Z1–Z6, decyzja użytkownika 2026-10-11; `SectionPlanner.Version` 3, POPRAWKI_WZORCA 32):** `Input.EndStyle`
   — tylko None / Tick (None = dawny rysunek — złote wejścia wzorca bit w bit; `PrepareSection` ustawia `SectionPlanner.DefaultEndStyle` = S1 „UK tick”
   — JEDEN styl w programie, wybrany przez użytkownika 2026-10-11; bez pola w oknie i bez zapisu w rekordzie / odcisku; style S2 „krótki hak” / S3 „kreska + kropka”
@@ -837,10 +846,17 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   (strefy RC_BEAM tego rzutu — Prepare GA / RC_BEAM zapisują je na obu rzutach; bez szukania po obrysie przystającym; analiza odcinków względem obrysu zewnętrznego) → odcięcia pasów (`BeamGeometry.MeshCutRects`,
   suma `RectilinearPolygons.Union`) i obszary krawędzi bez UB 01/02 (`UbExclusionRects`); używane w `GenerateLayer` (B1…T2 — `DecomposeStrips`
   z odcięciami), `GenerateUBLayerCore` (UB 01/02: pasy prętów głównych na tym samym obszarze, krawędź przy belce — bez UB, komunikat) i
-  `PlanNibStepBars` (krawędź uskoku w > 50 % przy belce — bez reguły UB 01/02; pręty góry z położeń dołu). Reguły (domyślne, pytanie 11):
+  `PlanNibStepBars` (krawędź uskoku w > 50 % przy belce — bez reguły UB 01/02; pręty góry z położeń dołu). Reguły (pytanie 11 — rozstrzygnięte
+  decyzją użytkownika 2026-10-11 „pręty górne i dolne płyty nie powinny wchodzić w belkę”):
   pręty **równoległe** do odcinka belki — dołem od lica wewnętrznego + d (pierwszy 40 + d = 50), górą od lica + (s/2 − 40) (pierwszy s/2 = 100);
-  **prostopadłe** dołem — odjęty pas nibu przed belką (pręty prosto do linii uskoku − 40 — „wchodzą do lica zewnętrznego belki”), górą bez zmian;
-  na końcach przy krawędzi i w narożnikach L odcięcie do obrysu (nib zawinięty). UB 03 i T IN NIB bez zmian (UB 03 z prętów dołu rzutu dolnego);
+  **prostopadłe** dołem i górą — odjęta cała strefa belki i nib przed nią, pręt kończy się **na licu wewnętrznym belki** (bez otuliny — beton
+  ciągły; granica odcięcia = lico ∓ 40, bo pas daje koniec pręta na granicy + otulina); dawniej (K7 do 2026-10-11) dołem do linii uskoku − 40
+  (w belkę), górą do linii uskoku. Belka bez krawędzi płyty (OuterSide = 0) — prostopadłe przez belkę bez zmian.
+  Na końcach przy krawędzi i w narożnikach L odcięcie do obrysu (nib zawinięty). **UB 03 przy belce:** pręty dołu prostopadłe nie dochodzą
+  już do nibu — liczba i położenia UB 03 = pręty siatki dolnej tego kierunku na długości nibu, szukane do lica wewnętrznego belki (okno
+  `BottomPositionsIn` wydłużone o zasięg `UbCuts` od krawędzi — `BeamReachFromEdge`; czyli rozstaw siatki B wzdłuż nibu, np. 528: 53 co 200);
+  brak siatki — dawny plan teoretyczny z pasów obrysu (rozstaw nominalny). **T IN NIB przy belce:** oba pręty w nibie (sekcja 4 „Nib”).
+  Zasada „liczba UB = liczba prętów” bez zmian (UB 01/02 — pasy na tym samym wielokącie co siatka; przy belce UB 01/02 brak);
   B3 ADD i Add — na obrysie płyty; odcinki „detal ręczny” — siatka jak bez belki. **Płyta bez stref — bit w bit** (odcięcia = null, dawny kod;
   test BRX D526). Obszar nie jest zapamiętywany (bez cache — UNDO). Testy BRX D319 / D528 / D539 (asercje E2, podsumowanie `beam-e2-<płyta>.txt`),
   M528 (belka → Mesh = Mesh bez belki tego przebiegu), S-REG FBEAM. Mesh / B1 / B2 na płycie ze strefami: komunikat „ponów Beam” (B IN NIB).
@@ -961,7 +977,7 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   (rekord v1 → komunikat migracji, zapis v2); przebieg bazowy `-Baseline` z DLL **HEAD + K1** (K1 zmienia siatkę płyt z nibem zawiniętym —
   zrzuty D319 / D528 / D539); jednostkowe `BeamGeometryTests` K2_* / K3_* (A1 / A2, zakłady, tryby BS, migracja v1, `CountText`, U-bary
   Holbrook / C12, 528 / 539 / 319 / T / krótki odcinek). **K4–K8:** D319 / D528 / D539 — asercje E2 (zamiast równości z HEAD), M528 — porównanie
-  z D528 tego przebiegu, S528 — B IN NIB = pręt B2 (numer, długość), S539 — jak e1644bd (BU pominięte, bez odgięć; K6 cofnięte 2026-10-11; siatka w trzonie belki S528 / C17 — tylko INFORMACJA), G528S (H 600: BS / UB SIDE), S319 / S319PDF,
+  z D528 tego przebiegu, S528 — B IN NIB = pręt B2 (numer, długość), S539 — jak e1644bd (BU pominięte, bez odgięć; K6 cofnięte 2026-10-11; siatka w trzonie belki S528 / C17 — od decyzji 2026-10-11 asercja: brak kropek, T IN NIB 2 kropki w nibie; D319 / D528 / D539 — prostopadłe do lica wewnętrznego, UB 03 co 100…250, T IN NIB w nibie), G528S (H 600: BS / UB SIDE), S319 / S319PDF,
   C17 / C17PDF / C3 (K8 na kopiach GA C12 — folder `RC_BEAM_C12`, domyślnie scratchpad `c12ga`); jednostkowe `RectilinearPolygonsTests`,
   `BeamK4K6Tests` (K4 UB SIDE, K8 PLOT 17 / 3, BC / BU pominięte w przekroju); złoty `beamK6` usunięty (K6 cofnięte).
 

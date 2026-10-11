@@ -1047,6 +1047,33 @@ namespace BricsCadRc.Core
                 : RectilinearPolygons.UncoveredParts(lo, hi, Tuples(e2.UbCuts), horizontal: !vertical, c);
 
         /// <summary>
+        /// UB 03 przy belce (decyzja 2026-10-11): jak daleko od krawędzi zewnętrznej (vertical — krawędź x = c, inaczej y = c; zakres
+        /// lo..hi) sięga obszar belki <see cref="BeamMeshCuts.UbCuts"/> obejmujący krawędź — pręty dołu prostopadłe kończą się tam na licu
+        /// wewnętrznym belki. Próbki co 100 mm wzdłuż krawędzi; wynik = mediana zasięgu z próbek przy belce (głębokość belki wzdłuż tej
+        /// krawędzi — w narożniku L obszar drugiej nogi sięga dalej i nie może poszerzać okna); 0 — krawędź bez belki.
+        /// </summary>
+        private static double BeamReachFromEdge(BeamMeshCuts e2, bool vertical, double c, double lo, double hi)
+        {
+            if (e2 == null || e2.UbCuts.Count == 0 || hi - lo < 1e-6) return 0.0;
+            var loops = Tuples(e2.UbCuts);
+            var reaches = new List<double>();
+            int n = Math.Max(1, (int)Math.Ceiling((hi - lo) / 100.0));
+            for (int i = 0; i <= n; i++)
+            {
+                double s = lo + (hi - lo) * i / n;
+                s = Math.Min(hi - 0.5, Math.Max(lo + 0.5, s));
+                // krawędź pionowa: prosta pozioma y = s (odcinki wzdłuż X); pozioma: x = s
+                double r = 0.0;
+                foreach (var (a, b) in RectilinearPolygons.IntervalsOnLine(loops, horizontal: vertical, s))
+                    if (a <= c + 1.0 && b >= c - 1.0) r = Math.Max(r, Math.Max(Math.Abs(a - c), Math.Abs(b - c)));
+                if (r > 0) reaches.Add(r);
+            }
+            if (reaches.Count == 0) return 0.0;
+            reaches.Sort();
+            return reaches[reaches.Count / 2];
+        }
+
+        /// <summary>
         /// K5: rozkłady siatki dolnej (B1 / B2, opis „… B1” / „… B2”, bez UB / ADD) rzutu: kierunek prętów, położenia w poprzek, zakres
         /// wzdłuż (początek, długość), średnica. Tylko odczyt; rozkłady obrócone pomijane.
         /// </summary>

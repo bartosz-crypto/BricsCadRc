@@ -21,8 +21,11 @@ namespace BricsCadRc.Core
         /// 3 (decyzja użytkownika 2026-10-11, zasady Z1–Z6): symbole zakończeń prętów w widoku (<see cref="Input.EndStyle"/>) —
         /// rzeczywiste końce prętów prostych i wolne końce ramion prętów giętych, zakład z odsunięciem w poprzek; płyty i belki.
         /// (2 — cofnięte K6, nie używać ponownie.)
+        /// 4 (decyzja użytkownika 2026-10-11 „pręty płyty nie wchodzą w belkę”, „w nibie 2 pręty górą i 1 dołem”): kropki siatki płyty
+        /// poziomu, którego rozkład nie wchodzi w trzon belki, nie są dorysowywane w pasie belki (trzon + nib belki) — AlignMesh /
+        /// MeshLevelBesideBeams; bez belek wynik bez zmian.
         /// </summary>
-        public const int Version = 3;
+        public const int Version = 4;
 
         /// <summary>
         /// Styl symbolu zakończenia pręta w widoku (Z1–Z6, decyzja użytkownika 2026-10-11): None — bez symboli (dawny rysunek, złote testy
@@ -362,8 +365,8 @@ namespace BricsCadRc.Core
                 foreach (var b in bands)
                     if (u >= b.U0 - b.Nib0 - 0.5 && u <= b.U1 + b.Nib1 + 0.5)
                     {
-                        // T IN NIB w trzonie belki (drugi pręt „150 dalej” — za licem belki): poziom jak w płycie, bez przesunięcia
-                        // do nibu belki (pręt jest w rysunku — E2 wstrzymany; nie udaje pręta nibu belki)
+                        // T IN NIB w trzonie belki (rysunki sprzed decyzji 2026-10-11 — drugi pręt „150 dalej”, za licem belki): poziom
+                        // jak w płycie, bez przesunięcia do nibu belki; od 2026-10-11 oba pręty T IN NIB przy belce leżą w nibie
                         if (tin && u > b.U0 + 0.5 && u < b.U1 - 0.5) return 0;
                         return tin ? (-b.H + b.NibH) - vNibTop : T - b.H;
                     }
@@ -563,7 +566,7 @@ namespace BricsCadRc.Core
             // 3a. Siatka w przekroju (schemat jak na rysunkach ASD): dół i góra w TYCH SAMYCH miejscach.
             //     Przy nibie: jeden pręt dołu w nibie (otulina od krawędzi zewnętrznej), pierwszy pręt siatki 150 dalej,
             //     reszta co rozstaw nominalny — jakby nibu nie było. Krawędź bez nibu: pierwszy pręt na otulinie.
-            AlignMesh(res, inp, InConcrete);
+            AlignMesh(res, inp, InConcrete, bands);
 
             // T IN NIB w spince UB 03: tuż pod jej górnym ramieniem (jak na rysunkach ASD)
             foreach (var dot in res.Dots.Where(x => x.TinNib))
@@ -1505,10 +1508,14 @@ namespace BricsCadRc.Core
             return d.Spacing > 0 ? d.Spacing : 200;
         }
 
-        private static void AlignMesh(Result res, Input inp, Func<double, double, bool> inConcrete)
+        private static void AlignMesh(Result res, Input inp, Func<double, double, bool> inConcrete, List<BandU> bands = null)
         {
             foreach (var sg in res.Segments)
             {
+                // belka (wersja 4, decyzja 2026-10-11 „pręty płyty nie wchodzą w belkę”): pasy belek tego odcinka; bez belek — null
+                // (dawny kod bit w bit)
+                var segBands = bands == null ? null : bands.Where(b => b.Seg == sg).ToList();
+                if (segBands != null && segBands.Count == 0) segBands = null;
                 // kotwy siatki przy końcach: krawędź z nibem → pręt w nibie + 150, krawędź / otwór → otulina, urwanie → brak
                 double? nibL = null, nibR = null, anchorL = null, anchorR = null;
                 if (sg.End0 != EndKind.Break)
@@ -1550,6 +1557,21 @@ namespace BricsCadRc.Core
                 {
                     var orig = level.OrderBy(d => d.U).ToList();
                     bool top = orig[0].Top;
+                    if (segBands != null)
+                    {
+                        // siatka płyty nie wchodzi w belkę (E2 / decyzja 2026-10-11): poziom bez żadnej kropki z rozkładu w trzonie belki
+                        // nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem kotwa przy belce = rzeczywisty pierwszy pręt
+                        // rozkładu (nie siatka od kotwy nibu płyty)
+                        var cut = segBands.Where(b => !orig.Any(d => d.U > b.U0 + 0.5 && d.U < b.U1 - 0.5)).ToList();
+                        if (cut.Count > 0)
+                        {
+                            var freshB = MeshLevelBesideBeams(sg, orig, cut, anchorL, anchorR, nibL, nibR, sp, top, inConcrete);
+                            if (freshB.Count == 0) continue;
+                            foreach (var d in orig) res.Dots.Remove(d);
+                            res.Dots.AddRange(freshB);
+                            continue;
+                        }
+                    }
                     var pts = new List<double>(grid);
                     if (!top) { if (nibL.HasValue) pts.Insert(0, nibL.Value); if (nibR.HasValue) pts.Add(nibR.Value); }
                     var fresh = new List<Dot>();
@@ -1565,6 +1587,71 @@ namespace BricsCadRc.Core
                     res.Dots.AddRange(fresh);
                 }
             }
+        }
+
+        /// <summary>
+        /// Siatka w odcinku z belką (wersja 4; jak poprawka b5d7e7f cofnięta z K6 — przywrócona decyzją użytkownika 2026-10-11): poziom
+        /// kropek siatki, którego rozkład nie wchodzi w trzon belki (pręty płyty nie wchodzą w belkę). Pas belki (trzon + nib belki do
+        /// krawędzi) — bez kropek; poza pasem — schemat jak <see cref="AlignMesh"/> (rozstaw nominalny, góra i dół od kotew), ale kotwa po
+        /// stronie belki = rzeczywisty skrajny pręt rozkładu przy belce; kotwy przy krawędzi / otworze / nibie płyty — jak dotąd. Zakres
+        /// bez kotew (urwanie i belka) — położenia z rozkładu.
+        /// </summary>
+        private static List<Dot> MeshLevelBesideBeams(Segment sg, List<Dot> orig, List<BandU> cut, double? anchorL, double? anchorR,
+                                                      double? nibL, double? nibR, double sp, bool top, Func<double, double, bool> inConcrete)
+        {
+            // przedziały zakazane (trzon + nib belki), scalone
+            var forb = new List<(double Lo, double Hi)>();
+            foreach (var b in cut.OrderBy(b => b.U0 - b.Nib0))
+            {
+                double lo = b.U0 - b.Nib0, hi = b.U1 + b.Nib1;
+                if (forb.Count > 0 && lo <= forb[forb.Count - 1].Hi + 1e-6)
+                    forb[forb.Count - 1] = (forb[forb.Count - 1].Lo, Math.Max(forb[forb.Count - 1].Hi, hi));
+                else forb.Add((lo, hi));
+            }
+            var ranges = new List<(double Lo, double Hi, bool SegL, bool SegR)>();
+            double start = sg.U0; bool startSeg = true;
+            foreach (var f in forb)
+            {
+                ranges.Add((start, f.Lo, startSeg, false));
+                start = f.Hi; startSeg = false;
+            }
+            ranges.Add((start, sg.U1, startSeg, true));
+
+            double v = orig[0].V;
+            var fresh = new List<Dot>();
+            foreach (var r in ranges)
+            {
+                if (r.Hi - r.Lo <= 1.0) continue;
+                var inR = orig.Where(d => d.U >= r.Lo - 0.5 && d.U <= r.Hi + 0.5).OrderBy(d => d.U).ToList();
+                if (inR.Count == 0) continue;
+                double? L = r.SegL ? anchorL : inR[0].U;
+                double? R = r.SegR ? anchorR : inR[inR.Count - 1].U;
+                var pts = new List<double>();
+                if (L.HasValue && R.HasValue)
+                {
+                    if (R.Value <= L.Value + 1) pts.Add((L.Value + R.Value) / 2);
+                    else
+                    {
+                        int n = Math.Max(1, (int)Math.Round((R.Value - L.Value) / sp));
+                        for (int i = 0; i <= n; i++) pts.Add(L.Value + (R.Value - L.Value) * i / n);
+                    }
+                }
+                else if (L.HasValue)
+                    for (double p = L.Value; p <= r.Hi - 10; p += sp) pts.Add(p);
+                else if (R.HasValue)
+                    for (double p = R.Value; p >= r.Lo + 10; p -= sp) pts.Insert(0, p);
+                else
+                    pts.AddRange(inR.Select(d => d.U));      // urwanie po obu stronach — położenia z rozkładu
+                if (!top) { if (r.SegL && nibL.HasValue) pts.Insert(0, nibL.Value); if (r.SegR && nibR.HasValue) pts.Add(nibR.Value); }
+                foreach (double u in pts)
+                {
+                    if (u < r.Lo - 0.5 || u > r.Hi + 0.5 || !inConcrete(u, v)) continue;
+                    var near = inR.OrderBy(d => Math.Abs(d.U - u)).First();
+                    fresh.Add(new Dot { U = u, V = near.V, Diameter = near.Diameter, PosNr = near.PosNr, Top = top,
+                                        Mesh = true, NomSpacing = near.NomSpacing });
+                }
+            }
+            return fresh;
         }
 
         /// <summary>Kropka na pionowym ramieniu pręta w widoku (np. UB) → odsunięcie od ramienia po swojej stronie.</summary>

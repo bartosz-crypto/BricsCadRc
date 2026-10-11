@@ -185,8 +185,72 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(inp);
             Assert.That(r.Dots.Any(d => d.PosNr == "09" || d.PosNr == "10"), Is.False);
             Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
-            // wersja 3 (zakończenia prętów Z1–Z6, 2026-10-11); BC / BU nadal pominięte
-            Assert.That(SectionPlanner.Version, Is.EqualTo(3));
+            // wersja 4 (2026-10-11: siatka płyty nie wchodzi w belkę — bez kropek w trzonie); BC / BU nadal pominięte
+            Assert.That(SectionPlanner.Version, Is.EqualTo(4));
+        }
+
+        // ── decyzja użytkownika 2026-10-11: pręty płyty nie wchodzą w belkę; w nibie 2 pręty górą (T IN NIB) i 1 dołem (B IN NIB) ──
+
+        /// <summary>
+        /// Wejście jak złoty „beam” (belka 160…760, nib 160), ale siatka wg decyzji 2026-10-11: B1 / T1 (prostopadłe do belki) od lica
+        /// wewnętrznego 760, B2 / T2 (równoległe) od 810 / 860, T IN NIB — oba pręty w nibie (56 i 120 od krawędzi, opis bez rozstawu),
+        /// B IN NIB H10 w dolnym narożu UB 03 (55), bez BN górą.
+        /// </summary>
+        private static SectionPlanner.Input CaseBeamNoMeshInBeam()
+        {
+            var inp = SectionPlannerGoldenTests.CaseBeam();
+            SectionPlanner.Dist P(string pos) => inp.Dists.First(d => d.PosNr == pos);
+            var b1 = P("11"); b1.X0 = 760; b1.LengthA = 5200;
+            var t1 = P("111"); t1.X0 = 760; t1.LengthA = 5200;
+            var b2 = P("12"); b2.X0 = 810; b2.Count = 26; b2.BarsSpan = 5000;
+            var t2 = P("112"); t2.X0 = 860; t2.Count = 25; t2.BarsSpan = 4800;
+            var tin = P("101"); tin.Mark = "2 H12-101 T IN NIB"; tin.X0 = 56; tin.BarsSpan = 64; tin.Spacing = 64;
+            inp.Dists.Remove(P("21"));
+            var bn = P("22"); bn.Mark = "H10-22 B IN NIB"; bn.Diameter = 10; bn.X0 = 55;
+            return inp;
+        }
+
+        [TestCase(SectionPlanner.EndStyle.None)]
+        [TestCase(SectionPlanner.EndStyle.Tick)]
+        public void D20261011_NoMeshDotsInBeam_TinBothInNib(SectionPlanner.EndStyle st)
+        {
+            var inp = CaseBeamNoMeshInBeam();
+            inp.EndStyle = st;
+            var r = SectionPlanner.Plan(inp);
+            var mesh = r.Dots.Where(d => d.Mesh).ToList();
+            Assert.That(mesh.Where(d => d.U <= 760 + 0.5), Is.Empty,
+                        "kropki siatki w belce / nibie: " + string.Join(" ", mesh.Where(d => d.U <= 760.5).Select(d => d.PosNr + "@" + d.U)));
+            var b2 = mesh.Where(d => d.PosNr == "12").OrderBy(d => d.U).ToList();
+            var t2 = mesh.Where(d => d.PosNr == "112").OrderBy(d => d.U).ToList();
+            Assert.That(b2[0].U, Is.EqualTo(810.0).Within(1e-9), "pierwszy B2 = rozkład");
+            Assert.That(t2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy T2 = rozkład");
+            // pręty prostopadłe do belki (B1 / T1 w widoku) zaczynają się na licu wewnętrznym — nie wchodzą w belkę
+            foreach (var pos in new[] { "11", "111" })
+            {
+                var bars = r.Bars.Where(b => b.PosNr == pos).ToList();
+                Assert.That(bars, Is.Not.Empty, pos);
+                Assert.That(bars.Min(b => b.Path.Min(q => q.U)), Is.GreaterThanOrEqualTo(760.0 - 1e-6), pos);
+            }
+            // T IN NIB: oba pręty w nibie (0…160), pod górnym ramieniem UB 03 (ten sam poziom)
+            var tin = r.Dots.Where(d => d.TinNib).ToList();
+            Assert.That(tin.Count, Is.EqualTo(2));
+            Assert.That(tin.All(d => d.U > 0 && d.U < 160), Is.True, string.Join(" ", tin.Select(d => d.U + "," + d.V)));
+            Assert.That(Math.Abs(tin[0].V - tin[1].V), Is.LessThan(1e-9));
+            var ub3 = r.Bars.First(b => b.Kind == SectionPlanner.DistKind.NibUB);
+            Assert.That(tin[0].V, Is.LessThan(ub3.Path.Max(q => q.V)), "pod górnym ramieniem UB 03");
+            // B IN NIB: jedna kropka w nibie, w dolnym narożu UB 03
+            var bin = r.Dots.Where(d => d.PosNr == "22").ToList();
+            Assert.That(bin.Count, Is.EqualTo(1));
+            Assert.That(bin[0].U, Is.LessThan(160));
+            Assert.That(bin[0].V, Is.GreaterThan(ub3.Path.Min(q => q.V)), "nad dolnym ramieniem UB 03");
+        }
+
+        /// <summary>Siatka przechodząca przez belkę (złoty „beam”: B2 od 40 — rysunek sprzed decyzji) — schemat kropek także w belce (bez zmian).</summary>
+        [Test]
+        public void D20261011_MeshThroughBeam_SchemeInBeamUnchanged()
+        {
+            var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
+            Assert.That(r.Dots.Any(d => d.Mesh && d.U > 160 && d.U < 760), Is.True);
         }
     }
 }

@@ -116,25 +116,30 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void MeshCut_528_BottomPerpendicular_ToStepLine()
+        public void MeshCut_528_BottomPerpendicular_ToInnerFace()
         {
-            // B1 (pręty X, prostopadłe): odjęty pas nibu przed belką → pręty od linii uskoku (1326924) + 40
+            // B1 (pręty X, prostopadłe; decyzja 2026-10-11 — nie wchodzą w belkę): odjęta strefa + nib → granica pasu lico wewnętrzne
+            // (1327524) − 40, pręt od granicy + 40 = koniec na licu wewnętrznym (bez otuliny)
             var rs = BeamGeometry.MeshCutRects(An528(), top: false, barsAlongX: true, d: 10);
             Assert.That(rs.Count, Is.EqualTo(1));
-            Assert.That(rs[0].X1, Is.EqualTo(1326924).Within(1e-9));
+            Assert.That(rs[0].X0, Is.EqualTo(1326924 - BeamGeometry.MeshCutReach).Within(1e-9));
+            Assert.That(rs[0].X1, Is.EqualTo(1327524 - 40).Within(1e-9));
             var reg = RectilinearPolygons.Subtract(Box(1326764, 49647, 1337395, 60150), rs);
             Assert.That(reg.Count, Is.EqualTo(1));
-            Assert.That(reg[0].Min(p => p.X), Is.EqualTo(1326924).Within(1e-9));
-            Assert.That(reg[0].Count, Is.EqualTo(4), "cały nib lewej krawędzi (z narożnikami) odcięty — prostokąt");
+            Assert.That(reg[0].Min(p => p.X) + 40, Is.EqualTo(1327524).Within(1e-9), "koniec pręta B1 na licu wewnętrznym");
+            Assert.That(reg[0].Count, Is.EqualTo(4), "cały pas belki z nibem lewej krawędzi (z narożnikami) odcięty — prostokąt");
         }
 
         [Test]
-        public void MeshCut_528_Top_ParallelHalfSpacing_PerpendicularUnchanged()
+        public void MeshCut_528_Top_ParallelHalfSpacing_PerpendicularToInnerFace()
         {
             var t2 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: false, d: 12);
             Assert.That(t2.Count, Is.EqualTo(1));
             Assert.That(t2[0].X1, Is.EqualTo(1327524 + 60).Within(1e-9), "pierwszy pręt T2 = lico + s/2");
-            Assert.That(BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: true, d: 12), Is.Empty, "T1 prostopadłe — bez zmian");
+            // T1 prostopadłe (decyzja 2026-10-11): też do lica wewnętrznego (wcześniej do linii uskoku)
+            var t1 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: true, d: 12);
+            Assert.That(t1.Count, Is.EqualTo(1));
+            Assert.That(t1[0].X1 + 40, Is.EqualTo(1327524).Within(1e-9), "koniec pręta T1 na licu wewnętrznym");
         }
 
         [Test]
