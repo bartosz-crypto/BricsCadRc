@@ -90,6 +90,11 @@ UNDO (jedna grupa), grip (krotność BM/BS), COPY (bez nowych RegApp), stare rys
 Jednostkowe: NibStepRules (321/525 → rozstaw ≈ 200), RectilinearPolygons, U-bary 265/340/190 i 325/475/625, narożnik, zakłady 400/500/650, B1/B2/B3, MigrateV1, CountText, ZoneFromNibEdge, ParseThk MLeader. BRX run-planc-beam (528: BM, 2×BU, strzemię H12 51 290×510, brak BT/BS/BN górą, B IN NIB = numer B2, brak UB 01/02 przy belce; 539 narożniki; UNDO/REDO, COPY, Blok/Polilinia; rekord v1). S-REG: F29, F-BEAM, reszta 0 nowych różnic. Porównanie z ręcznym BBS Holbrook 528/539/319, tonaż 321/525, C12 PLOT 17.
 
 ## 5. Parametry „do potwierdzenia” (pytania do Bartka)
+**Odpowiedzi Bartka 2026-10-12:** 1 — górna 35, dolna 40, boczna 40, każda + 5 zapasu (40 / 45 / 45); 2 / 22 — belki H ≤ 375: zachodzące
+strzemiona (2 obok siebie, Auto); 3 — noga Y w kwadrat do końca, noga X przed kwadratem; 5 / 14 — zakład standardowy (40·Ø) bez naddatku;
+6 — „-150” zostaje; 7 — niezależnie od UB 03; 9 / 26 — pręty boczne i UB SIDE później; 13 / 15 — cała belka w serii dolnej; 16 — „UB” OK;
+19 — strzemion tyle, ile się zmieści (rozstaw 200); 21 — belki H ≤ 375: pytanie H12 / H16 przy generowaniu; 32 — nib w przekroju jak
+w rzeczywistości. Do wyjaśnienia: 4, 8, 17, 18, 20, 24, 27, 31.
 1. Otulina górna strzemienia A1 35 (H−85, domyślnie) / A2 50 (H−100).
 2. H ≤ 375: 2 zachodzące strzemiona 370 (Holbrook) — opcja?
 3. Narożnik: pręty proste przed kwadratem (C12, domyślnie) / w kwadrat (Holbrook); B − 35 na nodze Y.

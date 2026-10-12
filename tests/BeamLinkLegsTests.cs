@@ -92,15 +92,16 @@ namespace BricsCadRc.Tests
 
         // ── C: próg normy (tabela raportu) ──
 
-        [TestCase(600, 600, true, 4, 397.5, 498.0, false)]
-        [TestCase(450, 450, true, 4, 285.0, 348.0, false)]
+        // decyzja użytkownika 2026-10-12: Auto — 4-cięte (zachodzące, B = 370) tylko H ≤ 375; wyższe 2-cięte (przekroczenie — ostrzeżenie)
+        [TestCase(600, 600, true, 2, 397.5, 498.0, true)]
+        [TestCase(450, 450, true, 2, 285.0, 348.0, true)]
         [TestCase(450, 375, true, 4, 228.75, 348.0, false)]
-        [TestCase(600, 375, true, 4, 228.75, 498.0, false)]   // Holbrook 528
-        [TestCase(600, 300, true, 4, 172.5, 498.0, true)]     // Holbrook 539 — 4-cięte nadal 188 > 172,5
-        [TestCase(600, 450, true, 4, 285.0, 498.0, false)]    // Holbrook 319 / C12 PLOT 17
+        [TestCase(600, 375, true, 4, 228.75, 498.0, false)]   // Holbrook 528 — 2 × 370, rozstaw ramion 218
+        [TestCase(600, 300, true, 4, 172.5, 498.0, true)]     // Holbrook 539 — 218 > 172,5
+        [TestCase(600, 450, true, 2, 285.0, 498.0, true)]     // Holbrook 319 / C12 PLOT 17 — 2-cięte
         [TestCase(300, 750, true, 2, 510.0, 198.0, false)]
         [TestCase(600, 600, false, 2, 397.5, 498.0, false)]   // belka w płycie — Auto 2-cięte, bez ostrzeżenia
-        [TestCase(600, 375, false, 2, 228.75, 498.0, false)]
+        [TestCase(600, 375, false, 4, 228.75, 498.0, false)]   // belka niska (H ≤ 375) — zawsze 2 zachodzące (2026-10-12)
         public void PlanLinkLegs_Auto(double width, double h, bool edge, int legs, double stMax, double sp2, bool exceeded)
         {
             var r = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, h, width, 45, 50, 12, H16x4, edge);
@@ -108,8 +109,9 @@ namespace BricsCadRc.Tests
             Assert.That(r.StMax, Is.EqualTo(stMax).Within(1e-9));
             Assert.That(r.Spacing2, Is.EqualTo(sp2));
             Assert.That(r.Exceeded, Is.EqualTo(exceeded));
-            if (legs == 4) Assert.That(r.TemplateB, Is.EqualTo(width == 600 ? 355 : 255));
-            if (!edge) Assert.That(r.Note, Does.Contain("belka w płycie — 2-cięte"));
+            if (legs == 4) Assert.That(r.TemplateB, Is.EqualTo(width == 600 ? 370 : 255));
+            if (!edge && legs == 2) Assert.That(r.Note, Does.Contain("belka w płycie — 2-cięte"));
+            if (h <= BeamGeometry.ShallowBeamMaxH) Assert.That(r.Note, Does.Contain("belka niska"));
         }
 
         [Test]
@@ -117,8 +119,11 @@ namespace BricsCadRc.Tests
         {
             var r = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, 600, 600, 45, 50, 12, H16x4);
             Assert.That(r.Note, Does.StartWith("600×600: d = 530, s_t,max = 0,75·d = 397.5"));
-            Assert.That(r.Note, Does.Contain("rozstaw ramion 2-ciętych 498 > 397.5 → 4-cięte"));
-            Assert.That(r.Note, Does.Contain("pręty 1–3 i 2–4"));
+            Assert.That(r.Note, Does.Contain("rozstaw ramion 2-ciętych 498 > 397.5 → 2-cięte"));
+            Assert.That(r.Note, Does.Contain("OSTRZEŻENIE"));
+            var r4 = BeamGeometry.PlanLinkLegs(BeamParams.Legs4, 600, 600, 45, 50, 12, H16x4);
+            Assert.That(r4.Note, Does.Contain("pręty 1–3 i 2–4"));
+            Assert.That(r4.B4, Is.EqualTo(370));
         }
 
         [Test]
@@ -144,10 +149,10 @@ namespace BricsCadRc.Tests
         [Test]
         public void PlanLinkLegs_BottomTopDifferent_WidestB()
         {
-            // dół 4 H16, góra 5 H20: k = 3 i 4 → B = max
-            var r = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, 600, 600, 45, 50, 12, new List<(int n, int d)> { (4, 16), (5, 20) });
+            // dół 4 H16, góra 5 H20: k = 3 i 4 → B = max(370, obejmujące) (belka niska — Auto 4-cięte)
+            var r = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, 375, 600, 45, 50, 12, new List<(int n, int d)> { (4, 16), (5, 20) });
             Assert.That(r.Legs, Is.EqualTo(4));
-            Assert.That(r.B4, Is.EqualTo(Math.Max(355, BeamGeometry.FourLegWidth(600, 5, 20, 4, 12, 45))));
+            Assert.That(r.B4, Is.EqualTo(Math.Max(370, BeamGeometry.FourLegWidth(600, 5, 20, 4, 12, 45))));
         }
 
         // ── B: opis i krotność ──

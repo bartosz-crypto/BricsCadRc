@@ -75,7 +75,7 @@ namespace BricsCadRc.Core
         /// <summary>[34] Strzemiona w kwadracie narożnika L: true — kontynuacja dłuższej nogi (domyślne), false — brak.</summary>
         public bool CornerSquareLinks = true;
         /// <summary>[35] Ramię U-bara końca: A = Ceil25(zakład + naddatek) [mm] (90: C12 740, Holbrook 770 — pytanie 14).</summary>
-        public double UBarArmExtra = 90;
+        public double UBarArmExtra = 0;   // decyzja użytkownika 2026-10-12: ramię = zakład standardowy (H16: 650); wcześniej + 90
         /// <summary>[36] K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 (osobny widok w modelu; true — domyślne) albo
         /// na rzucie dolnym 1:50 (false — jak przed K9). Brak pola w rekordzie = detal.</summary>
         public bool DetailView = true;
@@ -207,9 +207,10 @@ namespace BricsCadRc.Core
 
         /// <summary>Otuliny belki (decyzja użytkownika 2026-10-10): boczna / czołowa strzemion 45 (40 + odchyłka), dolna 50, górna 35
         /// (pod siatką T, bez zmian). Domyślne parametrów BeamParams.CoverSide / CoverBottom.</summary>
-        public const double DefaultCoverSide = 45.0, DefaultCoverBottom = 50.0, DefaultCoverTop = 35.0;
+        // decyzja użytkownika 2026-10-12: otuliny belki górna 35, dolna 40, boczna 40 — każda + 5 mm zapasu (jak UB płyty) → 40 / 45 / 45
+        public const double DefaultCoverSide = 45.0, DefaultCoverBottom = 45.0, DefaultCoverTop = 40.0;
         /// <summary>K2: otulina górna strzemienia — A1 35 (Holbrook, A = H − 85; domyślne) / A2 50 (C12, A = H − 100).</summary>
-        public const double CoverTopA1 = 35.0, CoverTopA2 = 50.0;
+        public const double CoverTopA1 = 40.0, CoverTopA2 = 50.0;   // A1: 35 + 5 zapasu (decyzja 2026-10-12; wcześniej 35)
         /// <summary>Otulina spinki UB 03 od krawędzi płyty (element płyty — bez zmian, 40): położenie prętów BN w poprzek (naroża spinki).</summary>
         public const double NibUbEdgeCover = 40.0;
 
@@ -734,9 +735,12 @@ namespace BricsCadRc.Core
                 }
             }
 
+            // decyzja użytkownika 2026-10-12: „strzemion tyle, ile się zmieści na długości” — rozstaw = s, liczba w dół, reszta po równo
+            // na obu końcach (wcześniej: liczba w górę, rozstaw ≤ s)
             double span = L - offLo - offHi;
-            int n = (int)Math.Ceiling(span / spacing - 1e-9) + 1;
-            return (lo + offLo, n > 1 ? span / (n - 1) : 0, n, false);
+            int n = (int)Math.Floor(span / spacing + 1e-9) + 1;
+            double rest = span - (n - 1) * spacing;
+            return (lo + offLo + rest / 2.0, n > 1 ? spacing : 0, n, false);
         }
 
         /// <summary>
@@ -867,7 +871,9 @@ namespace BricsCadRc.Core
                 switch (c)
                 {
                     case Closure.UBar: return face + dir * eo;
-                    case Closure.LBar:
+                    // decyzja użytkownika 2026-10-12: narożnik L — noga pionowa (wzdłuż Y) wchodzi prętami w kwadrat do lica zewnętrznego,
+                    // noga pozioma (wzdłuż X) kończy się przed kwadratem; [31] intoSquare — obie nogi w kwadrat
+                    case Closure.LBar: return intoSquare || !s.AlongX ? face + dir * eo : own;
                     case Closure.Tee: return intoSquare ? face + dir * eo : own;
                     default: return face + dir * cover;
                 }
@@ -1159,6 +1165,11 @@ namespace BricsCadRc.Core
         /// Doprecyzowanie użytkownika 2026-10-11: próg normy w trybie Auto tylko dla belek krawędziowych (edgeBeam — OuterSide ≠ 0); belka
         /// w płycie — Auto zawsze 2-cięte (komunikat informacyjny, bez ostrzeżenia); ręczne 2 / 4 nadpisuje Auto (ostrzeżenie tylko krawędziowej).
         /// </summary>
+        /// <summary>Belka niska (decyzja użytkownika 2026-10-12): H ≤ 375 — dwa zachodzące strzemiona (Auto) i pytanie H12 / H16 przy generowaniu.</summary>
+        public const double ShallowBeamMaxH = 375.0;
+        /// <summary>Strzemiona zachodzące (4-cięte): szerokość zewnętrzna B jednego strzemienia — sztywno 370 (decyzja użytkownika 2026-10-12).</summary>
+        public const double FourLegFixedB = 370.0;
+
         public static LinkLegsPlan PlanLinkLegs(int mode, double h, double width, double coverSide, double coverBottom, int dLink,
                                                 IList<(int n, int d)> layers, bool edgeBeam = true)
         {
@@ -1178,6 +1189,9 @@ namespace BricsCadRc.Core
                     if (k <= 0) { b4 = 0; r.K = 0; break; }
                     b4 = Math.Max(b4, FourLegWidth(width, n, d, k, dLink, coverSide));
                 }
+                // decyzja użytkownika 2026-10-12: strzemiona zachodzące (4-cięte) — szerokość jednego strzemienia sztywno 370
+                // (Holbrook; wcześniej obejmujące pręty 1..k: 355); belka węższa, w której 370 się nie mieści — B jak dotąd (pręty 1..k)
+                if (b4 > 0 && FourLegFixedB < r.BOuter - 2.0 * dLink) b4 = Math.Max(b4, FourLegFixedB);
                 if (r.K > 0 && b4 > 0 && b4 < r.BOuter - 2.0 * dLink)
                 {
                     r.B4 = b4;
@@ -1188,8 +1202,10 @@ namespace BricsCadRc.Core
             string F(double x) => x.ToString("0.#", CultureInfo.InvariantCulture);
             string head = $"{F(width)}×{F(h)}: d = {F(r.D)}, s_t,max = 0,75·d = {F(r.StMax)} (EN 1992-1-1 §9.2.2(8)), rozstaw ramion 2-ciętych {F(r.Spacing2)}";
             bool over2 = r.Spacing2 > r.StMax + 1e-6;
+            // decyzja użytkownika 2026-10-12: belki niskie (H ≤ 375) — Auto zawsze dwa zachodzące strzemiona (4-cięte, Holbrook)
+            bool shallow = r.Mode == BeamParams.LegsAuto && h <= ShallowBeamMaxH + 0.5;
             // doprecyzowanie użytkownika 2026-10-11: belka w płycie (OuterSide = 0) — Auto zawsze 2-cięte, bez ostrzeżenia normowego
-            if (!edgeBeam && r.Mode != BeamParams.Legs4)
+            if (!edgeBeam && r.Mode != BeamParams.Legs4 && !shallow)
             {
                 r.Legs = 2;
                 r.Note = $"{F(width)}×{F(h)}: belka w płycie — 2-cięte" + (r.Mode == BeamParams.Legs2 ? " (wybór ręczny)." : " (Auto: próg normy tylko dla belek krawędziowych).");
@@ -1205,9 +1221,20 @@ namespace BricsCadRc.Core
             }
             bool manual4 = r.Mode == BeamParams.Legs4;
             if (!edgeBeam) head = $"{F(width)}×{F(h)}: belka w płycie";
-            bool want4 = manual4 || over2;
-            string how = manual4 ? "; 4-cięte (wybór ręczny)" : (over2 ? $" > {F(r.StMax)} → 4-cięte" : $" ≤ {F(r.StMax)} → 2-cięte (Auto)");
-            if (!want4) { r.Legs = 2; r.Note = head + how + "."; return r; }
+            // decyzja użytkownika 2026-10-12: Auto — 4-cięte TYLKO belki niskie (H ≤ 375); wyższe standardowo 2-cięte (przekroczenie normy —
+            // tylko ostrzeżenie)
+            bool want4 = manual4 || shallow;
+            string how = manual4 ? "; 4-cięte (wybór ręczny)"
+                       : shallow ? $"; belka niska (H ≤ {F(ShallowBeamMaxH)}) → 2 zachodzące strzemiona"
+                       : over2 ? $" > {F(r.StMax)} → 2-cięte (Auto: zachodzące tylko dla H ≤ {F(ShallowBeamMaxH)})"
+                       : $" ≤ {F(r.StMax)} → 2-cięte (Auto)";
+            if (!want4)
+            {
+                r.Legs = 2;
+                r.Exceeded = over2 && edgeBeam;
+                r.Note = head + how + (r.Exceeded ? $" — *** OSTRZEŻENIE *** rozstaw ramion przekracza s_t,max (EN 1992-1-1 §9.2.2(8)); w razie potrzeby 4-cięte ręcznie w RC_BEAM." : ".");
+                return r;
+            }
             if (r.K <= 0)
             {
                 r.Legs = 2;

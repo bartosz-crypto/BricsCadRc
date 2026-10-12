@@ -62,7 +62,9 @@ namespace BricsCadRc.Tests
             var runs = BeamGeometry.PlanSideUBars(an, ranges, 1, 12, 12, 500, 45, new List<string>());
             var corner = runs.Where(r => r.Kind == "L").ToList();
             Assert.That(corner.Count, Is.EqualTo(2));
-            Assert.That(corner.All(r => r.A >= 600 - 45 + 500 - 1e-9), Is.True, string.Join(",", corner.Select(r => r.A)));
+            // 2026-10-12: noga Y w kwadrat narożnika — jej UB SIDE z samym zakładem; noga X — ramię przez kwadrat
+            Assert.That(corner.Any(r => r.A >= 600 - 45 + 500 - 1e-9), Is.True, string.Join(",", corner.Select(r => r.A)));
+            Assert.That(corner.All(r => r.A >= 500 - 1e-9), Is.True, string.Join(",", corner.Select(r => r.A)));
         }
 
         // ── K8: strefy z opisów „xxxTHK” (GA C12 bez SD-Thickening-Zone) ──

@@ -216,7 +216,8 @@ namespace BricsCadRc.Tests
             inp.Dists.Add(D("20 H10-03-200 UB", "B1", true, 40, 100, 610, 3800, 20, 200, 10, "21", "Left",
                             new List<(double X, double Y)> { (610, 0), (0, 0), (0, 60), (610, 60) }));
             inp.Dists.Add(D("2 H12-101-150 T IN NIB", "T1", false, 40, 40, 3920, 150, 2, 150, 12));
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AA", S0 = 160, S1 = 760, Height = 375, NibHeight = 150, StirrupDia = 10, StirrupA = 265 });
+            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000002AA", S0 = 160, S1 = 760, Height = 375, NibHeight = 150, StirrupDia = 10, StirrupA = 265,
+                                                     CoverBottom = 50 });   // rekord sprzed 2026-10-12 (otulina dolna 50) — złoty wynik bez zmian
             return inp;
         }
 

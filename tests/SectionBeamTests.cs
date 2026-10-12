@@ -262,7 +262,8 @@ namespace BricsCadRc.Tests
             inp.Dists.Add(SectionPlannerGoldenTests.B("103", "BT", true, 200, 223, 4750, 474, 4, sp, 16));
             var l51 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 190, 510, 0, 0, 0 }, 10);
             inp.Dists.Add(SectionPlannerGoldenTests.B("07", "BL", false, 280, 205, 510, 4600, 24, 200, 10, "51", l51, new double[] { 190, 510, 0, 0, 0 }));
-            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000003BB", S0 = 160, S1 = 5000, Height = 300, NibHeight = 150, StirrupDia = 10, StirrupA = 190 });
+            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "000003BB", S0 = 160, S1 = 5000, Height = 300, NibHeight = 150, StirrupDia = 10, StirrupA = 190,
+                                                     CoverBottom = 50 });   // rekord sprzed 2026-10-12 (otulina dolna 50)
             return inp;
         }
 

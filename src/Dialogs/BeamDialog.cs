@@ -99,10 +99,10 @@ namespace BricsCadRc.Dialogs
                          nibGeometry ? $"wg geometrii: linia uskoku {F(nibGap)} mm przed licem; odznaczone — belka bez nibu (lico zewnętrzne = krawędź płyty, bez UB 03 / T IN NIB / prętów w nibie)"
                                      : "brak linii uskoku przy belce — belka bez nibu");
             _nib.IsEnabled = nibGeometry;
-            _covSide = Field("Otulina boczna / czołowa [mm]", F(_p.CoverSide), "domyślne 45 (40 + odchyłka)");
-            _covBot  = Field("Otulina dolna [mm]", F(_p.CoverBottom), "spód belki i nibu; domyślne 50");
+            _covSide = Field("Otulina boczna / czołowa [mm]", F(_p.CoverSide), "domyślne 45 (40 + 5 zapasu)");
+            _covBot  = Field("Otulina dolna [mm]", F(_p.CoverBottom), "spód belki i nibu; domyślne 45 (40 + 5 zapasu)");
             _covTop = new ComboBox { Width = 250, Margin = new Thickness(0, 2, 6, 2) };
-            _covTop.Items.Add("A1: otulina górna 35 (A = H − 85; Holbrook)");
+            _covTop.Items.Add("A1: otulina górna 40 (35 + 5 zapasu; A = H − 85)");
             _covTop.Items.Add("A2: otulina górna 50 (A = H − 100; C12)");
             _covTop.Items.Add("inna (pole obok)");
             _covTop.SelectedIndex = System.Math.Abs(_p.CoverTop - BeamGeometry.CoverTopA1) < 0.5 ? 0
@@ -135,7 +135,7 @@ namespace BricsCadRc.Dialogs
             _endOff = Field("Koniec pręta prostego od lica [mm]", F(_p.StraightEndOffset), "0 = auto (otulina + Ø U-bara = 61; C12 ≈ 90)");
             _intoSquare = Check("Pręty proste w kwadrat narożnika", _p.CornerStraightIntoSquare, "domyślnie nie — przed kwadratem (C12)");
             _uDia = DiaBox("U-bary pionowe: średnica", BeamParams.MainDiameters, _p.UBarDia, "kształt 21, po 1 w kolumnie prętów");
-            _uExtra = Field("U-bar końca: A = zakład + [mm]", F(_p.UBarArmExtra), "90 (C12 740, Holbrook 770)");
+            _uExtra = Field("U-bar końca: A = zakład + [mm]", F(_p.UBarArmExtra), "0 = zakład standardowy (H16: 650)");
             _uDrop = Field("U-bary drugiego kierunku: B − [mm]", F(_p.UBarDrop), "noga Y narożnika / złącze T (35)");
 
             Header("Pręty boczne i w nibie");

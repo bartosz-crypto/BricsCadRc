@@ -167,12 +167,12 @@ namespace BricsCadRc.Tests
         [Test]
         public void Stirrups_528_Formula()
         {
-            // L = 10182.5: n = ceil((L − 100) / 200) + 1 = 52, rozstaw ≤ 200
+            // decyzja 2026-10-12 „tyle, ile się zmieści”: L = 10182.5, zakres 10082.5 → n = floor(10082.5 / 200) + 1 = 51, rozstaw 200,
+            // reszta 82.5 po równo na końcach
             var (first, step, n, fromUb) = BeamGeometry.StirrupLayout(49807.038, 59989.538);
-            Assert.That(n, Is.EqualTo(52));
-            Assert.That(step, Is.LessThanOrEqualTo(200.0));
-            Assert.That(step, Is.EqualTo(10082.5 / 51).Within(1e-9));
-            Assert.That(first, Is.EqualTo(49857.038).Within(1e-9));
+            Assert.That(n, Is.EqualTo(51));
+            Assert.That(step, Is.EqualTo(200.0).Within(1e-9));
+            Assert.That(first, Is.EqualTo(49857.038 + 41.25).Within(1e-9));
             Assert.That(fromUb, Is.False);
         }
 
@@ -180,7 +180,7 @@ namespace BricsCadRc.Tests
         public void Stirrups_ExactMultiple_And_Short()
         {
             Assert.That(BeamGeometry.StirrupLayout(0, 2100).Count, Is.EqualTo(11));   // 2000 / 200 + 1
-            Assert.That(BeamGeometry.StirrupLayout(0, 2101).Count, Is.EqualTo(12));
+            Assert.That(BeamGeometry.StirrupLayout(0, 2101).Count, Is.EqualTo(11));   // 2001 — 12. się nie mieści (2026-10-12)
             var one = BeamGeometry.StirrupLayout(0, 80);
             Assert.That(one.Count, Is.EqualTo(1));
             Assert.That(one.First, Is.EqualTo(40));
@@ -385,17 +385,17 @@ namespace BricsCadRc.Tests
         [Test]
         public void Stirrup51_Dimensions()
         {
-            // otuliny 2026-10-10: dół 50, boki 45 (górna 35)
+            // otuliny 2026-10-12: górna 40, dół 45, boki 45 (35 / 40 / 40 + 5 zapasu) — suma góra + dół jak dawniej (85)
             Assert.That(BeamGeometry.StirrupHeight(450), Is.EqualTo(340));          // 341 → 340
             Assert.That(BeamGeometry.StirrupHeight(375), Is.EqualTo(265));          // 266 → 265
             Assert.That(BeamGeometry.StirrupHeight(300), Is.EqualTo(190));          // 191 → 190
             Assert.That(BeamGeometry.StirrupHeight(450, topLayers: 1), Is.EqualTo(350));   // 353 → 350
-            Assert.That(BeamGeometry.StirrupHeight(450, coverBottom: 40), Is.EqualTo(350));   // dawna otulina 40: 351 → 350
+            Assert.That(BeamGeometry.StirrupHeight(450, coverBottom: 40), Is.EqualTo(345));   // otulina dolna 40 (górna 40): 346 → 345
             Assert.That(BeamGeometry.StirrupWidth(600), Is.EqualTo(510));
             Assert.That(BeamGeometry.StirrupWidth(600.404), Is.EqualTo(510));   // PLOT 539 — dolna noga
             Assert.That(BeamGeometry.StirrupWidth(600, 40), Is.EqualTo(520));
             Assert.That(new BeamParams().CoverSide, Is.EqualTo(45));
-            Assert.That(new BeamParams().CoverBottom, Is.EqualTo(50));
+            Assert.That(new BeamParams().CoverBottom, Is.EqualTo(45));
         }
 
         [Test]
@@ -442,14 +442,14 @@ namespace BricsCadRc.Tests
         [Test]
         public void K2_StirrupHeight_CoverTop_A1_A2()
         {
-            // A1 (otulina górna 35): Holbrook 450 → 365, 375 → 290, 300 → 215
+            // A1 (otulina górna 40 = 35 + 5, dolna 45 — 2026-10-12): 450 → 365, 375 → 290, 300 → 215
             Assert.That(BeamGeometry.StirrupHeightCovers(450), Is.EqualTo(365));
             Assert.That(BeamGeometry.StirrupHeightCovers(375), Is.EqualTo(290));
             Assert.That(BeamGeometry.StirrupHeightCovers(300), Is.EqualTo(215));
-            // A2 (otulina górna 50): C12 450 → 350, 600 → 500, 750 → 650
-            Assert.That(BeamGeometry.StirrupHeightCovers(450, BeamGeometry.CoverTopA2), Is.EqualTo(350));
-            Assert.That(BeamGeometry.StirrupHeightCovers(600, BeamGeometry.CoverTopA2), Is.EqualTo(500));
-            Assert.That(BeamGeometry.StirrupHeightCovers(750, BeamGeometry.CoverTopA2), Is.EqualTo(650));
+            // A2 (otulina górna 50, dolna 45): 450 → 355, 600 → 505, 750 → 655
+            Assert.That(BeamGeometry.StirrupHeightCovers(450, BeamGeometry.CoverTopA2), Is.EqualTo(355));
+            Assert.That(BeamGeometry.StirrupHeightCovers(600, BeamGeometry.CoverTopA2), Is.EqualTo(505));
+            Assert.That(BeamGeometry.StirrupHeightCovers(750, BeamGeometry.CoverTopA2), Is.EqualTo(655));
             Assert.That(BeamGeometry.StirrupFirstOffset(12), Is.EqualTo(51), "pierwsze strzemię: otulina 45 + Ø/2");
         }
 
@@ -458,7 +458,7 @@ namespace BricsCadRc.Tests
         {
             var p = new BeamParams();
             Assert.That(p.StirrupDia, Is.EqualTo(12));
-            Assert.That(p.CoverTop, Is.EqualTo(35));
+            Assert.That(p.CoverTop, Is.EqualTo(40));
             Assert.That(p.SideMode, Is.EqualTo(3));
             Assert.That(p.NibTopDia, Is.EqualTo(0));
             Assert.That(p.NibBottomDia, Is.EqualTo(10), "pręty w nibie 2T+1B — H10 (decyzja 2026-10-11)");
@@ -532,8 +532,9 @@ namespace BricsCadRc.Tests
             // 600 → 475, 750 → 625
             var r = BeamGeometry.Analyze(Zone528, Outline528);
             var lp = Plan(r);
-            foreach (var (h, ct, b) in new[] { (375.0, 35.0, 265.0), (450.0, 35.0, 340.0), (300.0, 35.0, 190.0),
-                                               (450.0, 50.0, 325.0), (600.0, 50.0, 475.0), (750.0, 50.0, 625.0) })
+            // 2026-10-12: otulina dolna 45, A1 = 40
+            foreach (var (h, ct, b) in new[] { (375.0, 40.0, 265.0), (450.0, 40.0, 340.0), (300.0, 40.0, 190.0),
+                                               (450.0, 50.0, 330.0), (600.0, 50.0, 480.0), (750.0, 50.0, 630.0) })
             {
                 var us = UBars(r, lp, BeamGeometry.StirrupHeightCovers(h, ct));
                 Assert.That(us.Select(u => u.B).Distinct(), Is.EqualTo(new[] { b }), $"H {h}, otulina górna {ct}");
@@ -577,11 +578,11 @@ namespace BricsCadRc.Tests
             Assert.That(hi.Back, Is.EqualTo(s.FaceHi - 45).Within(1e-6));
             Assert.That(hi.LineStart + hi.LineLength, Is.EqualTo(hi.Back).Within(1e-6));
             Assert.That(hi.BendAtStart, Is.False);
-            // strzemiona: pierwsze 51 od lica (także przy U-barach), rozstaw ≤ 200: L = 10182.5 → ceil(10080.5 / 200) + 1 = 52
-            // (Holbrook ręcznie 51 na zestaw — pierwsze ok. 250 od lica)
+            // strzemiona (2026-10-12 „tyle, ile się zmieści”): zakres 10182.5 − 102 = 10080.5 → floor(/200) + 1 = 51, rozstaw 200,
+            // reszta 80.5 po równo (Holbrook ręcznie 51)
             var st = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 51, null, 100, 51);
-            Assert.That(st.First, Is.EqualTo(s.FaceLo + 51).Within(1e-6));
-            Assert.That(st.Count, Is.EqualTo(52));
+            Assert.That(st.First, Is.EqualTo(s.FaceLo + 51 + 40.25).Within(1e-6));
+            Assert.That(st.Count, Is.EqualTo(51));
         }
 
         [Test]
@@ -598,9 +599,10 @@ namespace BricsCadRc.Tests
             Assert.That(bottom.HiClose, Is.EqualTo(BeamGeometry.Closure.UBar));
             var lp = Plan(r);
             TestContext.WriteLine(string.Join(" | ", lp.Straight.Select(x => $"{(x.Seg.AlongX ? "X" : "Y")} {x.Start:0.#}+{x.Length:0}")) + " || " + string.Join(" | ", lp.Messages));
-            // pręty proste nogi kończą się przed kwadratem narożnika (lico własnego zakresu) — C12, domyślne
-            Assert.That(lp.Bars[left].Lo, Is.GreaterThanOrEqualTo(left.OwnLo - 1e-6));
-            Assert.That(lp.Bars[left].Hi, Is.LessThanOrEqualTo(left.OwnHi + 1e-6));
+            // decyzja 2026-10-12: noga pozioma (X) — pręty proste przed kwadratem narożnika; noga pionowa (Y) — w kwadrat do lica zewnętrznego
+            Assert.That(lp.Bars[top].Lo, Is.GreaterThanOrEqualTo(top.OwnLo - 1e-6));
+            Assert.That(lp.Bars[left].Lo, Is.LessThan(left.OwnLo - 1.0));
+            Assert.That(lp.Bars[left].Hi, Is.GreaterThan(left.OwnHi + 1.0));
             var us = UBars(r, lp, 215);
             TestContext.WriteLine(string.Join(" | ", us));
             Assert.That(us.Count, Is.EqualTo(6), "2 narożniki × 2 nogi + 2 końce");
@@ -628,11 +630,15 @@ namespace BricsCadRc.Tests
         {
             var r = BeamGeometry.Analyze(Zone539, Outline539);
             var left = r.Segments.Single(s => !s.AlongX);
+            var top = r.Segments.Single(s => s.AlongX && s.AcrossLo > 50000);
+            // decyzja 2026-10-12: noga Y zawsze w kwadrat do lica zewnętrznego, noga X przed kwadratem (opcja [31] — obie w kwadrat)
             var (lo0, hi0) = BeamGeometry.StraightRange(left, 45, 61, intoSquare: false);
-            Assert.That((lo0, hi0), Is.EqualTo((left.OwnLo, left.OwnHi)));
-            var (lo1, hi1) = BeamGeometry.StraightRange(left, 45, 61, intoSquare: true);
-            Assert.That(lo1, Is.EqualTo(left.FaceLo + 61).Within(1e-6));
-            Assert.That(hi1, Is.EqualTo(left.FaceHi - 61).Within(1e-6));
+            Assert.That(lo0, Is.EqualTo(left.FaceLo + 61).Within(1e-6));
+            Assert.That(hi0, Is.EqualTo(left.FaceHi - 61).Within(1e-6));
+            var (tlo0, _) = BeamGeometry.StraightRange(top, 45, 61, intoSquare: false);
+            Assert.That(tlo0, Is.EqualTo(top.OwnLo).Within(1e-6));
+            var (tlo1, _) = BeamGeometry.StraightRange(top, 45, 61, intoSquare: true);
+            Assert.That(tlo1, Is.EqualTo(top.FaceLo + 61).Within(1e-6));
         }
 
         [Test]

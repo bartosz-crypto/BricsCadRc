@@ -301,6 +301,35 @@ namespace BricsCadRc.Core
                 msg($"{name}: brak wysokości H — ustaw w RC_BEAM; pominięto.");
                 return;
             }
+            // decyzja użytkownika 2026-10-12: belka niska (H ≤ 375) — pytanie o średnicę prętów głównych (H12 / H16; U-bary pionowe tak samo),
+            // zapis w rekordzie strefy obu rzutów (ta sama grupa UNDO); tryb bez okien — bez pytania (rekord / domyślne)
+            if (p.Height <= BeamGeometry.ShallowBeamMaxH + 0.5 && !ScriptMode.IsNonInteractive())
+            {
+                int cur = p.BottomDia == 12 ? 12 : 16;
+                var ko = new PromptKeywordOptions($"\n{BeamTag} {name}: belka niska (H = {p.Height:F0}) — pręty główne [H12/H16] <H{cur}>: ") { AllowNone = true };
+                ko.Keywords.Add("H12");
+                ko.Keywords.Add("H16");
+                ko.Keywords.Default = "H" + cur.ToString(CultureInfo.InvariantCulture);
+                var kr = doc.Editor.GetKeywords(ko);
+                if (kr.Status == PromptStatus.Cancel) { msg($"{name}: anulowano — pominięto."); return; }
+                int dia = kr.Status == PromptStatus.OK && kr.StringResult == "H12" ? 12 : kr.Status == PromptStatus.OK ? 16 : cur;
+                if (dia != p.BottomDia || dia != p.TopDia || dia != p.UBarDia)
+                {
+                    p.BottomDia = p.TopDia = p.UBarDia = dia;
+                    try
+                    {
+                        using var tr = db.TransactionManager.StartTransaction();
+                        foreach (var z in new[] { zb, zt })
+                        {
+                            if (z.IsNull || z.IsErased || !(tr.GetObject(z, OpenMode.ForWrite) is Polyline zpl)) continue;
+                            BeamStore.Write(tr, db, zpl, p, BeamStore.ReadSlab(zpl));
+                        }
+                        tr.Commit();
+                    }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.GenerateOneBeam.ShallowDia", ex); }
+                }
+                msg($"{name}: belka niska — pręty główne i U-bary H{dia}.");
+            }
 
             var outlB = bottom.Verts.Select(v => (v.X, v.Y)).ToList();
             var an = BeamGeometry.Analyze(zbPoly.Select(v => (v.X, v.Y)).ToList(), outlB);
@@ -392,11 +421,13 @@ namespace BricsCadRc.Core
                     {
                         double last = first + (n - 1) * step;
                         double c0 = s.AcrossLo + p.CoverSide, c1 = s.AcrossHi - p.CoverSide;
+                        // 4-cięte: w rzucie pręt o szerokości strzemienia (370), od otuliny — jak szablon (uwaga Bartka 2026-10-12)
+                        if (four) c1 = c0 + legs.B4;
                         // pręty strzemion prostopadle do osi belki
                         bool barsX = !s.AlongX;
                         double x0 = barsX ? c0 : first, x1 = barsX ? c1 : last;
                         double y0 = barsX ? first : c0, y1 = barsX ? last : c1;
-                        if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, B51, p.StirrupSpacing,
+                        if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, four ? legs.B4 : B51, p.StirrupSpacing,
                                              n > 1 ? step : double.NaN, BeamGeometry.CodeLinks, BeamGeometry.SuffixLinks,
                                              noSpacing: false, shape: tpl.bar.ShapeCode, repr: 0, zoneHandle: zbHandle,
                                              customize: four ? (Action<BarData>)(bar => bar.CountDisplay = 2 * n) : null, tg: tg))

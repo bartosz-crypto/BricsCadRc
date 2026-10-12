@@ -1261,6 +1261,19 @@ namespace BricsCadRc.Core
                 }
                 // tytuł detalu pod UB 03 dodanymi po Beam (tylko obniżany)
                 foreach (var zh in detailZones) UpdateBeamDetailTitle(db, zh);
+                // czytelność w detalu po UB 03 (uwaga Bartka 2026-10-12: UB 03 i strzemiona na sobie) — jak FinishBeamDetail
+                foreach (var zh in detailZones)
+                {
+                    ObjectId frameId = ObjectId.Null;
+                    using (var trF = db.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        foreach (var (fid, _, role) in BeamStore.FindDetail(trF, db, zh))
+                            if (role == BeamStore.RoleFrame) { frameId = fid; break; }
+                        trF.Commit();
+                    }
+                    if (!frameId.IsNull)
+                        ResolveRepresentativeCollisions(doc, frameId, RepresentativeClearance * BeamDetailAnnotScale, beamDetail: true);
+                }
             }
 
             ed.WriteMessage(

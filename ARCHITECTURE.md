@@ -845,6 +845,17 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   ramkę detalu (dolne w dół, górne w górę), ≥ DetailLabelSep od pozostałych opisów pionowych.
 
 ## 4i. Belki / pogrubienia (downstand) — plan docs/PLAN_BELKI_2026-10-10.md
+**Decyzje Bartka 2026-10-12 (odpowiedzi na „pytania do Bartka”, docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md §5) — obowiązują ponad opisem niżej:**
+otuliny belki górna 35 / dolna 40 / boczna 40, każda + 5 mm zapasu → `DefaultCoverTop` / `CoverTopA1` 40, `DefaultCoverBottom` 45, `DefaultCoverSide`
+45 (A strzemienia = H − 85 jak dotąd); belki niskie H ≤ 375 (`ShallowBeamMaxH`) — Auto zawsze dwa zachodzące strzemiona (4-cięte, także w płycie)
+(B jednego strzemienia sztywno 370 — `FourLegFixedB`; belki wyższe Auto ZAWSZE 2-cięte, przekroczenie s_t,max EN 1992-1-1 tylko jako
+ostrzeżenie; w rzucie pręt BL rysowany na szerokość strzemienia z szablonu — 370 przy 4-ciętych) i pytanie przy generowaniu „pręty główne [H12/H16]” (zapis w rekordzie obu rzutów; U-bary pionowe tak samo); narożnik L — noga pionowa (Y)
+prętami prostymi w kwadrat do lica zewnętrznego, noga pozioma (X) przed kwadratem (`StraightRange`; [31] — obie w kwadrat); ramię pionowego
+U-bara końca = zakład standardowy (40·Ø, [35] domyślnie 0 zamiast 90); strzemiona „tyle, ile się zmieści” — rozstaw = s, liczba w dół,
+reszta po równo na końcach (528: 51); opis „-150” przy rzeczywistym ~157 — zostaje; strzemiona niezależnie od UB 03 — zostaje; cała belka
+w serii dolnej — potwierdzone; U-bary belki „nn UB” (≥ 04) — OK; nib w przekroju jak w rzeczywistości (geometria). Pręty boczne i UB SIDE —
+później. Po UB 03 w detalu (`GenerateUBLayerCore`) — ponownie `ResolveRepresentativeCollisions` w ramce detalu (UB 03 i strzemiona
+nie na sobie). Rekordy stref zapisane wcześniej trzymają swoje otuliny / naddatek — nowe wartości po ponownym Prepare GA albo w oknie RC_BEAM.
 Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) — **K7 (staging)**.
 **Praktyka biura (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md): K1–K9 zrobione (staging, do testów Bartka; K9 — detal 1:25, niżej)** — opis E3–E4 niżej jest
 HISTORYCZNY tam, gdzie K2 / K3 go zmieniają (strzemiona, pręty podłużne, zamknięcia końców, numeracja):
