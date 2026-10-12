@@ -461,8 +461,9 @@ namespace BricsCadRc.Core
 
                         using (var trMatch = db.TransactionManager.StartTransaction())
                         {
+                            // decyzja 2026-10-12: także proste pręty belki (szablony obok detalu belki) — bez duplikatu tej samej długości
                             var freshTemplates = ScanTemplates(db, trMatch, plan.RebarBbox,
-                                                               diameter);
+                                                               diameter, includeBeam: !layerCode.StartsWith("T"));
                             foreach (var (tid, tb) in freshTemplates)
                             {
                                 // Szablon musi być z serii warstwy: góra 101+, dół < 101
@@ -590,7 +591,7 @@ namespace BricsCadRc.Core
         /// Zwraca liczbę rozkładów; 0 gdy płyta nie ma nibu.
         /// </summary>
         public static int GenerateNibUBLayer(Document doc, ObjectId slabPolyId, string sourceLayer = "rebar_bottom",
-                                             bool representativeOnly = false)
+                                             bool representativeOnly = false, bool onlyBeamDetail = false)
         {
             var nib = NibDetector.Detect(doc.Database, slabPolyId);
             if (nib == null)
@@ -601,10 +602,10 @@ namespace BricsCadRc.Core
             int n = 0;
             if (nib.Edges.Any(e => e.Vertical))
                 n += Math.Max(0, GenerateUBLayerCore(doc, slabPolyId, sourceLayer, "B1", 225, "X",
-                                                     DefaultSpacing, DefaultCover, representativeOnly, nibUB: true));
+                                                     DefaultSpacing, DefaultCover, representativeOnly, nibUB: true, onlyBeamDetail));
             if (nib.Edges.Any(e => !e.Vertical))
                 n += Math.Max(0, GenerateUBLayerCore(doc, slabPolyId, sourceLayer, "B2", 225, "Y",
-                                                     DefaultSpacing, DefaultCover, representativeOnly, nibUB: true));
+                                                     DefaultSpacing, DefaultCover, representativeOnly, nibUB: true, onlyBeamDetail));
             return n;
         }
 
@@ -618,7 +619,8 @@ namespace BricsCadRc.Core
             double   spacing,
             double   cover,
             bool     representativeOnly,
-            bool     nibUB)
+            bool     nibUB,
+            bool     onlyBeamDetail = false)   // decyzja 2026-10-12: Beam bez siatki — UB 03 tylko na krawędziach w detalu belki
         {
             var ed = doc.Editor;
             var db = doc.Database;
@@ -764,6 +766,10 @@ namespace BricsCadRc.Core
 
                 oldUBs = ScanOldUBDistributions(db, tr, slabVertices, layerCode, filterDirection,
                                                 pnr => nibUB ? pnr == NibUBPosNr : pnr != NibUBPosNr);
+                // tylko detal belki: usuwane wyłącznie UB 03 w detalach (znacznik strefy), UB 03 rzutu zostają
+                if (onlyBeamDetail)
+                    oldUBs = oldUBs.Where(o => tr.GetObject(o.Item1, OpenMode.ForRead) is Entity oe
+                                               && !string.IsNullOrEmpty(BeamStore.ReadTag(oe))).ToList();
                 if (nib == null) outerForBeams = slabVertices;
                 tr.Commit();
             }
@@ -847,12 +853,14 @@ namespace BricsCadRc.Core
 
                 // UB 03: tylko krawędzie z nibem, w zakresie nibu
                 NibUbTarget ubTarget = null;
+                double nibInner = 0;
                 if (nibUB)
                 {
                     var ne = nib.Edges.FirstOrDefault(nz => nz.Vertical == isUBB1 && Math.Abs(nz.OuterCoord - edgeCoord) < 1.0
                                                           && Math.Min(nz.Hi, segHigh) - Math.Max(nz.Lo, segLow) > 1.0);
                     if (ne == null) continue;
                     segLow = Math.Max(segLow, ne.Lo); segHigh = Math.Min(segHigh, ne.Hi);
+                    nibInner = ne.InnerCoord;
                     if (ubZones.Count > 0) ubTarget = NibUbTargetFor(ubZones, isUBB1, edgeCoord, ne.InnerCoord, segLow, segHigh, ed);
                 }
 
@@ -877,14 +885,56 @@ namespace BricsCadRc.Core
                     continue;
                 }
 
+                // decyzja użytkownika 2026-10-12: koniec belki przy krawędzi (szerokość belki + nib) w detalu — UB 03 co 150 od narożnika
+                // do uskoku w nibie (lico wewnętrzne belki); reszta krawędzi jak dotąd
+                if (nibUB && ubZones.Count > 0)
+                {
+                    var endPart = BeamEndUbPortion(ubZones, isUBB1, edgeCoord, segLow, segHigh);
+                    if (endPart != null)
+                    {
+                        var (plo, phi, ez, fromHigh) = endPart.Value;
+                        validSegments.Add((edgeCoord, plo, phi, symbolSide));
+                        segTargets.Add(new NibUbTarget { Zone = ez, EndAt150 = true, FromHigh = fromHigh });
+                        double rlo = fromHigh ? segLow : phi, rhi = fromHigh ? plo : segHigh;
+                        if (rhi - rlo > 100.0)
+                        {
+                            validSegments.Add((edgeCoord, rlo, rhi, symbolSide));
+                            segTargets.Add(NibUbTargetFor(ubZones, isUBB1, edgeCoord, nibInner, rlo, rhi, ed));
+                        }
+                        continue;
+                    }
+                }
+
                 validSegments.Add((edgeCoord, segLow, segHigh, symbolSide));
                 segTargets.Add(ubTarget);
+            }
+
+            // decyzja użytkownika 2026-10-12: koniec belki przy krawędzi (szerokość belki + nib) — w nibie końca zamiast T+B IN NIB jeden
+            // UB 03 prętami w kierunku tego przebiegu (równolegle do krawędzi końca): zagięcie przy uskoku w nibie, ramiona w stronę narożnika
+            // (krawędzie drugiego kierunku, ten sam rozkład co UB 03 tego kierunku — usuwany razem z nimi)
+            var endExtras = new List<(double stepC, double along, string side, NibUbTarget tg)>();
+            if (nibUB && ubZones != null && ubZones.Count > 0)
+                foreach (var ne2 in nib.Edges.Where(x => x.Vertical != isUBB1))
+                {
+                    var ep = BeamEndUbPortion(ubZones, ne2.Vertical, ne2.OuterCoord, ne2.Lo, ne2.Hi);
+                    if (ep == null) continue;
+                    var (plo, phi, ez, fromHigh) = ep.Value;
+                    double along = ne2.OuterCoord + ne2.InwardSign * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + ubDia / 2.0);
+                    endExtras.Add((fromHigh ? plo : phi, along, fromHigh ? "Left" : "Right", new NibUbTarget { Zone = ez }));
+                }
+
+            if (onlyBeamDetail)
+            {
+                // Beam przed Mesh (decyzja 2026-10-12 „jak jest na detalu, to musimy go zazbroić”): tylko krawędzie w detalu belki
+                for (int i = validSegments.Count - 1; i >= 0; i--)
+                    if (segTargets[i] == null) { validSegments.RemoveAt(i); segTargets.RemoveAt(i); }
+                if (validSegments.Count == 0 && endExtras.Count == 0) return 0;
             }
 
             ed.WriteMessage($"\n[AutoRebar UB] Segments ({filterDirection}): {candidates.Count} total, " +
                             $"{validSegments.Count} valid, {tooShortCount} too short.\n");
 
-            if (validSegments.Count == 0)
+            if (validSegments.Count == 0 && endExtras.Count == 0)
             {
                 // rekord RC_BEAM [38] „bez nibu”: wszystkie krawędzie nibu tego kierunku przy belkach bez nibu — stare UB 03 usuwane
                 if (nibUB && nib.BeamNibsRemoved && oldUBs.Count > 0)
@@ -1084,6 +1134,32 @@ namespace BricsCadRc.Core
                             distHigh = kept[kept.Count - 1];
                         }
                     }
+                    // UB 03 przy belce w detalu (decyzja użytkownika 2026-10-12): koniec belki — co 150 od narożnika do uskoku w nibie;
+                    // wzdłuż belki (nib na całej długości strzemion) — liczba strzemion + 2, od otuliny do otuliny krawędzi
+                    double labelSpacing = spacing;
+                    if (ubTarget != null && ubTarget.EndAt150)
+                    {
+                        double span = (segHigh - cover) - (segLow + cover);
+                        int nEnd = span >= 0 ? (int)Math.Floor(span / NibUbEndSpacing + 1e-9) + 1 : 1;
+                        totalCount = nEnd;
+                        if (ubTarget.FromHigh) { distHigh = segHigh - cover; distLow = distHigh - (nEnd - 1) * NibUbEndSpacing; }
+                        else { distLow = segLow + cover; distHigh = distLow + (nEnd - 1) * NibUbEndSpacing; }
+                        labelSpacing = NibUbEndSpacing;
+                        ed.WriteMessage($"\n[AutoRebar UB] UB 03: koniec belki {ubTarget.Zone.Zone} przy krawędzi {(isUBB1 ? "x" : "y")}={edgeCoord:F0} " +
+                                        $"[{segLow:F0}..{segHigh:F0}] — {nEnd} UB 03 co {NibUbEndSpacing:F0} do uskoku w nibie (decyzja 2026-10-12).\n");
+                    }
+                    else if (ubTarget != null && ubTarget.Zone.Links.Count > 0)
+                    {
+                        var lk = ubTarget.Zone.Links.Where(l => l.barsX == isUBB1 && Math.Min(l.hi, segHigh) - Math.Max(l.lo, segLow) > 1.0).ToList();
+                        if (lk.Count > 0 && segLow <= lk.Min(l => l.lo) + 1.0 && segHigh >= lk.Max(l => l.hi) - 1.0)
+                        {
+                            int nLinks = lk.Sum(l => l.count);
+                            totalCount = nLinks + 2;
+                            distLow = segLow + cover; distHigh = segHigh - cover;
+                            ed.WriteMessage($"\n[AutoRebar UB] UB 03 wzdłuż belki {ubTarget.Zone.Zone}: strzemiona {nLinks} + 2 = {totalCount} " +
+                                            "(nib na całej długości belki; decyzja 2026-10-12).\n");
+                        }
+                    }
                     double uSpacing = totalCount > 1 && distHigh > distLow
                         ? (distHigh - distLow) / (totalCount - 1)
                         : spacing;
@@ -1113,7 +1189,7 @@ namespace BricsCadRc.Core
                         bool ok = GenerateUBDistribution(
                             db, edgeCoord + dEdge, distLow + dAlong, distHigh + dAlong, 0.0, 0.0,
                             templateBarId, templateBar,
-                            ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, symbolSide,
+                            ubLengthA, ubLengthB, ubLengthC, labelSpacing, layerCode, symbolSide,
                             SpacingMode.Nominal,
                             acrossMin, acrossMax,
                             ubPosNr, ubShapeCode, filterDirection,
@@ -1147,6 +1223,41 @@ namespace BricsCadRc.Core
                     {
                         if (ubTarget != null) ResetBeamDetailOverrides();
                     }
+                }
+                foreach (var (stepC, along, side, xt) in endExtras)
+                {
+                    var z = xt.Zone;
+                    double dE = isUBB1 ? z.Shift.X : z.Shift.Y, dA = isUBB1 ? z.Shift.Y : z.Shift.X;
+                    double aMin = isUBB1 ? z.Box.MinPoint.Y : z.Box.MinPoint.X, aMax = isUBB1 ? z.Box.MaxPoint.Y : z.Box.MaxPoint.X;
+                    _annotScaleOverride = BeamDetailAnnotScale;
+                    _leaderArmOverride = LeaderArmExtension * BeamDetailAnnotScale;
+                    try
+                    {
+                        bool ok = GenerateUBDistribution(
+                            db, stepC + dE, along + dA, along + dA, 0.0, 0.0,
+                            templateBarId, templateBar, ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, side,
+                            SpacingMode.Nominal, aMin, aMax, ubPosNr, ubShapeCode, filterDirection,
+                            forcedSpacing: spacing, representativeOnly: representativeOnly, diameter: ubDia,
+                            annotAlongWorld: stepC + dE + (side == "Left" ? -NibUBAnnotOutside : NibUBAnnotOutside) * BeamDetailAnnotScale);
+                        if (ok && !_lastDistId.IsNull)
+                        {
+                            generated++;
+                            using (var trT = db.TransactionManager.StartTransaction())
+                            {
+                                BeamStore.Tag(trT, db, (Entity)trT.GetObject(_lastDistId, OpenMode.ForWrite), z.Zone);
+                                trT.Commit();
+                            }
+                            if (!detailZones.Contains(z.Zone)) detailZones.Add(z.Zone);
+                            ed.WriteMessage($"\n[AutoRebar UB] UB 03: koniec belki {z.Zone} — 1 UB 03 w nibie wzdłuż krawędzi końca (zamiast T+B IN NIB — " +
+                                            "nib końca = szerokość belki + nib; decyzja 2026-10-12).\n");
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Log.Error("AutoRebar UB end extra", ex);
+                        ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] UB 03 na końcu belki: {ex.Message}\n");
+                    }
+                    finally { ResetBeamDetailOverrides(); }
                 }
                 // tytuł detalu pod UB 03 dodanymi po Beam (tylko obniżany)
                 foreach (var zh in detailZones) UpdateBeamDetailTitle(db, zh);
@@ -1808,7 +1919,7 @@ namespace BricsCadRc.Core
         }
 
         private static List<(ObjectId, BarData)> ScanTemplates(
-            Database db, Transaction tr, Extents3d rebarBbox, int diameter)
+            Database db, Transaction tr, Extents3d rebarBbox, int diameter, bool includeBeam = false)
         {
             var result = new List<(ObjectId, BarData)>();
             // Plan C, etap 3b: polilinie i pręty-bloki, kolejność przestrzeni modelu jak dotąd
@@ -1822,7 +1933,8 @@ namespace BricsCadRc.Core
                 // Tylko pręty proste — gięty pręt o tej samej długości A nie może być szablonem B1/B2
                 if ((bar.ShapeCode ?? "00") != "00") continue;
                 var insPt = be.FirstOutlineVertex(tr);
-                if (insPt == null || !GeometryHelper.IsInsideBbox(insPt.Value, rebarBbox)) continue;
+                bool beamTpl = includeBeam && BeamGeometry.IsBeamCode(bar.LayerCode);
+                if (!beamTpl && (insPt == null || !GeometryHelper.IsInsideBbox(insPt.Value, rebarBbox))) continue;
                 // Etap 1E: usunięto filter InferDirectionFromPolyline — B1/B2 share template pool.
                 // Match po diameter + length (downstream), Direction irrelevant for elev template.
                 result.Add((be.Entity.ObjectId, bar));
@@ -3436,6 +3548,7 @@ namespace BricsCadRc.Core
                     if (!(obj is Polyline pl) || pl.NumberOfVertices < 3) continue;
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
                     if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)) continue;   // strefa belki (RC-BEAM / RC-BEAM-MANUAL) nie jest otworem
+                    if (string.Equals(pl.Layer, BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)) continue;   // ramka detalu belki (2026-10-12)
                     var verts = GeometryHelper.GetPolylineVertices(pl);
                     if (!verts.All(v => GeometryHelper.IsPointInsidePolygon(slabVertices, v))) continue;
                     candidates.Add(new HoleBox { MinX = verts.Min(v => v.X), MinY = verts.Min(v => v.Y),
@@ -3750,7 +3863,7 @@ namespace BricsCadRc.Core
         /// Zwraca liczbę przesuniętych prętów.
         /// </summary>
         public static int ResolveRepresentativeCollisions(Document doc, ObjectId slabId,
-                                                          double clearance = RepresentativeClearance)
+                                                          double clearance = RepresentativeClearance, bool beamDetail = false)
         {
             var db = doc.Database;
             var dists = new List<(ObjectId id, BarData bar, Point3d pos)>();
@@ -3767,8 +3880,9 @@ namespace BricsCadRc.Core
                     if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
                     var bar = BarBlockEngine.ReadXData(br);
                     if (bar == null || Math.Abs(br.Rotation) > 1e-6) continue;
-                    // Pręty belki (BB / BT / BL) — poza siatką: Mesh ich nie przesuwa i nie są przeszkodą (E2 wstrzymany)
-                    if (BeamGeometry.IsBeamCode(bar.LayerCode)) continue;
+                    // Pręty belki (BB / BT / BL) — poza siatką: Mesh ich nie przesuwa i nie są przeszkodą (E2 wstrzymany);
+                    // detal belki 1:25 (beamDetail, obrys = ramka detalu) — pręty belki też, jak siatka (decyzja 2026-10-12)
+                    if (!beamDetail && BeamGeometry.IsBeamCode(bar.LayerCode)) continue;
                     if (!GeometryHelper.IsPointInsidePolygon(verts, new Point2d(br.Position.X, br.Position.Y))) continue;
                     dists.Add((oid, bar, br.Position));
 

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using Teigha.Colors;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
 
@@ -41,21 +42,56 @@ namespace BricsCadRc.Core
             public double AnnotScale = BeamDetailAnnotScale;
             public int Number;
             public ObjectId Anchor = ObjectId.Null;
+            /// <summary>Ramka detalu (okno) — obrys dla czytelności prętów reprezentatywnych.</summary>
+            public ObjectId Frame = ObjectId.Null;
             public string ZoneHandle;
             /// <summary>Rozkłady utworzone w detalu (tytuł pod najniższym opisem).</summary>
             public List<ObjectId> Dists = new List<ObjectId>();
+            /// <summary>Strefa nowych szablonów prętów belki — obok detalu, jak przy detalu otworu (decyzja użytkownika 2026-10-12
+            /// „pręty, które rozkładamy — jak w otworze, w jakiejś odległości od detalu”), zamiast strefy rebar_bottom rzutu.</summary>
+            public Extents3d TemplateZone;
         }
+
+        /// <summary>Strefa szablonów prętów belki w trybie detalu (null — strefa rebar_bottom rzutu, jak przed decyzją 2026-10-12).</summary>
+        private static Extents3d? _beamTemplateZone;
 
         private static void SetBeamDetailOverrides(BeamDrawTarget tg)
         {
             _annotScaleOverride = tg.AnnotScale;
             _leaderArmOverride = LeaderArmExtension * tg.AnnotScale;   // ramię opisu na papierze jak na rzucie 1:50
+            _beamTemplateZone = tg.TemplateZone;
         }
 
         private static void ResetBeamDetailOverrides()
         {
             _annotScaleOverride = 1.0;
             _leaderArmOverride = double.NaN;
+            _beamTemplateZone = null;
+        }
+
+        /// <summary>Kolor detalu otworu / ramki detalu belki (czerwony, jak RC_DETAL_OTWORU) i skala przerywanej.</summary>
+        private const short BeamDetailFrameColor = 10;
+        private const double BeamDetailFrameLtScale = 25.0;
+        /// <summary>Lica belki w detalu (ANCHOR) — szara linia przerywana (belka pod płytą; decyzja 2026-10-12, wzór — screen Bartka).</summary>
+        private const short BeamDetailHiddenColor = 8;
+
+        /// <summary>Kolor i rodzaj linii obiektu źródłowego (ByLayer → z warstwy) — linie betonu w detalu jak na rzucie.</summary>
+        private static (Color color, ObjectId lt, double lts)? SourceStyle(Database db, ObjectId id)
+        {
+            if (id.IsNull || id.IsErased) return null;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(id, OpenMode.ForRead) is Entity e)) return null;
+                var layer = (LayerTableRecord)tr.GetObject(e.LayerId, OpenMode.ForRead);
+                var color = e.Color.IsByLayer || e.Color.IsByBlock ? layer.Color : e.Color;
+                var lt = string.Equals(e.Linetype, "ByLayer", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(e.Linetype, "ByBlock", StringComparison.OrdinalIgnoreCase) ? layer.LinetypeObjectId : e.LinetypeId;
+                var res = (color, lt, e.LinetypeScale);
+                tr.Commit();
+                return res;
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.SourceStyle", ex); return null; }
         }
 
         // ── UB 03 przy belce w detalu 1:25 (decyzja użytkownika 2026-10-11 „UB w nib też pokazuj na detalu”; „U-bary zamykające 1 a nie 4”
@@ -70,6 +106,11 @@ namespace BricsCadRc.Core
         private sealed class NibUbZone
         {
             public string Zone;
+            /// <summary>Strefa efektywna (ANCHOR) w układzie rzutu — końce belki przy krawędzi (UB 03 co 150, decyzja 2026-10-12).</summary>
+            public List<Point2d> Verts;
+            /// <summary>Strzemiona belki (BL) w detalu, w układzie rzutu: pręty wzdłuż X?, zakres wzdłuż linii rozkładu, liczba
+            /// (Count — bez krotności 4-ciętych) — UB 03 wzdłuż belki = strzemiona + 2 (decyzja 2026-10-12).</summary>
+            public List<(bool barsX, double lo, double hi, int count)> Links = new List<(bool, double, double, int)>();
             public List<List<(double X, double Y)>> UbLoops;
             public bool DetailView;
             public bool HasDetail;
@@ -81,6 +122,42 @@ namespace BricsCadRc.Core
         private sealed class NibUbTarget
         {
             public NibUbZone Zone;
+            /// <summary>Koniec belki przy krawędzi (szerokość belki + nib): UB 03 co 150 od narożnika do uskoku (decyzja 2026-10-12).</summary>
+            public bool EndAt150;
+            /// <summary>Narożnik płyty na górnym końcu odcinka (pręty od segHigh w dół do uskoku); inaczej od segLow w górę.</summary>
+            public bool FromHigh;
+        }
+
+        /// <summary>UB 03 na końcu belki przy krawędzi: rozstaw (decyzja użytkownika 2026-10-12 „dajemy co 150 UB … TYLKO do stepa w nibie”).</summary>
+        public const double NibUbEndSpacing = 150.0;
+
+        /// <summary>
+        /// Krawędź UB 03 prostopadła do osi belki (koniec belki przy krawędzi płyty, lico końca ≤ 260 od krawędzi), gdy na krawędzi
+        /// leży szerokość belki + nib (bok strefy ≤ 260 od narożnika = końca odcinka krawędzi): część krawędzi od narożnika do lica
+        /// wewnętrznego belki (uskok w nibie) → UB 03 w detalu co 150. Tylko strefy prostokątne w trybie detalu z istniejącym detalem.
+        /// Null — brak (UB 03 jak dotąd).
+        /// </summary>
+        private static (double lo, double hi, NibUbZone zone, bool fromHigh)? BeamEndUbPortion(List<NibUbZone> zones, bool verticalEdge,
+                                                                                              double edgeCoord, double segLow, double segHigh)
+        {
+            if (zones == null) return null;
+            foreach (var z in zones)
+            {
+                if (!z.DetailView || !z.HasDetail || z.Verts == null || z.Verts.Count != 4) continue;
+                double zx0 = z.Verts.Min(v => v.X), zx1 = z.Verts.Max(v => v.X), zy0 = z.Verts.Min(v => v.Y), zy1 = z.Verts.Max(v => v.Y);
+                bool beamAlongX = zx1 - zx0 >= zy1 - zy0;
+                if (verticalEdge != beamAlongX) continue;                          // krawędź równoległa do osi — to nie koniec belki
+                double f0 = verticalEdge ? zx0 : zy0, f1 = verticalEdge ? zx1 : zy1;   // lica końców
+                double a0 = verticalEdge ? zy0 : zx0, a1 = verticalEdge ? zy1 : zx1;   // lica boczne (wzdłuż krawędzi)
+                double gap = Math.Min(Math.Abs(f0 - edgeCoord), Math.Abs(f1 - edgeCoord));
+                if (gap > BeamGeometry.EdgeEndMaxGap) continue;
+                if (a1 <= segLow + 1.0 || a0 >= segHigh - 1.0) continue;
+                if (segHigh - a1 >= -1.0 && segHigh - a1 <= BeamGeometry.EdgeEndMaxGap && a0 > segLow + 1.0)
+                    return (a0, segHigh, z, true);
+                if (a0 - segLow >= -1.0 && a0 - segLow <= BeamGeometry.EdgeEndMaxGap && a1 < segHigh - 1.0)
+                    return (segLow, a1, z, false);
+            }
+            return null;
         }
 
         /// <summary>ANCHOR-y detali belek: strefa (handle znormalizowany) → wierzchołki ANCHOR-a. Tylko odczyt.</summary>
@@ -140,16 +217,29 @@ namespace BricsCadRc.Core
                 if (zones.Count > 0)
                 {
                     var anchors = ReadBeamDetailAnchors(tr, db);
+                    // strzemiona belek w detalach (BL ze znacznikiem strefy) — położenie detalu, przeliczane niżej na rzut (− Shift)
+                    var links = new List<(string zone, bool barsX, double x, double y, double span, int count)>();
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    foreach (ObjectId id in ms)
+                    {
+                        if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                        string tag = BeamStore.ReadTag(br);
+                        if (string.IsNullOrEmpty(tag)) continue;
+                        var bar = BarBlockEngine.ReadXData(br);
+                        if (bar == null || bar.LayerCode != BeamGeometry.CodeLinks || bar.Count <= 0) continue;
+                        links.Add((XLink.Norm(tag), bar.Direction == "X", br.Position.X, br.Position.Y, bar.BarsSpan, bar.Count));
+                    }
                     foreach (var zid in zones)
                     {
                         if (!(tr.GetObject(zid, OpenMode.ForRead) is Polyline pl)) continue;
                         var p = BeamStore.Read(pl) ?? new BeamParams();
                         var zt = GeometryHelper.GetPolylineVertices(pl).Select(v => (v.X, v.Y)).ToList();
                         var an = BeamGeometry.Analyze(zt, outl);
-                        var ze = EffectiveZoneVerts(GeometryHelper.GetPolylineVertices(pl), p, outer).Select(v => (v.X, v.Y)).ToList();   // ANCHOR
+                        var zeP = EffectiveZoneVerts(GeometryHelper.GetPolylineVertices(pl), p, outer);
+                        var ze = zeP.Select(v => (v.X, v.Y)).ToList();   // ANCHOR
                         var z = new NibUbZone
                         {
-                            Zone = XLink.Norm(pl.Handle.ToString()), DetailView = p.DetailView,
+                            Zone = XLink.Norm(pl.Handle.ToString()), DetailView = p.DetailView, Verts = zeP,
                             UbLoops = RectilinearPolygons.Union(BeamGeometry.UbExclusionRects(an))
                         };
                         if (p.DetailView && anchors.TryGetValue(z.Zone, out var av))
@@ -162,6 +252,12 @@ namespace BricsCadRc.Core
                                 z.HasDetail = true;
                                 z.Shift = new Vector2d(s.X, s.Y);
                                 z.Box = new Extents3d(new Point3d(w.X0, w.Y0, 0), new Point3d(w.X1, w.Y1, 0));
+                                // pręty X → rozkład wzdłuż Y (i odwrotnie); położenie rzutu = detal − Shift
+                                foreach (var l in links.Where(l => l.zone == z.Zone))
+                                {
+                                    double lo = l.barsX ? l.y - s.Y : l.x - s.X;
+                                    z.Links.Add((l.barsX, lo, lo + l.span, l.count));
+                                }
                             }
                         }
                         res.Add(z);
@@ -257,7 +353,7 @@ namespace BricsCadRc.Core
             try
             {
                 if (NibDetector.Detect(db, bottom.OuterId) == null) return;
-                bool any03 = false, inDetail = false, detailMode = false, noNib = false;
+                bool any03 = false, inDetail = false, detailMode = false, noNib = false, anyPlan03 = false;
                 string vh = bottom.OuterId.Handle.ToString();
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
@@ -274,7 +370,7 @@ namespace BricsCadRc.Core
                                                 : GeometryHelper.IsPointInsidePolygon(bottom.Verts, new Point2d(br.Position.X, br.Position.Y));
                         if (!mine) continue;
                         any03 = true;
-                        if (!string.IsNullOrEmpty(BeamStore.ReadTag(br))) inDetail = true;
+                        if (!string.IsNullOrEmpty(BeamStore.ReadTag(br))) inDetail = true; else anyPlan03 = true;
                     }
                     foreach (var zid in BeamStore.ZonesOfSlab(tr, db, bottom.OuterId, bottom.Verts))
                     {
@@ -284,10 +380,18 @@ namespace BricsCadRc.Core
                     }
                     tr.Commit();
                 }
+                if (!any03 && detailMode)
+                {
+                    // decyzja 2026-10-12 („jak jest na detalu, to musimy go zazbroić”): siatki (Mesh) jeszcze nie ma — UB 03 tylko
+                    // na krawędziach nibu w detalu belki; Mesh później wygeneruje UB 03 całej płyty (detal — ten sam wynik)
+                    msg("UB 03 w detalu belki (siatki płyty jeszcze nie ma — UB 03 na rzucie wygeneruje Mesh).");
+                    GenerateNibUBLayer(doc, bottom.OuterId, "rebar_bottom", representativeOnly: true, onlyBeamDetail: true);
+                    return;
+                }
                 if (!any03 || !(detailMode || inDetail || noNib)) return;
                 msg("UB 03 płyty — ponowne generowanie (decyzja 2026-10-11: UB 03 przy belce w detalu 1:25, poza belką — na rzucie " +
                     "bez zmian).");
-                GenerateNibUBLayer(doc, bottom.OuterId, "rebar_bottom", representativeOnly: true);
+                GenerateNibUBLayer(doc, bottom.OuterId, "rebar_bottom", representativeOnly: true, onlyBeamDetail: !anyPlan03);
             }
             catch (System.Exception ex)
             {
@@ -333,26 +437,52 @@ namespace BricsCadRc.Core
                 BeamStore.EraseDetail(db, new[] { zbHandle });
                 if (nr <= 0) nr = NextDetailNumber(db);
 
-                // 2. Miejsce nowego detalu: nad rzutami (dolnym i górnym), kolejne w prawo bez nachodzenia na rysunek
+                // 2. Miejsce nowego detalu — decyzja użytkownika 2026-10-12 „jak przy detalu otworu — sami klikamy miejsce”: wskazany
+                //    środek detalu (Enter / tryb bez okien — automatycznie nad rzutami, kolejne w prawo bez nachodzenia na rysunek)
                 if (shift == null)
                 {
-                    double x0 = bottom.Box.MinPoint.X, yTop = bottom.Box.MaxPoint.Y;
-                    if (top != null) { x0 = Math.Min(x0, top.Box.MinPoint.X); yTop = Math.Max(yTop, top.Box.MaxPoint.Y); }
-                    double lm = BeamDetailRules.LabelMargin, tm = BeamDetailRules.TitleMargin;
-                    var r = BeamDetailRules.Place(win.W + 2 * lm, win.H + 2 * lm + tm, OccupiedBoxes(db), x0,
-                                                  yTop + BeamDetailRules.AboveViewsGap, BeamDetailRules.PlaceGap);
-                    shift = (r.X0 + lm - win.X0, r.Y0 + lm + tm - win.Y0);
-                    msg($"{name}: DETAIL '{nr}' (1:25) — nowe miejsce nad rzutami (przesunięcie {shift.Value.X:F0}, {shift.Value.Y:F0}).");
+                    Point3d? pick = null;
+                    if (!ScriptMode.IsNonInteractive())
+                    {
+                        var po = new PromptPointOptions($"\n{BeamTag} {name}: wskaż miejsce DETAIL '{nr}' (środek detalu, okno " +
+                                                        $"{win.W:F0} × {win.H:F0}) <Enter = automatycznie nad rzutami>: ") { AllowNone = true };
+                        var pr = doc.Editor.GetPoint(po);
+                        if (pr.Status == PromptStatus.OK) pick = pr.Value;
+                        else if (pr.Status != PromptStatus.None)
+                        {
+                            msg($"{name}: anulowano wskazanie miejsca detalu — pręty belki pominięte.");
+                            return null;
+                        }
+                    }
+                    if (pick.HasValue)
+                    {
+                        shift = (pick.Value.X - (win.X0 + win.X1) / 2.0, pick.Value.Y - (win.Y0 + win.Y1) / 2.0);
+                        msg($"{name}: DETAIL '{nr}' (1:25) — w miejscu wskazanym.");
+                    }
+                    else
+                    {
+                        double x0 = bottom.Box.MinPoint.X, yTop = bottom.Box.MaxPoint.Y;
+                        if (top != null) { x0 = Math.Min(x0, top.Box.MinPoint.X); yTop = Math.Max(yTop, top.Box.MaxPoint.Y); }
+                        double lm = BeamDetailRules.LabelMargin, tm = BeamDetailRules.TitleMargin;
+                        // + kolumna szablonów prętów po prawej (TemplateZone)
+                        var r = BeamDetailRules.Place(win.W + 2 * lm + TemplateZoneWidth, win.H + 2 * lm + tm, OccupiedBoxes(db), x0,
+                                                      yTop + BeamDetailRules.AboveViewsGap, BeamDetailRules.PlaceGap);
+                        shift = (r.X0 + lm - win.X0, r.Y0 + lm + tm - win.Y0);
+                        msg($"{name}: DETAIL '{nr}' (1:25) — nowe miejsce nad rzutami (przesunięcie {shift.Value.X:F0}, {shift.Value.Y:F0}).");
+                    }
                 }
                 else msg($"{name}: DETAIL '{nr}' (1:25) — w dotychczasowym miejscu (ANCHOR).");
 
                 var sv = new Vector2d(shift.Value.X, shift.Value.Y);
                 var w = win.Offset(sv.X, sv.Y);
+                // szablony prętów (nowe pozycje) — kolumna na prawo od detalu, za opisami (jak detal otworu: ramka + 3000)
+                double tz0 = w.X1 + BeamDetailRules.LabelMargin;
                 var tg = new BeamDrawTarget
                 {
                     Shift = sv, Number = nr, ZoneHandle = zbHandle,
                     Box = new Extents3d(new Point3d(w.X0, w.Y0, 0), new Point3d(w.X1, w.Y1, 0)),
-                    Verts = bottom.Verts.Select(v => v + sv).ToList()
+                    Verts = bottom.Verts.Select(v => v + sv).ToList(),
+                    TemplateZone = new Extents3d(new Point3d(tz0, w.Y1 - 1.0e7, 0), new Point3d(tz0 + TemplateZoneWidth, w.Y1, 0))
                 };
 
                 // 3. Obiekty detalu (warstwa RC-BEAM-DETAIL) — dane czytane przed transakcją zapisu
@@ -361,8 +491,13 @@ namespace BricsCadRc.Core
                 var lines = BeamDetailRules.ClipPolygon(win, outlT);
                 // rekord [38] „bez nibu”: przy tej belce bez linii uskoku (nib płyty bez części przy belkach bez nibu)
                 var nib = WithoutBeamNibs(db, NibDetector.Detect(db, bottom.OuterId));
-                if (nib?.Inner != null)
-                    lines.AddRange(BeamDetailRules.ClipPolygon(win, nib.Inner.Select(v => (v.X, v.Y)).ToList(), outlT));
+                var nibLines = nib?.Inner != null
+                    ? BeamDetailRules.ClipPolygon(win, nib.Inner.Select(v => (v.X, v.Y)).ToList(), outlT)
+                    : new List<((double X, double Y) A, (double X, double Y) B)>();
+                // decyzja 2026-10-12 (wzór — screen Bartka): linie betonu w kolorach / rodzajach linii rzutu (obrys, linia uskoku)
+                var outlStyle = SourceStyle(db, bottom.OuterId);
+                var nibStyle = nib != null ? SourceStyle(db, nib.InnerId) ?? outlStyle : outlStyle;
+                var others = OtherPlanLines(db, win, bottom, nib?.InnerId ?? ObjectId.Null, outlT, nib?.Inner, m => msg($"{name}: {m}"));
                 var piles = FindPiles(db, bottom.Verts).Where(pc => win.Contains(pc.c.X, pc.c.Y)).ToList();
                 var texts = ThkTextsIn(db, textPoly ?? zbPoly);   // „xxxTHK” w strefie z GA (bez nibu — ANCHOR przesunięty)
 
@@ -379,16 +514,44 @@ namespace BricsCadRc.Core
                         return id;
                     }
 
+                    // ANCHOR = lica belki (kopia strefy): szara przerywana — belka pod płytą (decyzja 2026-10-12; wcześniej czerwona)
                     var anchor = new Polyline();
                     for (int i = 0; i < zbPoly.Count; i++) anchor.AddVertexAt(i, zbPoly[i] + sv, 0, 0, 0);
                     anchor.Closed = true;
                     tg.Anchor = Add(anchor, BeamStore.RoleAnchor);
-                    anchor.ColorIndex = 1;
+                    // kolor jak obrys płyty na rzucie (zielony — uwaga Bartka 2026-10-12), linia przerywana
+                    if (outlStyle != null) anchor.Color = outlStyle.Value.color; else anchor.ColorIndex = BeamDetailHiddenColor;
                     if (!dashed.IsNull) { anchor.LinetypeId = dashed; anchor.LinetypeScale = BeamDetailLtScale; }
 
-                    // linie betonu jako osobne odcinki (Line) — nigdy zamknięty obrys przystający do płyty (rzuty w RC_SECTION)
-                    foreach (var (a, b) in lines)
-                        Add(new Line(new Point3d(a.X + sv.X, a.Y + sv.Y, 0), new Point3d(b.X + sv.X, b.Y + sv.Y, 0)), BeamStore.RoleLine);
+                    // ramka detalu = okno (czerwona przerywana, jak detal otworu) — w odległości od belki (lico wewnętrzne + 600,
+                    // krawędź płyty + 300); decyzja 2026-10-12
+                    var frame = new Polyline();
+                    frame.AddVertexAt(0, new Point2d(w.X0, w.Y0), 0, 0, 0);
+                    frame.AddVertexAt(1, new Point2d(w.X1, w.Y0), 0, 0, 0);
+                    frame.AddVertexAt(2, new Point2d(w.X1, w.Y1), 0, 0, 0);
+                    frame.AddVertexAt(3, new Point2d(w.X0, w.Y1), 0, 0, 0);
+                    frame.Closed = true;
+                    tg.Frame = Add(frame, BeamStore.RoleFrame);
+                    frame.ColorIndex = BeamDetailFrameColor;
+                    if (!dashed.IsNull) { frame.LinetypeId = dashed; frame.LinetypeScale = BeamDetailFrameLtScale; }
+
+                    // linie betonu jako osobne odcinki (Line) — nigdy zamknięty obrys przystający do płyty (rzuty w RC_SECTION);
+                    // kolor i rodzaj linii jak obiekt na rzucie (obrys / linia uskoku)
+                    void AddLines(List<((double X, double Y) A, (double X, double Y) B)> segs, (Color color, ObjectId lt, double lts)? st)
+                    {
+                        foreach (var (a, b) in segs)
+                        {
+                            var ln = new Line(new Point3d(a.X + sv.X, a.Y + sv.Y, 0), new Point3d(b.X + sv.X, b.Y + sv.Y, 0));
+                            Add(ln, BeamStore.RoleLine);
+                            if (st == null) continue;
+                            ln.Color = st.Value.color;
+                            if (!st.Value.lt.IsNull) { ln.LinetypeId = st.Value.lt; ln.LinetypeScale = st.Value.lts; }
+                        }
+                    }
+                    AddLines(lines, outlStyle);
+                    AddLines(nibLines, nibStyle);
+                    // pozostałe linie rzutu w oknie (np. uskok w nibie na końcu belki — uwaga Bartka 2026-10-12 „nie zbiera tego z rzutu”)
+                    foreach (var (segsO, st) in others) AddLines(segsO, st);
 
                     foreach (var (c, rr) in piles)
                     {
@@ -422,15 +585,20 @@ namespace BricsCadRc.Core
 
         /// <summary>
         /// Po prętach detalu: kolizje prętów reprezentatywnych w obrysie ANCHOR-a (pręty belki są pomijane — dla porządku jak detal otworu),
-        /// tytuł „DETAIL 'n'” / „SCALE 1:25” pod najniższym opisem detalu, odnośniki „DETAIL 'n'” na rzutach (strefa dolna i górna).
+        /// tytuł „DETAIL 'n'” / „SCALE 1:25” pod najniższym opisem detalu, na rzutach (dolnym i górnym — <paramref name="topDelta"/> =
+        /// przesunięcie rzutu górnego) ramka okna detalu i odnośnik „DETAIL 'n'” do ramki — jak detal otworu (decyzja 2026-10-12).
         /// </summary>
-        private static void FinishBeamDetail(Document doc, BeamDrawTarget tg, ObjectId zb, ObjectId zt, Action<string> msg)
+        private static void FinishBeamDetail(Document doc, BeamDrawTarget tg, ObjectId zb, ObjectId zt, Action<string> msg,
+                                             List<Point2d> bottomVerts, Vector2d topDelta)
         {
             var db = doc.Database;
             string name = $"belka {tg.ZoneHandle}";
             try
             {
-                if (!tg.Anchor.IsNull) ResolveRepresentativeCollisions(doc, tg.Anchor);
+                // decyzja 2026-10-12 („wygaszajmy tak, żeby pręty na siebie nie nachodziły, jak na Generate Mesh”): widoczne pręty
+                // rozkładów w ramce detalu (pręty belki, UB 03 w detalu) z odstępem jak na rzucie (250 · 0,5 — ta sama odległość na papierze)
+                var area = !tg.Frame.IsNull ? tg.Frame : tg.Anchor;
+                if (!area.IsNull) ResolveRepresentativeCollisions(doc, area, RepresentativeClearance * tg.AnnotScale, beamDetail: true);
 
                 // najniższy punkt detalu: okno, rozkłady i ich opisy
                 double minY = tg.Box.MinPoint.Y;
@@ -475,28 +643,39 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
 
-                // odnośniki na rzutach 1:50: grot w strefie, tekst „DETAIL 'n'” obok
+                // rzuty 1:50 — jak detal otworu (decyzja 2026-10-12, wzór — screen Bartka): ramka okna detalu (czerwona przerywana)
+                // i odnośnik „DETAIL 'n'” z grotem na ramce, po stronie poza płytą (zwykle krawędź płyty przy belce)
                 int refs = 0;
-                foreach (var z in new[] { zb, zt })
+                var dashed = EnsureDashedLinetype(db);
+                // tylko rzut dolny — na rzucie górnym bez odnośnika (jak detal otworu; uwaga Bartka 2026-10-12)
+                foreach (var (z, d) in new[] { (zb, new Vector2d()) })
                 {
                     if (z.IsNull || z.IsErased) continue;
-                    Point2d tip;
-                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    double x0 = tg.Box.MinPoint.X - tg.Shift.X + d.X, y0 = tg.Box.MinPoint.Y - tg.Shift.Y + d.Y;
+                    double x1 = tg.Box.MaxPoint.X - tg.Shift.X + d.X, y1 = tg.Box.MaxPoint.Y - tg.Shift.Y + d.Y;
+                    var fid = DrawRect(db, x0, y0, x1, y1, BeamStore.DetailLayer, BeamDetailFrameColor, dashed, BeamDetailFrameLtScale);
+                    var verts = bottomVerts?.Select(v => v + d).ToList();
+                    double fcx = (x0 + x1) / 2.0, fcy = (y0 + y1) / 2.0;
+                    var sides = new[]
                     {
-                        if (!(tr.GetObject(z, OpenMode.ForRead) is Polyline zpl)) continue;
-                        tip = BeamStore.Centroid(zpl);
-                        tr.Commit();
-                    }
-                    var lid = SingleBarEngine.PlaceNoteLeader(db, new[] { new Point3d(tip.X, tip.Y, 0) },
-                                                              new Point3d(tip.X + 700, tip.Y + 700, 0), $"DETAIL '{tg.Number}'",
-                                                              BeamDetailRefHeight, 2, NoteTextStyle, BeamStore.DetailLayer);
-                    if (lid.IsNull) continue;
+                        (tip: new Point2d(fcx, y1), dir: new Vector2d(1, 1)),    // góra
+                        (tip: new Point2d(fcx, y0), dir: new Vector2d(1, -1)),   // dół
+                        (tip: new Point2d(x1, fcy), dir: new Vector2d(1, 1)),    // prawo
+                        (tip: new Point2d(x0, fcy), dir: new Vector2d(-1, 1)),   // lewo
+                    };
+                    var side = sides.FirstOrDefault(sd => verts == null || verts.Count < 3 || !GeometryHelper.IsPointInsidePolygon(verts, sd.tip));
+                    if (side.dir.Length < 1e-9) side = sides[0];
+                    var lid = SingleBarEngine.PlaceNoteLeader(db, new[] { new Point3d(side.tip.X, side.tip.Y, 0) },
+                                                              new Point3d(side.tip.X + 500 * side.dir.X, side.tip.Y + 500 * side.dir.Y, 0),
+                                                              $"DETAIL '{tg.Number}'", BeamDetailRefHeight, 2, NoteTextStyle, BeamStore.DetailLayer);
                     using (var tr = db.TransactionManager.StartTransaction())
                     {
-                        BeamStore.TagDetail(tr, db, (Entity)tr.GetObject(lid, OpenMode.ForWrite), tg.ZoneHandle, tg.Number, BeamStore.RolePlanRef);
+                        foreach (var id in new[] { fid, lid })
+                            if (!id.IsNull)
+                                BeamStore.TagDetail(tr, db, (Entity)tr.GetObject(id, OpenMode.ForWrite), tg.ZoneHandle, tg.Number, BeamStore.RolePlanRef);
                         tr.Commit();
                     }
-                    refs++;
+                    if (!lid.IsNull || !fid.IsNull) refs++;
                 }
                 msg($"{name}: DETAIL '{tg.Number}' — rozkładów w detalu {tg.Dists.Count}, odnośniki na rzutach: {refs}.");
             }
@@ -505,6 +684,150 @@ namespace BricsCadRc.Core
                 Log.Error("AutoRebar.FinishBeamDetail", ex);
                 msg($"{name}: błąd tytułu / odnośników detalu — {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Pozostałe linie rzutu dolnego w oknie detalu (dowolna warstwa poza obiektami programu, SD-Text, SD-Pile…, SD-Thickening-Zone): Line, Polyline
+        /// (cięciwy łuków), Arc (cięciwy) — przycięte do okna, bez odcinków leżących na obrysie albo linii uskoku (te rysowane osobno);
+        /// kolor / rodzaj linii z obiektu. Np. linia uskoku w nibie na końcu belki.
+        /// </summary>
+        private static List<(List<((double X, double Y) A, (double X, double Y) B)> segs, (Color color, ObjectId lt, double lts)? style)>
+            OtherPlanLines(Database db, BeamDetailRules.Rect win, BeamView bottom, ObjectId innerId,
+                           List<(double X, double Y)> outline, List<Point2d> inner, Action<string> msg = null)
+        {
+            var res = new List<(List<((double X, double Y) A, (double X, double Y) B)>, (Color, ObjectId, double)?)>();
+            var innerT = inner?.Select(v => (v.X, v.Y)).ToList();
+            bool OnKnown((double X, double Y) p)
+                => BeamDetailRules.DistToBoundary(outline, p) < 1.0 || (innerT != null && innerT.Count > 2 && BeamDetailRules.DistToBoundary(innerT, p) < 1.0);
+            var taken = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var skipped = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            void Count(SortedDictionary<string, int> d, string k) { d.TryGetValue(k, out int v); d[k] = v + 1; }
+            bool Excluded(string layer)
+                => BeamStore.IsBeamLayer(layer) || BeamStore.IsManualLayer(layer)
+                   || layer.Equals(BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)
+                   || layer.Equals("rebar_bottom", StringComparison.OrdinalIgnoreCase)
+                   || layer.Equals("rebar_top", StringComparison.OrdinalIgnoreCase)
+                   || layer.Equals("SD-Text", StringComparison.OrdinalIgnoreCase)
+                   // pale (SD-Pile, SD-Pile Text…) — UWAGA: nie StartsWith("SD-Pile"), bo łapało SD-PILED-RAFT (obrys, uskok)
+                   || layer.Equals("SD-Pile", StringComparison.OrdinalIgnoreCase)
+                   || layer.StartsWith("SD-Pile ", StringComparison.OrdinalIgnoreCase)
+                   || layer.Equals(GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase);
+            bool Touches(Entity e)
+            {
+                try
+                {
+                    var x = e.GeometricExtents;
+                    return x.MaxPoint.X >= win.X0 && x.MinPoint.X <= win.X1 && x.MaxPoint.Y >= win.Y0 && x.MinPoint.Y <= win.Y1;
+                }
+                catch (System.Exception) { return false; }
+            }
+            // punkty krzywej (cięciwy łuków / splajnów) — Line, Polyline, Polyline2d / 3d, Arc, Spline, Ellipse
+            List<(double X, double Y)> PointsOf(Curve c, out bool closed)
+            {
+                closed = false;
+                var pts = new List<(double X, double Y)>();
+                if (c is Line ln) { pts.Add((ln.StartPoint.X, ln.StartPoint.Y)); pts.Add((ln.EndPoint.X, ln.EndPoint.Y)); return pts; }
+                if (c is Polyline pl)
+                {
+                    for (int i = 0; i < pl.NumberOfVertices; i++) { var v = pl.GetPoint2dAt(i); pts.Add((v.X, v.Y)); }
+                    closed = pl.Closed;
+                    return pts;
+                }
+                if (c is Circle) return pts;   // okręgi (pale) — osobno
+                double p0 = c.StartParam, p1 = c.EndParam;
+                bool vertexParams = c is Polyline2d || c is Polyline3d;
+                int n = vertexParams ? (int)Math.Round(p1 - p0) : 24;
+                if (n < 1 || n > 10000) return pts;
+                for (int i = 0; i <= n; i++)
+                {
+                    var q = c.GetPointAtParameter(p0 + (p1 - p0) * i / n);
+                    pts.Add((q.X, q.Y));
+                }
+                return pts;
+            }
+            void Take(Curve c, (Color, ObjectId, double)? style, string what)
+            {
+                var pts = PointsOf(c, out bool closed);
+                if (pts.Count < 2) return;
+                var segs = new List<((double X, double Y) A, (double X, double Y) B)>();
+                int n = closed ? pts.Count : pts.Count - 1;
+                for (int i = 0; i < n; i++)
+                {
+                    var a = pts[i]; var b = pts[(i + 1) % pts.Count];
+                    var cl = BeamDetailRules.ClipToRect(win, a, b);
+                    if (!cl.HasValue) continue;
+                    var m = ((cl.Value.A.X + cl.Value.B.X) / 2, (cl.Value.A.Y + cl.Value.B.Y) / 2);
+                    if (OnKnown(cl.Value.A) && OnKnown(cl.Value.B) && OnKnown(m)) continue;   // obrys / linia uskoku — już narysowane
+                    segs.Add(cl.Value);
+                }
+                if (segs.Count > 0) { res.Add((segs, style)); Count(taken, what); }
+            }
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || id == bottom.OuterId || id == innerId) continue;
+                    if (!(tr.GetObject(id, OpenMode.ForRead) is Entity e) || !(e is Curve || e is BlockReference)) continue;
+                    if (!Touches(e)) continue;
+                    // decyzja 2026-10-12 („to, co jest w czerwonej obramówce, program zbiera i daje jako detal”): wszystkie linie rzutu
+                    // w oknie, dowolna warstwa — poza obiektami programu (strefy belek, detale, ramki szablonów, pręty, przekroje: XData
+                    // RC_… inne niż RC_GA) i warstwami opisów / pali (teksty „xxxTHK” i pale rysowane osobno)
+                    string layer = e.Layer ?? "";
+                    string what = layer + " / " + e.GetType().Name;
+                    if (Excluded(layer)) { Count(skipped, what); continue; }
+                    string app = ProgramAppOf(e);
+                    if (app != null) { Count(skipped, what + " [" + app + "]"); continue; }
+                    if (e is Curve c) { Take(c, SourceStyle(db, id), what); continue; }
+                    // blok z GA (np. symbole, linie w bloku) — linie z rozbicia (bez zapisu do rysunku)
+                    var br = (BlockReference)e;
+                    var parts = new DBObjectCollection();
+                    try { br.Explode(parts); }
+                    catch (System.Exception) { Count(skipped, what + " (nie rozbija się)"); continue; }
+                    var brStyle = SourceStyle(db, id);
+                    foreach (DBObject o in parts)
+                    {
+                        if (o is Curve pc && !(pc is Circle))
+                        {
+                            (Color, ObjectId, double)? st = brStyle;
+                            if (!pc.Color.IsByBlock && !pc.Color.IsByLayer) st = (pc.Color, brStyle?.Item2 ?? ObjectId.Null, brStyle?.Item3 ?? 1.0);
+                            Take(pc, st, what + " (blok)");
+                        }
+                        o.Dispose();
+                    }
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.OtherPlanLines", ex); }
+            msg?.Invoke("detal: linie z rzutu w ramce — " + (taken.Count == 0 ? "brak" : string.Join(", ", taken.Select(k => $"{k.Key} ×{k.Value}"))) +
+                        (skipped.Count == 0 ? "" : "; pominięte: " + string.Join(", ", skipped.Select(k => $"{k.Key} ×{k.Value}"))) + ".");
+            return res;
+        }
+
+        /// <summary>Aplikacje XData obiektów programu, których detal nie przenosi (pręty, rozkłady, opisy, strefy belek, detale, przekroje,
+        /// mapy, tagi przebicia, notki cięcia). Inne XData (np. RC_GA, tagi z pliku GA) — linia przenoszona.</summary>
+        private static readonly HashSet<string> ProgramApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            SingleBarEngine.XAppName, "RC_BAR_BLOCK", "RC_BAR", "RC_BAR_ANNOT", "RC_BAR_LABEL", "RC_BAR_LINK",
+            "RC_BEAM", "RC_BEAM_DETAIL", "RC_BEAM_MANUAL", "RC_AUTOREBAR_BEAM",
+            "RC_DETAIL", "RC_SECTION", "RC_SECTION_PART", "RC_MAP", "RC_PH", "RC_CUT_NOTE", "RC_ADD"
+        };
+
+        /// <summary>Aplikacja XData obiektu programu (null — obiekt z rysunku / GA).</summary>
+        private static string ProgramAppOf(Entity e)
+        {
+            using (var rb = e.XData)
+            {
+                if (rb == null) return null;
+                foreach (TypedValue tv in rb)
+                {
+                    if (tv.TypeCode != (short)DxfCode.ExtendedDataRegAppName) continue;
+                    string app = Convert.ToString(tv.Value, CultureInfo.InvariantCulture) ?? "";
+                    if (ProgramApps.Contains(app)) return app;
+                }
+            }
+            return null;
         }
 
         /// <summary>Teksty „xxxTHK” (MText / DBText) w strefie: punkt wstawienia, treść (bez formatowania), obrót, zaczepienie, styl.</summary>

@@ -185,8 +185,8 @@ namespace BricsCadRc.Tests
             Assert.That((c0, c1), Is.EqualTo((220.0, 700.0)));          // 160 + 45 + 10 + 5
         }
 
-        /// <summary>Decyzja 2026-10-11: pręty w nibie jedną pozycją (2T+1B, H10) — 2 pręty górą: w narożu UB 03 (55) i 40 od lica
-        /// zewnętrznego belki (120), obie strony belki; wąski nib — odstęp min. 40.</summary>
+        /// <summary>Decyzja 2026-10-11: pręty w nibie jedną pozycją (2T+1B, H10) — 2 pręty górą: w narożu UB 03 (55) i — decyzja 2026-10-12
+        /// „jak T IN NIB, co 150 w płytę” — 150 dalej w płytę (205), obie strony belki; wąski nib — też 150.</summary>
         [Test]
         public void D20261011_NibPairAcross_CornerAndFace()
         {
@@ -195,16 +195,16 @@ namespace BricsCadRc.Tests
             var s = BeamGeometry.Analyze(new List<(double X, double Y)> { (160, 160), (760, 160), (760, 3840), (160, 3840) }, outline).Segments.Single();
             double a = BeamGeometry.NibBarLine(s, outline, 10)!.Value.Across;
             Assert.That(a, Is.EqualTo(55.0));
-            Assert.That(BeamGeometry.NibPairAcross(s, a), Is.EqualTo((55.0, 120.0)));
-            // belka przy prawej krawędzi (lico zewnętrzne 5840, nib 160): naroże 6000 − 55, przy licu 5840 + 40
+            Assert.That(BeamGeometry.NibPairAcross(s, a), Is.EqualTo((55.0, 205.0)));
+            // belka przy prawej krawędzi (lico zewnętrzne 5840, nib 160): naroże 6000 − 55, drugi 150 dalej w płytę
             var r = BeamGeometry.Analyze(new List<(double X, double Y)> { (5240, 160), (5840, 160), (5840, 3840), (5240, 3840) }, outline).Segments.Single();
             double ar = BeamGeometry.NibBarLine(r, outline, 10)!.Value.Across;
             Assert.That(ar, Is.EqualTo(5945.0));
-            Assert.That(BeamGeometry.NibPairAcross(r, ar), Is.EqualTo((5945.0, 5880.0)));
-            // wąski nib (100): naroże 55 od krawędzi = 45 od lica → drugi pręt min. 40 dalej (nie 5)
+            Assert.That(BeamGeometry.NibPairAcross(r, ar), Is.EqualTo((5945.0, 5795.0)));
+            // wąski nib (100): też 150 (jak T IN NIB)
             var n = BeamGeometry.Analyze(new List<(double X, double Y)> { (100, 160), (700, 160), (700, 3840), (100, 3840) }, outline).Segments.Single();
             double an = BeamGeometry.NibBarLine(n, outline, 10)!.Value.Across;
-            Assert.That(BeamGeometry.NibPairAcross(n, an), Is.EqualTo((55.0, 95.0)));
+            Assert.That(BeamGeometry.NibPairAcross(n, an), Is.EqualTo((55.0, 205.0)));
         }
 
         [Test]

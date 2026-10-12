@@ -197,7 +197,8 @@ namespace BricsCadRc.Tests
         /// <summary>
         /// Wejście jak złoty „beam” (belka 160…760, nib 160), ale siatka wg decyzji 2026-10-11: B1 / T1 (prostopadłe do belki) przez
         /// belkę od 200 (lico zewnętrzne 160 + 40), B2 / T2 (równoległe) od 810 / 860; w nibie bez T IN NIB i B IN NIB — jedna pozycja
-        /// BN „H10-22 T+B IN NIB”: w rzucie 2 pręty (55 i 120 od krawędzi — BeamGeometry.NibPairAcross), w przekroju 3 kropki; bez BN górą.
+        /// BN „H10-22-150 T+B IN NIB”: w rzucie 2 pręty (55 i 205 od krawędzi — BeamGeometry.NibPairAcross, co 150 jak T IN NIB — decyzja
+        /// 2026-10-12), w przekroju 3 kropki; bez BN górą.
         /// </summary>
         internal static SectionPlanner.Input CaseBeamNoMeshInBeam()
         {
@@ -210,7 +211,7 @@ namespace BricsCadRc.Tests
             inp.Dists.Remove(P("101"));
             inp.Dists.Remove(P("21"));
             var bn = P("22"); bn.Mark = "H12-22 " + BeamGeometry.SuffixNibBoth; bn.Diameter = 10; bn.X0 = 55;
-            bn.Count = 2; bn.BarsSpan = 65; bn.Spacing = 65;
+            bn.Count = 2; bn.BarsSpan = BeamGeometry.NibPairSpacing; bn.Spacing = BeamGeometry.NibPairSpacing;
             return inp;
         }
 
@@ -237,18 +238,18 @@ namespace BricsCadRc.Tests
             }
             // bez T IN NIB płyty w nibie belki
             Assert.That(r.Dots.Any(d => d.TinNib), Is.False);
-            // pręty w nibie 2T+1B: jedna pozycja (22), 3 kropki w nibie (0…160) — 2 górą pod górnym ramieniem UB 03 (ten sam poziom),
-            // 1 dołem nad dolnym ramieniem UB 03, pod prętem górą przy krawędzi (55)
+            // pręty w nibie 2T+1B: jedna pozycja (22), 3 kropki — 2 górą pod górnym ramieniem UB 03 (ten sam poziom; 55 w nibie
+            // i 150 dalej w płytę — 205, jak T IN NIB, decyzja 2026-10-12), 1 dołem nad dolnym ramieniem UB 03, pod prętem górą przy krawędzi (55)
             var nib = r.Dots.Where(d => d.PosNr == "22").ToList();
             Assert.That(nib.Count, Is.EqualTo(3), string.Join(" ", nib.Select(d => d.U + "," + d.V)));
-            Assert.That(nib.All(d => d.U > 0 && d.U < 160 && d.Beam), Is.True, string.Join(" ", nib.Select(d => d.U + "," + d.V)));
+            Assert.That(nib.All(d => d.U > 0 && d.U < 760 && d.Beam), Is.True, string.Join(" ", nib.Select(d => d.U + "," + d.V)));
             var ub3 = r.Bars.First(b => b.Kind == SectionPlanner.DistKind.NibUB);
             var topN = nib.Where(d => d.Top).OrderBy(d => d.U).ToList();
             var botN = nib.Where(d => !d.Top).ToList();
             Assert.That(topN.Count, Is.EqualTo(2));
             Assert.That(botN.Count, Is.EqualTo(1));
             Assert.That(topN[0].U, Is.EqualTo(55.0).Within(0.5));
-            Assert.That(topN[1].U, Is.EqualTo(120.0).Within(0.5));
+            Assert.That(topN[1].U, Is.EqualTo(205.0).Within(0.5));
             Assert.That(Math.Abs(topN[0].V - topN[1].V), Is.LessThan(1e-9));
             Assert.That(topN[0].V, Is.LessThan(ub3.Path.Max(q => q.V)), "pod górnym ramieniem UB 03");
             Assert.That(botN[0].U, Is.EqualTo(55.0).Within(0.5), "dołem pod prętem przy krawędzi");

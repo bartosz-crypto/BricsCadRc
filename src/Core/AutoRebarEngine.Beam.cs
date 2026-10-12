@@ -519,7 +519,8 @@ namespace BricsCadRc.Core
             var tinNib = p.NibTopDia > 0 ? ReadTinNib(db, top ?? bottom, top != null ? delta : new Vector2d()) : null;
             var noUbMsg = new HashSet<int>();
             // decyzja użytkownika 2026-10-11: pręty w nibie belki jedną pozycją — 3 identyczne pręty H10 (2 górą pod górnym ramieniem UB 03:
-            // w narożu i przy licu belki, 1 dołem w dolnym narożu UB 03), opis „2+1 H10-nn T+B IN NIB”, w rzucie 2 pręty (CountDisplay 3);
+            // w narożu i — decyzja 2026-10-12 — 150 dalej w płytę jak T IN NIB, 1 dołem w dolnym narożu UB 03), opis „2+1 H10-nn-150 T+B IN NIB”,
+            // w rzucie 2 pręty (CountDisplay 3);
             // podział na długości — PlanBars z zakładem 40·Ø (dawniej K5: 1 H10 „B IN NIB” z podziałem i numerem pręta siatki B2);
             // opis przy nibie — linia odniesienia na zewnątrz krawędzi płyty (NibPairLeader), nie przez płytę
             foreach (var (nd, suffix) in new[] { (p.NibTopDia, BeamGeometry.SuffixNibTop), (p.NibBottomDia, BeamGeometry.SuffixNibBoth) })
@@ -541,12 +542,16 @@ namespace BricsCadRc.Core
                             "(Nib: pręt górą = 0 w oknie RC_BEAM wyłącza BN górą).");
                     var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapN).Select(x => (Start: lo + x.Offset, x.Length)).ToList();
                     // w rzucie: BN górą — 1 pręt; pręty w nibie (2T+1B) — 2 pręty górą (pręt dołem pod prętem w narożu), opis / BBS 3
-                    double f0 = across, sp = 0; int drawn = 1;
+                    double f0 = across, sp = 0; int drawn = 1, reprNib = -1;
                     Func<Point3d, List<List<Point3d>>> leader = null;
                     if (nibPair)
                     {
                         var (outer, inner) = BeamGeometry.NibPairAcross(segs[i], across);
                         f0 = Math.Min(outer, inner); sp = Math.Abs(inner - outer); drawn = 2;
+                        // widoczny pręt w narożu UB 03 (przy krawędzi), nie ten 150 dalej — ten leży przy prętach głównych belki i opisy /
+                        // pręty nachodziły (uwaga Bartka 2026-10-12); ShowRepresentativeOnly: indeks (2/2 + repr) % 2
+                        int outerIdx = outer <= inner ? 0 : 1;
+                        reprNib = (outerIdx + 1) % 2;
                         int sgE = segs[i].OuterSide < 0 ? -1 : 1;
                         double edge = outer + sgE * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + nd / 2.0);   // krawędź płyty przy nibie
                         // K9: w detalu oś w poprzek przesunięta o Shift, linia odniesienia względem okna detalu
@@ -554,8 +559,8 @@ namespace BricsCadRc.Core
                         leader = tg == null
                             ? NibPairLeader(segs[i].AlongX, edge, sgE, (outer + inner) / 2.0, bottom.Verts)
                             : NibPairLeader(segs[i].AlongX, edge + sh, sgE, (outer + inner) / 2.0 + sh, tg.Verts, tg.Box, tg.AnnotScale);
-                        msg($"{name}: odcinek {i + 1} — pręty w nibie {NibPairCount} H{nd} (2 górą: w narożu UB 03 i {sp:F0} dalej, przy licu " +
-                            "belki; 1 dołem w narożu UB 03), jedna pozycja, długości " +
+                        msg($"{name}: odcinek {i + 1} — pręty w nibie {NibPairCount} H{nd} (2 górą: w narożu UB 03 i {sp:F0} dalej w płytę — " +
+                            "jak T IN NIB; 1 dołem w narożu UB 03), jedna pozycja, długości " +
                             $"{string.Join(" + ", plan.Select(x => x.Length.ToString("F0", CultureInfo.InvariantCulture)))} (zakład {lapN:F0}).");
                     }
                     for (int k = 0; k < plan.Count; k++)
@@ -563,9 +568,12 @@ namespace BricsCadRc.Core
                         double a0 = plan[k].Start, a1 = a0 + plan[k].Length;
                         var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: nd, shape: "00", a: plan[k].Length, b: 0,
                                                            code: BeamGeometry.CodeNib);
+                        // decyzja 2026-10-12: pręty w nibie też wygaszane do pręta reprezentatywnego (jak siatka)
                         if (!tpl.id.IsNull && BeamLongitudinal(db, bottom, tpl, segs[i], a0, a1, f0, sp, drawn, nd, BeamGeometry.CodeNib,
-                                                                suffix, nibPair ? -1 : i + k, zbHandle, new Vector2d(),
+                                                                suffix, nibPair ? reprNib : i + k, zbHandle, new Vector2d(),
                                                                 nibPair ? (Action<BarData>)(bar => bar.CountDisplay = NibPairCount) : null,
+                                                                // decyzja 2026-10-12: rozstaw w opisie jak T IN NIB — „2+1 H10-nn-150 T+B IN NIB”
+                                                                nominal: nibPair ? BeamGeometry.NibPairSpacing : double.NaN,
                                                                 leaderFor: leader, tg: tg))
                         { res.NibDists++; nibRuns++; }
                     }
@@ -575,7 +583,7 @@ namespace BricsCadRc.Core
                 msg($"{name}: pręty wzdłuż nibu belki (BN górą {(p.NibTopDia > 0 ? "H" + p.NibTopDia : "brak")}, w nibie 2T+1B " +
                     $"{(p.NibBottomDia > 0 ? "H" + p.NibBottomDia : "brak")}): {nibRuns} rozkł. " +
                     "(„2+1 … T+B IN NIB” — jedna pozycja, decyzja 2026-10-11).");
-            if (tg != null) FinishBeamDetail(doc, tg, zb, zt, msg);
+            if (tg != null) FinishBeamDetail(doc, tg, zb, zt, msg, bottom.Verts, delta);
         }
 
         /// <summary>
@@ -746,6 +754,9 @@ namespace BricsCadRc.Core
         {
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
+                // decyzja użytkownika 2026-10-12: pręt prosty — istniejący pręt siatki dolnej (strefa szablonów rebar_bottom) albo pręt
+                // belki; inne pręty serii dolnej (np. detal otworu) nie są brane
+                var meshZones = shape == "00" ? ScanLayerRectangles(db, tr, "rebar_bottom").Select(r => r.Item2).ToList() : null;
                 foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
                     var x = be.Read();
@@ -754,6 +765,11 @@ namespace BricsCadRc.Core
                     bool series = top ? nr >= PositionCounter.TopSeriesStart && nr < PositionCounter.SeparateSeriesStart
                                       : nr >= PositionCounter.FirstAutoNumber && nr < PositionCounter.TopSeriesStart;
                     if (!series || Math.Abs(x.LengthA - a) >= 1.0) continue;
+                    if (meshZones != null && !BeamGeometry.IsBeamCode(x.LayerCode))
+                    {
+                        var ip = be.FirstOutlineVertex(tr);
+                        if (ip == null || !meshZones.Any(z => GeometryHelper.IsInsideBbox(ip.Value, z))) continue;
+                    }
                     if (shape != "00" && (Math.Abs(x.LengthB - b) >= 1.0 || Math.Abs(x.LengthC - c) >= 1.0)) continue;
                     var foundId = be.Entity.ObjectId;
                     tr.Commit();
@@ -763,10 +779,12 @@ namespace BricsCadRc.Core
             }
 
             string zoneLayer = top ? "rebar_top" : "rebar_bottom";
-            ObjectId rectId; Extents3d zone; double lowY;
+            ObjectId rectId = ObjectId.Null; Extents3d zone; double lowY;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                (rectId, zone) = FindOrCreateTemplateZone(db, tr, zoneLayer, slabBox, ed);
+                // decyzja 2026-10-12: pręty belki w detalu 1:25 — nowe szablony obok detalu (jak detal otworu), nie w strefie rzutu
+                if (_beamTemplateZone.HasValue) zone = _beamTemplateZone.Value;
+                else (rectId, zone) = FindOrCreateTemplateZone(db, tr, zoneLayer, slabBox, ed);
                 lowY = zone.MaxPoint.Y - TemplateOffsetY + TemplateSpacingY;
                 foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
@@ -827,7 +845,7 @@ namespace BricsCadRc.Core
                 trL.Commit();
             }
             PositionCounter.CommitUsed(db, posNr);
-            GrowZoneToFit(db, rectId, barId, zone);
+            if (!rectId.IsNull) GrowZoneToFit(db, rectId, barId, zone);
             ed?.WriteMessage($"\n{BeamTag} Utworzono szablon {bar.Mark} (kształt {shape}, A={a:F0}" + (shape != "00" ? $", B={b:F0}" : "")
                              + (Math.Abs(c) > 0.5 ? $", C={c:F0}" : "") + ").");
             return (barId, bar);

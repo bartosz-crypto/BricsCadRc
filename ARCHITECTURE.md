@@ -132,9 +132,10 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 - `RC_AUTOREBAR_BEAM` (rozkład belki): [1]strefa belki (1005). Kopia samych prętów (CloneRemap) → "" — przynależność z testu
   punktu w strefie. Rozkłady w detalu 1:25 (K9) — ten sam znacznik (ponowne Beam usuwa rozkłady strefy z rzutu i z detalu).
 - `RC_BEAM_DETAIL` (K9, obiekt detalu belki niebędący prętem, `BeamStore.TagDetail`): [1]FormatVersion (Int16, 1) [2]strefa belki (1005, XLink)
-  [3]numer detalu (Int16) [4]rola (tekst): ANCHOR (zamknięta kopia polilinii strefy, czerwona, DASHED, LTSCALE 12,5 — jej położenie wyznacza
-  Shift detalu), LINE (przycięte linie betonu), PILE (pal w oknie, DASHED), TEXT („xxxTHK”), TITLE („DETAIL 'n'” / „SCALE 1:25”), PLANREF
-  (odnośnik „DETAIL 'n'” na rzucie). CloneRemap: [2] → klon strefy, gdy skopiowana razem, inaczej "" (detal bez strefy — pomijany).
+  [3]numer detalu (Int16) [4]rola (tekst): ANCHOR (zamknięta kopia polilinii strefy, szara (8), DASHED, LTSCALE 12,5 — lica belki pod płytą;
+  jej położenie wyznacza Shift detalu), LINE (przycięte linie betonu, kolor / rodzaj linii obiektu z rzutu), PILE (pal w oknie, DASHED), TEXT
+  („xxxTHK”), TITLE („DETAIL 'n'” / „SCALE 1:25”), FRAME (ramka detalu = okno, czerwona (10) DASHED, LTSCALE 25 — od 2026-10-12), PLANREF
+  (na rzucie: ramka okna detalu — czerwona DASHED — i odnośnik „DETAIL 'n'” do ramki). CloneRemap: [2] → klon strefy, gdy skopiowana razem, inaczej "" (detal bez strefy — pomijany).
 - Odczyt musi tolerować krótsze (starsze) rekordy — sprawdzaj `v.Length`.
 
 ## 2. Moduły
@@ -907,28 +908,47 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   test BRX D526). Obszar nie jest zapamiętywany (bez cache — UNDO). Testy BRX D319 / D528 / D539 (asercje E2, podsumowanie `beam-e2-<płyta>.txt`),
   M528 (belka → Mesh = Mesh bez belki tego przebiegu), S-REG FBEAM (Mesh bez Beam — przy belce bez T IN NIB). Komunikat Mesh „ponów Beam” (B IN NIB z siatki B2) — usunięty (pręty w nibie
   nie zależą już od siatki dolnej).
-  `NibDetector.Detect` pomija warstwy RC-BEAM i `SD-Thickening-Zone` (strefa z GA przed Prepare GA), `FindHoles` — RC-BEAM.
+  `NibDetector.Detect` pomija warstwy RC-BEAM, RC-BEAM-DETAIL (ramki detalu na rzucie) i `SD-Thickening-Zone` (strefa z GA przed Prepare GA),
+  `FindHoles` — RC-BEAM i RC-BEAM-DETAIL.
 - **Detal 1:25 (K9, decyzja użytkownika 2026-10-11 „rób wg rekomendacji”; `AutoRebarEngine.BeamDetail`, czyste `BeamDetailRules`):** pręty
   belki rysowane TYLKO w detalu — rzut belki 1:25 w przestrzeni modelu w rzeczywistych wymiarach, z dala od rzutów (przekroje zostają osobno
-  w 1:20, RC_SECTION bez zmian rysunku). Na rzutach 1:50 (dolnym i górnym): strefa, „xxxTHK” i odnośnik „DETAIL 'n'” (`PlaceNoteLeader`,
-  wys. 140, grot w strefie). Siatka płyty — na rzucie; UB 03 przy belce — w detalu (niżej, „UB 03 w detalu”). Detal domyślny;
+  w 1:20, RC_SECTION bez zmian rysunku). Na rzutach 1:50: strefa, „xxxTHK”; **tylko na rzucie dolnym ramka okna detalu (czerwona przerywana)
+  i odnośnik „DETAIL 'n'” z grotem na ramce** (rzut górny bez odnośnika — jak detal otworu) (decyzja użytkownika 2026-10-12; `PlaceNoteLeader`, wys. 140, bok ramki
+  poza płytą: góra, dół, prawo, lewo; wcześniej grot w strefie). Siatka płyty — na rzucie; UB 03 przy belce — w detalu (niżej, „UB 03 w detalu”). Detal domyślny;
   opcja okna RC_BEAM „Pręty belki w detalu 1:25” (rekord [36]; odznaczone = rzut jak przed K9, przełączenie detal → rzut usuwa detal przy
   generowaniu). Jeden detal na strefę (L / U jako jeden), także dla belek identycznych; numer wspólny z detalami otworów (`NextDetailNumber`).
   - **Okno** (`BeamDetailRules.Window`): obwiednia strefy; bok, przy którym na zewnątrz (≤ 600) leży równoległa krawędź obrysu płyty —
     do krawędzi + 300 (widać nib i krawędź; także koniec przy krawędzi), inaczej bok strefy + 600 (lico wewnętrzne, koniec wewnętrzny).
   - **Miejsce:** istniejący ANCHOR strefy → numer i Shift = MinPoint(ANCHOR) − MinPoint(strefy) (bez cache — MOVE detalu i ponowne Beam:
-    detal zostaje w nowym miejscu z tym samym numerem); inaczej nowe miejsce nad rzutami (`BeamDetailRules.Place`: od lewego brzegu rzutów,
-    3000 nad nimi, w prawo aż obwiednia okna + 3000 na opisy, + 1000 na tytuł, nie nachodzi z odstępem 1000 na żaden obiekt modelu).
-  - **Zawartość:** ANCHOR, przycięte linie betonu (obrys zewnętrzny i linia uskoku — osobne `Line`, nigdy zamknięty obrys), pale w oknie
+    detal zostaje w nowym miejscu z tym samym numerem); inaczej **użytkownik wskazuje środek detalu** (decyzja 2026-10-12 „jak przy detalu
+    otworu — sami klikamy miejsce”; Esc — pręty belki pominięte), Enter albo tryb bez okien (`ScriptMode`) — nowe miejsce nad rzutami
+    (`BeamDetailRules.Place`: od lewego brzegu rzutów, 3000 nad nimi, w prawo aż obwiednia okna + 3000 na opisy + kolumna szablonów,
+    + 1000 na tytuł, nie nachodzi z odstępem 1000 na żaden obiekt modelu).
+  - **Zawartość (wygląd wg wzoru Bartka 2026-10-12):** ramka detalu = okno (czerwona przerywana, w odległości od belki — lico wewnętrzne
+    + 600, krawędź płyty + 300), ANCHOR (lica belki — przerywana w kolorze obrysu płyty), przycięte linie betonu w kolorach i rodzajach linii
+    z rzutu (obrys zewnętrzny i linia uskoku — osobne `Line`, nigdy zamknięty obrys; **wszystkie pozostałe linie rzutu w oknie** (Line /
+    Polyline / Arc, dowolna warstwa — „co jest w czerwonej obramówce”, decyzja 2026-10-12) poza obiektami programu (XData RC_… inne niż RC_GA,
+    warstwy RC-BEAM*, rebar_*) i SD-Text / SD-Pile… / SD-Thickening-Zone, np. uskok w nibie na końcu belki — `OtherPlanLines`), pale w oknie
     (przerywane okręgi), teksty „xxxTHK” strefy (62,5), wszystkie pręty belki (BM, LINKS, BU, BS / BC, 2+1 T+B IN NIB) z opisami, tytuł pod
     najniższym opisem (jak detal otworu: 125 / 0,8×), bez wymiarów i bez znaczników przekroju (później). Warstwa `RC-BEAM-DETAIL` — nic na
     SD-PILED-RAFT, SD-Pile, SD-Text, RC-BEAM (czytają je NibDetector, NibAutoClose, FindPiles, przebicie, ZonesOfSlab, PrepareSection).
   - **Pręty:** `BeamDrawTarget` (Shift, okno, obrys przesunięty, skala) w `BeamDistribution` / `BeamLongitudinal` / `BeamVerticalUBar` /
     `BeamSideUBar` / `NibPairLeader` — położenie rzutu + Shift, linie odniesienia za oknem detalu, skala opisów 0,5 (`_annotScaleOverride` =
-    25 / 50, ramię opisu 2400 · 0,5 — opisy 2,5 mm na papierze), przywracana po każdej belce. Szablony prętów — strefa rebar_bottom rzutu,
-    skala 1.0. Tryb rzutu (target = null) — bit w bit jak przed K9. BBS liczy raz (pręty tylko w detalu). Do modelu 3D — później.
+    25 / 50, ramię opisu 2400 · 0,5 — opisy 2,5 mm na papierze), przywracana po każdej belce. Szablony prętów (nowe pozycje) — **kolumna obok
+    detalu, 3000 na prawo od ramki** (jak detal otworu; decyzja 2026-10-12 — wcześniej strefa rebar_bottom rzutu; `BeamDrawTarget.TemplateZone`),
+    skala 1.0; identyczny pręt = istniejąca pozycja — pręt prosty tylko z siatki dolnej (strefa rebar_bottom) albo pręt belki (decyzja
+    2026-10-12), gięty — jak dotąd; Mesh (warstwy dolne) przy szukaniu szablonu bierze też proste pręty belki (bez duplikatu tej samej długości). Tryb rzutu (target = null) — bit w bit jak przed K9. BBS liczy raz (pręty tylko w detalu). Do modelu 3D — później.
   - **Usuwanie:** ponowne Beam — rozkłady strefy (znacznik) z rzutu i z detalu + obiekty RC_BEAM_DETAIL strefy; ponowne Prepare GA
     (`BeamStore.EraseGeneratedForZones`) — także detale i UB 03 w detalu (`FindDetailSlabDists`). Jedna komenda = jedna grupa UNDO.
+  - **Zbrojenie nibu w detalu (decyzja użytkownika 2026-10-12):** krawędź wzdłuż belki z nibem na całej długości strzemion — UB 03 =
+    liczba strzemion (BL strefy w detalu, Count) + 2, od otuliny do otuliny krawędzi (np. 55 → 57); koniec belki przy krawędzi, gdy na
+    krawędzi leży szerokość belki + nib (bok strefy ≤ 260 od narożnika; tylko strefy prostokątne) — część krawędzi od narożnika do uskoku
+    w nibie (lico wewnętrzne belki) → UB 03 co 150 w detalu (`BeamEndUbPortion`, opis „n H10-03-150 UB”), reszta krawędzi jak dotąd;
+    w nibie takiego końca zamiast T+B IN NIB — 1 UB 03 prętem równoległym do krawędzi końca (zagięcie przy uskoku, oś 55 od krawędzi,
+    „1 H10-03 UB”, generowany w przebiegu UB 03 drugiego kierunku). Nib końca dłuższy niż szerokość belki + nib (np. 2 m) — do zrobienia
+    (decyzja: wtedy 2+1 T+B IN NIB co 150).
+    UB 03 w detalu powstają też przy Beam bez siatki (`RefreshNibUbAtBeams` → `GenerateNibUBLayer(onlyBeamDetail)`: tylko krawędzie w detalu,
+    UB 03 rzutu robi Mesh); uskok w nibie na końcu belki — z rzutu (linia z GA, `OtherPlanLines`), program go nie dorysowuje.
   - **UB 03 w detalu (decyzja użytkownika 2026-10-11 „UB w nib też pokazuj na detalu”):** UB 03 generuje
     nadal `GenerateNibUBLayer` (Mesh / UB NIB; liczba i położenia z siatki dolnej jak dotąd). Krawędź nibu, której linia uskoku leży w > 50 % przy strefie
     (`UbExclusionRects` strefy — kryterium jak T IN NIB), strefa w trybie detalu ([36] = 1) z ANCHOR-em przystającym do strefy (`NibUbZones` /
@@ -945,9 +965,9 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   odpowiednio też”, potem „średnica H10”, „opis 2+1 … T+B IN NIB”, „pozycja na rzucie dolnym z nibem” — zastępuje K5 i T IN NIB przy belce):**
   kod BN, rzut dolny, seria dolna; JEDNA pozycja — 3 identyczne pręty Ø [21] (domyślnie **H10**): 2 górą pod górnym ramieniem UB 03 (oś w narożu
   spinki UB 03 — `NibBarLine`, krawędź − 40 − 10 − d/2 = 55; drugi
-  przy licu zewnętrznym belki — lico + 40, odstęp min. 40 — `BeamGeometry.NibPairAcross`) i 1 dołem w dolnym narożu UB 03 pod prętem przy
-  krawędzi. W rzucie rozkład 2 prętów (górnych; pręt dołem pod prętem przy krawędzi), Count 2, **CountDisplay 3**, opis bez rozstawu
-  `2+1 H10-nn T+B IN NIB` (sufiks `BeamGeometry.SuffixNibBoth` = „T+B IN NIB”; liczba „2+1” — `BarLabelRules.CountText`: BN z CountDisplay > Count
+  **150 dalej w płytę, jak drugi pręt T IN NIB** — decyzja użytkownika 2026-10-12, `BeamGeometry.NibPairSpacing`; wcześniej przy licu zewnętrznym
+  belki − 40) i 1 dołem w dolnym narożu UB 03 pod prętem przy krawędzi. W rzucie rozkład 2 prętów (górnych; pręt dołem pod prętem przy
+  krawędzi), Count 2, **CountDisplay 3**, opis z rozstawem jak T IN NIB (2026-10-12) `2+1 H10-nn-150 T+B IN NIB` (sufiks `BeamGeometry.SuffixNibBoth` = „T+B IN NIB”; liczba „2+1” — `BarLabelRules.CountText`: BN z CountDisplay > Count
   → „Count+reszta”), BBS — 3 sztuki na rozkład. Opis przy nibie (`NibPairLeader`, poprawka 2026-10-11 — wcześniej linia odniesienia biegła przez
   całą płytę i opisy 539 wypadały poza okno layoutu): prosto na zewnątrz krawędzi płyty po stronie nibu (ramię jak T IN NIB, potem +500 … +2000,
   bo tuż za krawędzią leży linia rozkładu UB 03 i opisy belki), dopiero potem załamanie wzdłuż krawędzi. Zakres
@@ -1029,7 +1049,11 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   (`BeamGeometry.PlanSideUBars`): tył na otulinie od lica (narożnik — lica zewnętrznego), B = Floor5(B strzemienia − 2·Ø strzemienia) = 485,
   A = C = Ceil25(tył → początek prętów bocznych + zakład 500) (koniec 525), przycięte do zakresu prętów bocznych; w rzucie ramię przy jednym boku
   z hakiem na zagięciu w stronę drugiego ramienia; opis „{n}x1 H12-nn UB SIDE”.
-  Pręty belki (gdy już są) nie są przeszkodą w `ResolveRepresentativeCollisions`; opisy siatki je omijają (zasada „opisy nie nachodzą”).
+  Pręty belki (gdy już są) nie są przeszkodą w `ResolveRepresentativeCollisions` na rzucie; opisy siatki je omijają (zasada „opisy nie nachodzą”).
+  **Detal 1:25 (decyzja 2026-10-12 „wygaszajmy tak, żeby pręty na siebie nie nachodziły, jak na Generate Mesh”):** `FinishBeamDetail` woła
+  `ResolveRepresentativeCollisions(ramka detalu, 250 · 0,5, beamDetail: true)` — pręty belki (BM, BU końca, BN, BS…) i UB 03 w ramce: widoczny
+  pręt przesuwany na inny indeks, gdy leży bliżej niż 125 od widocznego pręta innego rozkładu; pręty w nibie 2+1 wygaszane do 1 pręta
+  reprezentatywnego — widoczny pręt w narożu UB 03 przy krawędzi (nie ten 150 dalej, przy prętach głównych belki).
 - Strefa: `RC-BEAM` + `RC_BEAM` (sekcja 1). Prepare GA (sekcja 4d) albo `RC_BEAM` (polilinia → strefa; [Krawedz] — obrys + 2 punkty
   → prostokąt od linii uskoku na szerokość 600). Strefa na drugim rzucie (przystający obrys) — znaleziona albo utworzona (kopia).
   `RC_BEAM` odmawia (`[RC BEAM]`) dla obrysu płyty / uskoku (SD-PILED-RAFT), pręta (polilinia z `RC_SINGLE_BAR`) i otworu (krzyżyk

@@ -1370,24 +1370,21 @@ namespace BricsCadRc.Core
             return hi - lo > 100 ? (across, lo, hi) : ((double, double, double)?)null;
         }
 
-        /// <summary>Pręty w nibie jedną pozycją (decyzja 2026-10-11): oś drugiego pręta górą od lica zewnętrznego belki (linia uskoku − 40)
-        /// i minimalny odstęp osi dwóch prętów górą (H10: prześwit 30 mm).</summary>
-        public const double NibPairFaceCover = 40.0, NibPairMinGap = 40.0;
+        /// <summary>Pręty w nibie jedną pozycją: rozstaw osi dwóch prętów górą — jak T IN NIB płyty (decyzja użytkownika 2026-10-12
+        /// „zróbmy tak jak już rozkładamy T IN NIB — czyli co 150 w płytę”; opis „2+1 H10-nn-150 T+B IN NIB”).</summary>
+        public const double NibPairSpacing = 150.0;
 
         /// <summary>
         /// Pręty w nibie jedną pozycją (decyzja użytkownika 2026-10-11 „jedna pozycja bottom in nib i top — 3 pręty te same”): osie
         /// w poprzek dwóch prętów górą (w rzucie rysowane 2 pręty, opis / BBS 3). <paramref name="across1"/> — oś pręta w narożu spinki UB 03
-        /// (<see cref="NibBarLine"/>; pod nim, w dolnym narożu, trzeci pręt dołem); drugi pręt górą przy licu zewnętrznym belki (lico
-        /// zewnętrzne + <see cref="NibPairFaceCover"/> w stronę krawędzi płyty), odstęp osi min. <see cref="NibPairMinGap"/>.
-        /// Wynik: Outer — pręt w narożu (z prętem dołem), Inner — pręt przy licu belki.
+        /// (<see cref="NibBarLine"/>; pod nim, w dolnym narożu, trzeci pręt dołem); drugi pręt górą <see cref="NibPairSpacing"/> (150) dalej
+        /// w płytę — jak drugi pręt T IN NIB (decyzja użytkownika 2026-10-12; wcześniej przy licu zewnętrznym belki − 40).
+        /// Wynik: Outer — pręt w narożu (z prętem dołem), Inner — pręt 150 dalej w płytę.
         /// </summary>
         public static (double Outer, double Inner) NibPairAcross(Segment s, double across1)
         {
-            double face = s.OuterSide < 0 ? s.AcrossLo : s.AcrossHi;
-            int sg = s.OuterSide < 0 ? -1 : 1;
-            double fromFace = (across1 - face) * sg;                     // oś pręta narożnego od lica zewnętrznego (w stronę krawędzi)
-            double gap = Math.Max(fromFace - NibPairFaceCover, NibPairMinGap);
-            return (across1, across1 - sg * gap);
+            int sg = s.OuterSide < 0 ? -1 : 1;                           // kierunek od belki do krawędzi płyty
+            return (across1, across1 - sg * NibPairSpacing);
         }
 
         // ── K7 (E2): siatka płyty przy belce (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne, do potwierdzenia — pytanie 11) ──

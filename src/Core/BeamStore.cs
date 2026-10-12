@@ -337,14 +337,15 @@ namespace BricsCadRc.Core
         // ── K9: detal belki 1:25 — obiekty detalu niebędące prętami ────
         // XData RC_BEAM_DETAIL: [1] FormatVersion (Int16, 1) [2] strefa (1005, XLink) [3] numer detalu (Int16) [4] rola (tekst):
         // ANCHOR (kopia polilinii strefy — miejsce detalu), LINE (przycięte linie betonu), PILE (pal w oknie), TEXT („xxxTHK”),
-        // TITLE („DETAIL 'n'” / „SCALE 1:25”), PLANREF (odnośnik „DETAIL 'n'” na rzucie). Pręty detalu — zwykłe rozkłady z RC_AUTOREBAR_BEAM.
+        // TITLE („DETAIL 'n'” / „SCALE 1:25”), FRAME (ramka detalu = okno, czerwona przerywana — jak detal otworu; decyzja 2026-10-12),
+        // PLANREF (na rzucie: ramka okna detalu i odnośnik „DETAIL 'n'”). Pręty detalu — zwykłe rozkłady z RC_AUTOREBAR_BEAM.
 
         public const string DetailApp = "RC_BEAM_DETAIL";
         public const string DetailLayer = "RC-BEAM-DETAIL";
         public const short DetailFormat = 1;
         public const int DetailZoneIdx = 2;   // RC_BEAM_DETAIL [2] strefa (CloneRemap)
         public const string RoleAnchor = "ANCHOR", RoleLine = "LINE", RolePile = "PILE", RoleText = "TEXT", RoleTitle = "TITLE",
-                            RolePlanRef = "PLANREF";
+                            RolePlanRef = "PLANREF", RoleFrame = "FRAME";
 
         public static void TagDetail(Transaction tr, Database db, Entity e, string zoneHandle, int nr, string role)
         {

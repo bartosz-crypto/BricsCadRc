@@ -78,7 +78,9 @@ namespace BricsCadRc.Core
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
                     // strefa belki (RC-BEAM), polilinia ręczna belki (RC-BEAM-MANUAL) ani strefa pogrubienia z GA (SD-Thickening-Zone)
                     // nie jest linią uskoku
+                    // ani ramka detalu belki (RC-BEAM-DETAIL — ramka okna detalu na rzucie, ANCHOR detalu; decyzja 2026-10-12)
                     if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)
+                        || string.Equals(pl.Layer, BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(pl.Layer, GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase)) continue;
                     var q = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
                     if (q.Count < 3) continue;
