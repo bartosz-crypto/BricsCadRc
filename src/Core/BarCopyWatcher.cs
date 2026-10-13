@@ -621,12 +621,31 @@ namespace BricsCadRc.Core
                         || System.Math.Abs(System.Math.Abs(blk.Rotation) - System.Math.PI) < 1e-3);
                     if (blkNeedsNorm)
                     {
+                        // 2026-10-13: odbicie (lokalne osie bloku po MIRROR) — po normalizacji do +1 dane rozkładu muszą to odbicie
+                        // przejąć (gripy krawędzi, symbol końca, kolejność prętów); wcześniej gripy zostawały po starej stronie
+                        var ex = Vector3d.XAxis.TransformBy(blk.BlockTransform);
+                        var ey = Vector3d.YAxis.TransformBy(blk.BlockTransform);
+                        bool flipX = ex.X < -0.5, flipY = ey.Y < -0.5;
+                        var bd = BarBlockEngine.ReadXData(blk);
+                        bool alongX = bd?.Direction == "X";
                         Point3d vMin;
                         try   { vMin = blk.GeometricExtents.MinPoint; }
                         catch { vMin = blk.Position; }
+                        if (bd != null && Math.Abs(bd.SkewStart) < 1e-6 && Math.Abs(bd.SkewEnd) < 1e-6)
+                        {
+                            // naroże prostokąta prętów (bez symboli końców — kółko / hak poszerza obwiednię o promień)
+                            double la = bd.LengthA, ls = bd.BarsSpan;
+                            var loc = alongX
+                                ? new[] { new Point3d(0, 0, 0), new Point3d(la, 0, 0), new Point3d(0, ls, 0), new Point3d(la, ls, 0) }
+                                : new[] { new Point3d(0, 0, 0), new Point3d(ls, 0, 0), new Point3d(0, la, 0), new Point3d(ls, la, 0) };
+                            var w = loc.Select(q => q.TransformBy(blk.BlockTransform)).ToList();
+                            vMin = new Point3d(w.Min(q => q.X), w.Min(q => q.Y), blk.Position.Z);
+                        }
                         blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
                         blk.Rotation     = 0.0;
                         blk.Position     = vMin;
+                        if (bd != null)
+                            BarBlockEngine.ApplyMirror(blk, flipAlong: alongX ? flipX : flipY, flipAcross: alongX ? flipY : flipX);
                     }
 
                     bool annNeedsNorm = ann != null && (ann.ScaleFactors.X < 0 || ann.ScaleFactors.Y < 0

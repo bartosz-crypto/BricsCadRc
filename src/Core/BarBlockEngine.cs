@@ -659,6 +659,45 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
+        // ApplyMirror — po MIRROR (kopia znormalizowana do skali +1, uwaga Bartka 2026-10-13: gripy zostawały po starej stronie):
+        // odbicie wzdłuż prętów — Flipped (gripy krawędzi / zakresu) i SymbolSide Left ↔ Right; odbicie w poprzek (kolejność prętów)
+        // — SymbolDirection Up ↔ Down, SkewStart ↔ SkewEnd, widoczne indeksy i → n − 1 − i. BTR przebudowany. br — otwarty do zapisu.
+        // ----------------------------------------------------------------
+        public static void ApplyMirror(BlockReference br, bool flipAlong, bool flipAcross)
+        {
+            if (!flipAlong && !flipAcross) return;
+            var bar = ReadXData(br);
+            if (bar == null) return;
+            if (flipAlong)
+            {
+                bar.Flipped = !bar.Flipped;
+                if (bar.SymbolSide == "Left") bar.SymbolSide = "Right";
+                else if (bar.SymbolSide == "Right") bar.SymbolSide = "Left";
+            }
+            if (flipAcross)
+            {
+                bar.SymbolDirection = bar.SymbolDirection == "Down" ? "Up" : "Down";
+                double s0 = bar.SkewStart; bar.SkewStart = bar.SkewEnd; bar.SkewEnd = s0;
+                if (bar.Count > 1 && !string.IsNullOrWhiteSpace(bar.VisibleIndices))
+                {
+                    var idx = new List<string>();
+                    foreach (var part in bar.VisibleIndices.Split(','))
+                        idx.Add(int.TryParse(part.Trim(), out int i) ? (bar.Count - 1 - i).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                                                     : part.Trim());
+                    bar.VisibleIndices = string.Join(",", idx);
+                }
+            }
+            ClearSkewCache(br.BlockTableRecord.Handle.Value);
+            WriteXData(br, bar);
+            using var tr = br.Database.TransactionManager.StartTransaction();
+            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            EraseAllInBtr(tr, btr);
+            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
+            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+            tr.Commit();
+        }
+
+        // ----------------------------------------------------------------
         // RebuildVisibility — zmienia VisibilityMode/VisibleIndices i przebudowuje BTR.
         // Wywoływane przez RC_EDIT_LABEL po zmianie bar visibility.
         // ----------------------------------------------------------------
