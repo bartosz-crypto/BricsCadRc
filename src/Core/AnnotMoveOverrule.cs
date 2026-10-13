@@ -268,9 +268,8 @@ namespace BricsCadRc.Core
                 BarBlockEngine.RegenerateBarBlock(br, newSpan, newSkewStart: newSkewStart);
                 updated = BarBlockEngine.ReadXData(br);
 
-                var annotId = ResolveAnnotId(br, updated);
-                if (!annotId.IsNull && tr.GetObject(annotId, OpenMode.ForWrite) is BlockReference annot)
-                    annot.Position = annot.Position + move;
+                // uwaga Bartka 2026-10-13: opis NIE jedzie z gripem początku (wcześniej przesuwany o move) — linia rozkładu
+                // dopasowuje się w SyncAnnotation (offset blok − opis), tekst i ramię zostają na miejscu
                 tr.Commit();
             }
             if (updated != null)

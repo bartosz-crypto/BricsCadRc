@@ -562,7 +562,12 @@ namespace BricsCadRc.Core
             {
                 // Po usunięciu skosu: punkt pośredni zbędny, jeśli wszystkie punkty leżą na jednej prostej osi
                 bool colinear = pts.All(q => alongIsY ? Math.Abs(q.X - p0.X) < 1e-3 : Math.Abs(q.Y - p0.Y) < 1e-3);
-                return colinear && pts.Count > 2 ? new List<Point3d> { p0, last } : pts;
+                if (colinear && pts.Count > 2) return new List<Point3d> { p0, last };
+                // 2026-10-13 (uwaga Bartka: skos gripem i powrót do poziomu psuł opis): załamanie po skosie [środek, koniec
+                // skośnej linii, koniec ramienia wzdłuż osi] — z powrotem prosty leader wzdłuż osi przez środek linii rozkładu
+                if (pts.Count == 3 && dCross < 1e-3)
+                    return new List<Point3d> { p0, alongIsY ? new Point3d(p0.X, last.Y, 0) : new Point3d(last.X, p0.Y, 0) };
+                return pts;
             }
 
             var end = positive ? distEnd : distStart;

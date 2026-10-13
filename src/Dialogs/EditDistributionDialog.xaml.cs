@@ -41,6 +41,8 @@ namespace BricsCadRc.Dialogs
             SpacingBox.Text = bar.Spacing.ToString("F0", CultureInfo.InvariantCulture);
             CoverBox.Text   = bar.Cover.ToString("F0", CultureInfo.InvariantCulture);
             SpanBox.Text    = bar.BarsSpan.ToString("F0", CultureInfo.InvariantCulture);
+            _origSpan       = bar.BarsSpan;
+            _origSpanText   = SpanBox.Text;
             _suppressRecalc = false;
 
             _prevCount    = bar.Count;
@@ -70,6 +72,26 @@ namespace BricsCadRc.Dialogs
                 CbAddAnnotation.Visibility = Visibility.Visible;
         }
 
+        // decyzja użytkownika 2026-10-13: zakres rozkładu (Span — gripy na krawędziach) NIE zmienia się przy zmianie liczby
+        // ani rozstawu. Rozstaw → liczba = ile się zmieści w zakresie (195: nadal 12, 190: wskakuje 13). Liczba większa, niż się
+        // mieści → rozstaw zmniejszony (w dół do 5), zakres bez zmian. Zakres zmienia tylko pole „Span” (i gripy).
+
+        // dokładny zakres rozkładu (pole pokazuje F0 — bez edycji pola zakres zostaje co do ułamka, gripy bez drgnięcia)
+        private double _origSpan = double.NaN;
+        private string _origSpanText;
+
+        private bool TryGetSpan(out double span)
+        {
+            if (_origSpanText != null && SpanBox.Text == _origSpanText && !double.IsNaN(_origSpan)) { span = _origSpan; return true; }
+            return NumberParser.TryParseDouble(SpanBox.Text, out span);
+        }
+
+        private double CurrentSpan()
+            => TryGetSpan(out var sp) && sp >= 0 ? sp : _prevBarsSpan;
+
+        private static int FitCount(double span, double spacing)
+            => spacing > 0 ? Math.Max(1, (int)Math.Floor(span / spacing + 1e-9) + 1) : 1;
+
         private void OnCountChanged(object sender, RoutedEventArgs e)
         {
             if (_suppressRecalc) return;
@@ -79,18 +101,17 @@ namespace BricsCadRc.Dialogs
             if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0)
             { _prevCount = newCount; RestartPreviewTimer(); return; }
 
-            if (newCount > _prevCount)
+            double span = CurrentSpan();
+            if (newCount > 1 && (newCount - 1) * spacing > span + 1e-6)
             {
-                double needed = (newCount - 1) * spacing;
-                if (!NumberParser.TryParseDouble(SpanBox.Text, out var currSpan))
-                    currSpan = 0;
-                if (needed > currSpan)
-                {
-                    _suppressRecalc = true;
-                    SpanBox.Text = needed.ToString("F0", CultureInfo.InvariantCulture);
-                    _suppressRecalc = false;
-                    _prevBarsSpan = needed;
-                }
+                // nie poszerzamy zakresu — zagęszczamy (rozstaw w dół do 5 mm)
+                double sp = Math.Floor(span / (newCount - 1) / 5.0 + 1e-9) * 5.0;
+                if (sp <= 0) { newCount = FitCount(span, spacing); sp = spacing; }
+                _suppressRecalc = true;
+                SpacingBox.Text = sp.ToString("F0", CultureInfo.InvariantCulture);
+                CountBox.Text   = newCount.ToString(CultureInfo.InvariantCulture);
+                _suppressRecalc = false;
+                _prevSpacing = sp;
             }
 
             _prevCount = newCount;
@@ -103,22 +124,12 @@ namespace BricsCadRc.Dialogs
             if (!NumberParser.TryParseDouble(SpacingBox.Text, out var newSpacing) || newSpacing <= 0)
             { RestartPreviewTimer(); return; }
 
-            if (!int.TryParse(CountBox.Text, out int count))
-            { _prevSpacing = newSpacing; RestartPreviewTimer(); return; }
-
-            if (newSpacing > _prevSpacing)
-            {
-                double needed = (count - 1) * newSpacing;
-                if (!NumberParser.TryParseDouble(SpanBox.Text, out var currSpan))
-                    currSpan = 0;
-                if (needed > currSpan)
-                {
-                    _suppressRecalc = true;
-                    SpanBox.Text = needed.ToString("F0", CultureInfo.InvariantCulture);
-                    _suppressRecalc = false;
-                    _prevBarsSpan = needed;
-                }
-            }
+            // liczba = ile się zmieści w niezmienionym zakresie
+            int fit = FitCount(CurrentSpan(), newSpacing);
+            _suppressRecalc = true;
+            CountBox.Text = fit.ToString(CultureInfo.InvariantCulture);
+            _suppressRecalc = false;
+            _prevCount = fit;
 
             _prevSpacing = newSpacing;
             RestartPreviewTimer();
@@ -130,21 +141,14 @@ namespace BricsCadRc.Dialogs
             if (!NumberParser.TryParseDouble(SpanBox.Text, out var newSpan) || newSpan < 0)
             { RestartPreviewTimer(); return; }
 
-            if (newSpan < _prevBarsSpan)
+            // 2026-10-13: nowy zakres → liczba = ile się zmieści przy obecnym rozstawie (w obie strony)
+            if (NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) && spacing > 0)
             {
-                if (!int.TryParse(CountBox.Text, out int count))
-                { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
-                if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0)
-                { _prevBarsSpan = newSpan; RestartPreviewTimer(); return; }
-
-                int newCount = Math.Max(1, (int)(newSpan / spacing) + 1);
-                if (newCount < count)
-                {
-                    _suppressRecalc = true;
-                    CountBox.Text = newCount.ToString(CultureInfo.InvariantCulture);
-                    _suppressRecalc = false;
-                    _prevCount = newCount;
-                }
+                int fit = FitCount(newSpan, spacing);
+                _suppressRecalc = true;
+                CountBox.Text = fit.ToString(CultureInfo.InvariantCulture);
+                _suppressRecalc = false;
+                _prevCount = fit;
             }
 
             _prevBarsSpan = newSpan;
@@ -169,7 +173,8 @@ namespace BricsCadRc.Dialogs
             if (!int.TryParse(CountBox.Text, out int count) || count < 1) return;
             if (!NumberParser.TryParseDouble(SpacingBox.Text, out var spacing) || spacing <= 0) return;
             if (!NumberParser.TryParseDouble(CoverBox.Text, out var cover))   return;
-            if (!NumberParser.TryParseDouble(SpanBox.Text, out var span))    return;
+            if (!TryGetSpan(out var span))    return;
+            if (count > 1 && (count - 1) * spacing > span + 1e-6) count = FitCount(span, spacing);   // zakres bez zmian
             PreviewApplied = true;
             _onPreview?.Invoke(count, spacing, cover, span);
         }
@@ -182,11 +187,12 @@ namespace BricsCadRc.Dialogs
             { MessageBox.Show("Rozstaw musi być > 0", "Edycja rozkładu"); return; }
             if (!NumberParser.TryParseDouble(CoverBox.Text, out var cover) || cover < 0)
             { MessageBox.Show("Otulina ≥ 0", "Edycja rozkładu"); return; }
-            if (!NumberParser.TryParseDouble(SpanBox.Text, out var span) || span < 0)
+            if (!TryGetSpan(out var span) || span < 0)
             { MessageBox.Show("Rozpiętość ≥ 0", "Edycja rozkładu"); return; }
 
-            if ((count - 1) * spacing > span)
-                span = (count - 1) * spacing;
+            // 2026-10-13: zakres bez zmian — za dużo prętów → tyle, ile się zmieści
+            if (count > 1 && (count - 1) * spacing > span + 1e-6)
+                count = FitCount(span, spacing);
 
             ResultCount          = count;
             ResultSpacing        = spacing;

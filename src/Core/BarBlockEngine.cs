@@ -847,8 +847,10 @@ namespace BricsCadRc.Core
             {
                 // non-flipped: edge at local X=0   → grip just before edge (X=-c), below first bar (Y=-c)
                 // flipped:     edge at local X=LengthA → grip just past edge (X=LengthA+c), below first bar (Y=-c)
+                // 2026-10-13: odbity (Flipped) — też z SkewStart (grip przy końcu pierwszego pręta, jak GripSpan z SkewEnd);
+                // wcześniej po skosie gripem grip zostawał w starym miejscu
                 local = bar.Flipped
-                    ? new Point3d(bar.LengthA + c, -c, 0)
+                    ? new Point3d(bar.SkewStart + bar.LengthA + c, -c, 0)
                     : new Point3d(bar.SkewStart - c, -c, 0);
             }
             else
@@ -856,7 +858,7 @@ namespace BricsCadRc.Core
                 // non-flipped: edge at local Y=0   → grip left of first bar (X=-c), just before edge (Y=-c)
                 // flipped:     edge at local Y=LengthA → grip left of first bar (X=-c), just past edge (Y=LengthA+c)
                 local = bar.Flipped
-                    ? new Point3d(-c, bar.LengthA + c, 0)
+                    ? new Point3d(-c, bar.SkewStart + bar.LengthA + c, 0)
                     : new Point3d(-c, bar.SkewStart - c, 0);
             }
             return local.TransformBy(br.BlockTransform);
