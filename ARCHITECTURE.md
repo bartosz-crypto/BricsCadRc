@@ -876,6 +876,14 @@ Koniec belki przy krawędzi (UB 03 co 150 + pojedynczy UB 03 drugiego kierunku, 
 (także noga L / U; wcześniej tylko strefy prostokątne). Strzemiona przy załamaniu (narożnik L) — obie nogi kończą się przed kwadratem
 narożnika (kwadrat zbrojony U-barami; [34] nieużywany, w oknie wyłączony). Pionowe U-bary narożnika L / złącza T — też 1 pręt widoczny (wcześniej wszystkie); w detalu rozkłady bez wygaszenia są przeszkodą
 w `ResolveRepresentativeCollisions`.
+**Decyzje Bartka 2026-10-13 (siatka przy końcu belki w płycie):** koniec WEWNĘTRZNY odcinka belki — pręty siatki równoległe do belki
+(dół i góra), dochodzące do jej końca, kotwią się W BELCE na `MeshAnchorIntoBeam` (40·Ø w górę do 50 + 50: H10 450, H12 550; zakres
+Bartka H10 450–550, H12 550–700) — `MeshCutRects` skraca odcięcie pasa o kotwienie + otulinę. T IN NIB na krawędzi, przy której belka
+leży tylko na części — tylko poza belką, do linii uskoku w nibie (lico końca belki; dalej pręty w nibie belki w detalu). Pojedynczy UB 03
+na uskoku w nibie przy końcu wewnętrznym belki krawędziowej (pręty wzdłuż nibu, zagięcie na uskoku, ramiona w stronę belki) — w detalu
+(`endExtras`); po stronie PŁYTY drugi pojedynczy UB 03 na tym samym uskoku — na rzucie dolnym (`planSteps`, też przy końcu belki przy
+krawędzi; tylko pełny przebieg Mesh / UB). UB 03 przy belce w trybie detalu, gdy detalu jeszcze nie ma — NIE na rzucie (`NibUbTarget.Skip`;
+wcześniej rysowane na rzucie i znikały po Beam); Beam rysuje je w detalu.
 Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) — **K7 (staging)**.
 **Praktyka biura (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md): K1–K9 zrobione (staging, do testów Bartka; K9 — detal 1:25, niżej)** — opis E3–E4 niżej jest
 HISTORYCZNY tam, gdzie K2 / K3 go zmieniają (strzemiona, pręty podłużne, zamknięcia końców, numeracja):

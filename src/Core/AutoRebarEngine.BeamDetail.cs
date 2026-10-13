@@ -130,6 +130,9 @@ namespace BricsCadRc.Core
             public bool EndAt150;
             /// <summary>Narożnik płyty na górnym końcu odcinka (pręty od segHigh w dół do uskoku); inaczej od segLow w górę.</summary>
             public bool FromHigh;
+            /// <summary>2026-10-13: krawędź przy belce w trybie detalu, detal jeszcze nie istnieje — UB 03 NIE na rzucie (Beam narysuje je
+            /// w detalu; wcześniej rysowane na rzucie i znikały po Beam).</summary>
+            public bool Skip;
         }
 
         /// <summary>UB 03 na końcu belki przy krawędzi: rozstaw (decyzja użytkownika 2026-10-12 „dajemy co 150 UB … TYLKO do stepa w nibie”).</summary>
@@ -143,12 +146,13 @@ namespace BricsCadRc.Core
         /// Null — brak (UB 03 jak dotąd).
         /// </summary>
         private static (double lo, double hi, NibUbZone zone, bool fromHigh)? BeamEndUbPortion(List<NibUbZone> zones, bool verticalEdge,
-                                                                                              double edgeCoord, double segLow, double segHigh)
+                                                                                              double edgeCoord, double segLow, double segHigh,
+                                                                                              bool needDetail = true)
         {
             if (zones == null) return null;
             foreach (var z in zones)
             {
-                if (!z.DetailView || !z.HasDetail || z.Segs == null) continue;
+                if (!z.DetailView || (needDetail && !z.HasDetail) || z.Segs == null) continue;
                 // każdy odcinek strefy (prostokąt, noga L / U) z końcem przy krawędzi płyty (decyzja 2026-10-13 — wcześniej tylko
                 // strefy prostokątne, belka L traciła UB 03 co 150 i pojedynczy UB 03 drugiego kierunku)
                 foreach (var sg in z.Segs)
@@ -297,9 +301,10 @@ namespace BricsCadRc.Core
                 if (free >= 0.5 * (hi - lo)) continue;
                 if (!z.HasDetail)
                 {
+                    // 2026-10-13 (uwaga Bartka: UB 03 na rzucie po Mesh znikały po Beam): od początku bez UB 03 na rzucie przy belce
                     ed.WriteMessage($"\n[AutoRebar UB] UB 03: krawędź {(vertical ? "x" : "y")}={edgeCoord:F0} przy belce {z.Zone} — detal 1:25 jeszcze " +
-                                    "nie istnieje, UB 03 na rzucie; RC_GENERATE → Beam przeniesie je do detalu.\n");
-                    return null;
+                                    "nie istnieje: UB 03 przy belce nie na rzucie, RC_GENERATE → Beam narysuje je w detalu.\n");
+                    return new NibUbTarget { Zone = z, Skip = true };
                 }
                 return new NibUbTarget { Zone = z };
             }
@@ -317,7 +322,7 @@ namespace BricsCadRc.Core
             if (zones == null || hi - lo < 1e-6) return null;
             foreach (var z in zones)
             {
-                if (!z.DetailView || !z.HasDetail) continue;
+                if (!z.DetailView) continue;   // bez detalu — części przy belce pomijane (Skip), Beam narysuje je w detalu
                 var free = RectilinearPolygons.UncoveredParts(lo, hi, z.UbLoops, horizontal: !vertical, innerCoord)
                                               .Where(q => q.Hi - q.Lo > 1.0).OrderBy(q => q.Lo).ToList();
                 if (hi - lo - free.Sum(q => q.Hi - q.Lo) < 300.0) continue;

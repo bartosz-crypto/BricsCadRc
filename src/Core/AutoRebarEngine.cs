@@ -915,7 +915,7 @@ namespace BricsCadRc.Core
                         foreach (var (plo, phi, pz) in split)
                         {
                             validSegments.Add((edgeCoord, plo, phi, symbolSide));
-                            segTargets.Add(pz == null ? null : new NibUbTarget { Zone = pz });
+                            segTargets.Add(pz == null ? null : new NibUbTarget { Zone = pz, Skip = !pz.HasDetail });
                         }
                         ed.WriteMessage($"\n[AutoRebar UB] UB 03: krawędź {(isUBB1 ? "x" : "y")}={edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] — " +
                                         "część przy belce w detalu: " +
@@ -941,6 +941,59 @@ namespace BricsCadRc.Core
                     double along = ne2.OuterCoord + ne2.InwardSign * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + ubDia / 2.0);
                     endExtras.Add((fromHigh ? plo : phi, along, fromHigh ? "Left" : "Right", new NibUbTarget { Zone = ez }));
                 }
+            // 2026-10-13 (uwaga Bartka): koniec WEWNĘTRZNY belki krawędziowej, nib idzie dalej wzdłuż krawędzi — na uskoku w nibie
+            // (lico końca belki; za nim płyta wyżej) pojedynczy UB 03 prętami wzdłuż nibu: zagięcie na uskoku, ramiona w stronę belki
+            if (nibUB && ubZones != null && ubZones.Count > 0)
+                foreach (var z in ubZones.Where(x => x.DetailView && x.HasDetail && x.Segs != null))
+                    foreach (var sg in z.Segs.Where(x => !x.Manual && x.OuterSide != 0 && x.AlongX == isUBB1))
+                    {
+                        double outerFace = sg.OuterSide < 0 ? sg.AcrossLo : sg.AcrossHi;
+                        var ne2 = nib.Edges.FirstOrDefault(x => x.Vertical != isUBB1
+                                                                && Math.Abs(x.OuterCoord - outerFace) <= BeamGeometry.EdgeEndMaxGap + 1.0
+                                                                && Math.Min(x.Hi, sg.FaceHi) - Math.Max(x.Lo, sg.FaceLo) > 1.0);
+                        if (ne2 == null) continue;
+                        double along = ne2.OuterCoord + ne2.InwardSign * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + ubDia / 2.0);
+                        if (sg.LoKind == BeamGeometry.EndKind.Internal && sg.FaceLo > ne2.Lo + 100.0)
+                            endExtras.Add((sg.FaceLo, along, "Left", new NibUbTarget { Zone = z }));
+                        if (sg.HiKind == BeamGeometry.EndKind.Internal && sg.FaceHi < ne2.Hi - 100.0)
+                            endExtras.Add((sg.FaceHi, along, "Right", new NibUbTarget { Zone = z }));
+                    }
+
+            // 2026-10-13: krawędzie przy belce bez detalu (Skip) — bez UB 03 na rzucie (Beam narysuje je w detalu)
+            for (int i = validSegments.Count - 1; i >= 0; i--)
+                if (segTargets[i] != null && segTargets[i].Skip) { validSegments.RemoveAt(i); segTargets.RemoveAt(i); }
+
+            // 2026-10-13 (uwaga Bartka „potrzebne są i tu i tu — po obu stronach uskoku”): pojedynczy UB 03 na uskoku w nibie po stronie
+            // PŁYTY — na rzucie (w detalu jest ten po stronie belki): koniec belki przy krawędzi i koniec wewnętrzny belki krawędziowej;
+            // tylko przy pełnym przebiegu (Mesh / UB — przebieg „tylko detal” nie rusza UB 03 rzutu)
+            var planSteps = new List<(double stepC, double along, string side)>();
+            if (nibUB && !onlyBeamDetail && ubZones != null && ubZones.Count > 0)
+            {
+                foreach (var ne2 in nib.Edges.Where(x => x.Vertical != isUBB1))
+                {
+                    var ep = BeamEndUbPortion(ubZones, ne2.Vertical, ne2.OuterCoord, ne2.Lo, ne2.Hi, needDetail: false);
+                    if (ep == null) continue;
+                    var (plo, phi, _, fromHigh) = ep.Value;
+                    double along = ne2.OuterCoord + ne2.InwardSign * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + ubDia / 2.0);
+                    // belka po stronie wyższej (fromHigh) — płyta niżej: pręty od uskoku w dół („Right”)
+                    if (fromHigh ? plo - ne2.Lo > 300.0 : ne2.Hi - phi > 300.0)
+                        planSteps.Add((fromHigh ? plo : phi, along, fromHigh ? "Right" : "Left"));
+                }
+                foreach (var z in ubZones.Where(x => x.DetailView && x.Segs != null))
+                    foreach (var sg in z.Segs.Where(x => !x.Manual && x.OuterSide != 0 && x.AlongX == isUBB1))
+                    {
+                        double outerFace = sg.OuterSide < 0 ? sg.AcrossLo : sg.AcrossHi;
+                        var ne2 = nib.Edges.FirstOrDefault(x => x.Vertical != isUBB1
+                                                                && Math.Abs(x.OuterCoord - outerFace) <= BeamGeometry.EdgeEndMaxGap + 1.0
+                                                                && Math.Min(x.Hi, sg.FaceHi) - Math.Max(x.Lo, sg.FaceLo) > 1.0);
+                        if (ne2 == null) continue;
+                        double along = ne2.OuterCoord + ne2.InwardSign * (BeamGeometry.NibUbEdgeCover + BeamNibUbDia + ubDia / 2.0);
+                        if (sg.LoKind == BeamGeometry.EndKind.Internal && sg.FaceLo > ne2.Lo + 300.0)
+                            planSteps.Add((sg.FaceLo, along, "Right"));
+                        if (sg.HiKind == BeamGeometry.EndKind.Internal && sg.FaceHi < ne2.Hi - 300.0)
+                            planSteps.Add((sg.FaceHi, along, "Left"));
+                    }
+            }
 
             if (onlyBeamDetail)
             {
@@ -953,7 +1006,7 @@ namespace BricsCadRc.Core
             ed.WriteMessage($"\n[AutoRebar UB] Segments ({filterDirection}): {candidates.Count} total, " +
                             $"{validSegments.Count} valid, {tooShortCount} too short.\n");
 
-            if (validSegments.Count == 0 && endExtras.Count == 0)
+            if (validSegments.Count == 0 && endExtras.Count == 0 && planSteps.Count == 0)
             {
                 // rekord RC_BEAM [38] „bez nibu”: wszystkie krawędzie nibu tego kierunku przy belkach bez nibu — stare UB 03 usuwane
                 if (nibUB && nib.BeamNibsRemoved && oldUBs.Count > 0)
@@ -1306,6 +1359,30 @@ namespace BricsCadRc.Core
                         ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] UB 03 na końcu belki: {ex.Message}\n");
                     }
                     finally { ResetBeamDetailOverrides(); }
+                }
+                // 2026-10-13: pojedyncze UB 03 na uskoku po stronie płyty — na rzucie (skala rzutu, bez znacznika strefy)
+                foreach (var (stepC, along, side) in planSteps)
+                {
+                    try
+                    {
+                        bool ok = GenerateUBDistribution(
+                            db, stepC, along, along, 0.0, 0.0,
+                            templateBarId, templateBar, ubLengthA, ubLengthB, ubLengthC, spacing, layerCode, side,
+                            SpacingMode.Nominal, slabAcrossMin, slabAcrossMax, ubPosNr, ubShapeCode, filterDirection,
+                            forcedSpacing: spacing, representativeOnly: representativeOnly, diameter: ubDia,
+                            annotAlongWorld: stepC + (side == "Left" ? -NibUBAnnotOutside : NibUBAnnotOutside));
+                        if (ok)
+                        {
+                            generated++;
+                            ed.WriteMessage($"\n[AutoRebar UB] UB 03: uskok w nibie przy belce ({(isUBB1 ? "y" : "x")}={along:F0}, " +
+                                            $"{(isUBB1 ? "x" : "y")}={stepC:F0}) — 1 UB 03 po stronie płyty na rzucie (2026-10-13).\n");
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Log.Error("AutoRebar UB plan step", ex);
+                        ed.WriteMessage($"\n*** ERROR *** [AutoRebar UB] UB 03 na uskoku (rzut): {ex.Message}\n");
+                    }
                 }
                 // tytuł detalu pod UB 03 dodanymi po Beam (tylko obniżany)
                 foreach (var zh in detailZones) UpdateBeamDetailTitle(db, zh);
@@ -2779,8 +2856,9 @@ namespace BricsCadRc.Core
             var bb = (x0: nib.Outer.Min(v => v.X), y0: nib.Outer.Min(v => v.Y),
                       x1: nib.Outer.Max(v => v.X), y1: nib.Outer.Max(v => v.Y));
 
-            foreach (var e in nib.Edges.Where(e => e.Vertical != horizontal))
+            foreach (var e0 in nib.Edges.Where(x => x.Vertical != horizontal))
             {
+                var e = e0;
                 double p1 = e.OuterCoord + e.InwardSign * cover;            // pręt w nibie
                 double p2 = p1 + e.InwardSign * NibTopSpacing;               // pręt za uskokiem
                 // decyzja 2026-10-11 „jedna pozycja bottom in nib i top”: przy belce pręty w nibie (2 górą + 1 dołem) — jedną pozycją z belki
@@ -2793,6 +2871,22 @@ namespace BricsCadRc.Core
                                     "(decyzja 2026-10-11).\n");
                     continue;
                 }
+                // 2026-10-13 (uwaga Bartka): belka tylko na części krawędzi (np. koniec belki wewnątrz krawędzi) — T IN NIB tylko poza
+                // belką, do linii uskoku w nibie (lico końca belki; tam belka niżej — pręty w nibie belki „T+B IN NIB” w detalu)
+                var eParts = e2 == null ? new List<(double Lo, double Hi)> { (e0.Lo, e0.Hi) }
+                                        : EdgePartsOutsideBeams(e2, e0.Vertical, e0.InnerCoord, e0.Lo, e0.Hi)
+                                              .Where(q => q.Hi - q.Lo >= 100.0).ToList();
+                foreach (var part in eParts)
+                {
+                bool cutLo = part.Lo > e0.Lo + 1.0, cutHi = part.Hi < e0.Hi - 1.0;
+                e = new NibDetector.NibEdge
+                {
+                    Vertical = e0.Vertical, OuterCoord = e0.OuterCoord, InnerCoord = e0.InnerCoord,
+                    Lo = part.Lo, Hi = part.Hi, InwardSign = e0.InwardSign
+                };
+                if (cutLo || cutHi)
+                    ed.WriteMessage($"\n[AutoRebar] {NibTopSuffix}: krawędź {(e.Vertical ? "x" : "y")}={e.OuterCoord:F0} — część przy belce " +
+                                    $"pominięta, T IN NIB [{part.Lo:F0}..{part.Hi:F0}] do linii uskoku w nibie (2026-10-13).\n");
                 double sLo = Math.Min(p1, p2), sHi = Math.Max(p1, p2);
 
                 // Za końcem nibu pręty wchodzą do 600 mm w płytę, jeśli płyta tam jest (narożnik wklęsły);
@@ -2811,6 +2905,9 @@ namespace BricsCadRc.Core
                     spaceLo = Math.Max(spaceLo, a + cover);
                     spaceHi = Math.Min(spaceHi, b - cover);
                 }
+                // koniec przy belce — bez wejścia dalej (linia uskoku w nibie − otulina)
+                if (cutLo) spaceLo = Math.Max(spaceLo, e.Lo + cover);
+                if (cutHi) spaceHi = Math.Min(spaceHi, e.Hi - cover);
                 runLo = Math.Max(runLo, spaceLo);
                 runHi = Math.Min(runHi, spaceHi);
                 double available = runHi - runLo;
@@ -2910,6 +3007,7 @@ namespace BricsCadRc.Core
                     }
                     finally { _annotAlongOverride = prevAlong; }
                     if (ok) generated++;
+                }
                 }
             }
             return generated;

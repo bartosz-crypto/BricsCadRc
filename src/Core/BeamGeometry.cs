@@ -1477,6 +1477,10 @@ namespace BricsCadRc.Core
         /// Wzdłuż: lica końców odcinka (FaceLo..FaceHi), na końcu przy krawędzi i w narożniku L dalej o <see cref="MeshCutReach"/>
         /// (nib zawinięty / nib narożnika). d — średnica prętów warstwy, spacing — rozstaw nominalny, cover — otulina siatki.
         /// </summary>
+        /// <summary>Zakotwienie pręta siatki w belce na jej końcu wewnętrznym (decyzja użytkownika 2026-10-13: H10 450–550,
+        /// H12 550–700): 40·Ø w górę do 50 + 50 (H10 450, H12 550, H16 700).</summary>
+        public static double MeshAnchorIntoBeam(double d) => Math.Ceiling(40.0 * d / 50.0 - 1e-9) * 50.0 + 50.0;
+
         public static List<RectilinearPolygons.Rect> MeshCutRects(Result an, bool top, bool barsAlongX, double d,
                                                                   double spacing = 200, double cover = 40)
         {
@@ -1490,6 +1494,12 @@ namespace BricsCadRc.Core
                 double cLo, cHi;
                 if (s.AlongX == barsAlongX)
                 {
+                    // 2026-10-13 (uwaga Bartka): koniec wewnętrzny belki (belka kończy się w płycie) — pręty siatki równoległe do belki,
+                    // dochodzące do jej końca, kotwią się W BELCE na MeshAnchorIntoBeam (H10 450, H12 550) — odcięcie pasa krótsze
+                    double anch = MeshAnchorIntoBeam(d) + cover;
+                    if (s.LoKind == EndKind.Internal) eLo = s.FaceLo + anch;
+                    if (s.HiKind == EndKind.Internal) eHi = s.FaceHi - anch;
+                    if (eHi - eLo < 1.0) continue;
                     double off = top ? spacing / 2.0 - cover : d;
                     if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossHi + off; }
                     else if (s.OuterSide > 0) { cLo = s.AcrossLo - off; cHi = s.AcrossHi + MeshCutReach; }
