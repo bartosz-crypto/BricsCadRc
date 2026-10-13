@@ -63,8 +63,9 @@ namespace BricsCadRc.Core
         public double AcrossNominal = 150;
         /// <summary>[29] Dół = góra (Ø i liczba) → jedna pozycja „B+T” (kod BM); false — osobno BB / BT.</summary>
         public bool BothOneMark = true;
-        /// <summary>[30] Obniżenie U-barów drugiego kierunku [mm]: noga Y narożnika L i belka dochodząca złącza T (B − 35).</summary>
-        public double UBarDrop = 35;
+        /// <summary>[30] Obniżenie U-barów zagnieżdżonych [mm]: noga X narożnika L i belka dochodząca złącza T (B − obniżenie);
+        /// 0 = auto: 2·Ø U-bara w górę do 5 (H16 → 35, H12 → 25) — decyzja użytkownika 2026-10-13.</summary>
+        public double UBarDrop = 0;
         /// <summary>[31] Narożnik L / złącze T: pręty proste nogi w kwadrat narożnika do lica zewnętrznego (Holbrook); false — przed
         /// kwadratem (C12, domyślne).</summary>
         public bool CornerStraightIntoSquare;
@@ -73,7 +74,7 @@ namespace BricsCadRc.Core
         /// <summary>[33] Strzemiona względem UB 03: false — niezależnie (domyślne), true — położenia UB 03 + 100.</summary>
         public bool StirrupsAtUb03;
         /// <summary>[34] Strzemiona w kwadracie narożnika L: true — kontynuacja dłuższej nogi (domyślne), false — brak.</summary>
-        public bool CornerSquareLinks = true;
+        public bool CornerSquareLinks = false;   // decyzja użytkownika 2026-10-13: zawsze brak (pole nieużywane w generowaniu)
         /// <summary>[35] Ramię U-bara końca: A = Ceil25(zakład + naddatek) [mm] (90: C12 740, Holbrook 770 — pytanie 14).</summary>
         public double UBarArmExtra = 0;   // decyzja użytkownika 2026-10-12: ramię = zakład standardowy (H16: 650); wcześniej + 90
         /// <summary>[36] K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 (osobny widok w modelu; true — domyślne) albo
@@ -735,12 +736,20 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // decyzja użytkownika 2026-10-12: „strzemion tyle, ile się zmieści na długości” — rozstaw = s, liczba w dół, reszta po równo
-            // na obu końcach (wcześniej: liczba w górę, rozstaw ≤ s)
+            // decyzja użytkownika 2026-10-12: „strzemion tyle, ile się zmieści na długości” — rozstaw = s, liczba w dół;
+            // 2026-10-13: pierwsze strzemię zawsze przy licu (otulina 40), reszta przy drugim końcu (wcześniej po równo na obu
+            // końcach — pierwsze np. 106 od lica)
+            // 2026-10-13 (2): ostatnie strzemię dalej niż LinkMaxEndGap (80) od lica końca (np. 166 przy kwadracie narożnika) —
+            // +1 strzemię, rozstaw równy ≤ s, oba końce przy otulinie (jak UB: zagęszczamy, nigdy nie rozszerzamy)
             double span = L - offLo - offHi;
             int n = (int)Math.Floor(span / spacing + 1e-9) + 1;
             double rest = span - (n - 1) * spacing;
-            return (lo + offLo + rest / 2.0, n > 1 ? spacing : 0, n, false);
+            if (n >= 1 && offHi + rest > LinkMaxEndGap + 1e-6)
+            {
+                n++;
+                return (lo + offLo, span / (n - 1), n, false);
+            }
+            return (lo + offLo, n > 1 ? spacing : 0, n, false);
         }
 
         /// <summary>
@@ -749,6 +758,14 @@ namespace BricsCadRc.Core
         /// w strefie U-barów; wcześniej E4: 125 za tyłami poziomych U-barów).
         /// </summary>
         public static double StirrupFirstOffset(int dLink, double cover = DefaultCoverSide) => cover + dLink / 2.0;
+
+        /// <summary>Otulina strzemion od lica końca zakresu (decyzja użytkownika 2026-10-13 „zaczynają się 40 mm od krawędzi belki”):
+        /// oś pierwszego strzemienia = 40 + Ø/2 (H12: 46).</summary>
+        public const double LinkEndCover = 40.0;
+
+        /// <summary>Największa odległość osi ostatniego strzemienia od lica końca zakresu bez dodatkowego strzemienia [mm]
+        /// (decyzja użytkownika 2026-10-13: „80 od krawędzi ok, więcej — zagęszczamy”).</summary>
+        public const double LinkMaxEndGap = 80.0;
 
         /// <summary>
         /// Plan prętów podłużnych (proste, siatka 250, maks. maxLen, zakład w przedziale [lap, lap + grid) — decyzja 1c: 800,
@@ -894,6 +911,18 @@ namespace BricsCadRc.Core
         private static double Floor25(double v) => Math.Floor(v / 25.0 + 1e-6) * 25.0;
 
         private static double Floor5(double v) => Math.Floor(v / 5.0 + 1e-6) * 5.0;
+        /// <summary>W górę do 5 mm (2·Ø: H12 24 → 25, H16 32 → 35).</summary>
+        public static double Ceil5(double v) => Math.Ceiling(v / 5.0 - 1e-6) * 5.0;
+
+        /// <summary>
+        /// Warstwy strzemion (decyzja użytkownika 2026-10-13): odcinki wzdłuż Y — pierwsza warstwa, A = H − otuliny (z zapasem);
+        /// odcinki wzdłuż X — druga warstwa, A − 15 (strzemiona odsunięte od górnej siatki o pręt górny 12 + 3 zapasu).
+        /// </summary>
+        public const double SecondLayerLinkDrop = 15.0;
+
+        /// <summary>Wysokość strzemienia odcinka: <paramref name="firstLayerA"/> (wzdłuż Y) albo − 15 (wzdłuż X, druga warstwa).</summary>
+        public static double LinkHeightFor(double firstLayerA, bool alongX)
+            => alongX ? Math.Max(0, firstLayerA - SecondLayerLinkDrop) : firstLayerA;
 
         /// <summary>
         /// K3: pręty proste jednej warstwy (BM / BB / BT) wszystkich odcinków osiowych — PlanBars na zakresie
@@ -963,8 +992,10 @@ namespace BricsCadRc.Core
         /// <summary>
         /// K3 (praktyka biura C12 / Holbrook — docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne do potwierdzenia): pionowe U-bary
         /// kształt 21 na każdym końcu z zamknięciem UBar / LBar / Tee, po jednym na kolumnę prętów (columns), w osiach kolumn:
-        ///   • B = A strzemienia − 2·Ø strzemienia (w dół do 5; 528 A 290 → 265, 319: 365 → 340, 539: 215 → 190); noga Y narożnika L
-        ///     i belka dochodząca złącza T — B − drop (35: zestawy krzyżują się w kwadracie piętrowo);
+        ///   • (decyzja użytkownika 2026-10-13) B = A strzemienia własnej warstwy − 2·Ø strzemienia w górę do 5 (H12 → −25):
+        ///     odcinek wzdłuż Y (1. warstwa, A = stirrupA: 450 → 365 → 340), wzdłuż X (2. warstwa, A − 15: 350 → 325);
+        ///     noga X narożnika L i belka dochodząca złącza T — wewnątrz U-barów 1. warstwy: B(Y) − 2·Ø U-bara w górę do 5
+        ///     (drop; 0 = auto, H16 → 35: 340 → 305);
         ///   • tył U na otulinie czołowej od lica końca (narożnik L — lica zewnętrznego narożnika, złącze T — dalszego lica belki ciągłej);
         ///   • ramię A = C: koniec — Ceil25(max(zakład + armExtra, tył → pręt prosty + zakład)) (zakład 650 + 90 → 750; C12 740);
         ///     narożnik L / złącze T — Ceil25(tył → początek prętów prostych nogi + zakład) (≈ szerokość drugiej nogi + zakład);
@@ -977,8 +1008,10 @@ namespace BricsCadRc.Core
         {
             var res = new List<VUBarRun>();
             if (an == null || columns <= 0 || uDia <= 0) return res;
-            double b0 = Floor5(stirrupA - 2 * dLink);
-            if (b0 <= 0)
+            double b0 = Floor5(stirrupA - 2 * dLink);                                          // 1. warstwa (wzdłuż Y)
+            double bX = Floor5(LinkHeightFor(stirrupA, true) - 2 * dLink);                    // 2. warstwa (wzdłuż X)
+            double nest = drop > 0 ? drop : Ceil5(2.0 * uDia);
+            if (b0 <= 0 || bX <= 0)
             {
                 msgs?.Add(string.Format(CultureInfo.InvariantCulture,
                     "U-bary: wysokość U ≤ 0 (A strzemienia {0:0}) — U-bary pominięte.", stirrupA));
@@ -1011,8 +1044,8 @@ namespace BricsCadRc.Core
                             kind == "E" ? "koniec" : kind == "L" ? "narożnik L" : "złącze T", A, cut));
                         A = cut;
                     }
-                    bool dropped = (kind == "L" && !s.AlongX) || kind == "T";
-                    double B = dropped ? Floor5(b0 - drop) : b0;
+                    bool dropped = (kind == "L" && s.AlongX) || kind == "T";
+                    double B = dropped ? Floor5(b0 - nest) : s.AlongX ? bX : b0;
                     var rows = RowsAcross(s, columns, dMain, dLink, cover);
                     double end = back + sE * A;
                     reach[(s, atLo)] = end;
@@ -1679,7 +1712,8 @@ namespace BricsCadRc.Core
         ///   • zasięg w głąb: linia strefy z GA (odcinek równoległy do linii uskoku 300–1000 w głąb, najbliższy 600), bez niej — 600;
         ///   • zasięg wzdłuż: krawędź linii uskoku, podzielona odcinkami prostopadłymi w pasie (granice stref o różnym H, PLOT 3: 600 / 675);
         ///   • H przedziału: z opisów MText (najczęstsze), MLeader tylko gdy brak MText (inny H z MLeader — ostrzeżenie);
-        ///   • sąsiednia krawędź (narożnik) — dołączona (L / U) tylko, gdy ma własny opis albo linię strefy;
+        ///   • sąsiednia krawędź (narożnik) — dołączona (L / U) tylko, gdy ma własny opis albo linię strefy (na ≥ 50 % krawędzi —
+        ///     cała krawędź do dzielnika; albo tylko przy narożniku — od narożnika do dzielnika / końca linii strefy);
         ///   • przedziały tego samego H stykające się → jeden wielokąt (suma prostokątów).
         /// </summary>
         public static List<ThkZone> ZonesFromThk(IList<ThkStepEdge> edges, IList<ThkText> texts,
@@ -1722,6 +1756,28 @@ namespace BricsCadRc.Core
                     if (o0 <= 5.0 && o1 >= depth - 5.0) r.Add(along);   // odcinek od linii uskoku do linii strefy
                 }
                 return r.OrderBy(x => x).ToList();
+            }
+
+            // linia strefy sąsiedniej krawędzi tylko przy narożniku: równoległa, 300–1000 w głąb, bliższy koniec w zasięgu strefy
+            // narożnika (cornerDepth + 50), długość ≥ 100; (głębokość, dalszy koniec wzdłuż krawędzi)
+            (double depth, double far)? CornerLine(ThkStepEdge e, bool atLo, double cornerDepth)
+            {
+                (double depth, double far)? best = null;
+                foreach (var (a, b) in lines ?? new List<((double X, double Y), (double X, double Y))>())
+                {
+                    bool vert = Math.Abs(a.X - b.X) < 1.0, hor = Math.Abs(a.Y - b.Y) < 1.0;
+                    if (e.Vertical ? !vert : !hor) continue;
+                    double cc = e.Vertical ? (a.X + b.X) / 2 : (a.Y + b.Y) / 2;
+                    double l0 = Math.Max(e.Lo, e.Vertical ? Math.Min(a.Y, b.Y) : Math.Min(a.X, b.X));
+                    double l1 = Math.Min(e.Hi, e.Vertical ? Math.Max(a.Y, b.Y) : Math.Max(a.X, b.X));
+                    double off = (cc - e.C) * e.Inward;
+                    if (off < ThkLineMin || off > ThkLineMax || l1 - l0 < 100.0) continue;
+                    double near = atLo ? l0 - e.Lo : e.Hi - l1;
+                    if (near > cornerDepth + 50.0) continue;
+                    if (best == null || Math.Abs(off - defaultDepth) < Math.Abs(best.Value.depth - defaultDepth))
+                        best = (off, atLo ? l1 : l0);
+                }
+                return best;
             }
 
             var entries = new Dictionary<(int e, double lo, double hi), (List<int> hText, List<int> hLeader, double depth, bool line)>();
@@ -1802,12 +1858,27 @@ namespace BricsCadRc.Core
                             if (f.Vertical == e.Vertical || zoned.Any(x => x.e == j)) continue;
                             if (Math.Abs(f.C - endAlong) > 1.0) continue;
                             if (Math.Abs(f.Lo - e.C) > 1.0 && Math.Abs(f.Hi - e.C) > 1.0) continue;
-                            double? fd = LineDepth(f);
-                            if (!fd.HasValue) continue;
-                            var dv = Dividers(f, fd.Value);
                             bool atLo = Math.Abs(f.Lo - e.C) <= 1.0;
                             double lo = f.Lo, hi = f.Hi;
-                            if (dv.Count > 0) { if (atLo) hi = dv[0]; else lo = dv[dv.Count - 1]; }
+                            double? fd = LineDepth(f);
+                            if (fd.HasValue)
+                            {
+                                var dv = Dividers(f, fd.Value);
+                                if (dv.Count > 0) { if (atLo) hi = dv[0]; else lo = dv[dv.Count - 1]; }
+                            }
+                            else
+                            {
+                                // 2026-10-13: linia strefy tylko przy narożniku (krótka noga L, np. 375THK wzdłuż góry i ~2 m w dół
+                                // prawej krawędzi) — linia równoległa zaczynająca się przy narożniku; zasięg do dzielnika albo do jej końca
+                                var cl = CornerLine(f, atLo, z.depth);
+                                if (!cl.HasValue) continue;
+                                fd = cl.Value.depth;
+                                var dv = Dividers(f, fd.Value);
+                                double far = cl.Value.far;
+                                if (atLo) { hi = Math.Min(f.Hi, far); foreach (var x in dv) if (x > f.Lo + 1.0) { hi = Math.Min(hi, x); break; } }
+                                else { lo = Math.Max(f.Lo, far); for (int q = dv.Count - 1; q >= 0; q--) if (dv[q] < f.Hi - 1.0) { lo = Math.Max(lo, dv[q]); break; } }
+                                if (hi - lo < 100.0) continue;
+                            }
                             zoned.Add((j, lo, hi, z.h, fd.Value));
                             msgs?.Add($"krawędź uskoku {(f.Vertical ? "x" : "y")}={F(f.C)}: linia strefy w GA bez opisu — dołączona do strefy {z.h}THK (L / U).");
                             changed = true;

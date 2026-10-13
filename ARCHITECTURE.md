@@ -856,6 +856,26 @@ reszta po równo na końcach (528: 51); opis „-150” przy rzeczywistym ~157 �
 w serii dolnej — potwierdzone; U-bary belki „nn UB” (≥ 04) — OK; nib w przekroju jak w rzeczywistości (geometria). Pręty boczne i UB SIDE —
 później. Po UB 03 w detalu (`GenerateUBLayerCore`) — ponownie `ResolveRepresentativeCollisions` w ramce detalu (UB 03 i strzemiona
 nie na sobie). Rekordy stref zapisane wcześniej trzymają swoje otuliny / naddatek — nowe wartości po ponownym Prepare GA albo w oknie RC_BEAM.
+**Decyzje Bartka 2026-10-13 (wysokości — warstwy):** strzemiona odcinków wzdłuż Y — 1. warstwa, A = H − 40 − 45 (450: 365); wzdłuż X —
+2. warstwa, A − 15 (350; odsunięte od górnej siatki o pręt 12 + 3 zapasu) — `BeamGeometry.LinkHeightFor` / `SecondLayerLinkDrop`, osobne
+pozycje strzemion X / Y. Pionowe U-bary (`PlanVerticalUBars`): B = A strzemienia własnej warstwy − 2·Ø strzemienia w górę do 5 (`Ceil5`;
+koniec X 325, koniec / narożnik Y 340); noga X narożnika L i belka dochodząca złącza T — wewnątrz U-barów 1. warstwy: 340 − 2·Ø U-bara
+w górę do 5 (H16 → 305; [30] `UBarDrop` 0 = auto, dawniej 35 na nodze Y). Zakład U-bara nogi X liczony od końca prętów prostych przed
+kwadratem narożnika (bez zmian). Strefa z opisów THK (`ZonesFromThk`): sąsiednia krawędź z linią strefy tylko przy narożniku (krótka noga L)
+— dołączona od narożnika do dzielnika / końca linii strefy.
+**Decyzje Bartka 2026-10-13 (detal):** ramka detalu = offset strefy (`BeamDetailRules.FramePolygon`: strefa ⊕ 600 ∩ obrys ⊕ 300,
+kwadratowe naroża — belka L / U daje ramkę L / U, ten sam styl: czerwona przerywana, na rzucie i w detalu); linie rzutu, obrys, uskok
+i pale przycinane do wielokąta ramki (`ClipToPolygon`); okno (`DetailWindow`) = obwiednia ramki. UB 03: krawędź, przy której strefa
+w detalu leży tylko na części (krótka noga L) — część przy belce w detalu, reszta na rzucie (`SplitEdgeByDetailZones`). UB 03 wzdłuż belki w detalu: krawędź = zakres strzemion odcinka (Own) + nib na
+końcu belki przy krawędzi (szerokość nibu mierzona, ≤ 260) → strzemiona + 1 na każdy taki koniec (od krawędzi do krawędzi + 2,
+jeden koniec + 1); inaczej (narożnik L, strzemiona przed krawędzią) — od otuliny do otuliny, rozstaw ≤ 200 (n = ⌈L / 200⌉ + 1).
+Strzemiona: pierwsze zawsze przy licu zakresu — oś 40 + Ø/2 (`LinkEndCover`, H12: 46), rozstaw s, liczba w dół (tyle, ile się
+zmieści), reszta przy drugim końcu (wcześniej otulina 45 i reszta po równo na obu końcach); gdy ostatnie wypada dalej niż 80 od lica
+(`LinkMaxEndGap`, np. 166 przy kwadracie narożnika) — +1 strzemię, rozstaw równy ≤ s, oba końce 40 + Ø/2.
+Koniec belki przy krawędzi (UB 03 co 150 + pojedynczy UB 03 drugiego kierunku, `BeamEndUbPortion`) — dla każdego odcinka strefy
+(także noga L / U; wcześniej tylko strefy prostokątne). Strzemiona przy załamaniu (narożnik L) — obie nogi kończą się przed kwadratem
+narożnika (kwadrat zbrojony U-barami; [34] nieużywany, w oknie wyłączony). Pionowe U-bary narożnika L / złącza T — też 1 pręt widoczny (wcześniej wszystkie); w detalu rozkłady bez wygaszenia są przeszkodą
+w `ResolveRepresentativeCollisions`.
 Status: **E1 + E3 + E4 + E4b + E5 + E6 zrobione (staging)**; E2 (siatka przy belce) — **K7 (staging)**.
 **Praktyka biura (docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md): K1–K9 zrobione (staging, do testów Bartka; K9 — detal 1:25, niżej)** — opis E3–E4 niżej jest
 HISTORYCZNY tam, gdzie K2 / K3 go zmieniają (strzemiona, pręty podłużne, zamknięcia końców, numeracja):

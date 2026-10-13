@@ -153,6 +153,27 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
+        public void K8_CornerLeg_ZoneLineOnlyNearCorner_JoinedAsL()
+        {
+            // 2026-10-13 (PLOT 61–62): 375THK wzdłuż górnej krawędzi, linia strefy skręca w dół prawej krawędzi na ~2 m
+            // i wychodzi poziomo na krawędź — prawa noga L tylko do tego dzielnika (nie cała krawędź)
+            var step = new List<(double X, double Y)> { (0, 0), (10000, 0), (10000, 10000), (0, 10000) };
+            var lines = new List<((double X, double Y) A, (double X, double Y) B)>
+            {
+                ((-135, 9400), (9400, 9400)), ((9400, 9400), (9400, 7500)), ((9400, 7500), (10135, 7500)),
+            };
+            var texts = new List<BeamGeometry.ThkText> { new BeamGeometry.ThkText { Text = "375THK", X = 5000, Y = 9750 } };
+            var msgs = new List<string>();
+            var z = BeamGeometry.ZonesFromThk(StepEdges(step, null!), texts, lines, step, 225, msgs);
+            Assert.That(z.Count, Is.EqualTo(1), string.Join(" | ", msgs));
+            Assert.That(z[0].Height, Is.EqualTo(375));
+            Assert.That(z[0].Polygon.Min(p => p.Y), Is.EqualTo(7500).Within(1e-6), string.Join(" | ", msgs));
+            Assert.That(z[0].Polygon.Min(p => p.X), Is.EqualTo(0).Within(1e-6));
+            Assert.That(RectilinearPolygons.SignedArea(z[0].Polygon), Is.EqualTo(10000 * 600 + 600 * 1900).Within(1e-3));
+            Assert.That(msgs.Any(m => m.Contains("dołączona do strefy 375THK")), Is.True);
+        }
+
+        [Test]
         public void K8_Rejections_SlabThicknessOutsideBand()
         {
             var step = new List<(double X, double Y)> { (0, 0), (10000, 0), (10000, 8000), (0, 8000) };

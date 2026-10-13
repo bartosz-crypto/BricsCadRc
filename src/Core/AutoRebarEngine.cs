@@ -905,6 +905,25 @@ namespace BricsCadRc.Core
                     }
                 }
 
+                // decyzja użytkownika 2026-10-13: strefa w detalu tylko na części krawędzi (krótka noga belki L) — ta część w detalu,
+                // reszta na rzucie jak dotąd
+                if (nibUB && ubZones.Count > 0 && ubTarget == null)
+                {
+                    var split = SplitEdgeByDetailZones(ubZones, isUBB1, nibInner, segLow, segHigh);
+                    if (split != null && split.Count > 0)
+                    {
+                        foreach (var (plo, phi, pz) in split)
+                        {
+                            validSegments.Add((edgeCoord, plo, phi, symbolSide));
+                            segTargets.Add(pz == null ? null : new NibUbTarget { Zone = pz });
+                        }
+                        ed.WriteMessage($"\n[AutoRebar UB] UB 03: krawędź {(isUBB1 ? "x" : "y")}={edgeCoord:F0} [{segLow:F0}..{segHigh:F0}] — " +
+                                        "część przy belce w detalu: " +
+                                        string.Join(", ", split.Where(x => x.zone != null).Select(x => $"[{x.lo:F0}..{x.hi:F0}]")) + ".\n");
+                        continue;
+                    }
+                }
+
                 validSegments.Add((edgeCoord, segLow, segHigh, symbolSide));
                 segTargets.Add(ubTarget);
             }
@@ -1148,17 +1167,46 @@ namespace BricsCadRc.Core
                         ed.WriteMessage($"\n[AutoRebar UB] UB 03: koniec belki {ubTarget.Zone.Zone} przy krawędzi {(isUBB1 ? "x" : "y")}={edgeCoord:F0} " +
                                         $"[{segLow:F0}..{segHigh:F0}] — {nEnd} UB 03 co {NibUbEndSpacing:F0} do uskoku w nibie (decyzja 2026-10-12).\n");
                     }
-                    else if (ubTarget != null && ubTarget.Zone.Links.Count > 0)
+                    else if (ubTarget != null)
                     {
-                        var lk = ubTarget.Zone.Links.Where(l => l.barsX == isUBB1 && Math.Min(l.hi, segHigh) - Math.Max(l.lo, segLow) > 1.0).ToList();
-                        if (lk.Count > 0 && segLow <= lk.Min(l => l.lo) + 1.0 && segHigh >= lk.Max(l => l.hi) - 1.0)
+                        // decyzja użytkownika 2026-10-13: UB 03 wzdłuż belki w detalu —
+                        //  • krawędź = zakres strzemion odcinka belki + nib na końcu (szerokość nibu z geometrii, nie sztywno) → liczba
+                        //    strzemion + 1 na każdy taki koniec (koniec bez nibu: + 0) — belka od krawędzi do krawędzi: + 2;
+                        //  • inaczej (narożnik L, strzemiona kończą się przed krawędzią itp.) — rozkład jak na krawędzi siatki: od otuliny
+                        //    do otuliny, rozstaw ≤ nominalny (200; nigdy szerzej — wtedy +1 pręt)
+                        double span = (segHigh - cover) - (segLow + cover);
+                        int n = span > 1e-6 ? (int)Math.Ceiling(span / spacing - 1e-9) + 1 : 1;
+                        string how = $"rozstaw ≤ {spacing:F0}";
+                        var bs = ubTarget.Zone.Segs?
+                            .Where(x => !x.Manual && x.AlongX == !isUBB1 && x.OuterSide != 0
+                                        && Math.Min(x.OwnHi, segHigh) - Math.Max(x.OwnLo, segLow) > 1.0)
+                            .Select(x => (sg: x, gap: Math.Abs((x.OuterSide < 0 ? x.AcrossLo : x.AcrossHi) - edgeCoord)))
+                            .Where(x => x.gap <= BeamGeometry.EdgeEndMaxGap + 1.0)
+                            .OrderBy(x => x.gap).FirstOrDefault();
+                        if (bs != null && bs.Value.sg != null)
                         {
-                            int nLinks = lk.Sum(l => l.count);
-                            totalCount = nLinks + 2;
-                            distLow = segLow + cover; distHigh = segHigh - cover;
-                            ed.WriteMessage($"\n[AutoRebar UB] UB 03 wzdłuż belki {ubTarget.Zone.Zone}: strzemiona {nLinks} + 2 = {totalCount} " +
-                                            "(nib na całej długości belki; decyzja 2026-10-12).\n");
+                            var sg = bs.Value.sg;
+                            const double tol = 10.0;
+                            // koniec: 0 — krawędź UB 03 kończy się na licu końca belki; 1 — koniec belki przy krawędzi płyty z nibem
+                            // (krawędź dłuższa o szerokość nibu tego końca — mierzona, 115 / 135 / 150 / 225…); −1 — inaczej
+                            int Extra(double e, BeamGeometry.EndKind k)
+                                => Math.Abs(e) <= tol ? 0
+                                 : k == BeamGeometry.EndKind.Edge && e > tol && e <= BeamGeometry.EdgeEndMaxGap + tol ? 1 : -1;
+                            int eLo = Extra(sg.OwnLo - segLow, sg.LoKind), eHi = Extra(segHigh - sg.OwnHi, sg.HiKind);
+                            double nibW = (eLo == 1 ? sg.OwnLo - segLow : 0) + (eHi == 1 ? segHigh - sg.OwnHi : 0);
+                            int nLinks = ubTarget.Zone.Links
+                                .Where(l => l.barsX == isUBB1 && Math.Min(l.hi, sg.OwnHi) - Math.Max(l.lo, sg.OwnLo) > -1.0)
+                                .Sum(l => l.count);
+                            if (eLo >= 0 && eHi >= 0 && nLinks > 0)
+                            {
+                                n = nLinks + eLo + eHi;
+                                how = $"strzemiona {nLinks} + {eLo + eHi} (nib na końcach: {nibW:F0} mm łącznie)";
+                            }
                         }
+                        totalCount = n;
+                        distLow = segLow + cover; distHigh = n > 1 ? segHigh - cover : distLow;
+                        ed.WriteMessage($"\n[AutoRebar UB] UB 03 wzdłuż belki {ubTarget.Zone.Zone}: {n} UB 03 — {how}, rozstaw " +
+                                        $"{(n > 1 ? span / (n - 1) : 0):F0} (decyzja 2026-10-13).\n");
                     }
                     double uSpacing = totalCount > 1 && distHigh > distLow
                         ? (distHigh - distLow) / (totalCount - 1)
@@ -3468,6 +3516,25 @@ namespace BricsCadRc.Core
             return pl.ObjectId;
         }
 
+        /// <summary>Zamknięta polilinia z wierzchołków (ramka detalu belki L / U — decyzja 2026-10-13).</summary>
+        private static ObjectId DrawPolygon(Database db, IList<(double X, double Y)> pts, string layer, short color, ObjectId linetypeId,
+                                            double ltScale)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            var pl = new Polyline();
+            pl.SetDatabaseDefaults(db);
+            for (int i = 0; i < pts.Count; i++) pl.AddVertexAt(i, new Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
+            pl.Closed = true;
+            pl.Layer = layer;
+            pl.ColorIndex = color;
+            if (!linetypeId.IsNull) { pl.LinetypeId = linetypeId; pl.LinetypeScale = ltScale; }
+            space.AppendEntity(pl);
+            tr.AddNewlyCreatedDBObject(pl, true);
+            tr.Commit();
+            return pl.ObjectId;
+        }
+
         private static void DrawLine(Database db, Point3d a, Point3d b, string layer)
         {
             using var tr = db.TransactionManager.StartTransaction();
@@ -3912,6 +3979,19 @@ namespace BricsCadRc.Core
             }
 
             var reps = new List<ParallelSeg>();
+            // detal belki (uwaga Bartka 2026-10-13 — pręty na sobie): rozkłady bez wygaszenia (wszystkie widoczne / 1 pręt) są
+            // przeszkodą dla pozostałych — wszystkie ich widoczne pręty
+            if (beamDetail)
+                foreach (var (_, bar, pos) in dists)
+                {
+                    if (bar.VisibilityMode == BarVisibilityMode.Manual && bar.Count > 1) continue;
+                    int n = Math.Max(1, bar.Count);
+                    var idx = bar.VisibilityMode == BarVisibilityMode.MiddleOnly ? new[] { n / 2 }
+                            : bar.VisibilityMode == BarVisibilityMode.FirstLast ? new[] { 0, n - 1 }
+                            : bar.VisibilityMode == BarVisibilityMode.Manual ? new[] { 0 }
+                            : Enumerable.Range(0, n).ToArray();
+                    foreach (int i in idx.Distinct()) reps.Add(RepSegFor(bar, pos, i));
+                }
             int moved = 0;
             foreach (var (id, bar, pos) in dists.OrderBy(d => d.bar.Direction).ThenBy(d => d.pos.X).ThenBy(d => d.pos.Y))
             {

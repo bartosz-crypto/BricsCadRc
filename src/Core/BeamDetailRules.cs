@@ -83,6 +83,138 @@ namespace BricsCadRc.Core
                             Side(true, 1, z.X1, z.Y0, z.Y1), Side(false, 1, z.Y1, z.X0, z.X1));
         }
 
+        /// <summary>
+        /// Ramka detalu jako obrys strefy z odsunięciem (decyzja użytkownika 2026-10-13 „offset od fioletowego”): strefa powiększona
+        /// o <see cref="Margin"/> (kwadratowe naroża — suma Minkowskiego z kwadratem) i przycięta do obrysu płyty powiększonego
+        /// o <see cref="OutsideEdge"/> (za krawędzią płyty: krawędź + 300, w płycie: lico + 600). Strefa L / U — ramka L / U.
+        /// Null — strefa lub obrys nie są osiowe (wtedy okno prostokątne <see cref="Window"/>). Wierzchołki CCW.
+        /// </summary>
+        public static List<(double X, double Y)> FramePolygon(IList<(double X, double Y)> zone, IList<(double X, double Y)> outline)
+        {
+            if (zone == null || zone.Count < 4 || !RectilinearPolygons.IsRectilinear(zone)) return null;
+            bool clip = outline != null && outline.Count >= 4;
+            if (clip && !RectilinearPolygons.IsRectilinear(outline)) return null;
+            var xs = new List<double>(); var ys = new List<double>();
+            foreach (var q in zone) { xs.Add(q.X - Margin); xs.Add(q.X + Margin); ys.Add(q.Y - Margin); ys.Add(q.Y + Margin); }
+            if (clip)
+                foreach (var q in outline)
+                { xs.Add(q.X - OutsideEdge); xs.Add(q.X + OutsideEdge); ys.Add(q.Y - OutsideEdge); ys.Add(q.Y + OutsideEdge); }
+            xs = xs.Select(v => Math.Round(v, 6)).Distinct().OrderBy(v => v).ToList();
+            ys = ys.Select(v => Math.Round(v, 6)).Distinct().OrderBy(v => v).ToList();
+            var cells = new List<RectilinearPolygons.Rect>();
+            for (int i = 0; i + 1 < xs.Count; i++)
+                for (int j = 0; j + 1 < ys.Count; j++)
+                {
+                    double cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+                    if (ChebDist(zone, cx, cy) > Margin + 1e-6) continue;
+                    if (clip && ChebDist(outline, cx, cy) > OutsideEdge + 1e-6) continue;
+                    cells.Add(new RectilinearPolygons.Rect(xs[i], ys[j], xs[i + 1], ys[j + 1]));
+                }
+            var loops = RectilinearPolygons.Union(cells).Where(l => RectilinearPolygons.SignedArea(l) > 0).ToList();
+            if (loops.Count == 0) return null;
+            return loops.OrderByDescending(l => RectilinearPolygons.SignedArea(l)).First();
+        }
+
+        /// <summary>Odległość Czebyszewa punktu od zamkniętego wielokąta osiowego (0 — wewnątrz).</summary>
+        private static double ChebDist(IList<(double X, double Y)> poly, double x, double y)
+        {
+            if (BeamGeometry.Inside(poly, (x, y))) return 0;
+            double best = double.MaxValue;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i]; var b = poly[(i + 1) % poly.Count];
+                double lx = Math.Min(a.X, b.X), hx = Math.Max(a.X, b.X), ly = Math.Min(a.Y, b.Y), hy = Math.Max(a.Y, b.Y);
+                double dx = Math.Max(0, Math.Max(lx - x, x - hx)), dy = Math.Max(0, Math.Max(ly - y, y - hy));
+                best = Math.Min(best, Math.Max(dx, dy));
+            }
+            return best;
+        }
+
+        /// <summary>Punkt w wielokącie albo na jego brzegu (tol 1e-6).</summary>
+        public static bool InsideOrOn(IList<(double X, double Y)> poly, (double X, double Y) p)
+            => DistToBoundary(poly, p) < 1e-6 || BeamGeometry.Inside(poly, p);
+
+        /// <summary>
+        /// Odcinek a–b przycięty do zamkniętego wielokąta (ramka L / U): części wewnątrz albo na brzegu, sąsiednie scalone.
+        /// </summary>
+        public static List<((double X, double Y) A, (double X, double Y) B)> ClipToPolygon(IList<(double X, double Y)> poly,
+                                                                                           (double X, double Y) a, (double X, double Y) b)
+        {
+            var res = new List<((double X, double Y), (double X, double Y))>();
+            if (poly == null || poly.Count < 3) return res;
+            double dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy;
+            if (l2 < 1e-12) return res;
+            var ts = new List<double> { 0, 1 };
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var p = poly[i]; var q = poly[(i + 1) % poly.Count];
+                double ex = q.X - p.X, ey = q.Y - p.Y;
+                double den = dx * ey - dy * ex;
+                if (Math.Abs(den) > 1e-12)
+                {
+                    double t = ((p.X - a.X) * ey - (p.Y - a.Y) * ex) / den;
+                    double u = ((p.X - a.X) * dy - (p.Y - a.Y) * dx) / den;
+                    if (t > 0 && t < 1 && u >= -1e-9 && u <= 1 + 1e-9) ts.Add(t);
+                }
+                // wierzchołek wielokąta na odcinku (odcinki współliniowe z krawędzią)
+                double tv = ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / l2;
+                if (tv > 0 && tv < 1)
+                {
+                    double px = a.X + tv * dx - p.X, py = a.Y + tv * dy - p.Y;
+                    if (px * px + py * py < 1e-8) ts.Add(tv);
+                }
+            }
+            ts = ts.Distinct().OrderBy(t => t).ToList();
+            (double X, double Y) At(double t) => (a.X + t * dx, a.Y + t * dy);
+            double? open = null; double last = 0;
+            for (int k = 0; k + 1 < ts.Count; k++)
+            {
+                if (ts[k + 1] - ts[k] < 1e-12) continue;
+                bool inside = InsideOrOn(poly, At((ts[k] + ts[k + 1]) / 2));
+                if (inside) { if (open == null) open = ts[k]; last = ts[k + 1]; }
+                else if (open != null) { Add(open.Value, last); open = null; }
+            }
+            if (open != null) Add(open.Value, last);
+            void Add(double t0, double t1)
+            {
+                var p0 = At(t0); var p1 = At(t1);
+                if (Math.Abs(p1.X - p0.X) + Math.Abs(p1.Y - p0.Y) >= 1e-6) res.Add((p0, p1));
+            }
+            return res;
+        }
+
+        /// <summary>Krawędzie zamkniętego wielokąta przycięte do ramki-wielokąta (jak ClipPolygon z prostokątem).</summary>
+        public static List<((double X, double Y) A, (double X, double Y) B)> ClipPolygon(IList<(double X, double Y)> frame,
+                                                                                         IList<(double X, double Y)> poly,
+                                                                                         IList<(double X, double Y)> skipOn = null)
+        {
+            var res = new List<((double X, double Y), (double X, double Y))>();
+            if (poly == null || poly.Count < 2) return res;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i];
+                var b = poly[(i + 1) % poly.Count];
+                if (skipOn != null)
+                {
+                    var m = ((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+                    if (DistToBoundary(skipOn, a) < 1.0 && DistToBoundary(skipOn, b) < 1.0 && DistToBoundary(skipOn, m) < 1.0) continue;
+                }
+                res.AddRange(ClipToPolygon(frame, a, b));
+            }
+            return res;
+        }
+
+        /// <summary>Prostokąt jako wielokąt (CCW).</summary>
+        public static List<(double X, double Y)> RectPoly(Rect r)
+            => new List<(double X, double Y)> { (r.X0, r.Y0), (r.X1, r.Y0), (r.X1, r.Y1), (r.X0, r.Y1) };
+
+        /// <summary>Okno detalu: obwiednia ramki <see cref="FramePolygon"/> (strefa osiowa) albo <see cref="Window"/>.</summary>
+        public static Rect DetailWindow(IList<(double X, double Y)> zone, IList<(double X, double Y)> outline)
+        {
+            var f = FramePolygon(zone, outline);
+            return f != null ? Bbox(f) : Window(zone, outline);
+        }
+
         /// <summary>Odcinek a–b przycięty do prostokąta (Liang–Barsky); null — odcinek poza oknem (albo krótszy niż 1e-6).</summary>
         public static ((double X, double Y) A, (double X, double Y) B)? ClipToRect(Rect r, (double X, double Y) a, (double X, double Y) b)
         {

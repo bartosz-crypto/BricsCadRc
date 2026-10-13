@@ -169,10 +169,12 @@ namespace BricsCadRc.Tests
         {
             // decyzja 2026-10-12 „tyle, ile się zmieści”: L = 10182.5, zakres 10082.5 → n = floor(10082.5 / 200) + 1 = 51, rozstaw 200,
             // reszta 82.5 po równo na końcach
+            // 2026-10-13: ostatnie 50 + 82.5 = 132.5 > 80 od lica → +1 strzemię, rozstaw równy 10082.5 / 51 ≤ 200
             var (first, step, n, fromUb) = BeamGeometry.StirrupLayout(49807.038, 59989.538);
-            Assert.That(n, Is.EqualTo(51));
-            Assert.That(step, Is.EqualTo(200.0).Within(1e-9));
-            Assert.That(first, Is.EqualTo(49857.038 + 41.25).Within(1e-9));
+            Assert.That(n, Is.EqualTo(52));
+            Assert.That(step, Is.EqualTo(10082.5 / 51).Within(1e-9));
+            Assert.That(first + (n - 1) * step, Is.EqualTo(59989.538 - 50).Within(1e-6));
+            Assert.That(first, Is.EqualTo(49857.038).Within(1e-9), "2026-10-13: pierwsze przy licu, reszta na drugim końcu");
             Assert.That(fromUb, Is.False);
         }
 
@@ -181,6 +183,12 @@ namespace BricsCadRc.Tests
         {
             Assert.That(BeamGeometry.StirrupLayout(0, 2100).Count, Is.EqualTo(11));   // 2000 / 200 + 1
             Assert.That(BeamGeometry.StirrupLayout(0, 2101).Count, Is.EqualTo(11));   // 2001 — 12. się nie mieści (2026-10-12)
+            // 2026-10-13: reszta przy końcu ≤ 80 od lica — bez dodatkowego (2130: ostatnie 80 od lica → 11); 2131 → 12, rozstaw ≤ 200
+            var a = BeamGeometry.StirrupLayout(0, 2130);
+            Assert.That((a.Count, a.Step), Is.EqualTo((11, 200.0)));
+            var b = BeamGeometry.StirrupLayout(0, 2131);
+            Assert.That(b.Count, Is.EqualTo(12));
+            Assert.That(b.First + (b.Count - 1) * b.Step, Is.EqualTo(2081).Within(1e-9));
             var one = BeamGeometry.StirrupLayout(0, 80);
             Assert.That(one.Count, Is.EqualTo(1));
             Assert.That(one.First, Is.EqualTo(40));
@@ -454,6 +462,20 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
+        public void LinkLayers_X_Minus15_UBarsNested_2026_10_13()
+        {
+            // H 450: strzemiona Y 365 (1. warstwa), X 350 (− 15); U-bary H16 / strzemiona H12: koniec X 325, koniec Y / narożnik Y 340,
+            // narożnik X 305 (wewnątrz U-bara nogi Y)
+            double a = BeamGeometry.StirrupHeightCovers(450);
+            Assert.That(a, Is.EqualTo(365));
+            Assert.That(BeamGeometry.LinkHeightFor(a, false), Is.EqualTo(365));
+            Assert.That(BeamGeometry.LinkHeightFor(a, true), Is.EqualTo(350));
+            Assert.That(BeamGeometry.Ceil5(2 * 12), Is.EqualTo(25));
+            Assert.That(BeamGeometry.Ceil5(2 * 16), Is.EqualTo(35));
+            Assert.That(new BeamParams().UBarDrop, Is.EqualTo(0), "0 = auto 2·Ø U-bara");
+        }
+
+        [Test]
         public void K2_Defaults_And_Laps()
         {
             var p = new BeamParams();
@@ -581,8 +603,9 @@ namespace BricsCadRc.Tests
             // strzemiona (2026-10-12 „tyle, ile się zmieści”): zakres 10182.5 − 102 = 10080.5 → floor(/200) + 1 = 51, rozstaw 200,
             // reszta 80.5 po równo (Holbrook ręcznie 51)
             var st = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, 200, 51, null, 100, 51);
-            Assert.That(st.First, Is.EqualTo(s.FaceLo + 51 + 40.25).Within(1e-6));
-            Assert.That(st.Count, Is.EqualTo(51));
+            Assert.That(st.First, Is.EqualTo(s.FaceLo + 51).Within(1e-6));
+            Assert.That(st.Count, Is.EqualTo(52), "2026-10-13: reszta 80.5 + 51 > 80 → +1, rozstaw ≤ 200");
+            Assert.That(st.Step, Is.LessThanOrEqualTo(200.0));
         }
 
         [Test]
@@ -608,9 +631,11 @@ namespace BricsCadRc.Tests
             Assert.That(us.Count, Is.EqualTo(6), "2 narożniki × 2 nogi + 2 końce");
             Assert.That(us.Count(u => u.Kind == "L"), Is.EqualTo(4));
             Assert.That(us.Count(u => u.Kind == "E"), Is.EqualTo(2));
-            // noga Y (lewa) — B − 35 (539 ręcznie: 1340-155-1340 przy narożnikach, 800-190-800 na końcach)
-            Assert.That(us.Where(u => u.Seg == left).Select(u => u.B).Distinct(), Is.EqualTo(new[] { 155.0 }));
-            Assert.That(us.Where(u => u.Seg != left).Select(u => u.B).Distinct(), Is.EqualTo(new[] { 190.0 }));
+            // decyzja 2026-10-13: noga Y (lewa) — 1. warstwa, B = 215 − 25 = 190; nogi X — 2. warstwa: koniec (215 − 15) − 25 = 175,
+            // narożnik — wewnątrz U-barów nogi Y: 190 − 2·16 w górę do 5 = 155
+            Assert.That(us.Where(u => u.Seg == left).Select(u => u.B).Distinct(), Is.EqualTo(new[] { 190.0 }));
+            Assert.That(us.Where(u => u.Seg != left && u.Kind == "L").Select(u => u.B).Distinct(), Is.EqualTo(new[] { 155.0 }));
+            Assert.That(us.Where(u => u.Seg != left && u.Kind == "E").Select(u => u.B).Distinct(), Is.EqualTo(new[] { 175.0 }));
             // tył U-barów narożnika na licu zewnętrznym narożnika (otulina 45); ramię ≈ szerokość drugiej nogi + zakład
             var tl = us.Single(u => u.Seg == top && u.AtLo);
             Assert.That(tl.Back, Is.EqualTo(top.FaceLo + 45).Within(1e-6));
@@ -658,9 +683,10 @@ namespace BricsCadRc.Tests
             TestContext.WriteLine(string.Join(" | ", us) + " || " + string.Join(" | ", msgs));
             Assert.That(us.Count, Is.EqualTo(3), "narożnik L (2 nogi) + koniec wewnętrzny prawej nogi");
             Assert.That(us.All(u => u.Seg != top || !u.AtLo), Is.True, "bez U-barów przy narożniku z odcinkiem ręcznym");
-            Assert.That(us.Single(u => u.Seg == right && !u.AtLo).B, Is.EqualTo(305), "noga Y narożnika: 340 − 35");
-            Assert.That(us.Single(u => u.Seg == right && u.AtLo).B, Is.EqualTo(340), "koniec wewnętrzny — bez obniżenia");
-            Assert.That(us.Single(u => u.Seg == top).B, Is.EqualTo(340));
+            // decyzja 2026-10-13: noga Y — 1. warstwa (365 − 25 = 340), noga X narożnika — wewnątrz: 340 − 35 = 305
+            Assert.That(us.Single(u => u.Seg == right && !u.AtLo).B, Is.EqualTo(340), "noga Y narożnika: 1. warstwa");
+            Assert.That(us.Single(u => u.Seg == right && u.AtLo).B, Is.EqualTo(340), "koniec wewnętrzny nogi Y");
+            Assert.That(us.Single(u => u.Seg == top).B, Is.EqualTo(305), "noga X narożnika: 340 − 2·16 w górę do 5");
         }
 
         [Test]

@@ -383,8 +383,9 @@ namespace BricsCadRc.Core
             }
 
             // Q8 (parametr [34]): strzemiona w kwadracie narożnika L — kontynuacja dłuższej nogi (domyślne) albo brak
-            if (!p.CornerSquareLinks)
-                foreach (var s in segs) { s.LinkLo = s.OwnLo; s.LinkHi = s.OwnHi; }
+            // decyzja użytkownika 2026-10-13: przy załamaniu strzemiona obu nóg kończą się PRZED kwadratem narożnika (kwadrat zbrojony
+            // U-barami — kolizje); parametr [34] nieużywany
+            foreach (var s in segs) { s.LinkLo = s.OwnLo; s.LinkHi = s.OwnHi; }
 
             int nL = an.Joints.Count(j => !j.IsTee && !j.A.Manual && !j.B.Manual);
             int nT = an.Joints.Count(j => j.IsTee && !j.A.Manual && !j.B.Manual);
@@ -395,7 +396,7 @@ namespace BricsCadRc.Core
             double H = p.Height;
             // K2: A = H − otulina górna (A1 35 / A2 50) − otulina dolna (50), w dół do 5
             double A51 = BeamGeometry.StirrupHeightCovers(H, p.CoverTop, p.CoverBottom);
-            double offFirst = BeamGeometry.StirrupFirstOffset(p.StirrupDia, p.CoverSide);
+            double offFirst = BeamGeometry.StirrupFirstOffset(p.StirrupDia, BeamGeometry.LinkEndCover);   // 2026-10-13: 40 + Ø/2
             // decyzja użytkownika 2026-10-11 (punkt C): cięcie strzemion — Auto wg EN 1992-1-1 §9.2.2(8) (tylko belka krawędziowa), 2- / 4-cięte;
             // 4-cięte = dwa identyczne strzemiona 51 jedną pozycją (B obejmuje pręty 1..k), w rzucie linia rozkładu jak dotąd, CountDisplay 2n
             var legLayers = p.UsesBothMark ? new List<(int n, int d)> { (p.BottomCount, p.BottomDia) }
@@ -404,15 +405,17 @@ namespace BricsCadRc.Core
             foreach (var s in segs)
             {
                 double B51 = BeamGeometry.StirrupWidth(s.Width, p.CoverSide);
+                // 2026-10-13: wzdłuż X — druga warstwa (A − 15), wzdłuż Y — pierwsza (A)
+                double Aseg = BeamGeometry.LinkHeightFor(A51, s.AlongX);
                 // ── strzemiona (rzut dolny; zakres strzemion — w narożniku L dłuższy odcinek przez kwadrat narożnika) ──
-                if (A51 > 0 && B51 > 0)
+                if (Aseg > 0 && B51 > 0)
                 {
                     var legs = BeamGeometry.PlanLinkLegs(p.StirrupLegs, H, s.Width, p.CoverSide, p.CoverBottom, p.StirrupDia, legLayers,
                                                          edgeBeam: s.OuterSide != 0);
                     if (legNotes.Add(legs.Note)) msg($"{name}: {legs.Note}");
                     bool four = legs.Legs == 4;
                     var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: p.StirrupShape ?? "51",
-                                                       a: A51, b: four ? legs.B4 : B51, code: BeamGeometry.CodeLinks);
+                                                       a: Aseg, b: four ? legs.B4 : B51, code: BeamGeometry.CodeLinks);
                     // K2: pierwsze strzemię w osi otulina + Ø/2 od lica (także przy U-barach); Q7 [33]: niezależnie od UB 03 (domyślne)
                     var ubAlong = p.StirrupsAtUb03 ? Ub03Along(ub03, s) : null;
                     var (first, step, n, fromUb) = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, p.StirrupSpacing, offFirst,
@@ -437,7 +440,8 @@ namespace BricsCadRc.Core
                 }
                 else msg($"{name}: wymiary strzemienia ≤ 0 (H = {H:F0}, szer. = {s.Width:F0}) — strzemiona pominięte.");
             }
-            msg($"{name}: strzemiona H{p.StirrupDia} 51 A = {A51:F0} (H − {p.CoverTop:F0} − {p.CoverBottom:F0}), pierwsze {offFirst:F0} od lica " +
+            msg($"{name}: strzemiona H{p.StirrupDia} 51 A = {A51:F0} wzdłuż Y (H − {p.CoverTop:F0} − {p.CoverBottom:F0}), " +
+                $"{BeamGeometry.LinkHeightFor(A51, true):F0} wzdłuż X (− {BeamGeometry.SecondLayerLinkDrop:F0}, druga warstwa), pierwsze {offFirst:F0} od lica " +
                 $"(cięcie: {BeamParams.LegsText(p.StirrupLegs)}).");
 
             // ── pręty podłużne (K3): dół = góra → jedna pozycja BM „2x4 H16-nn-150 B+T”, inaczej BB / BT; wszystkie na rzucie dolnym,
@@ -678,9 +682,9 @@ namespace BricsCadRc.Core
                                     r.Count > 1 ? nominal : 200, r.Count > 1 ? r.Spacing : double.NaN,
                                     BeamGeometry.CodeUBar, BeamGeometry.SuffixUBar, noSpacing: r.Count <= 1,
                                     // decyzja użytkownika 2026-10-11 („U-bary zamykające pokazuj 1 a nie 4”, potem „tyle samo co prętów głównych”):
-                                    // koniec belki — wszystkie U-bary w rozkładzie (opis / BBS: liczba kolumn), w rzucie / detalu widoczny 1 pręt
-                                    // reprezentatywny; narożnik L / złącze T — wszystkie widoczne (bez zmian)
-                                    shape: "21", repr: r.Kind == "E" ? 0 : -1, zoneHandle: zoneHandle,
+                                    // wszystkie U-bary w rozkładzie (opis / BBS: liczba kolumn), w rzucie / detalu widoczny 1 pręt reprezentatywny —
+                                    // także narożnik L / złącze T (uwaga Bartka 2026-10-13: „niektóre nie są wygaszone”)
+                                    shape: "21", repr: 0, zoneHandle: zoneHandle,
                                     customize: bar => { bar.SymbolType = "Circle"; bar.SymbolSide = side; }, tg: tg);
         }
 

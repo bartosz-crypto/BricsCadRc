@@ -121,7 +121,8 @@ namespace BricsCadRc.Dialogs
             _sSp  = Field("Rozstaw [mm]", F(_p.StirrupSpacing), "domyślne 200");
             _shape = Field("Kod kształtu", _p.StirrupShape ?? "51", "51 (zamknięte)");
             _atUb03 = Check("Położenia UB 03 + 100", _p.StirrupsAtUb03, "domyślnie nie — niezależnie od UB 03, pierwsze 51 od lica");
-            _squareLinks = Check("Strzemiona w kwadracie narożnika L", _p.CornerSquareLinks, "kontynuacja dłuższej nogi (domyślnie tak)");
+            _squareLinks = Check("Strzemiona w kwadracie narożnika L", false, "od 2026-10-13 zawsze brak — kwadrat zbrojony U-barami");
+            _squareLinks.IsEnabled = false;
 
             Header("Pręty podłużne i pionowe U-bary");
             _bDia = DiaBox("Dołem: średnica", BeamParams.MainDiameters, _p.BottomDia);
@@ -136,7 +137,7 @@ namespace BricsCadRc.Dialogs
             _intoSquare = Check("Pręty proste w kwadrat narożnika", _p.CornerStraightIntoSquare, "domyślnie nie — przed kwadratem (C12)");
             _uDia = DiaBox("U-bary pionowe: średnica", BeamParams.MainDiameters, _p.UBarDia, "kształt 21, po 1 w kolumnie prętów");
             _uExtra = Field("U-bar końca: A = zakład + [mm]", F(_p.UBarArmExtra), "0 = zakład standardowy (H16: 650)");
-            _uDrop = Field("U-bary drugiego kierunku: B − [mm]", F(_p.UBarDrop), "noga Y narożnika / złącze T (35)");
+            _uDrop = Field("U-bary zagnieżdżone: B − [mm]", F(_p.UBarDrop), "noga X narożnika / złącze T; 0 = auto 2·Ø (H16: 35)");
 
             Header("Pręty boczne i w nibie");
             _sideMode = new ComboBox { Width = 250, Margin = new Thickness(0, 2, 6, 2) };

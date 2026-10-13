@@ -50,6 +50,8 @@ namespace BricsCadRc.Core
             /// <summary>Strefa nowych szablonów prętów belki — obok detalu, jak przy detalu otworu (decyzja użytkownika 2026-10-12
             /// „pręty, które rozkładamy — jak w otworze, w jakiejś odległości od detalu”), zamiast strefy rebar_bottom rzutu.</summary>
             public Extents3d TemplateZone;
+            /// <summary>Ramka detalu w układzie rzutu (wielokąt — offset strefy L / U, decyzja 2026-10-13; albo prostokąt okna).</summary>
+            public List<(double X, double Y)> FramePlan;
         }
 
         /// <summary>Strefa szablonów prętów belki w trybie detalu (null — strefa rebar_bottom rzutu, jak przed decyzją 2026-10-12).</summary>
@@ -112,6 +114,8 @@ namespace BricsCadRc.Core
             /// (Count — bez krotności 4-ciętych) — UB 03 wzdłuż belki = strzemiona + 2 (decyzja 2026-10-12).</summary>
             public List<(bool barsX, double lo, double hi, int count)> Links = new List<(bool, double, double, int)>();
             public List<List<(double X, double Y)>> UbLoops;
+            /// <summary>Odcinki strefy efektywnej (końce przy krawędzi — także noga belki L / U; decyzja 2026-10-13).</summary>
+            public List<BeamGeometry.Segment> Segs;
             public bool DetailView;
             public bool HasDetail;
             public Vector2d Shift;
@@ -134,7 +138,8 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Krawędź UB 03 prostopadła do osi belki (koniec belki przy krawędzi płyty, lico końca ≤ 260 od krawędzi), gdy na krawędzi
         /// leży szerokość belki + nib (bok strefy ≤ 260 od narożnika = końca odcinka krawędzi): część krawędzi od narożnika do lica
-        /// wewnętrznego belki (uskok w nibie) → UB 03 w detalu co 150. Tylko strefy prostokątne w trybie detalu z istniejącym detalem.
+        /// wewnętrznego belki (uskok w nibie) → UB 03 w detalu co 150. Każdy odcinek strefy (także noga belki L / U — 2026-10-13) w trybie
+        /// detalu z istniejącym detalem.
         /// Null — brak (UB 03 jak dotąd).
         /// </summary>
         private static (double lo, double hi, NibUbZone zone, bool fromHigh)? BeamEndUbPortion(List<NibUbZone> zones, bool verticalEdge,
@@ -143,19 +148,25 @@ namespace BricsCadRc.Core
             if (zones == null) return null;
             foreach (var z in zones)
             {
-                if (!z.DetailView || !z.HasDetail || z.Verts == null || z.Verts.Count != 4) continue;
-                double zx0 = z.Verts.Min(v => v.X), zx1 = z.Verts.Max(v => v.X), zy0 = z.Verts.Min(v => v.Y), zy1 = z.Verts.Max(v => v.Y);
-                bool beamAlongX = zx1 - zx0 >= zy1 - zy0;
-                if (verticalEdge != beamAlongX) continue;                          // krawędź równoległa do osi — to nie koniec belki
-                double f0 = verticalEdge ? zx0 : zy0, f1 = verticalEdge ? zx1 : zy1;   // lica końców
-                double a0 = verticalEdge ? zy0 : zx0, a1 = verticalEdge ? zy1 : zx1;   // lica boczne (wzdłuż krawędzi)
-                double gap = Math.Min(Math.Abs(f0 - edgeCoord), Math.Abs(f1 - edgeCoord));
-                if (gap > BeamGeometry.EdgeEndMaxGap) continue;
-                if (a1 <= segLow + 1.0 || a0 >= segHigh - 1.0) continue;
-                if (segHigh - a1 >= -1.0 && segHigh - a1 <= BeamGeometry.EdgeEndMaxGap && a0 > segLow + 1.0)
-                    return (a0, segHigh, z, true);
-                if (a0 - segLow >= -1.0 && a0 - segLow <= BeamGeometry.EdgeEndMaxGap && a1 < segHigh - 1.0)
-                    return (segLow, a1, z, false);
+                if (!z.DetailView || !z.HasDetail || z.Segs == null) continue;
+                // każdy odcinek strefy (prostokąt, noga L / U) z końcem przy krawędzi płyty (decyzja 2026-10-13 — wcześniej tylko
+                // strefy prostokątne, belka L traciła UB 03 co 150 i pojedynczy UB 03 drugiego kierunku)
+                foreach (var sg in z.Segs)
+                {
+                    if (sg.Manual || verticalEdge != sg.AlongX) continue;   // krawędź równoległa do osi — to nie koniec belki
+                    foreach (var (f, kind) in new[] { (sg.FaceLo, sg.LoKind), (sg.FaceHi, sg.HiKind) })
+                    {
+                        // koniec przy krawędzi (narożnik L / złącze T — nie koniec belki)
+                        if (kind == BeamGeometry.EndKind.Corner || kind == BeamGeometry.EndKind.Tee
+                            || Math.Abs(f - edgeCoord) > BeamGeometry.EdgeEndMaxGap) continue;
+                        double a0 = sg.AcrossLo, a1 = sg.AcrossHi;            // lica boczne (wzdłuż krawędzi)
+                        if (a1 <= segLow + 1.0 || a0 >= segHigh - 1.0) continue;
+                        if (segHigh - a1 >= -1.0 && segHigh - a1 <= BeamGeometry.EdgeEndMaxGap && a0 > segLow + 1.0)
+                            return (a0, segHigh, z, true);
+                        if (a0 - segLow >= -1.0 && a0 - segLow <= BeamGeometry.EdgeEndMaxGap && a1 < segHigh - 1.0)
+                            return (segLow, a1, z, false);
+                    }
+                }
             }
             return null;
         }
@@ -240,7 +251,8 @@ namespace BricsCadRc.Core
                         var z = new NibUbZone
                         {
                             Zone = XLink.Norm(pl.Handle.ToString()), DetailView = p.DetailView, Verts = zeP,
-                            UbLoops = RectilinearPolygons.Union(BeamGeometry.UbExclusionRects(an))
+                            UbLoops = RectilinearPolygons.Union(BeamGeometry.UbExclusionRects(an)),
+                            Segs = BeamGeometry.Analyze(ze, outl).Segments
                         };
                         if (p.DetailView && anchors.TryGetValue(z.Zone, out var av))
                         {
@@ -248,7 +260,7 @@ namespace BricsCadRc.Core
                             var s = BeamDetailRules.ShiftOf(at, ze);
                             if (BeamDetailRules.Congruent(at, ze, s))
                             {
-                                var w = BeamDetailRules.Window(ze, outl).Offset(s.X, s.Y);
+                                var w = BeamDetailRules.DetailWindow(ze, outl).Offset(s.X, s.Y);
                                 z.HasDetail = true;
                                 z.Shift = new Vector2d(s.X, s.Y);
                                 z.Box = new Extents3d(new Point3d(w.X0, w.Y0, 0), new Point3d(w.X1, w.Y1, 0));
@@ -290,6 +302,35 @@ namespace BricsCadRc.Core
                     return null;
                 }
                 return new NibUbTarget { Zone = z };
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Krawędź UB 03, przy której strefa w detalu leży tylko na części (&lt; 50 % — np. krótka noga belki L na długiej krawędzi;
+        /// decyzja użytkownika 2026-10-13 „brakuje UB 03 na tej krawędzi”): podział na część przy belce (cel — detal tej strefy)
+        /// i resztę (null — rzut jak dotąd). Części krótsze niż 100 mm pomijane. Null — brak strefy z detalem przy krawędzi (≥ 300 mm).
+        /// </summary>
+        private static List<(double lo, double hi, NibUbZone zone)> SplitEdgeByDetailZones(List<NibUbZone> zones, bool vertical,
+                                                                                          double innerCoord, double lo, double hi)
+        {
+            if (zones == null || hi - lo < 1e-6) return null;
+            foreach (var z in zones)
+            {
+                if (!z.DetailView || !z.HasDetail) continue;
+                var free = RectilinearPolygons.UncoveredParts(lo, hi, z.UbLoops, horizontal: !vertical, innerCoord)
+                                              .Where(q => q.Hi - q.Lo > 1.0).OrderBy(q => q.Lo).ToList();
+                if (hi - lo - free.Sum(q => q.Hi - q.Lo) < 300.0) continue;
+                var res = new List<(double lo, double hi, NibUbZone zone)>();
+                double cur = lo;
+                foreach (var q in free)
+                {
+                    if (q.Lo - cur > 1.0) res.Add((cur, q.Lo, z));
+                    res.Add((q.Lo, q.Hi, null));
+                    cur = q.Hi;
+                }
+                if (hi - cur > 1.0) res.Add((cur, hi, z));
+                return res.Where(r => r.hi - r.lo >= 100.0).ToList();
             }
             return null;
         }
@@ -415,7 +456,10 @@ namespace BricsCadRc.Core
             {
                 var zoneT = zbPoly.Select(v => (v.X, v.Y)).ToList();
                 var outlT = bottom.Verts.Select(v => (v.X, v.Y)).ToList();
-                var win = BeamDetailRules.Window(zoneT, outlT);
+                // decyzja użytkownika 2026-10-13: ramka = offset strefy (L / U jak strefa), okno = jej obwiednia
+                var frameT = BeamDetailRules.FramePolygon(zoneT, outlT);
+                var win = frameT != null ? BeamDetailRules.Bbox(frameT) : BeamDetailRules.Window(zoneT, outlT);
+                if (frameT == null) frameT = BeamDetailRules.RectPoly(win);
 
                 // 1. Istniejący detal strefy: numer i miejsce z ANCHOR-a (bez cache — MOVE detalu zostaje)
                 int nr = 0;
@@ -482,23 +526,24 @@ namespace BricsCadRc.Core
                     Shift = sv, Number = nr, ZoneHandle = zbHandle,
                     Box = new Extents3d(new Point3d(w.X0, w.Y0, 0), new Point3d(w.X1, w.Y1, 0)),
                     Verts = bottom.Verts.Select(v => v + sv).ToList(),
-                    TemplateZone = new Extents3d(new Point3d(tz0, w.Y1 - 1.0e7, 0), new Point3d(tz0 + TemplateZoneWidth, w.Y1, 0))
+                    TemplateZone = new Extents3d(new Point3d(tz0, w.Y1 - 1.0e7, 0), new Point3d(tz0 + TemplateZoneWidth, w.Y1, 0)),
+                    FramePlan = frameT
                 };
 
                 // 3. Obiekty detalu (warstwa RC-BEAM-DETAIL) — dane czytane przed transakcją zapisu
                 SingleBarEngine.EnsureLayer(db, BeamStore.DetailLayer, 7);
                 var dashed = EnsureDashedLinetype(db);
-                var lines = BeamDetailRules.ClipPolygon(win, outlT);
+                var lines = BeamDetailRules.ClipPolygon(frameT, outlT);
                 // rekord [38] „bez nibu”: przy tej belce bez linii uskoku (nib płyty bez części przy belkach bez nibu)
                 var nib = WithoutBeamNibs(db, NibDetector.Detect(db, bottom.OuterId));
                 var nibLines = nib?.Inner != null
-                    ? BeamDetailRules.ClipPolygon(win, nib.Inner.Select(v => (v.X, v.Y)).ToList(), outlT)
+                    ? BeamDetailRules.ClipPolygon(frameT, nib.Inner.Select(v => (v.X, v.Y)).ToList(), outlT)
                     : new List<((double X, double Y) A, (double X, double Y) B)>();
                 // decyzja 2026-10-12 (wzór — screen Bartka): linie betonu w kolorach / rodzajach linii rzutu (obrys, linia uskoku)
                 var outlStyle = SourceStyle(db, bottom.OuterId);
                 var nibStyle = nib != null ? SourceStyle(db, nib.InnerId) ?? outlStyle : outlStyle;
-                var others = OtherPlanLines(db, win, bottom, nib?.InnerId ?? ObjectId.Null, outlT, nib?.Inner, m => msg($"{name}: {m}"));
-                var piles = FindPiles(db, bottom.Verts).Where(pc => win.Contains(pc.c.X, pc.c.Y)).ToList();
+                var others = OtherPlanLines(db, win, frameT, bottom, nib?.InnerId ?? ObjectId.Null, outlT, nib?.Inner, m => msg($"{name}: {m}"));
+                var piles = FindPiles(db, bottom.Verts).Where(pc => BeamDetailRules.InsideOrOn(frameT, (pc.c.X, pc.c.Y))).ToList();
                 var texts = ThkTextsIn(db, textPoly ?? zbPoly);   // „xxxTHK” w strefie z GA (bez nibu — ANCHOR przesunięty)
 
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -525,11 +570,9 @@ namespace BricsCadRc.Core
 
                     // ramka detalu = okno (czerwona przerywana, jak detal otworu) — w odległości od belki (lico wewnętrzne + 600,
                     // krawędź płyty + 300); decyzja 2026-10-12
+                    // decyzja 2026-10-13: ramka = offset strefy (L / U), nie prostokąt
                     var frame = new Polyline();
-                    frame.AddVertexAt(0, new Point2d(w.X0, w.Y0), 0, 0, 0);
-                    frame.AddVertexAt(1, new Point2d(w.X1, w.Y0), 0, 0, 0);
-                    frame.AddVertexAt(2, new Point2d(w.X1, w.Y1), 0, 0, 0);
-                    frame.AddVertexAt(3, new Point2d(w.X0, w.Y1), 0, 0, 0);
+                    for (int i = 0; i < frameT.Count; i++) frame.AddVertexAt(i, new Point2d(frameT[i].X + sv.X, frameT[i].Y + sv.Y), 0, 0, 0);
                     frame.Closed = true;
                     tg.Frame = Add(frame, BeamStore.RoleFrame);
                     frame.ColorIndex = BeamDetailFrameColor;
@@ -651,20 +694,30 @@ namespace BricsCadRc.Core
                 foreach (var (z, d) in new[] { (zb, new Vector2d()) })
                 {
                     if (z.IsNull || z.IsErased) continue;
-                    double x0 = tg.Box.MinPoint.X - tg.Shift.X + d.X, y0 = tg.Box.MinPoint.Y - tg.Shift.Y + d.Y;
-                    double x1 = tg.Box.MaxPoint.X - tg.Shift.X + d.X, y1 = tg.Box.MaxPoint.Y - tg.Shift.Y + d.Y;
-                    var fid = DrawRect(db, x0, y0, x1, y1, BeamStore.DetailLayer, BeamDetailFrameColor, dashed, BeamDetailFrameLtScale);
+                    // ramka detalu na rzucie — ten sam wielokąt co w detalu (offset strefy L / U, decyzja 2026-10-13)
+                    var fp = (tg.FramePlan ?? BeamDetailRules.RectPoly(new BeamDetailRules.Rect(
+                                 tg.Box.MinPoint.X - tg.Shift.X, tg.Box.MinPoint.Y - tg.Shift.Y,
+                                 tg.Box.MaxPoint.X - tg.Shift.X, tg.Box.MaxPoint.Y - tg.Shift.Y)))
+                             .Select(v => (X: v.X + d.X, Y: v.Y + d.Y)).ToList();
+                    if (RectilinearPolygons.SignedArea(fp) < 0) fp.Reverse();
+                    var fid = DrawPolygon(db, fp, BeamStore.DetailLayer, BeamDetailFrameColor, dashed, BeamDetailFrameLtScale);
                     var verts = bottomVerts?.Select(v => v + d).ToList();
-                    double fcx = (x0 + x1) / 2.0, fcy = (y0 + y1) / 2.0;
-                    var sides = new[]
+                    // grot na środku boku ramki poza płytą: kolejno góra, dół, prawo, lewo (najdłuższy bok danej strony)
+                    var cand = new List<(int pri, double len, Point2d tip, Vector2d dir)>();
+                    for (int i = 0; i < fp.Count; i++)
                     {
-                        (tip: new Point2d(fcx, y1), dir: new Vector2d(1, 1)),    // góra
-                        (tip: new Point2d(fcx, y0), dir: new Vector2d(1, -1)),   // dół
-                        (tip: new Point2d(x1, fcy), dir: new Vector2d(1, 1)),    // prawo
-                        (tip: new Point2d(x0, fcy), dir: new Vector2d(-1, 1)),   // lewo
-                    };
-                    var side = sides.FirstOrDefault(sd => verts == null || verts.Count < 3 || !GeometryHelper.IsPointInsidePolygon(verts, sd.tip));
-                    if (side.dir.Length < 1e-9) side = sides[0];
+                        var a = fp[i]; var b = fp[(i + 1) % fp.Count];
+                        double ex = b.X - a.X, ey = b.Y - a.Y, len = Math.Sqrt(ex * ex + ey * ey);
+                        if (len < 1.0) continue;
+                        var n = new Vector2d(ey / len, -ex / len);   // na zewnątrz (CCW)
+                        int pri = n.Y > 0.5 ? 0 : n.Y < -0.5 ? 1 : n.X > 0.5 ? 2 : 3;
+                        var tip = new Point2d((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
+                        if (verts != null && verts.Count >= 3 && GeometryHelper.IsPointInsidePolygon(verts, tip)) pri += 10;
+                        var dir = n + (Math.Abs(n.Y) > 0.5 ? new Vector2d(1, 0) : new Vector2d(0, 1));
+                        cand.Add((pri, len, tip, dir));
+                    }
+                    var side = cand.OrderBy(c => c.pri).ThenByDescending(c => c.len).FirstOrDefault();
+                    if (cand.Count == 0) side = (0, 0, new Point2d(fp[0].X, fp[0].Y), new Vector2d(1, 1));
                     var lid = SingleBarEngine.PlaceNoteLeader(db, new[] { new Point3d(side.tip.X, side.tip.Y, 0) },
                                                               new Point3d(side.tip.X + 500 * side.dir.X, side.tip.Y + 500 * side.dir.Y, 0),
                                                               $"DETAIL '{tg.Number}'", BeamDetailRefHeight, 2, NoteTextStyle, BeamStore.DetailLayer);
@@ -692,7 +745,7 @@ namespace BricsCadRc.Core
         /// kolor / rodzaj linii z obiektu. Np. linia uskoku w nibie na końcu belki.
         /// </summary>
         private static List<(List<((double X, double Y) A, (double X, double Y) B)> segs, (Color color, ObjectId lt, double lts)? style)>
-            OtherPlanLines(Database db, BeamDetailRules.Rect win, BeamView bottom, ObjectId innerId,
+            OtherPlanLines(Database db, BeamDetailRules.Rect win, IList<(double X, double Y)> frame, BeamView bottom, ObjectId innerId,
                            List<(double X, double Y)> outline, List<Point2d> inner, Action<string> msg = null)
         {
             var res = new List<(List<((double X, double Y) A, (double X, double Y) B)>, (Color, ObjectId, double)?)>();
@@ -754,11 +807,16 @@ namespace BricsCadRc.Core
                 for (int i = 0; i < n; i++)
                 {
                     var a = pts[i]; var b = pts[(i + 1) % pts.Count];
-                    var cl = BeamDetailRules.ClipToRect(win, a, b);
-                    if (!cl.HasValue) continue;
-                    var m = ((cl.Value.A.X + cl.Value.B.X) / 2, (cl.Value.A.Y + cl.Value.B.Y) / 2);
-                    if (OnKnown(cl.Value.A) && OnKnown(cl.Value.B) && OnKnown(m)) continue;   // obrys / linia uskoku — już narysowane
-                    segs.Add(cl.Value);
+                    // ramka L / U (decyzja 2026-10-13) — przycięcie do wielokąta ramki
+                    foreach (var cl in frame != null ? BeamDetailRules.ClipToPolygon(frame, a, b)
+                                                     : (BeamDetailRules.ClipToRect(win, a, b) is var r && r.HasValue
+                                                        ? new List<((double X, double Y) A, (double X, double Y) B)> { r.Value }
+                                                        : new List<((double X, double Y) A, (double X, double Y) B)>()))
+                    {
+                        var m = ((cl.A.X + cl.B.X) / 2, (cl.A.Y + cl.B.Y) / 2);
+                        if (OnKnown(cl.A) && OnKnown(cl.B) && OnKnown(m)) continue;   // obrys / linia uskoku — już narysowane
+                        segs.Add(cl);
+                    }
                 }
                 if (segs.Count > 0) { res.Add((segs, style)); Count(taken, what); }
             }
