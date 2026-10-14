@@ -244,9 +244,8 @@ namespace BricsCadRc.Core
             var e2 = BeamMeshRegion(db, slabPolyId, outerVertices, layerCode.StartsWith("T"), horizontal, diameter, spacing, cover);
             if (e2 != null && e2.Cuts.Count > 0)
                 ed.WriteMessage($"\n[AutoRebar] Belki na płycie: {e2.Zones} stref(a) — siatka {layerCode} przy belce (E2): " +
-                                (layerCode.StartsWith("T")
-                                    ? "równoległe od s/2 od lica wewnętrznego"
-                                    : $"równoległe od 40 + {diameter} od lica wewnętrznego") +
+                                $"równoległe od 40 + {diameter} od lica wewnętrznego" +
+                                (layerCode.StartsWith("T") ? " (góra w położeniach prętów dołu, bez prętów w nibie)" : "") +
                                 $", prostopadłe przez belkę do {BeamGeometry.MeshBeamSideCover:F0} od lica zewnętrznego belki (decyzja 2026-10-11)" +
                                 "; krawędzie przy belce bez UB 01/02.\n");
             List<StripBounds> strips = horizontal
@@ -393,9 +392,15 @@ namespace BricsCadRc.Core
                     // niż otulina) — na każdą stronę z nibem dokładnie o jeden (przy nibie ≥ rozstaw: więcej) pręt
                     // mniej niż dołem, rozstaw identyczny jak dołem.
                     double nibForcedSpacing = double.NaN;
-                    if (nib != null && layerCode.StartsWith("T") && bottomView != null && StripTouchesNib(nib, strip, horizontal))
+                    // decyzja 2026-10-14: płyta z belkami — pas góry przy belce (granica pasa = odcięcie E2) też w położeniach prętów
+                    // dołu: między belkami tyle samo prętów góra / dół, pręty dołu w nibie (poza wielokątem góry) pominięte
+                    bool beamStrip = e2 != null && e2.Cuts.Count > 0 && StripTouchesCut(e2.Cuts, strip, horizontal);
+                    if (layerCode.StartsWith("T") && bottomView != null
+                        && ((nib != null && StripTouchesNib(nib, strip, horizontal)) || beamStrip))
                     {
-                        var kept = BottomPositionsIn(bottomView, strip.ScanLow + cover - 0.5, strip.ScanHigh - cover + 0.5,
+                        // przy belce granica pasa góry = lico − Ø góry, dołu = lico − Ø dołu — tolerancja na różnicę średnic (≤ 15)
+                        double tolB = beamStrip ? 15.0 : 0.5;
+                        var kept = BottomPositionsIn(bottomView, strip.ScanLow + cover - tolB, strip.ScanHigh - cover + tolB,
                                                      strip.PerpLow, strip.PerpHigh, out double bSpacing);
                         if (kept.Count >= 1)
                         {
@@ -403,7 +408,7 @@ namespace BricsCadRc.Core
                             spacingMode = SpacingMode.Nominal;
                             singleBarMode = kept.Count == 1;
                             nibForcedSpacing = kept.Count > 1 ? bSpacing : double.NaN;
-                            ed.WriteMessage($"\n[AutoRebar] Nib: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {kept.Count} prętów " +
+                            ed.WriteMessage($"\n[AutoRebar] {(beamStrip ? "Belka" : "Nib")}: pas {strip.ScanLow:F0}..{strip.ScanHigh:F0} — {kept.Count} prętów " +
                                             "góry w położeniach prętów dołu (pręty w nibie pominięte).\n");
                         }
                     }
@@ -2780,6 +2785,24 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Pas (obrys uskoku) graniczy z nibem: jego granica w osi rozkładu leży na linii uskoku.</summary>
+        /// <summary>
+        /// Pas graniczy z odcięciem siatki przy belce (E2): granica pasa w osi skanu (ScanLow / ScanHigh) leży na krawędzi wielokąta
+        /// odcięcia równoległej do prętów (decyzja 2026-10-14 — góra przy belce w położeniach prętów dołu).
+        /// </summary>
+        private static bool StripTouchesCut(List<List<Point2d>> cuts, StripBounds strip, bool horizontal)
+        {
+            foreach (var poly in cuts)
+                for (int i = 0; i < poly.Count; i++)
+                {
+                    var a = poly[i]; var b = poly[(i + 1) % poly.Count];
+                    // pręty X (horizontal): skan = Y, krawędź pozioma; pręty Y: skan = X, krawędź pionowa
+                    double sa = horizontal ? a.Y : a.X, sb = horizontal ? b.Y : b.X;
+                    if (Math.Abs(sa - sb) > 1.0) continue;
+                    if (Math.Abs(sa - strip.ScanLow) < 1.0 || Math.Abs(sa - strip.ScanHigh) < 1.0) return true;
+                }
+            return false;
+        }
+
         private static bool StripTouchesNib(NibDetector.NibInfo nib, StripBounds strip, bool horizontal)
             => nib.Edges.Any(e => e.Vertical == !horizontal
                 && (Math.Abs(e.InnerCoord - strip.ScanLow) < 1.0 || Math.Abs(e.InnerCoord - strip.ScanHigh) < 1.0)

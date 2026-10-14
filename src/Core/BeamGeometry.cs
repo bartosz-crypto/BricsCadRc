@@ -1464,7 +1464,7 @@ namespace BricsCadRc.Core
         /// górnej (top = true, wielokąt = linia uskoku), pręty wzdłuż X (barsAlongX) albo Y; każdy odcinek osiowy belki (odcinki
         /// „detal ręczny” — bez odcięcia, siatka jak bez belki):
         ///   • pręty RÓWNOLEGŁE do odcinka — dół: od strony krawędzi płyty (nib przed belką) do lica wewnętrznego + d (pierwszy pręt
-        ///     40 + d od lica), góra: do lica wewnętrznego + (s/2 − otulina) (pierwszy pręt s/2 od lica); belka bez krawędzi płyty
+        ///     40 + d od lica), góra: tak samo (decyzja 2026-10-14; dawniej s/2 od lica); belka bez krawędzi płyty
         ///     (OuterSide = 0) — oba lica;
         ///   • pręty PROSTOPADŁE (decyzja użytkownika 2026-10-11 „pręty prostopadłe płyty powinny wchodzić w belkę jak normalnie do
         ///     40 mm side cover” — zastępuje decyzję z 60e8a9c „do lica wewnętrznego”) — dół i góra: przez belkę, koniec
@@ -1500,7 +1500,9 @@ namespace BricsCadRc.Core
                     if (s.LoKind == EndKind.Internal) eLo = s.FaceLo + anch;
                     if (s.HiKind == EndKind.Internal) eHi = s.FaceHi - anch;
                     if (eHi - eLo < 1.0) continue;
-                    double off = top ? spacing / 2.0 - cover : d;
+                    // decyzja 2026-10-14: góra jak dół — pierwszy pręt 40 + d od lica wewnętrznego (siatka górna i dolna w jednej linii,
+                    // między belkami ta sama liczba prętów; dawniej góra s/2 od lica)
+                    double off = d;
                     if (s.OuterSide < 0) { cLo = s.AcrossLo - MeshCutReach; cHi = s.AcrossHi + off; }
                     else if (s.OuterSide > 0) { cLo = s.AcrossLo - off; cHi = s.AcrossHi + MeshCutReach; }
                     else { cLo = s.AcrossLo - off; cHi = s.AcrossHi + off; }

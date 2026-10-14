@@ -946,7 +946,9 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   z odcięciami), `GenerateUBLayerCore` (UB 01/02: pasy prętów głównych na tym samym obszarze, krawędź przy belce — bez UB, komunikat) i
   `PlanNibStepBars` (krawędź uskoku w > 50 % przy belce — bez reguły UB 01/02; pręty góry z położeń dołu). Reguły (pytanie 11 — rozstrzygnięte
   decyzjami użytkownika 2026-10-11):
-  pręty **równoległe** do odcinka belki — dołem od lica wewnętrznego + d (pierwszy 40 + d = 50), górą od lica + (s/2 − 40) (pierwszy s/2 = 100);
+  pręty **równoległe** do odcinka belki — dołem od lica wewnętrznego + d (pierwszy 40 + d = 50), górą tak samo (**decyzja 2026-10-14**:
+  dawniej górą s/2 = 100 — między belkami góra miała o 2 pręty mniej; teraz pas góry przy belce (`StripTouchesCut`) bierze położenia
+  prętów dołu jak przy nibie (`BottomPositionsIn`, tolerancja 15 na różnicę Ø), pręty dołu w nibie pominięte: góra 49 + 3, dół 49 + 4);
   **prostopadłe** dołem i górą (decyzja 2026-10-11 „pręty prostopadłe płyty powinny wchodzić w belkę jak normalnie do 40mm side cover” —
   zastępuje wcześniejszą tego dnia „nie wchodzą w belkę”, 60e8a9c: koniec na licu wewnętrznym) — **przez belkę, koniec 40 od lica zewnętrznego
   belki** (`BeamGeometry.MeshBeamSideCover` = 40 — otulina boczna siatki w belce, inna niż otulina strzemion 45; `MeshCutRects` odcina tylko

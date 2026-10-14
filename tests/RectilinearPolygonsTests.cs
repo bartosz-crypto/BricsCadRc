@@ -145,7 +145,8 @@ namespace BricsCadRc.Tests
         {
             var t2 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: false, d: 12);
             Assert.That(t2.Count, Is.EqualTo(1));
-            Assert.That(t2[0].X1, Is.EqualTo(1327524 + 60).Within(1e-9), "pierwszy pręt T2 = lico + s/2");
+            // decyzja 2026-10-14: góra jak dół — pierwszy pręt T2 = lico + 40 + d (dawniej lico + s/2)
+            Assert.That(t2[0].X1, Is.EqualTo(1327524 + 12).Within(1e-9), "pierwszy pręt T2 = lico + 40 + d");
             // T1 prostopadłe (decyzja 2026-10-11 „do 40mm side cover”): przez belkę, 40 od lica zewnętrznego (= linia uskoku — jak dawniej)
             var t1 = BeamGeometry.MeshCutRects(An528(), top: true, barsAlongX: true, d: 12);
             Assert.That(t1.Count, Is.EqualTo(1));
