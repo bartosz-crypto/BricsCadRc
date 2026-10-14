@@ -45,6 +45,12 @@ namespace BricsCadRc.Core
             /// <summary>Grubość i SSL z opisu płyty (null = brak opisu) — przed oknem (P1: nadpisanie ręczne).</summary>
             public double? DescThickness;
             public string DescSsl;
+            /// <summary>
+            /// Znaczniki przekroju na detalach belek 1:25 / 1:50 (decyzja 2026-10-14): linia cięcia przeniesiona do detalu (rzut strefy +
+            /// Shift) i przycięta do ramki detalu; Scale — skala znacznika względem rzutu 1:50 (1:25 → 0,5); Key — „D&lt;nr detalu&gt;”.
+            /// Bez wpływu na odcisk przekroju (bezpiecznik) — tylko rysunek znaczników.
+            /// </summary>
+            public List<(Point2d P1, Point2d P2, double Scale, string Key)> DetailMarks = new List<(Point2d, Point2d, double, string)>();
         }
 
         /// <summary>
@@ -109,6 +115,9 @@ namespace BricsCadRc.Core
                 var zoneRecs = new List<(string handle, List<Point2d> verts, Point2d inside, BeamParams p)>();
                 // K9: detale belek 1:25 — ANCHOR (kopia strefy): strefa, numer, wierzchołki
                 var anchors = new List<(string zone, int nr, List<Point2d> verts)>();
+                // znaczniki przekroju na detalach (2026-10-14): ramki detali (FRAME) i skala z tytułu („SCALE 1:25”)
+                var frames = new List<(string zone, int nr, List<Point2d> verts)>();
+                var detailScale = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 foreach (ObjectId oid in ms)
                 {
                     if (oid.IsErased) continue;
@@ -128,6 +137,8 @@ namespace BricsCadRc.Core
                         {
                             if (dd.Value.role == BeamStore.RoleAnchor && !string.IsNullOrEmpty(dd.Value.zone))
                                 anchors.Add((dd.Value.zone, dd.Value.nr, GeometryHelper.GetPolylineVertices(pl)));
+                            else if (dd.Value.role == BeamStore.RoleFrame && !string.IsNullOrEmpty(dd.Value.zone))
+                                frames.Add((dd.Value.zone, dd.Value.nr, GeometryHelper.GetPolylineVertices(pl)));
                             continue;
                         }
                         outlines.Add(pl);
@@ -140,7 +151,17 @@ namespace BricsCadRc.Core
                         }
                     }
                     else if (obj is MText mt)
+                    {
+                        // tytuł detalu belki — skala detalu (nie opis płyty)
+                        if (BeamStore.ReadDetail(mt) is var td && td != null)
+                        {
+                            if (td.Value.role == BeamStore.RoleTitle && !string.IsNullOrEmpty(td.Value.zone)
+                                && DetailScaleOf(mt.Contents) is double sc)
+                                detailScale[XLink.Norm(td.Value.zone)] = sc;
+                            continue;
+                        }
                         texts.Add((new Point2d(mt.Location.X, mt.Location.Y), string.Join("\n", GaImportEngine.TextLines(mt))));
+                    }
                     else if (obj is DBText dt)
                         texts.Add((new Point2d(dt.Position.X, dt.Position.Y), dt.TextString));
                 }
@@ -178,6 +199,23 @@ namespace BricsCadRc.Core
                     }
                     var w = BeamDetailRules.Window(zt, zview.poly.Select(v => (v.X, v.Y)).ToList()).Offset(s.X, s.Y).Inflate(BeamDetailRules.Margin);
                     detailOf[XLink.Norm(zh)] = (new Vector2d(s.X, s.Y), w);
+
+                    // znacznik przekroju na detalu (2026-10-14): cięcie rzutu wskazanego → rzut strefy (+ delta) → detal (+ Shift),
+                    // przycięte do ramki detalu (bez ramki — do okna detalu); skala znacznika = skala detalu / 50
+                    try
+                    {
+                        var off = zview.delta + new Vector2d(s.X, s.Y);
+                        var fr = frames.FirstOrDefault(f => XLink.Same(f.zone, zh) && f.nr == anr);
+                        var poly = fr.verts != null && fr.verts.Count >= 3 ? fr.verts
+                                 : new List<Point2d> { new Point2d(w.X0, w.Y0), new Point2d(w.X1, w.Y0), new Point2d(w.X1, w.Y1), new Point2d(w.X0, w.Y1) };
+                        var clip = ClipToPolygon(ctx.P1 + off, ctx.P2 + off, poly);
+                        if (clip.HasValue && !ctx.DetailMarks.Any(m => m.Key == "D" + anr))
+                        {
+                            double sc = detailScale.TryGetValue(XLink.Norm(zh), out var ds) ? ds : DetailScale;
+                            ctx.DetailMarks.Add((clip.Value.a, clip.Value.b, sc / 50.0, "D" + anr));
+                        }
+                    }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.DetailMark", ex); }
                 }
 
                 int nDist = 0;
@@ -298,6 +336,43 @@ namespace BricsCadRc.Core
                 if (ctx.SslSource == null) ctx.Info.Add("Nie znaleziono SSL w opisie płyty.");
             }
             return ctx;
+        }
+
+        /// <summary>Skala detalu z tytułu („SCALE 1:25” → 25); null gdy brak.</summary>
+        internal static double? DetailScaleOf(string contents)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(contents ?? "", @"SCALE\s*1\s*:\s*(\d+(?:\.\d+)?)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && v > 0) return v;
+            return null;
+        }
+
+        /// <summary>Odcinek a–b przycięty do wielokąta (pierwszy wejściowy i ostatni wyjściowy punkt części w środku); null gdy poza.</summary>
+        internal static (Point2d a, Point2d b)? ClipToPolygon(Point2d a, Point2d b, List<Point2d> poly)
+        {
+            var d = b - a;
+            if (d.Length < 1e-9 || poly == null || poly.Count < 3) return null;
+            var ts = new List<double> { 0, 1 };
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var p = poly[i]; var q = poly[(i + 1) % poly.Count]; var e = q - p;
+                double den = d.X * e.Y - d.Y * e.X;
+                if (Math.Abs(den) < 1e-12) continue;
+                var w = p - a;
+                double t = (w.X * e.Y - w.Y * e.X) / den, u = (w.X * d.Y - w.Y * d.X) / den;
+                if (u >= -1e-9 && u <= 1 + 1e-9 && t > 0 && t < 1) ts.Add(t);
+            }
+            ts.Sort();
+            double lo = double.NaN, hi = double.NaN;
+            for (int i = 0; i + 1 < ts.Count; i++)
+            {
+                if (ts[i + 1] - ts[i] < 1e-9) continue;
+                var mid = a + d * ((ts[i] + ts[i + 1]) / 2);
+                if (!GeometryHelper.IsPointInsidePolygon(poly, mid)) continue;
+                if (double.IsNaN(lo)) lo = ts[i];
+                hi = ts[i + 1];
+            }
+            if (double.IsNaN(lo) || (hi - lo) * d.Length < 1.0) return null;
+            return (a + d * lo, a + d * hi);
         }
 
         /// <summary>Oś pręta wzorcowego rozkładu (układ lokalny kształtu), jego kod kształtu i wymiary A–E; null gdy brak.</summary>
@@ -614,33 +689,40 @@ namespace BricsCadRc.Core
                 {
                     a = a.GetNormal();
                     var nrm = ctx.Input.CutAlongX ? new Vector2d(0, ctx.Input.LookSign) : new Vector2d(ctx.Input.LookSign, 0);
+                    // znacznik (k — skala względem rzutu 1:50; rzuty k = 1, wynik bez zmian)
+                    void Mark(Point2d p, Vector2d dir, string mkKey, double k)
+                    {
+                        Tag("MARK", mkKey);
+                        var mk = new Polyline { Layer = SectionMarkLayer };
+                        var t0 = p + nrm * (294 * k); var t1 = p + dir * (83 * k); var t2 = p + dir * (300 * k);
+                        mk.AddVertexAt(0, t1, 0, 0, 0);
+                        mk.AddVertexAt(1, t0, 0, 0, 0);
+                        mk.AddVertexAt(2, p, 0, 0, 0);
+                        mk.AddVertexAt(3, t2, 0, 0, 0);
+                        Add(mk);
+                        var lp = p + dir * (214 * k) + nrm * (130 * k);
+                        if (opt != null && opt.MarkTextOffsets.TryGetValue(mkKey, out var mo)) lp = lp + mo;   // litera przesunięta ręcznie
+                        Tag("MARKTXT", mkKey);
+                        Add(new MText
+                        {
+                            Contents = letter, TextHeight = 150 * k, Layer = SectionMarkLayer, TextStyleId = titleStyle,
+                            Location = new Point3d(lp.X, lp.Y, 0), Attachment = AttachmentPoint.MiddleCenter,
+                            Rotation = ctx.Input.CutAlongX ? 0 : Math.PI / 2   // litera wzdłuż linii cięcia (pionowe cięcie → obrót 90°)
+                        });
+                    }
                     int vi = 0;
                     foreach (var delta in ctx.Views)
                     {
-                        int pi = 0;
-                        foreach (var (p, dir) in new[] { (ctx.P1 + delta, a), (ctx.P2 + delta, -a) })
-                        {
-                            // klucz V<rzut>.P1 / P2 — V0 = rzut wskazany (położenie cięcia przy przeliczeniu: wierzchołek [2])
-                            string mkKey = "V" + vi + ".P" + (++pi);
-                            Tag("MARK", mkKey);
-                            var mk = new Polyline { Layer = SectionMarkLayer };
-                            var t0 = p + nrm * 294; var t1 = p + dir * 83; var t2 = p + dir * 300;
-                            mk.AddVertexAt(0, t1, 0, 0, 0);
-                            mk.AddVertexAt(1, t0, 0, 0, 0);
-                            mk.AddVertexAt(2, p, 0, 0, 0);
-                            mk.AddVertexAt(3, t2, 0, 0, 0);
-                            Add(mk);
-                            var lp = p + dir * 214 + nrm * 130;
-                            if (opt != null && opt.MarkTextOffsets.TryGetValue(mkKey, out var mo)) lp = lp + mo;   // litera przesunięta ręcznie
-                            Tag("MARKTXT", mkKey);
-                            Add(new MText
-                            {
-                                Contents = letter, TextHeight = 150, Layer = SectionMarkLayer, TextStyleId = titleStyle,
-                                Location = new Point3d(lp.X, lp.Y, 0), Attachment = AttachmentPoint.MiddleCenter,
-                                Rotation = ctx.Input.CutAlongX ? 0 : Math.PI / 2   // litera wzdłuż linii cięcia (pionowe cięcie → obrót 90°)
-                            });
-                        }
+                        // klucz V<rzut>.P1 / P2 — V0 = rzut wskazany (położenie cięcia przy przeliczeniu: wierzchołek [2])
+                        Mark(ctx.P1 + delta, a, "V" + vi + ".P1", 1.0);
+                        Mark(ctx.P2 + delta, -a, "V" + vi + ".P2", 1.0);
                         vi++;
+                    }
+                    // detale belek 1:25 / 1:50 (decyzja 2026-10-14): klucz D<nr>.P1 / P2, znacznik w skali detalu
+                    foreach (var dm in ctx.DetailMarks)
+                    {
+                        Mark(dm.P1, a, dm.Key + ".P1", dm.Scale);
+                        Mark(dm.P2, -a, dm.Key + ".P2", dm.Scale);
                     }
                 }
                 Tag(null, null);

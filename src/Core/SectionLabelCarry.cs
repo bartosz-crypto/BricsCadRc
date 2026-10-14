@@ -141,7 +141,9 @@ namespace BricsCadRc.Core
             double dl = Len(v0.X - p.X, v0.Y - p.Y), nl = Len(v1.X - p.X, v1.Y - p.Y);
             if (dl < 1e-6 || nl < 1e-6) return null;
             double dx = (v0.X - p.X) / dl, dy = (v0.Y - p.Y) / dl, nx = (v1.X - p.X) / nl, ny = (v1.Y - p.Y) / nl;
-            return (p.X + dx * 214 + nx * 130, p.Y + dy * 214 + ny * 130);
+            // skala znacznika (detal 1:25 — 0,5; decyzja 2026-10-14) z długości ramienia w stronę patrzenia (294 na rzucie 1:50)
+            double k = Math.Abs(nl - 294.0) < 1e-6 ? 1.0 : nl / 294.0;
+            return (p.X + dx * (214 * k) + nx * (130 * k), p.Y + dy * (214 * k) + ny * (130 * k));
         }
 
         private static double Len(double x, double y) => Math.Sqrt(x * x + y * y);

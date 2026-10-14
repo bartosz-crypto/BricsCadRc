@@ -73,7 +73,7 @@ namespace BricsCadRc.Tests
         private static List<(double X, double Y)> Rect(double x0, double y0, double x1, double y1)
             => new List<(double X, double Y)> { (x0, y0), (x1, y0), (x1, y1), (x0, y1) };
 
-        private static SectionPlanner.Dist D(string mark, string layer, bool alongX, double x0, double y0, double lenA, double span,
+        internal static SectionPlanner.Dist D(string mark, string layer, bool alongX, double x0, double y0, double lenA, double span,
                                              int count, double spacing, int dia, string shape = "00", string side = "",
                                              List<(double X, double Y)>? local = null)
         {
@@ -254,11 +254,11 @@ namespace BricsCadRc.Tests
         /// <summary>Skróty zapisane na niezmienionym kodzie SectionPlanner (przed polami Used* / Source*).</summary>
         private static readonly Dictionary<string, string> Golden = new Dictionary<string, string>
         {
-            ["nib"]      = "6cdd4905a5b5a635902878c8fbae5178d8d96134e810c0d33ef692bf3f50d761",
+            ["nib"]      = "0815e56d32a92f640f660a1bc9f6ab7213064d0dd3fd7946b752f6a47fa4f13f",
             ["hole"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
             ["piles"]    = "e62159df1d8a97d4402e43e2746a34ddd7757689d0fa221837fb35744c928832",
             ["vertical"] = "b7d453c9093a86c4321faf50aeeec03595182eb84263d1da37ed2c37b8fb85d2",
-            ["fitshape"] = "ba680f87ce1e77fab8b000de66b9268f110cc429365f5f9d13ec973a6fbe284f",
+            ["fitshape"] = "6dfb28cfe9e7068c845c0e3044b357f7457cf890f53f24fbfd38ff5657dd9452",
             // plan belek E5 + E4b (2026-10-10): przekrój przez belkę — zapisany po przejrzeniu zrzutu (profil, kropki, strzemię, boczne, nib, wymiary);
             // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty;
             // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
@@ -268,11 +268,11 @@ namespace BricsCadRc.Tests
             // do wnętrza, w betonie, zasięg prętów bez zmian, zakład T1 104 / B1 05 odsunięty o 25, UB 01 / 03 — symbole na wolnych końcach,
             // strzemię bez symboli); „hole” w stylach = „hole” bez stylu (Z4: pręty przechodzą przez otwór / urwanie);
             // kreska 30 mm (2026-10-11): względem 50 mm zmieniają się tylko linie BAR z kreskami (ramię skrócone o 30/√2), opisy bez zmian
-            ["nib-S1"]      = "e81a1897ff9368bed99fb0b5c8fe25c71effb7a1a2193c1de28bc38d43664abc",
+            ["nib-S1"]      = "31757be0577b581dd00527b062fa1b06a453ce101ea8ed2d68487f1532694d23",   // v5 (2026-10-14): bez odsunięcia zakładów
             ["hole-S1"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
-            ["fitshape-S1"] = "92cac570eaefcbd2391b55a5e5fcfc1b8feb4e38fb8ec309629d495b2fd6b3b9",
+            ["fitshape-S1"] = "523c042c8ab58617cc9f3cb2355ce1a0cb4f8331d411b5d7bcdeb16b64c5131d",
             ["beam-S1"]     = "7008be454337ee42b8d7ec232c832a93dea2afbe62ef45654d0db5839ee9f10e",
-            ["along-S1"]    = "6f338ab9f0944a04348a286c900a61f552a5a9f6daaa8c1cab6603ab75e143ab",
+            ["along-S1"]    = "fec85f72176d52dbb82b64000ca4095377af7304b9630097ac3c062ac660a8f8",   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
         };
 
         [TestCaseSource(nameof(Cases))]

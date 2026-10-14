@@ -143,5 +143,14 @@ namespace BricsCadRc.Tests
             Assert.That(e.Value.Y, Is.EqualTo(1786).Within(1e-9));
             Assert.That(SectionLabelCarry.MarkTextDefault((0, 0), (0, 294), (0, 0)), Is.Null);
         }
+
+        [Test]
+        public void MarkTextDefault_DetailScale_2026_10_14()
+        {
+            // znacznik na detalu 1:25 (skala 0,5): ramię 147, litera (107, 65)
+            var d = SectionLabelCarry.MarkTextDefault((41.5, 0), (0, 147), (0, 0));
+            Assert.That(d!.Value.X, Is.EqualTo(107).Within(1e-9));
+            Assert.That(d.Value.Y, Is.EqualTo(65).Within(1e-9));
+        }
     }
 }

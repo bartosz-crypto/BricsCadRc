@@ -670,6 +670,23 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (opis UB jest w połowie), odnośnik ze środka linii rozkładu wzdłuż prętów za krawędź (600 za płytą), tekst wzdłuż odnośnika; widoczny (reprezentatywny) pręt UB ADD obok środka, nie pod odnośnikiem. Wymaga wygenerowanych UB; po ponownym UB uruchom ADD jeszcze raz.
 
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
+**Decyzja Bartka 2026-10-14 (SectionPlanner.Version 5):** przekrój „w 1 warstwie” — pręty jednego kierunku (proste siatki i ramiona
+U-barów) na jednej linii poziomu swojej warstwy, bez odsunięcia zakładów Z2 (`OffsetLaps` wyłączone; od 5895ac7 pręt prosty przy
+U-barze odsuwany o 25 w głąb — B1 lądował nad B2, kropki na prętach). Symbole zakończeń S1 (kreska 45°) bez zmian. Obrys pręta
+(`OutlineOf`) w narożnikach — ścięcie po dwusiecznej normalnych obu odcinków (wcześniej normalna z cięciwy sąsiednich punktów: przy
+ramieniu 640 + kreska 35 krawędzie U-bara skośne, kreski „krzywe”). Luka w zbrojeniu (np. usunięty rozkład): schemat siatki
+(`AlignMesh` / `MeshLevelBesideBeams`) wstawia kropkę tylko tam, gdzie ≤ ¾ rozstawu od niej leży rzeczywisty pręt rozkładu
+(`CoveredByBars`; pręt w nibie — tolerancja + 150) — w luce brak kropek i podpisów sąsiednim rozkładem, a RC_SECTION /
+RC_SECTION_UPDATE wypisuje komunikat „Luka w zbrojeniu (dół/góra) …” (`WarnGaps`).
+Przekrój przez belkę (2026-10-14): UB 03 w pasie belki / jej nibie licuje się ze strzemieniem (lico zewnętrzne dolnego ramienia na
+`VLinkBot`, wysokość U bez zmian — `UbBeamShift`); pręty w nibie belki 2T+1B: górą NA górnym ramieniu spinki, dołem wewnątrz na dolnym
+(screen Bartka). Opisy: pręt górą w dolnej części belki (pod spodem płyty) — w rzędzie uskoku nibu belki nad prętem (w obrysie, bez
+przecinania pionowych ramion prętów); opis dołem kolidujący tylko z betonem (pręt płyty przy licu belki) — przesunięty w bok o ≤ 60 w
+rzędzie pod płytą zamiast spadać pod belkę. Okno RC_SECTION: wysokość belki z rekordu (tylko do wglądu). Znaczniki przekroju także na
+detalach belek (`SectionContext.DetailMarks`): cięcie → rzut strefy + Shift detalu, przycięte do ramki FRAME; skala znacznika = skala z
+tytułu detalu („SCALE 1:25” → 0,5 rzutu 1:50); klucze `D<nr>.P1/P2` (litera przesuwana ręcznie — `MarkTextDefault` ze skalą).
+Siatka przy belce (2026-10-14): siatka górna i dolna w jednej linii — w `MeshLevelBesideBeams` kotwa po stronie belki wspólna dla
+poziomów odcinka (wyznacza ją poziom górny, liczony najpierw); bez belek bez zmian.
 - Wskazanie: obrys płyty (rzut dolny albo górny), 2 punkty linii cięcia (pozioma / pionowa wg dłuższej składowej),
   strona patrzenia, okno parametrów (`SectionDialog`), punkt wstawienia = lewy górny narożnik płyty (poziom SSL).
 - **Belki (plan belek E5; wartości domyślne do potwierdzenia przez Bartka):** `PrepareSection` czyta strefy RC_BEAM rzutów płyty (punkt

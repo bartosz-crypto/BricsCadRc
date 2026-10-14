@@ -75,19 +75,38 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
-        public void Z2_Lap_StraightBarOffset25_TowardsInterior()
+        public void MeshGap_DeletedDistribution_NoDots_Warning_2026_10_14()
         {
-            // nib: T1 104 zachodzi na górne ramię UB 01 (ten sam poziom) — pręt prosty odsunięty o 25 mm w dół
+            // decyzja 2026-10-14: po usunięciu rozkładu (luka w zbrojeniu) schemat siatki nie wstawia kropek w luce i nie podpisuje ich
+            // sąsiednim rozkładem; RC_SECTION / RC_SECTION_UPDATE dostaje komunikat o luce
+            var inp = SectionPlannerGoldenTests.CasePiles();
+            inp.Dists.RemoveAll(d => d.PosNr == "11");
+            inp.Dists.Add(SectionPlannerGoldenTests.D("H10-11-200 B1", "B1", false, 40, 40, 4920, 1800, 10, 200, 10));    // x 40…1840
+            inp.Dists.Add(SectionPlannerGoldenTests.D("H10-22-200 B1", "B1", false, 2960, 40, 4920, 2000, 11, 200, 10));  // x 2960…4960
+            var r = SectionPlanner.Plan(inp);
+            var b1 = r.Dots.Where(d => d.PosNr == "11" || d.PosNr == "22").ToList();
+            Assert.That(b1.Count(d => d.PosNr == "11"), Is.EqualTo(10));
+            Assert.That(b1.Count(d => d.PosNr == "22"), Is.EqualTo(11));
+            // luka 1840…2960 (w u) — bez kropek
+            var us = b1.Select(d => d.U).OrderBy(u => u).ToList();
+            double maxStep = us.Zip(us.Skip(1), (a, b) => b - a).Max();
+            Assert.That(maxStep, Is.GreaterThan(1000));
+            Assert.That(r.Warnings.Any(w => w.StartsWith("Luka w zbrojeniu (dół)")), Is.True, string.Join(" | ", r.Warnings));
+            // bez luki — bez komunikatu
+            Assert.That(SectionPlanner.Plan(SectionPlannerGoldenTests.CasePiles()).Warnings.Any(w => w.StartsWith("Luka")), Is.False);
+        }
+
+        [Test]
+        public void Z2_Lap_NoOffset_OneLayer_2026_10_14()
+        {
+            // decyzja 2026-10-14 („przekrój w 1 warstwie”): T1 104 i B1 05 na poziomie swojej warstwy, na jednej linii z ramionami
+            // U-barów (bez odsunięcia 25 z wersji 3) — kreski zakończeń mogą tylko schodzić do wnętrza, linia pręta bez zmian
             var none = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseNib());
             var r = Plan(SectionPlannerGoldenTests.CaseNib, SectionPlanner.EndStyle.Tick);
             double v0 = none.Bars.Single(x => x.PosNr == "104").Path[0].V;
-            double v1 = r.Bars.Single(x => x.PosNr == "104").Path.Max(p => p.V);      // kreski w dół
-            Assert.That(v1, Is.EqualTo(v0 - SectionPlanner.LapOffset).Within(1e-6));
-            // B1 05 zachodzi na dolne ramię UB 03 — w górę
+            Assert.That(r.Bars.Single(x => x.PosNr == "104").Path.Max(p => p.V), Is.EqualTo(v0).Within(1e-6));
             double b0 = none.Bars.Single(x => x.PosNr == "05").Path[0].V;
-            double b1 = r.Bars.Single(x => x.PosNr == "05").Path.Min(p => p.V);       // kreski w górę
-            Assert.That(b1, Is.EqualTo(b0 + SectionPlanner.LapOffset).Within(1e-6));
-            // U-bary (gięte) bez odsunięcia
+            Assert.That(r.Bars.Single(x => x.PosNr == "05").Path.Min(p => p.V), Is.EqualTo(b0).Within(1e-6));
             Assert.That(r.Bars.Single(x => x.PosNr == "01").Path.Max(p => p.V), Is.EqualTo(none.Bars.Single(x => x.PosNr == "01").Path.Max(p => p.V)));
         }
 

@@ -210,12 +210,29 @@ namespace BricsCadRc.Tests
             Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
             // wersja 4 (2026-10-11: siatka równoległa do belki nie wchodzi w belkę — bez kropek w trzonie; decyzja „do 40mm side cover”
             // zmienia tylko wejście — wersja bez zmian); BC / BU nadal pominięte
-            Assert.That(SectionPlanner.Version, Is.EqualTo(4));
+            Assert.That(SectionPlanner.Version, Is.EqualTo(5));
         }
 
         // ── decyzje użytkownika 2026-10-11: pręty płyty RÓWNOLEGŁE do belki nie wchodzą w belkę (E2), PROSTOPADŁE wchodzą w belkę
         //    „jak normalnie do 40mm side cover” (40 od lica zewnętrznego); w nibie jedna pozycja — 3 pręty: 2 górą i 1 dołem
         //    („jedna pozycja bottom in nib i top”, BN „2+1 H10-nn T+B IN NIB”) ──
+
+        [Test]
+        public void D20261014_Labels_NibBarInBeam_LedgeRow_SlabBottomBesideBeam()
+        {
+            var inp = CaseBeamNoMeshInBeam();
+            inp.Dists.RemoveAll(d => d.PosNr == "112");   // bez T2 — B2 od 810 (przy licu belki 760)
+            var r = SectionPlanner.Plan(inp);
+            // pręt 22 górą w trzonie belki (u = 205, na górnym ramieniu UB 03): opis w rzędzie uskoku nibu belki (−375 + 150 + 15), nie nad belką
+            var l22 = r.Labels.Where(l => l.Text == "22").ToList();
+            Assert.That(l22.Any(l => l.V > 0), Is.False, string.Join(" ", l22.Select(l => l.U + "," + l.V)));
+            Assert.That(l22.Count(l => Math.Abs(l.V - (-210)) < 1e-9 && Math.Abs(l.U - 205) <= 90), Is.EqualTo(1),
+                        string.Join(" ", l22.Select(l => l.U + "," + l.V)));
+            // B2 (12) przy licu belki (u = 810, lico 760): opis pod spodem płyty (−225 − 15 − 50), przesunięty w bok — nie pod belką
+            var l12 = r.Labels.Where(l => l.Text == "12").OrderBy(l => l.U).First();
+            Assert.That(l12.V, Is.EqualTo(-290).Within(1e-9));
+            Assert.That(Math.Abs(l12.U - 810), Is.LessThanOrEqualTo(60));
+        }
 
         /// <summary>
         /// Wejście jak złoty „beam” (belka 160…760, nib 160), ale siatka wg decyzji 2026-10-11: B1 / T1 (prostopadłe do belki) przez
@@ -250,7 +267,9 @@ namespace BricsCadRc.Tests
                         "kropki siatki w belce / nibie: " + string.Join(" ", mesh.Where(d => d.U <= 760.5).Select(d => d.PosNr + "@" + d.U)));
             var b2 = mesh.Where(d => d.PosNr == "12").OrderBy(d => d.U).ToList();
             var t2 = mesh.Where(d => d.PosNr == "112").OrderBy(d => d.U).ToList();
-            Assert.That(b2[0].U, Is.EqualTo(810.0).Within(1e-9), "pierwszy B2 = rozkład");
+            // decyzja 2026-10-14: siatka dolna w linii z górną — kotwa przy belce z poziomu górnego (T2 od 860)
+            Assert.That(b2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy B2 = pierwszy T2");
+            Assert.That(b2.Select(d => d.U).Take(5), Is.EqualTo(t2.Select(d => d.U).Take(5)), "dół i góra w jednej linii");
             Assert.That(t2[0].U, Is.EqualTo(860.0).Within(1e-9), "pierwszy T2 = rozkład");
             // pręty prostopadłe do belki (B1 / T1 w widoku) wchodzą w belkę — koniec 40 od lica zewnętrznego (160 + 40 = 200)
             foreach (var pos in new[] { "11", "111" })
@@ -261,7 +280,7 @@ namespace BricsCadRc.Tests
             }
             // bez T IN NIB płyty w nibie belki
             Assert.That(r.Dots.Any(d => d.TinNib), Is.False);
-            // pręty w nibie 2T+1B: jedna pozycja (22), 3 kropki — 2 górą pod górnym ramieniem UB 03 (ten sam poziom; 55 w nibie
+            // pręty w nibie 2T+1B: jedna pozycja (22), 3 kropki — 2 górą na górnym ramieniu UB 03 (2026-10-14; ten sam poziom; 55 w nibie
             // i 150 dalej w płytę — 205, jak T IN NIB, decyzja 2026-10-12), 1 dołem nad dolnym ramieniem UB 03, pod prętem górą przy krawędzi (55)
             var nib = r.Dots.Where(d => d.PosNr == "22").ToList();
             Assert.That(nib.Count, Is.EqualTo(3), string.Join(" ", nib.Select(d => d.U + "," + d.V)));
@@ -274,7 +293,7 @@ namespace BricsCadRc.Tests
             Assert.That(topN[0].U, Is.EqualTo(55.0).Within(0.5));
             Assert.That(topN[1].U, Is.EqualTo(205.0).Within(0.5));
             Assert.That(Math.Abs(topN[0].V - topN[1].V), Is.LessThan(1e-9));
-            Assert.That(topN[0].V, Is.LessThan(ub3.Path.Max(q => q.V)), "pod górnym ramieniem UB 03");
+            Assert.That(topN[0].V, Is.GreaterThan(ub3.Path.Max(q => q.V)), "na górnym ramieniu UB 03 (decyzja 2026-10-14)");
             Assert.That(botN[0].U, Is.EqualTo(55.0).Within(0.5), "dołem pod prętem przy krawędzi");
             Assert.That(botN[0].V, Is.GreaterThan(ub3.Path.Min(q => q.V)), "nad dolnym ramieniem UB 03");
             Assert.That(botN[0].V, Is.LessThan(topN[0].V));

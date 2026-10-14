@@ -87,10 +87,10 @@ namespace BricsCadRc.Tests
             // boczne: po 1 na bok, w połowie między osiami dołu (−307) i góry (−78): −192.5; przy ramionach strzemienia (220 / 700)
             var side = r.Dots.Where(d => d.PosNr == "20").OrderBy(d => d.U).ToList();
             Assert.That(side.Select(d => (d.U, d.V)), Is.EqualTo(new[] { (220.0, -192.5), (700.0, -192.5) }));
-            // nib: w narożach spinki UB 03 (ramiona: dół −375 + 45 + 5 = −325, góra −325 + 60 = −265), wewnątrz U:
-            // dołem H16 −325 + 5 + 8 = −312, górą H10 −265 − 5 − 5 = −275
-            Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-312));
-            Assert.That(r.Dots.Single(d => d.PosNr == "21").V, Is.EqualTo(-275));
+            // nib (decyzja 2026-10-14): spinka UB 03 licuje się ze strzemieniem — ramiona: dół −375 + 50 + 5 = −320, góra −320 + 60 = −260;
+            // dołem H16 wewnątrz U −320 + 5 + 8 = −307, górą H10 NA górnym ramieniu −260 + 5 + 5 = −250
+            Assert.That(r.Dots.Single(d => d.PosNr == "22").V, Is.EqualTo(-307));
+            Assert.That(r.Dots.Single(d => d.PosNr == "21").V, Is.EqualTo(-250));
             Assert.That(r.Dots.Single(d => d.PosNr == "21").U, Is.EqualTo(55));
             // UB 03 (element płyty) na otulinie dołem 45 < otulina dolna belki 50 — K2 (praktyka biura): bez ostrzeżenia, BN dołem od UB 03
             Assert.That(r.Warnings.Any(w => w.StartsWith("UB 03 płyty")), Is.False);
@@ -121,7 +121,7 @@ namespace BricsCadRc.Tests
             }
             // drugi T IN NIB (190 od krawędzi — w trzonie belki 160…760): poziom jak w płycie (−75 − 30 − 6 = −111), nie pod ramieniem UB 03
             Assert.That(tin[1].V, Is.EqualTo(-111).Within(1e-9));
-            Assert.That(tin[0].V, Is.EqualTo(-265 - 5 - 6).Within(1e-9));
+            Assert.That(tin[0].V, Is.EqualTo(-260 - 5 - 6).Within(1e-9));   // pod górnym ramieniem UB 03 (licuje się ze strzemieniem, 2026-10-14)
         }
 
         [Test]

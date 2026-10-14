@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -49,6 +50,16 @@ namespace BricsCadRc.Dialogs
 
             _letter = Field("Oznaczenie przekroju", letter);
             _thk    = Field("Grubość płyty [mm]", F(_inp.Thickness), ctx.ThicknessSource != null ? "z opisu płyty" : "nie znaleziono");
+            // decyzja 2026-10-14: przekrój przez belkę — wysokość belki (z rekordu strefy RC_BEAM, tylko do wglądu)
+            var beams = _inp.Beams ?? new List<SectionPlanner.BeamBand>();
+            var beamH = beams.Where(b => b != null && b.Height > 0).Select(b => b.Height).Distinct().OrderBy(h => h).ToList();
+            if (beamH.Count > 0)
+            {
+                var bh = Field("Wysokość belki [mm]", string.Join(" / ", beamH.Select(F)),
+                               (beamH.Count == 1 ? "z rekordu belki" : "z rekordów belek") + $" ({beams.Count} na linii cięcia)");
+                bh.IsReadOnly = true;
+                bh.Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF6, 0xF8));
+            }
             _ssl    = Field("SSL", _inp.Ssl ?? "", ctx.SslSource != null ? "z opisu płyty" : "puste = bez znacznika");
             _nibH   = Field("Wysokość nibu [mm]", F(_inp.NibHeight), ctx.NibCount > 0 ? $"nib: {ctx.NibCount} krawędzi" : "brak nibu");
             _cb     = Field("Otulina dołem [mm]", F(_inp.CoverBottom));
