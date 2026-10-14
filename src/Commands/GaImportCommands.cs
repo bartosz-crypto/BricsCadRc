@@ -45,7 +45,49 @@ namespace BricsCadRc.Commands
                     k = dlg.SelectedIndex;
                 }
                 var plot = src.Plots[k];
+
+                // decyzja 2026-10-14: brakujące elementy „pliku RC” z szablonu wtyczki — tytuły rzutów i czysty arkusz RC (bez rzutni, zawsze na nowo)
+                // przed wstawieniem płyty (rzuty ustawiane nad tytułami), detale PH1–PH9 po wstawieniu (obok rzutu górnego)
+                var tplRep = new RcTemplateEngine.Report();
+                Teigha.DatabaseServices.Database tpl = null;
+                try
+                {
+                    tpl = RcTemplateEngine.OpenTemplate();
+                    if (tpl == null) ed.WriteMessage($"\n{T} Szablon RC (zasób wtyczki) niedostępny — tytuły / layout / detale PH nie zostaną dodane.");
+                    else
+                        using (doc.LockDocument())
+                        {
+                            RcTemplateEngine.EnsureTitles(doc.Database, tpl, tplRep);
+                            // czysty arkusz RC nazwany wg GA (GA0300… → RC0300 + rewizja szablonu, np. RC0300C1)
+                            var gaData = GaTitleEngine.Read(src.Db, plot.Label);
+                            string sheet = GaTitleEngine.BuildDrawingSuffix(gaData, 0) + RcTemplateEngine.TemplateRev(tpl);
+                            RcTemplateEngine.CreateSheet(doc.Database, tpl, sheet, tplRep);
+                        }
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("RC_PRZYGOTUJ_GA.Template", ex);
+                    ed.WriteMessage($"\n{T} Szablon RC — błąd: {ex.Message}");
+                }
+
                 var r = GaImportEngine.Import(doc, src, plot, warnings);
+
+                if (tpl != null)
+                {
+                    try
+                    {
+                        if (RcTemplateEngine.PhAnchor(doc.Database, r.OutlineTop) is var a && a.HasValue)
+                            using (doc.LockDocument())
+                                RcTemplateEngine.EnsurePh(doc.Database, tpl, a.Value.left, a.Value.top, tplRep);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Log.Error("RC_PRZYGOTUJ_GA.TemplatePh", ex);
+                        ed.WriteMessage($"\n{T} Detale PH z szablonu — błąd: {ex.Message}");
+                    }
+                    finally { tpl.Dispose(); }
+                }
+                foreach (var m in tplRep.Messages) ed.WriteMessage($"\n{T} Szablon RC: {m}.");
                 ed.WriteMessage($"\n{T} {plot.Label}: rzut dolny {r.Bottom} obiektów, rzut górny {r.Top} (z podpisami pali)" +
                     (r.Joined > 0 ? $", połączone kawałki obrysu/uskoku: {r.Joined}" : "") +
                     (r.NibClosed > 0 ? $", nib domknięty: {r.NibClosed}" : "") +

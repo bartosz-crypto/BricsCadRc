@@ -598,6 +598,16 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   i o płytę (`RunPunching` z zapamiętaną płytą); inaczej jak dawniej wybór xlsx. RC_IMPORT_MAP działa dalej osobno.
 
 ## 4d. Przygotowanie rysunku RC z GA (RC_PRZYGOTUJ_GA)
+- **Szablon RC (decyzja użytkownika 2026-10-14, `RcTemplateEngine`):** rysunek bez elementów „pliku RC default” dostaje je z zasobu
+  wtyczki `Resources/rc-template.dxf.gz` (EmbeddedResource; budowany z przykładowego rysunku RC skryptem
+  `tools/RcTemplate/build_template.py`): tytuły rzutów „REINFORCEMENT DETAILS … BOTTOM / TOP LAYER” (przed wstawieniem płyty),
+  **czysty arkusz RC zawsze na nowo** (2026-10-14, poprawka: dawniej tylko gdy brak A1-BL) — nazwa wg GA: `BuildDrawingSuffix`
+  (GA0300… → RC0300) + rewizja z A1-BL szablonu (REV, „C1”) → „RC0300C1”, pierwsza zakładka; layout o tej nazwie i puste
+  „Layout1/2” usuwane; bez rzutni, notatek „Note:” i chmurek rewizji (A1-BL, ramki, notatki ogólne, tabela rewizji; wydruk jak
+  w szablonie — pc3, A1, ctb, skala); detale PH1–PH9 (po wstawieniu płyty, PlanGap na prawo od rzutu górnego
+  i ramki rebar_top) z opisami „EXTRA BARS (N/A)” / „APPLICABLE FOR PILES N/A” — wypełnia je RC_PUNCHING_AUTO. Style, warstwy,
+  bloki — razem z obiektami (WblockCloneObjects, istniejące bez zmian). Element już obecny — pomijany. Blok A1-BL nowego layoutu
+  wypełnia dalej `GaTitleEngine` (teksty z GA).
 - W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” albo „GARAGE n…” na SD-Text
   wewnątrz zamkniętego obrysu SD-PILED-RAFT — `PlotLabelRules.IsPlotLabel`; obrys zewnętrzny = największy zawierający opis).
   Lista: najpierw PLOT, potem GARAGE (domyślnie pierwszy PLOT). Garaż: TITLE_1 / DRAWING_NUMBER z layoutu GA (GA3215 → RC3215);
