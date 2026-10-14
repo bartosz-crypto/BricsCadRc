@@ -151,6 +151,14 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   OK / Anuluj z listą numerów (`ConfirmIdenticalBars` / `FindIdenticalBars`, teksty `IdenticalBarText`); w trybie bez okien
   (`ScriptMode.IsNonInteractive`: `/automation`, `RC_NO_DIALOGS=1`, bit 4 `CMDACTIVE` = skrypt .scr — LISP / makra pokażą
   okno) komunikat `[RC] Na rysunku jest już pręt identyczny …` w linii poleceń + log. Tylko odczyt.
+  **Method = Any** (decyzja użytkownika 2026-10-14, jak „Any” w ASD; wcześniej e565894, usunięte w 54c6efa): okno „Reinforcement
+  detailing” — Method Module / Any. Any = JEDEN pręt: blok rozkładu (RC_BAR_BLOCK, `ViewingDirection` = "Any") z całym kształtem
+  pręta wzorcowego jako polilinią wypełnioną (szerokość = Ø; `BarGeometryBuilder.AnyAxis` — najdłuższy odcinek na osi prętów od
+  punktu wstawienia; [Obróć] 90°, [Lustro] = `SymbolDirection` Down), w miejscu wskazanym; opis jak rozkład (kropka na pręcie,
+  bez linii rozkładu). Count = 1, BarsSpan = 0, liczba prętów z okna opisu w `CountDisplay` (zestawienie BBS — `EffectiveCount`),
+  rozstaw w `Spacing` i opisie. `BarBlockEngine.BuildBars` → `BuildAny`; grip zakresu i `UpdateBarLength` bez zmian dla Any;
+  RC_EDIT_DISTRIBUTION dla Any — okno opisu (liczba, rozstaw, sufiks). Przekrój (RC_SECTION) — Any jak rozkład 1 pręta (do ustalenia:
+  pręty boczne belki).
 - `BarFormatCommands` (Plan C, krok 3f) — `RC_BAR_FORMAT [Polilinia/Blok]`: format NOWYCH prętów (RC_BAR, AutoRebar,
   przebicie), zapis `%APPDATA%\NaSmartRc\barformat.txt` (`BarFormat`; fallback: plik starej wtyczki); **domyślnie Polilinia**
   (rysunki dla starej wtyczki kolegi — zawsze Polilinia). Przy starcie: `[NA Smart RC] Nowe pręty: polilinia|blok`.

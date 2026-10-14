@@ -186,6 +186,13 @@ namespace BricsCadRc.Commands
             var detailDlg = new ReinfDetailingDialog();
             if (Application.ShowModalWindow(detailDlg) != true) return;
 
+            // Method = Any (decyzja 2026-10-14, jak w ASD): jeden pręt w miejscu wskazanym, liczba i rozstaw w opisie
+            if (detailDlg.IsAnyMethod)
+            {
+                DistributionAny(doc, db, sourceBar);
+                return;
+            }
+
             // viewLength — Auto z GetViewLength lub Manual z kliknięcia segmentu
             double viewLength;
             if (detailDlg.IsManualViewingDirection)
@@ -467,6 +474,121 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
+        /// RC_DISTRIBUTION, Method = Any (decyzja użytkownika 2026-10-14, jak „Any” w ASD): JEDEN pręt — cały kształt pręta wzorcowego
+        /// jako polilinia wypełniona — w miejscu wskazanym ([Obróć] 90°, [Lustro] — zagięcia na drugą stronę), opis z kropką na pręcie;
+        /// liczba prętów i rozstaw z okna opisu (tylko opis i zestawienie: Count = 1, CountDisplay = liczba, Spacing = rozstaw).
+        /// </summary>
+        private static void DistributionAny(Document doc, Database db, BarData sourceBar)
+        {
+            var ed = doc.Editor;
+            sourceBar.ViewingDirection = BarBlockEngine.AnyMethod;
+            sourceBar.VisibilityMode   = BarVisibilityMode.All;
+            sourceBar.VisibleIndices   = "";
+            sourceBar.Count            = 1;
+            sourceBar.CountDisplay     = null;
+            sourceBar.Angle            = 0.0;
+            sourceBar.Cover            = 0.0;
+            sourceBar.Flipped          = false;
+            sourceBar.SkewStart        = 0; sourceBar.SkewEnd = 0;
+            if (sourceBar.Spacing <= 0) sourceBar.Spacing = 200.0;
+            if (sourceBar.LengthA <= 0) { ed.WriteMessage("\n[RC] Pręt bez wymiaru A — nie da się rozłożyć (Any).\n"); return; }
+
+            bool alongY = false, mirror = false;
+            // podgląd przy kursorze: jedna polilinia DirectShortTerm (jak podgląd leadera) — usuwana przed każdym nowym rysunkiem
+            var tmP = TransientManager.CurrentTransientManager;
+            var vpP = new IntegerCollection();
+            Polyline previewPl = null;
+            void ClearPreview()
+            {
+                if (previewPl == null) return;
+                try { tmP.EraseTransient(previewPl, vpP); } catch (System.Exception logEx) { Log.Error("BarCommands.DistributionAny", logEx); }
+                try { previewPl.Dispose(); } catch (System.Exception logEx) { Log.Error("BarCommands.DistributionAny", logEx); }
+                previewPl = null;
+            }
+            void DrawAt(Point3d p)
+            {
+                ClearPreview();
+                var pts = BarGeometryBuilder.AnyAxis(sourceBar.ShapeCode ?? "00", sourceBar.ParamValues, sourceBar.Diameter, mirror, alongY);
+                if (pts.Count < 2) return;
+                var pl = new Polyline { ColorIndex = 7 };
+                for (int i = 0; i < pts.Count; i++) pl.AddVertexAt(i, new Point2d(p.X + pts[i].X, p.Y + pts[i].Y), 0, 0, 0);
+                pl.ConstantWidth = Math.Max(1, sourceBar.Diameter);
+                try { tmP.AddTransient(pl, TransientDrawingMode.DirectShortTerm, 128, vpP); previewPl = pl; }
+                catch (System.Exception logEx) { Log.Error("BarCommands.DistributionAny", logEx); pl.Dispose(); }
+            }
+
+            Point3d ins;
+            while (true)
+            {
+                var po = new PromptPointOptions("\nPunkt wstawienia pręta (początek najdłuższego ramienia) [Obróć/Lustro]: ")
+                    { AppendKeywordsToMessage = false };
+                po.Keywords.Add("Obróć");
+                po.Keywords.Add("Lustro");
+                PointMonitorEventHandler mon = (s, ev) =>
+                {
+                    try { DrawAt(ev.Context.ComputedPoint); Application.UpdateScreen(); }
+                    catch (System.Exception logEx) { Log.Error("BarCommands.DistributionAny", logEx); }
+                };
+                ed.PointMonitor += mon;
+                PromptPointResult pr;
+                try { pr = ed.GetPoint(po); }
+                finally { ed.PointMonitor -= mon; }
+                if (pr.Status == PromptStatus.Keyword)
+                {
+                    if (pr.StringResult == "Obróć") alongY = !alongY; else mirror = !mirror;
+                    continue;
+                }
+                ClearPreview();
+                if (pr.Status != PromptStatus.OK) return;
+                ins = pr.Value;
+                break;
+            }
+
+            bool horizontal = !alongY;
+            sourceBar.Direction       = horizontal ? "X" : "Y";
+            sourceBar.SymbolDirection = mirror ? "Down" : "Up";
+            sourceBar.Pt1X = ins.X; sourceBar.Pt1Y = ins.Y;
+            sourceBar.BarsSpan = 0;
+
+            int posNr        = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
+            bool newPosAlloc = posNr <= 0;
+            if (newPosAlloc) posNr = PositionCounter.Peek(db);
+
+            // zakres: punkt wstawienia + A wzdłuż prętów (tylko położenie bloku; kształt z wymiarów pręta)
+            double x1 = horizontal ? ins.X + sourceBar.LengthA : ins.X;
+            double y1 = horizontal ? ins.Y : ins.Y + sourceBar.LengthA;
+            var barResult = BarBlockEngine.GenerateFromBounds(db, ins.X, ins.Y, x1, y1, sourceBar, horizontal, posNr);
+            if (!barResult.IsValid)
+            {
+                ed.WriteMessage("\n[RC SLAB] Nie udało się utworzyć rozkładu Any.\n");
+                return;
+            }
+
+            string baseMark = BarData.FormatMark(sourceBar.Diameter, posNr, sourceBar.Spacing, 2);   // Any: rozstaw zawsze w opisie
+            bool annOk = RunAnnotationFlow(doc, db, sourceBar, barResult, horizontal,
+                sourceBar.Spacing, 1, baseMark, barResult.BlockRefId);
+            if (!annOk) return;
+
+            if (newPosAlloc) PositionCounter.CommitUsed(db, posNr);
+            if (!string.IsNullOrEmpty(sourceBar.Mark))
+            {
+                using (var trMark = db.TransactionManager.StartTransaction())
+                {
+                    if (trMark.GetObject(barResult.BlockRefId, OpenMode.ForWrite) is BlockReference brMark
+                        && BarBlockEngine.ReadXData(brMark) is BarData barXd)
+                    {
+                        barXd.Mark = sourceBar.Mark;
+                        BarBlockEngine.WriteXData(brMark, barXd);
+                    }
+                    trMark.Commit();
+                }
+            }
+            AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
+            ed.WriteMessage($"\n[RC SLAB] Rozkład Any: {sourceBar.EffectiveCount} prętów (w rzucie 1)  {sourceBar.Mark}");
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("BarCommands.DistributionAny", logEx); }
+        }
+
+        /// <summary>
         /// RC_DISTRIBUTION (e7b600d (a), decyzja D5): na rysunku są inne pręty o identycznych wymiarach (średnica, kształt,
         /// A–E) — także kopie o tym samym numerze, bez prętów bez numeru. Okno OK / Anuluj z listą numerów; Anuluj przerywa
         /// rozkład. Tryb skryptowy (<see cref="ScriptMode"/>) — komunikat w linii poleceń + log, bez okna. Tylko odczyt.
@@ -545,13 +667,18 @@ namespace BricsCadRc.Commands
             finalSpacing      = descDlg.BarSpacing;
 
             // Odbuduj mark z finalSpacing/finalCount (baseMark ma command-line spacing — nie nadpisuj)
+            // Any (2026-10-14): rozstaw zawsze w opisie, także przy 1 pręcie
             string newBaseMark = BarData.FormatMark(
                 sourceBar.Diameter,
                 SingleBarEngine.ExtractPosNr(sourceBar.Mark),
-                finalSpacing, finalCount);
+                finalSpacing, BarBlockEngine.IsAny(sourceBar) ? Math.Max(2, finalCount) : finalCount);
             string mark = string.IsNullOrEmpty(suffix) ? newBaseMark : $"{newBaseMark} {suffix}";
             sourceBar.Mark         = mark;
             sourceBar.CountDisplay = (finalCount != sourceBar.Count) ? (int?)finalCount : null;
+            // ANY: w bloku jeden pręt (Count = 1) — podgląd opisu z jedną kropką; rozstaw z okna zapisany w rozkładzie
+            bool any = BarBlockEngine.IsAny(sourceBar);
+            int jigCount = any ? 1 : finalCount;
+            if (any) sourceBar.Spacing = finalSpacing;
 
             // Geometria fizycznego rozkładu BEZ ZMIAN — label-override semantics.
             // Zaktualizuj XData RC_BAR_BLOCK: tylko Mark i CountDisplay. Count/Spacing canonical bez zmian.
@@ -565,6 +692,7 @@ namespace BricsCadRc.Commands
                     {
                         barXd.Mark         = sourceBar.Mark;
                         barXd.CountDisplay = sourceBar.CountDisplay;
+                        if (any) barXd.Spacing = finalSpacing;
                         BarBlockEngine.WriteXData(brXData, barXd);
                     }
                 }
@@ -609,7 +737,7 @@ namespace BricsCadRc.Commands
 
             // ETAP 1
             var jig1 = new AnnotLabelPositionJig(
-                minFixed, basePos, barsSpan, finalSpacing, finalCount,
+                minFixed, basePos, barsSpan, finalSpacing, jigCount,
                 horizontal, AnnotationEngine.DotRadius,
                 sourceBar.Angle, jigRotCenter);
             var res1 = ed.Drag(jig1);
@@ -656,7 +784,7 @@ namespace BricsCadRc.Commands
                 // ETAP 2
                 var jig2 = new AnnotLabelDirectionJig(
                     distCenter, labelPos, minFixed, barsSpan,
-                    horizontal, AnnotationEngine.DotRadius, finalCount, finalSpacing,
+                    horizontal, AnnotationEngine.DotRadius, jigCount, finalSpacing,
                     sourceBar.Angle, jigRotCenter);
                 var res2 = ed.Drag(jig2);
                 jig2.ClearTransients();

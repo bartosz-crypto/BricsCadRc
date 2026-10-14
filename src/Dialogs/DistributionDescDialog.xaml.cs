@@ -18,7 +18,7 @@ namespace BricsCadRc.Dialogs
         public double BarSpacing { get; private set; }
         public string Suffix     { get; private set; }
 
-        public DistributionDescDialog(BarData sourceBar, int autoCount, double autoSpacing, string baseMark)
+        public DistributionDescDialog(BarData sourceBar, int autoCount, double autoSpacing, string baseMark, string initialSuffix = "")
         {
             InitializeComponent();
             _sourceBar = sourceBar;
@@ -27,7 +27,7 @@ namespace BricsCadRc.Dialogs
 
             CountBox.Text   = autoCount.ToString();
             SpacingBox.Text = ((int)autoSpacing).ToString();
-            SuffixBox.Text  = "";
+            SuffixBox.Text  = initialSuffix ?? "";
 
             UpdatePreview();
         }
@@ -40,7 +40,8 @@ namespace BricsCadRc.Dialogs
             if (!int.TryParse(SpacingBox.Text, out int spacing) || spacing <= 0) return;
 
             string suffix      = SuffixBox?.Text ?? "";
-            string newBaseMark = BarData.FormatMark(_diameter, _posNr, spacing, count);
+            string newBaseMark = BarData.FormatMark(_diameter, _posNr, spacing,
+                BarBlockEngine.IsAny(_sourceBar) ? System.Math.Max(2, count) : count);   // Any: rozstaw zawsze w opisie
             string label       = string.IsNullOrWhiteSpace(suffix)
                 ? $"{count} {newBaseMark}"
                 : $"{count} {newBaseMark} {suffix}";

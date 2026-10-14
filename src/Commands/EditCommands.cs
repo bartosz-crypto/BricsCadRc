@@ -19,6 +19,41 @@ namespace BricsCadRc.Commands
         // komenda była zarejestrowana dwa razy. Aktualna wersja: BarCommands.EditBar.
 
         /// <summary>
+        /// RC_EDIT_DISTRIBUTION dla rozkładu Any (decyzja 2026-10-14): okno opisu (liczba, rozstaw, sufiks) — w bloku zostaje jeden pręt
+        /// (Count = 1), liczba w CountDisplay (opis, zestawienie), rozstaw w Spacing i w opisie.
+        /// </summary>
+        private static void EditAnyDistribution(Database db, Editor ed, ObjectId blockRefId, BarData bar)
+        {
+            int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
+            string mark0 = (bar.Mark ?? "").Trim();
+            int sp = mark0.IndexOf(' ');
+            string suffix0 = sp > 0 ? mark0.Substring(sp + 1).Trim() : "";
+            string baseMark = BarData.FormatMark(bar.Diameter, posNr, bar.Spacing, bar.EffectiveCount);
+            var dlg = new DistributionDescDialog(bar, bar.EffectiveCount, bar.Spacing > 0 ? bar.Spacing : 200, baseMark, suffix0);
+            if (Application.ShowModalWindow(dlg) != true) return;
+
+            string newBase = BarData.FormatMark(bar.Diameter, posNr, dlg.BarSpacing, 2);   // Any: rozstaw zawsze w opisie
+            string mark = string.IsNullOrEmpty(dlg.Suffix) ? newBase : $"{newBase} {dlg.Suffix}";
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (tr.GetObject(blockRefId, OpenMode.ForWrite) is BlockReference br && BarBlockEngine.ReadXData(br) is BarData b)
+                {
+                    b.Mark = mark;
+                    b.Spacing = dlg.BarSpacing;
+                    b.CountDisplay = dlg.BarCount != b.Count ? (int?)dlg.BarCount : null;
+                    BarBlockEngine.WriteXData(br, b);
+                    bar = b;
+                }
+                tr.Commit();
+            }
+            AnnotationEngine.SyncAnnotation(db, bar);
+            AnnotationEngine.UpdateBarLabelCount(db, bar.SourceBarHandle ?? "", markOverride: mark);
+            ed.WriteMessage($"\n[RC] Rozkład Any: {bar.EffectiveCount} prętów, rozstaw {bar.Spacing:F0} — {mark}\n");
+            try { Application.DocumentManager.MdiActiveDocument?.SendStringToExecute("REGEN\n", false, false, false); }
+            catch (System.Exception logEx) { Log.Error("EditCommands.EditAnyDistribution", logEx); }
+        }
+
+        /// <summary>
         /// RC_EDIT_DISTRIBUTION — edytuje istniejący rozkład prętów (RC_BAR_BLOCK).
         /// Otwiera dialog z polami Count/Spacing/Cover i przebudowuje blok.
         /// </summary>
@@ -60,6 +95,13 @@ namespace BricsCadRc.Commands
 
                 ed.WriteMessage("\nTo nie jest rozkład RC — kliknij na linię rozkładu prętów.\n");
                 blockRefId = ObjectId.Null;
+            }
+
+            // Rozkład Any (decyzja 2026-10-14): jeden pręt w bloku — edycja tylko liczby / rozstawu / sufiksu opisu
+            if (BarBlockEngine.IsAny(bar))
+            {
+                EditAnyDistribution(db, ed, blockRefId, bar);
+                return;
             }
 
             // Lokalna metoda pomocnicza — przebudowuje blok + annotację (Mark sticky — nie ruszamy)

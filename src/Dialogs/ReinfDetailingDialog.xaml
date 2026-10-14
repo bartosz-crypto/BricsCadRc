@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     x:Class="BricsCadRc.Dialogs.ReinfDetailingDialog"
     Title="Reinforcement detailing"
-    Width="340" Height="210"
+    Width="340" Height="214"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterScreen"
     Background="#F0F0F0">
@@ -57,7 +57,12 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Method:"/>
-            <TextBlock Grid.Column="1" Text="Module" FontWeight="SemiBold"/>
+            <ComboBox x:Name="CbMethod" Grid.Column="1"
+                      SelectedIndex="0" FontSize="12" Height="24"
+                      SelectionChanged="CbMethod_SelectionChanged">
+                <ComboBoxItem Content="Module"/>
+                <ComboBoxItem Content="Any"/>
+            </ComboBox>
         </Grid>
 
         <!-- Viewing direction -->

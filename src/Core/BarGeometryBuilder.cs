@@ -161,6 +161,37 @@ namespace BricsCadRc.Core
             => GetLocalPoints(shapeCode, paramValues, diameter, BarGeometryOptions.Current);
 
         /// <summary>
+        /// Rozkład ANY (decyzja 2026-10-14, jak „Any” w ASD): oś całego pręta w układzie bloku rozkładu — najdłuższy prosty odcinek
+        /// kształtu leży na osi +X od (0, 0) (pręty X) albo +Y (pręty Y, <paramref name="alongY"/>); <paramref name="mirror"/> — odbicie
+        /// w poprzek tego odcinka (zagięcia po drugiej stronie). Pusta lista, gdy kształt nie ma punktów.
+        /// </summary>
+        public static List<(double X, double Y)> AnyAxis(string shapeCode, double[] paramValues, double diameter, bool mirror, bool alongY)
+        {
+            var pts = GetLocalPoints(shapeCode ?? "00", (double[])paramValues.Clone(), diameter);
+            var res = new List<(double X, double Y)>();
+            if (pts == null || pts.Count < 2) return res;
+            int best = 0; double bestLen = -1;
+            for (int i = 0; i + 1 < pts.Count; i++)
+            {
+                double l = Math.Sqrt((pts[i + 1].X - pts[i].X) * (pts[i + 1].X - pts[i].X) + (pts[i + 1].Y - pts[i].Y) * (pts[i + 1].Y - pts[i].Y));
+                if (l > bestLen + 1e-9) { bestLen = l; best = i; }
+            }
+            var o = pts[best];
+            double ang = Math.Atan2(pts[best + 1].Y - o.Y, pts[best + 1].X - o.X);
+            double c = Math.Cos(-ang), sn = Math.Sin(-ang);
+            foreach (var p in pts)
+            {
+                double x = p.X - o.X, y = p.Y - o.Y;
+                double rx = x * c - y * sn, ry = x * sn + y * c;
+                if (Math.Abs(rx) < 1e-9) rx = 0;
+                if (Math.Abs(ry) < 1e-9) ry = 0;
+                if (mirror) ry = -ry;
+                res.Add(alongY ? (-ry == 0 ? 0 : -ry, rx) : (rx, ry));
+            }
+            return res;
+        }
+
+        /// <summary>
         /// Jak GetLocalPoints, w wybranym wariancie geometrii (Plan W4, 0-POPRAWKI p.2). Legacy → LegacyBarGeometry
         /// (geometria sprzed W4, bit w bit). Wywołania bez opcji = BarGeometryOptions.Current.
         /// </summary>

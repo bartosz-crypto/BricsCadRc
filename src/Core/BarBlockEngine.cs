@@ -119,8 +119,7 @@ namespace BricsCadRc.Core
             var btrId = blockTable.Add(btr);
             tr.AddNewlyCreatedDBObject(btr, true);
 
-            if (horizontal) BuildHorizontal(tr, btr, bar, barLength, count);
-            else             BuildVertical  (tr, btr, bar, barLength, count);
+            BuildBars(tr, btr, bar, horizontal, barLength, count);
 
             var insertPt = new Point3d(x0, y0, 0);
             var blockRef = new BlockReference(insertPt, btrId) { Layer = "0" };
@@ -137,6 +136,40 @@ namespace BricsCadRc.Core
                 MinPoint   = new Point3d(x0, y0, 0),
                 MaxPoint   = new Point3d(x1, y1, 0)
             };
+        }
+
+        // ----------------------------------------------------------------
+        // Rozkład ANY (decyzja 2026-10-14, jak „Any” w ASD): w bloku JEDEN pręt — cały kształt pręta wzorcowego jako polilinia
+        // wypełniona (szerokość = Ø); liczba prętów i rozstaw tylko w opisie i zestawieniu (Count = 1, BarsSpan = 0,
+        // CountDisplay = liczba z okna). Kształt: BarGeometryBuilder.AnyAxis (najdłuższy odcinek na osi prętów od punktu wstawienia),
+        // SymbolDirection „Down” — zagięcia po drugiej stronie.
+        // ----------------------------------------------------------------
+        public const string AnyMethod = "Any";
+
+        public static bool IsAny(BarData bar)
+            => bar != null && string.Equals(bar.ViewingDirection, AnyMethod, StringComparison.OrdinalIgnoreCase);
+
+        private static void BuildBars(Transaction tr, BlockTableRecord btr, BarData bar, bool horizontal, double length, int count)
+        {
+            if (IsAny(bar)) BuildAny(tr, btr, bar, !horizontal);
+            else if (horizontal) BuildHorizontal(tr, btr, bar, length, count);
+            else BuildVertical(tr, btr, bar, length, count);
+        }
+
+        private static void BuildAny(Transaction tr, BlockTableRecord btr, BarData bar, bool alongY)
+        {
+            var pts = BarGeometryBuilder.AnyAxis(bar.ShapeCode ?? "00", bar.ParamValues, bar.Diameter,
+                                                 mirror: string.Equals(bar.SymbolDirection, "Down", StringComparison.OrdinalIgnoreCase), alongY: alongY);
+            if (pts.Count < 2) return;
+            // biały jak RC_SINGLE_BAR (warstwa B1 / B2 ma kolor — Bartek 2026-10-14); ADD — cyan (ColorizeAdd)
+            var pl = new Polyline { Layer = LayerManager.GetLayerName(bar.LayerCode), ColorIndex = 7 };
+            for (int i = 0; i < pts.Count; i++) pl.AddVertexAt(i, new Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
+            pl.ConstantWidth = Math.Max(1, bar.Diameter);
+            if (pts.Count > 2 && Math.Abs(pts[0].X - pts[pts.Count - 1].X) < 1e-6 && Math.Abs(pts[0].Y - pts[pts.Count - 1].Y) < 1e-6)
+                pl.Closed = true;   // pierścień
+            btr.AppendEntity(pl);
+            tr.AddNewlyCreatedDBObject(pl, true);
+            ColorizeAdd(tr, btr, bar);
         }
 
         // ----------------------------------------------------------------
@@ -549,7 +582,8 @@ namespace BricsCadRc.Core
                 // without affecting genuine fractional ratios.
                 bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing + 1e-9) + 1);
 
-            bar.LengthA = barLength;
+            // ANY (2026-10-14): A to wymiar kształtu pręta wzorcowego — zakres x0..x1 tylko wyznacza punkt wstawienia
+            if (!IsAny(bar)) bar.LengthA = barLength;
 
             using var tr = db.TransactionManager.StartTransaction();
             var space      = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
@@ -571,10 +605,7 @@ namespace BricsCadRc.Core
             var btrId = blockTable.Add(btr);
             tr.AddNewlyCreatedDBObject(btr, true);
 
-            if (horizontal)
-                BuildHorizontal(tr, btr, bar, barLength, bar.Count);
-            else
-                BuildVertical(tr, btr, bar, barLength, bar.Count);
+            BuildBars(tr, btr, bar, horizontal, barLength, bar.Count);
 
             // Dla ukośnych prętów: insertPt = Pt1X/Pt1Y (krawędź kliknięta przez użytkownika po cover)
             // Dla prostych (angle≈0): zachowaj stary lewy-dolny róg AABB
@@ -615,6 +646,7 @@ namespace BricsCadRc.Core
         {
             var bar = ReadXData(br);
             if (bar == null || bar.Spacing <= 0) return;
+            if (IsAny(bar)) return;   // ANY: jeden pręt w bloku — liczba w opisie (RC_EDIT_DISTRIBUTION), grip zakresu bez zmian
 
             newBarsSpan = Math.Max(0, newBarsSpan);
             // +1e-9: 2999.9999/200 ma dać 16 prętów, nie 15 (błąd zmiennoprzecinkowy po dragu)
@@ -652,8 +684,7 @@ namespace BricsCadRc.Core
 
             EraseAllInBtr(tr, btr);
 
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, newCount);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, newCount);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, newCount);
 
             tr.Commit();
         }
@@ -692,8 +723,7 @@ namespace BricsCadRc.Core
             using var tr = br.Database.TransactionManager.StartTransaction();
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
             EraseAllInBtr(tr, btr);
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
             tr.Commit();
         }
 
@@ -719,8 +749,7 @@ namespace BricsCadRc.Core
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
             EraseAllInBtr(tr, btr);
 
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
 
             tr.Commit();
         }
@@ -748,8 +777,7 @@ namespace BricsCadRc.Core
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
             EraseAllInBtr(tr, btr);
 
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
 
             tr.Commit();
         }
@@ -777,8 +805,7 @@ namespace BricsCadRc.Core
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
             EraseAllInBtr(tr, btr);
 
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, bar.Count);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, bar.Count);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
 
             tr.Commit();
         }
@@ -824,8 +851,7 @@ namespace BricsCadRc.Core
             var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
             EraseAllInBtr(tr, btr);
 
-            if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, bar.LengthA, newCount);
-            else                      BuildVertical  (tr, btr, bar, bar.LengthA, newCount);
+            BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, newCount);
 
             tr.Commit();
         }
@@ -1159,6 +1185,7 @@ namespace BricsCadRc.Core
 
                 var bar = ReadXData(br);
                 if (bar == null) { tr.Commit(); return false; }
+                if (IsAny(bar)) { tr.Commit(); return false; }   // ANY: kształt z wymiarów pręta, nie z długości widoku
 
                 bar.LengthA = newLengthA;
                 WriteXData(br, bar);
@@ -1166,8 +1193,7 @@ namespace BricsCadRc.Core
                 var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
                 EraseAllInBtr(tr, btr);
 
-                if (bar.Direction == "X") BuildHorizontal(tr, btr, bar, newLengthA, bar.Count);
-                else                      BuildVertical  (tr, btr, bar, newLengthA, bar.Count);
+                BuildBars(tr, btr, bar, bar.Direction == "X", newLengthA, bar.Count);
 
                 tr.Commit();
                 return true;
