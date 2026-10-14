@@ -39,5 +39,27 @@ namespace BricsCadRc.Tests
             double maxAbsY = p.Max(q => Math.Abs(q.Y));
             Assert.That(mirror ? p.Min(q => q.Y) : p.Max(q => q.Y), Is.EqualTo(mirror ? -maxAbsY : maxAbsY).Within(1e-6));
         }
+
+        [Test]
+        public void Reverse_BendAtInsertionPoint()
+        {
+            var dims = new double[] { 700, 250, 700, 0, 0 };
+            var f = BarGeometryBuilder.AnyAxis("21", dims, 12, mirror: false, alongY: false);
+            var r = BarGeometryBuilder.AnyAxis("21", dims, 12, mirror: false, alongY: false, reverse: true);
+            double len = f[1].X;
+            // odbicie wzdłuż: x → len − x, ramię od len do 0, zagięcie przy 0
+            for (int i = 0; i < f.Count; i++)
+            {
+                Assert.That(r[i].X, Is.EqualTo(len - f[i].X).Within(1e-6));
+                Assert.That(r[i].Y, Is.EqualTo(f[i].Y).Within(1e-6));
+            }
+            Assert.That(r[0], Is.EqualTo((len, 0.0)));
+        }
+
+        [TestCase(300, 0)] [TestCase(375, 0)] [TestCase(400, 0)]
+        [TestCase(450, 1)] [TestCase(525, 1)] [TestCase(600, 2)] [TestCase(675, 2)]
+        [TestCase(750, 3)] [TestCase(825, 3)] [TestCase(900, 4)] [TestCase(975, 4)] [TestCase(1050, 5)]
+        public void SideLevelsForHeight_2026_10_14(double h, int n)
+            => Assert.That(BeamGeometry.SideLevelsForHeight(h), Is.EqualTo(n));
     }
 }

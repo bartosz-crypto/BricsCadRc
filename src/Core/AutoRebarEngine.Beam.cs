@@ -425,6 +425,7 @@ namespace BricsCadRc.Core
                         double last = first + (n - 1) * step;
                         double c0 = s.AcrossLo + p.CoverSide, c1 = s.AcrossHi - p.CoverSide;
                         // 4-cięte: w rzucie pręt o szerokości strzemienia (370), od otuliny — jak szablon (uwaga Bartka 2026-10-12)
+                        double c1Full = c1;
                         if (four) c1 = c0 + legs.B4;
                         // pręty strzemion prostopadle do osi belki
                         bool barsX = !s.AlongX;
@@ -433,7 +434,12 @@ namespace BricsCadRc.Core
                         if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, four ? legs.B4 : B51, p.StirrupSpacing,
                                              n > 1 ? step : double.NaN, BeamGeometry.CodeLinks, BeamGeometry.SuffixLinks,
                                              noSpacing: false, shape: tpl.bar.ShapeCode, repr: 0, zoneHandle: zbHandle,
-                                             customize: four ? (Action<BarData>)(bar => bar.CountDisplay = 2 * n) : null, tg: tg))
+                                             customize: four ? (Action<BarData>)(bar =>
+                                             {
+                                                 bar.CountDisplay = 2 * n;
+                                                 // 2026-10-14: drugie strzemię w rzucie — o rozstaw dalej, od drugiego lica (B 2-ciętego − B4)
+                                                 bar.PairShift = Math.Max(0, (c1Full - c0) - legs.B4);
+                                             }) : null, tg: tg))
                             res.Stirrups++;
                         if (fromUb) msg($"{name}: strzemiona przesunięte o {BeamStirrupUb03Shift:F0} względem UB 03 (rozstaw {step:F0}).");
                     }
@@ -510,11 +516,17 @@ namespace BricsCadRc.Core
             //    przy ramionach strzemienia, opis „2x{n} H12-nn SIDE” (boki × liczba na bok), proste do U-barów „UB SIDE” (BC, kształt 21
             //    poziomo, 1 na poziom na koniec / narożnik / złącze T, opis „{n}x1 H12-nn UB SIDE”) — rzut dolny, seria dolna ──
             bool sideOn = p.SideBarsActive(H);
-            int nSide = sideOn ? BeamGeometry.SideBarCount(A51, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing) : 0;
+            // decyzja użytkownika 2026-10-14 (tryb B3): liczba na bok z wysokości belki — ≤ 375 brak, 450–525: 1, 600–675: 2, 750–825: 3 …
+            int nSide = !sideOn ? 0
+                      : p.SideMode == 3 ? BeamGeometry.SideLevelsForHeight(H)
+                      : BeamGeometry.SideBarCount(A51, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing);
+            double sideSp = BeamGeometry.SideLevelSpacing(A51, p.StirrupDia, p.BottomDia, p.TopDia, nSide);
             if (p.SideDia > 0)
                 msg(sideOn
-                    ? $"{name}: pręty boczne H{p.SideDia}: {nSide} na bok (tryb B{p.SideMode}, rozstaw pionowy ≤ {p.SideSpacing:F0}; do potwierdzenia)."
-                    : $"{name}: pręty boczne — brak (tryb B{p.SideMode}{(p.SideMode == 3 ? $", H {H:F0} ≤ {p.SideThreshold:F0}" : "")}).");
+                    ? $"{name}: pręty boczne H{p.SideDia}: {nSide} na bok (tryb B{p.SideMode}" +
+                      (p.SideMode == 3 ? $", H {H:F0}: ≤ 375 brak, co 150 od 450 — +1" : $", rozstaw pionowy ≤ {p.SideSpacing:F0}") +
+                      $"; rozstaw pionowy ≈ {sideSp:F0}, w opisie UB SIDE {BeamGeometry.UbSideLabelSpacing:F0})."
+                    : $"{name}: pręty boczne — brak (tryb B{p.SideMode}{(p.SideMode == 3 ? $", H {H:F0} < 450" : "")}).");
             if (nSide > 0)
             {
                 double lapS = p.LapFor(p.SideDia);
@@ -544,7 +556,7 @@ namespace BricsCadRc.Core
                 var sruns = BeamGeometry.PlanSideUBars(an, sideRanges, nSide, p.SideDia, p.StirrupDia, lapS, p.CoverSide, smsgs);
                 foreach (var m in smsgs) msg($"{name}: {m}");
                 foreach (var r in sruns)
-                    if (BeamSideUBar(db, doc.Editor, bottom, r, zbHandle, tg)) res.SideDists++;
+                    if (BeamSideUBar(db, doc.Editor, bottom, r, zbHandle, BeamGeometry.UbSideLabelSpacing, tg)) res.SideDists++;
                 if (sruns.Count > 0)
                     msg($"{name}: UB SIDE: {string.Join(", ", sruns.Select(r => r.ToString()))}.");
             }
@@ -694,7 +706,7 @@ namespace BricsCadRc.Core
         /// (Count 1, CountDisplay = liczba poziomów — BBS liczy wszystkie).
         /// </summary>
         private static bool BeamSideUBar(Database db, Editor ed, BeamView view, BeamGeometry.SideUBarRun r, string zoneHandle,
-                                         BeamDrawTarget tg = null)
+                                         double levelSpacing, BeamDrawTarget tg = null)
         {
             var tpl = FindOrCreateBeamTemplate(db, ed, view.Box, top: false, d: r.Dia, shape: "21", a: r.A, b: r.B,
                                                code: BeamGeometry.CodeSideU, c: r.C);
@@ -707,11 +719,30 @@ namespace BricsCadRc.Core
             string dir = barsX ? "Up" : "Down";
             string side = r.BendAtStart ? "Left" : "Right";
             int levels = r.Levels;
-            return BeamDistribution(db, view, tpl, x0, y0, x1, y1, barsX, r.Dia, r.LineLength, 200, double.NaN,
-                                    BeamGeometry.CodeSideU, BeamGeometry.SuffixSideU, noSpacing: true, shape: "21", repr: -1,
-                                    zoneHandle: zoneHandle,
+            // decyzja użytkownika 2026-10-14: UB SIDE jako rozkład Any — cały U wypełniony w rzucie (ramię przy boku od punktu wstawienia,
+            // tył U przy końcu — SymbolSide, drugie ramię w stronę Across1 — SymbolDirection), opis „{n} H12-nn-{rozstaw pionowy} UB SIDE”
+            bool withSp = levelSpacing > 0;
+            // 2026-10-14: opis blisko pręta — krótka linia odniesienia prostopadle do ramienia, najpierw na zewnątrz U (od drugiego ramienia),
+            // zamiast za okno detalu / obrys płyty
+            double sc = tg != null ? tg.AnnotScale : 1.0;
+            Func<Point3d, List<List<Point3d>>> leader = ins =>
+            {
+                var res = new List<List<Point3d>>();
+                foreach (int sg in new[] { -1, 1 })
+                    foreach (double len in new[] { 600.0, 900.0, 1200.0, 1600.0 })
+                    {
+                        double l = sg * len * sc;
+                        res.Add(new List<Point3d> { ins, barsX ? new Point3d(ins.X, ins.Y + l, 0) : new Point3d(ins.X + l, ins.Y, 0) });
+                    }
+                return res;
+            };
+            return BeamDistribution(db, view, tpl, x0, y0, x1, y1, barsX, r.Dia, r.LineLength, withSp ? levelSpacing : 200, double.NaN,
+                                    BeamGeometry.CodeSideU, BeamGeometry.SuffixSideU, noSpacing: !withSp, shape: "21", repr: -1,
+                                    zoneHandle: zoneHandle, leaderFor: leader,
                                     customize: bar =>
                                     {
+                                        bar.ViewingDirection = BarBlockEngine.AnyMethod;
+                                        bar.LengthA = r.A; bar.LengthB = r.B; bar.LengthC = r.C;
                                         bar.SymbolType = "Hook";
                                         bar.SymbolSide = side;
                                         bar.SymbolDirection = dir;

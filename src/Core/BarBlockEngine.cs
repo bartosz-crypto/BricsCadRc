@@ -142,7 +142,7 @@ namespace BricsCadRc.Core
         // Rozkład ANY (decyzja 2026-10-14, jak „Any” w ASD): w bloku JEDEN pręt — cały kształt pręta wzorcowego jako polilinia
         // wypełniona (szerokość = Ø); liczba prętów i rozstaw tylko w opisie i zestawieniu (Count = 1, BarsSpan = 0,
         // CountDisplay = liczba z okna). Kształt: BarGeometryBuilder.AnyAxis (najdłuższy odcinek na osi prętów od punktu wstawienia),
-        // SymbolDirection „Down” — zagięcia po drugiej stronie.
+        // SymbolDirection „Down” — zagięcia po drugiej stronie, SymbolSide „Left” — zagięcie przy początku odcinka (UB SIDE, lustro wzdłuż).
         // ----------------------------------------------------------------
         public const string AnyMethod = "Any";
 
@@ -158,8 +158,25 @@ namespace BricsCadRc.Core
 
         private static void BuildAny(Transaction tr, BlockTableRecord btr, BarData bar, bool alongY)
         {
-            var pts = BarGeometryBuilder.AnyAxis(bar.ShapeCode ?? "00", bar.ParamValues, bar.Diameter,
-                                                 mirror: string.Equals(bar.SymbolDirection, "Down", StringComparison.OrdinalIgnoreCase), alongY: alongY);
+            // wymiary A–E z pręta wzorcowego (XData rozkładu ma tylko A — po przebudowie, np. RC_SCALE_ANNOT / MIRROR, U-bar tracił B i C
+            // i zostawało jedno ramię; 2026-10-14); brak pręta — wymiary rozkładu
+            double[] dims = bar.ParamValues;
+            string shape = bar.ShapeCode ?? "00";
+            try
+            {
+                if (!string.IsNullOrEmpty(bar.SourceBarHandle))
+                {
+                    var sid = SingleBarEngine.HandleToObjectId(btr.Database, bar.SourceBarHandle);
+                    if (!sid.IsNull && !sid.IsErased && tr.GetObject(sid, OpenMode.ForRead) is Entity se
+                        && SingleBarEngine.ReadBarXData(se) is BarData sb && sb.LengthA > 0
+                        && string.Equals(sb.ShapeCode ?? "00", shape, StringComparison.OrdinalIgnoreCase))
+                        dims = sb.ParamValues;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("BarBlockEngine.BuildAny", ex); }
+            var pts = BarGeometryBuilder.AnyAxis(shape, dims, bar.Diameter,
+                                                 mirror: string.Equals(bar.SymbolDirection, "Down", StringComparison.OrdinalIgnoreCase), alongY: alongY,
+                                                 reverse: string.Equals(bar.SymbolSide, "Left", StringComparison.OrdinalIgnoreCase));
             if (pts.Count < 2) return;
             // biały jak RC_SINGLE_BAR (warstwa B1 / B2 ma kolor — Bartek 2026-10-14); ADD — cyan (ColorizeAdd)
             var pl = new Polyline { Layer = LayerManager.GetLayerName(bar.LayerCode), ColorIndex = 7 };
@@ -206,7 +223,29 @@ namespace BricsCadRc.Core
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
+            AddPairBar(tr, btr, bar, barLayer, lw, cat, visibleSet, count, barWidth, alongX: true);
             ColorizeAdd(tr, btr, bar);
+        }
+
+        /// <summary>
+        /// Strzemiona 4-cięte (decyzja użytkownika 2026-10-14): drugie (zachodzące) strzemię — pręt o jeden rozstaw dalej od pierwszego
+        /// widocznego, przesunięty wzdłuż osi o <see cref="BarData.PairShift"/> (od drugiego lica belki), z symbolami końców jak widoczny.
+        /// </summary>
+        private static void AddPairBar(Transaction tr, BlockTableRecord btr, BarData bar, string barLayer, LineWeight lw,
+                                       BarSymbolCategory cat, HashSet<int> visibleSet, int count, double length, bool alongX)
+        {
+            if (Math.Abs(bar.PairShift) < 1.0 || count < 2 || visibleSet.Count == 0) return;
+            int j = visibleSet.Min() + 1;
+            if (j >= count) j = visibleSet.Min() - 1;
+            if (j < 0 || visibleSet.Contains(j)) return;
+            double t = j * bar.Spacing;
+            double a0 = bar.PairShift, a1 = bar.PairShift + length;
+            Point3d P(double along) => alongX ? new Point3d(along, t, 0) : new Point3d(t, along, 0);
+            var (trimS, trimE) = CircleTrims(cat, bar.SymbolSide, bar.AnnotScale, length);
+            var line = new Line(P(a0 + trimS), P(a1 - trimE)) { Layer = barLayer, ColorIndex = 256, LineWeight = lw };
+            btr.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(line, true);
+            AddBarSymbols(tr, btr, barLayer, cat, P(a0), P(a1), bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
         }
 
         // ----------------------------------------------------------------
@@ -243,6 +282,7 @@ namespace BricsCadRc.Core
                 AddBarSymbols(tr, btr, barLayer, cat, ptS, ptE,
                               bar.SymbolSide, bar.SymbolDirection, bar.AnnotScale);
             }
+            AddPairBar(tr, btr, bar, barLayer, lw, cat, visibleSet, count, barHeight, alongX: false);
             ColorizeAdd(tr, btr, bar);
         }
 
@@ -702,6 +742,7 @@ namespace BricsCadRc.Core
             if (flipAlong)
             {
                 bar.Flipped = !bar.Flipped;
+                bar.PairShift = -bar.PairShift;   // strzemiona 4-cięte: drugie przy drugim licu
                 if (bar.SymbolSide == "Left") bar.SymbolSide = "Right";
                 else if (bar.SymbolSide == "Right") bar.SymbolSide = "Left";
             }
@@ -970,7 +1011,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.Flipped ? 1 : 0)),    // [28] Flipped
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.ShowSpacing    ? 1 : 0)), // [29] ShowSpacing
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)),  // [30] IsLabelManual
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? "")                   // [31] CutZones (otwory)
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? ""),                  // [31] CutZones (otwory)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.PairShift)                        // [32] PairShift (strzemiona 4-cięte)
             );
             if (entity is BlockReference br) RecolorAdd(br, bar);
         }
@@ -1067,6 +1109,11 @@ namespace BricsCadRc.Core
             {
                 try { bd.CutZones = v[31].Value as string ?? ""; }
                 catch { bd.CutZones = ""; }
+            }
+            if (v.Length >= 33)
+            {
+                try { bd.PairShift = Convert.ToDouble(v[32].Value); }
+                catch { bd.PairShift = 0; }
             }
 
             return bd;

@@ -189,7 +189,21 @@ namespace BricsCadRc.Tests
             Assert.That(links[1].Path.Min(p => p.U), Is.EqualTo(365).Within(1e-6));
             Assert.That(links[1].Path.Max(p => p.U), Is.EqualTo(710).Within(1e-6));
             Assert.That(links[1].Path.Min(p => p.V), Is.EqualTo(links[0].Path.Min(p => p.V)).Within(1e-9));
-            Assert.That(r.Labels.Count(l => l.Text == "07"), Is.EqualTo(1));
+            // decyzja 2026-10-14: każde strzemię ma swój opis ze strzałką (screen Bartka)
+            Assert.That(r.Labels.Count(l => l.Text == "07" && l.HasLeader), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void Section_FourLeg_PlanDistOnlyB4Wide_SecondLinkAtOtherFace_2026_10_14()
+        {
+            // w rzucie rozkład 4-ciętych ma szerokość jednego strzemienia (B4), nie całej belki — drugie strzemię i tak przy drugim licu pasa
+            var inp = Case4Leg();
+            inp.Dists.Single(d => d.PosNr == "07").LengthA = 355;
+            var r = SectionPlanner.Plan(inp);
+            var links = r.Bars.Where(b => b.PosNr == "07").OrderBy(b => b.Path.Min(p => p.U)).ToList();
+            Assert.That(links.Count, Is.EqualTo(2));
+            Assert.That(links[0].Path.Min(p => p.U), Is.EqualTo(210).Within(1e-6));
+            Assert.That(links[1].Path.Max(p => p.U), Is.EqualTo(710).Within(1e-6));
         }
 
         [Test]

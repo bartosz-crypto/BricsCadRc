@@ -20,8 +20,8 @@ namespace BricsCadRc.Tests
             foreach (var (h, n) in new[] { (525.0, 1), (600.0, 2), (675.0, 2), (750.0, 3), (450.0, 1) })
                 Assert.That(BeamGeometry.SideBarCount(BeamGeometry.StirrupHeightCovers(h), 12, 16, 16, 200), Is.EqualTo(n), h.ToString());
             var p = new BeamParams();
-            Assert.That(p.SideBarsActive(450), Is.False, "B3: H ≤ 450 — brak");
-            Assert.That(p.SideBarsActive(525), Is.True);
+            Assert.That(p.SideBarsActive(375), Is.False, "B3: H ≤ 375 — brak (2026-10-14)");
+            Assert.That(p.SideBarsActive(450), Is.True);
             Assert.That(p.SideDia, Is.EqualTo(12));
         }
 
@@ -232,6 +232,24 @@ namespace BricsCadRc.Tests
             var l12 = r.Labels.Where(l => l.Text == "12").OrderBy(l => l.U).First();
             Assert.That(l12.V, Is.EqualTo(-290).Within(1e-9));
             Assert.That(Math.Abs(l12.U - 810), Is.LessThanOrEqualTo(60));
+        }
+
+        [Test]
+        public void D20261014_SideBarLabels_BesideDots_InsideBeam()
+        {
+            // pręty boczne (20, BS) przy ramionach strzemienia 220 / 700: opis obok kropki, w obrysie belki (lewy — na prawo, prawy — na lewo)
+            var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
+            var dots = r.Dots.Where(d => d.PosNr == "20").OrderBy(d => d.U).ToList();
+            var lbl = r.Labels.Where(l => l.Text == "20").OrderBy(l => l.U).ToList();
+            Assert.That(dots.Count, Is.EqualTo(2));
+            Assert.That(lbl.Count, Is.EqualTo(2), string.Join(" ", lbl.Select(l => l.U + "," + l.V)));
+            Assert.That(lbl[0].U, Is.GreaterThan(dots[0].U));
+            Assert.That(lbl[1].U, Is.LessThan(dots[1].U));
+            foreach (var (l, d) in lbl.Zip(dots))
+            {
+                Assert.That(Math.Abs(l.U - d.U), Is.LessThan(120));
+                Assert.That(Math.Abs(l.V + SectionPlanner.TextHeight / 2 - d.V), Is.LessThanOrEqualTo(60.0 + 1e-9));
+            }
         }
 
         /// <summary>

@@ -176,6 +176,8 @@ namespace BricsCadRc.Core
             public double U, V; public int Diameter; public string PosNr; public bool Top; public bool Mesh; public bool TinNib; public double NomSpacing = 200;
             /// <summary>Belki (E5): pręt belki (bez przesuwania przy ramionach prętów w widoku); Bent — ramię pręta giętego (11 / 21).</summary>
             public bool Beam, Bent;
+            /// <summary>Pręt boczny belki (BS) — opis obok kropki, w obrysie belki (decyzja 2026-10-14).</summary>
+            public bool Side;
         }
 
         public sealed class BarLine
@@ -967,7 +969,8 @@ namespace BricsCadRc.Core
                                     if (!inConcrete(u, v)) continue;
                                     res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr,
                                                            Top = top || IsBothTop(b, d, v) || (nibPair && li == 0),
-                                                           Beam = true, Bent = bent, NomSpacing = NominalSpacing(d) });
+                                                           Beam = true, Bent = bent, NomSpacing = NominalSpacing(d),
+                                                           Side = d.LayerCode == BeamGeometry.CodeSide });
                                     MarkUsed(res, d);      // tylko gdy kropka powstała (poza betonem — rozkład nieużyty)
                                 }
                             }
@@ -1003,17 +1006,19 @@ namespace BricsCadRc.Core
                             axis = new List<(double U, double V)> { (uLo, vBot), (uHi, vBot), (uHi, vTop), (uLo, vTop), (uLo, vBot) };
                         res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, band.LinkDia), Diameter = d.Diameter,
                                                    PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
-                        // strzemiona 4-cięte (Layers 2, decyzja użytkownika 2026-10-11): drugie identyczne strzemię przy drugim licu (zachodzące),
-                        // bez własnego opisu; tylko gdy pręt wzorcowy węższy od rozkładu
+                        // strzemiona 4-cięte (Layers 2, decyzja użytkownika 2026-10-11): drugie identyczne strzemię przy drugim licu (zachodzące);
+                        // 2026-10-14: drugie lico z pasa belki (rozkład w rzucie ma szerokość B4 — nie całej belki) i własny opis ze strzałką
                         if (d.Layers == 2 && axis.Count >= 2)
                         {
                             double ax0 = axis.Min(p => p.U), ax1 = axis.Max(p => p.U);
-                            double sh = uHi - ax1;
-                            if (sh > 1.0 && ax0 + sh > uLo + 1.0)
+                            double fLo = band.U0 + band.Src.Cover + hl, fHi = band.U1 - band.Src.Cover - hl;   // osie przy licach pasa
+                            bool atLo = Math.Abs(ax0 - fLo) <= Math.Abs(fHi - ax1);
+                            double sh = atLo ? fHi - ax1 : fLo - ax0;
+                            if (Math.Abs(sh) > 1.0)
                             {
                                 var axis2 = axis.Select(p => (U: p.U + sh, p.V)).ToList();
                                 res.Bars.Add(new BarLine { Path = axis2, Outline = OutlineOf(axis2, band.LinkDia), Diameter = d.Diameter,
-                                                           PosNr = d.PosNr, Top = false, Kind = DistKind.Beam, NoLabel = true });
+                                                           PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
                             }
                         }
                         MarkUsed(res, d);
@@ -1300,7 +1305,7 @@ namespace BricsCadRc.Core
                 => !occupied.Skip(fixedCount).Any(o => u0 < o.u1 + 10 && u1 > o.u0 - 10 && v0 < o.v1 + 5 && v1 > o.v0 - 5);
 
             // kropki: numer nad (góra) / pod (dół) kropką, kolejne rzędy przy kolizji
-            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !LowBeamTop(d)).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
+            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !LowBeamTop(d) && !d.Side).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
             {
                 double w = TextWidth(dot.PosNr);
                 bool placed = false;
@@ -1355,6 +1360,35 @@ namespace BricsCadRc.Core
                 }
             }
 
+            // decyzja 2026-10-14: pręty boczne belki (BS) — numer obok każdej kropki, w obrysie belki: lewy bok — na prawo od kropki,
+            // prawy bok — na lewo (strona drugiej kropki na tym samym poziomie), na wysokości kropki
+            var sideDots = res.Dots.Where(d => !tinDone.Contains(d) && d.Side).ToList();
+            foreach (var dot in sideDots.OrderBy(d => d.U).ThenByDescending(d => d.V))
+            {
+                double w = TextWidth(dot.PosNr);
+                bool toRight = sideDots.Any(o => o != dot && Math.Abs(o.V - dot.V) < 1.0 && o.U > dot.U + 1.0);
+                double gap = dot.Diameter / 2.0 + LabelGap;
+                double u = toRight ? dot.U + gap + w / 2 : dot.U - gap - w / 2;
+                bool placed = false;
+                foreach (double dv in new[] { 0.0, 30, -30, 60, -60 })
+                {
+                    double vb = dot.V - TextHeight / 2 + dv;
+                    if (!FreeOfLabels(u - w / 2, vb, u + w / 2, vb + TextHeight)) continue;
+                    occupied.Add((u - w / 2, vb, u + w / 2, vb + TextHeight));
+                    res.Labels.Add(new Label { Text = dot.PosNr, U = u, V = vb, Height = TextHeight });
+                    placed = true;
+                    break;
+                }
+                if (placed) continue;
+                for (int row = 0; row < 8; row++)
+                {
+                    double vb = LocalBottom(res, dot.U, T) - LabelGap - TextHeight - row * LabelRowStep;
+                    if (!Free(dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight)) continue;
+                    occupied.Add((dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight));
+                    res.Labels.Add(new Label { Text = dot.PosNr, U = dot.U, V = vb, Height = TextHeight });
+                    break;
+                }
+            }
             // pręty w widoku: numer ze strzałką, nad płytą (góra) albo pod płytą (dół)
             foreach (var bar in res.Bars)
             {

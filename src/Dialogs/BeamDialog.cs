@@ -143,12 +143,13 @@ namespace BricsCadRc.Dialogs
             _sideMode = new ComboBox { Width = 250, Margin = new Thickness(0, 2, 6, 2) };
             _sideMode.Items.Add("B1: brak");
             _sideMode.Items.Add("B2: zawsze");
-            _sideMode.Items.Add("B3: gdy H > próg (domyślne)");
+            _sideMode.Items.Add("B3: wg H — 450: 1, 600: 2, 750: 3 … (domyślne)");
             _sideMode.SelectedIndex = _p.SideMode == 1 ? 0 : _p.SideMode == 2 ? 1 : 2;
             Row("Pręty boczne: tryb", _sideMode);
-            _sideThr = Field("Pręty boczne: próg H [mm]", F(_p.SideThreshold), "B3: H ≤ 450 brak, od 525");
+            _sideThr = Field("Pręty boczne: próg H [mm]", F(_p.SideThreshold), "nieużywany od 2026-10-14 (B3: H ≤ 375 brak)");
+            _sideThr.IsEnabled = false;
             _sideDia = Field("Pręty boczne: średnica H", I(_p.SideDia), "domyślne H12; 0 = brak");
-            _sideSp  = Field("Pręty boczne: rozstaw pionowy [mm]", F(_p.SideSpacing), "do potwierdzenia (krok K4)");
+            _sideSp  = Field("Pręty boczne: rozstaw pionowy [mm]", F(_p.SideSpacing), "tylko tryb B2 (B3 — liczba z H)");
             _nibTop  = Field("Nib: dodatkowy pręt BN górą, średnica H", I(_p.NibTopDia), "0 = brak (domyślnie — pręty w nibie 2T+1B)");
             _nibBot  = Field("Nib: pręty w nibie (2T+1B), średnica H", I(_p.NibBottomDia), "domyślne H10 — 3 pręty jedną pozycją (2+1 T+B IN NIB); 0 = brak");
 

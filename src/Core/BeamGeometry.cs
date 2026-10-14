@@ -130,7 +130,7 @@ namespace BricsCadRc.Core
 
         /// <summary>Pręty boczne przy wysokości H (tryb [25] / próg [26]).</summary>
         public bool SideBarsActive(double h)
-            => SideDia > 0 && (SideMode == 2 || (SideMode == 3 && h > SideThreshold + 0.5));
+            => SideDia > 0 && (SideMode == 2 || (SideMode == 3 && BeamGeometry.SideLevelsForHeight(h) > 0));
 
         /// <summary>Koniec pręta prostego przy U-barze od lica: [32] albo otulina + Ø U-bara.</summary>
         public double StraightEndOffsetAuto => StraightEndOffset > 0 ? StraightEndOffset : CoverSide + UBarDia;
@@ -1307,6 +1307,23 @@ namespace BricsCadRc.Core
         /// od światła — H 750: 3 odstępy po ~205). Np. H 600 (A 500): 464 / 200 → 3 − 1 = 2; 750 (A 650): 614 → 3; 450 (A 350): 1;
         /// 375: 1; 300: 0.
         /// </summary>
+        /// <summary>
+        /// Liczba prętów bocznych na bok (= poziomów UB SIDE) z wysokości belki (decyzja użytkownika 2026-10-14, tryb B3): H ≤ 375 — brak,
+        /// 450–525 — 1, 600–675 — 2, 750–825 — 3, 900–975 — 4 i tak dalej co 150 (⌊(H − 300) / 150⌋).
+        /// </summary>
+        public static int SideLevelsForHeight(double h)
+            => h <= 375.5 ? 0 : Math.Max(0, (int)Math.Floor((h - 300.0) / 150.0 + 1e-9));
+
+        /// <summary>Rozstaw w opisie UB SIDE — wpisany na stałe (decyzja użytkownika 2026-10-14: „rozstaw z ręki — 150”).</summary>
+        public const double UbSideLabelSpacing = 150.0;
+
+        /// <summary>Rozstaw pionowy prętów bocznych (opis UB SIDE): osie dołu / góry podzielone na n + 1 równych części, w dół do 5 mm.</summary>
+        public static double SideLevelSpacing(double stirrupA, double dLink, double dBottom, double dTop, int n)
+        {
+            double axes = stirrupA - 2 * dLink - (dBottom + dTop) / 2.0;
+            return n > 0 && axes > 0 ? Floor5(axes / (n + 1)) : 0;
+        }
+
         public static int SideBarCount(double stirrupA, double dLink, double dBottom, double dTop, double spacing)
         {
             if (stirrupA <= 0 || spacing <= 0) return 0;

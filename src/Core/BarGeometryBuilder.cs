@@ -163,9 +163,11 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Rozkład ANY (decyzja 2026-10-14, jak „Any” w ASD): oś całego pręta w układzie bloku rozkładu — najdłuższy prosty odcinek
         /// kształtu leży na osi +X od (0, 0) (pręty X) albo +Y (pręty Y, <paramref name="alongY"/>); <paramref name="mirror"/> — odbicie
-        /// w poprzek tego odcinka (zagięcia po drugiej stronie). Pusta lista, gdy kształt nie ma punktów.
+        /// w poprzek tego odcinka (zagięcia po drugiej stronie), <paramref name="reverse"/> — odbicie wzdłuż (odcinek od długości do 0,
+        /// zagięcie przy punkcie wstawienia). Pusta lista, gdy kształt nie ma punktów.
         /// </summary>
-        public static List<(double X, double Y)> AnyAxis(string shapeCode, double[] paramValues, double diameter, bool mirror, bool alongY)
+        public static List<(double X, double Y)> AnyAxis(string shapeCode, double[] paramValues, double diameter, bool mirror, bool alongY,
+                                                         bool reverse = false)
         {
             var pts = GetLocalPoints(shapeCode ?? "00", (double[])paramValues.Clone(), diameter);
             var res = new List<(double X, double Y)>();
@@ -186,6 +188,8 @@ namespace BricsCadRc.Core
                 if (Math.Abs(rx) < 1e-9) rx = 0;
                 if (Math.Abs(ry) < 1e-9) ry = 0;
                 if (mirror) ry = -ry;
+                if (reverse) rx = bestLen - rx;   // odcinek od długości do 0 — zagięcie przy punkcie wstawienia
+                if (Math.Abs(rx) < 1e-9) rx = 0;
                 res.Add(alongY ? (-ry == 0 ? 0 : -ry, rx) : (rx, ry));
             }
             return res;

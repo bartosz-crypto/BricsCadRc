@@ -28,7 +28,8 @@ namespace BricsCadRc.Core
         {
             int eff = countDisplay ?? count;
             string I(int x) => x.ToString(CultureInfo.InvariantCulture);
-            if ((layerCode == BeamGeometry.CodeBoth || layerCode == BeamGeometry.CodeSideU || layerCode == BeamGeometry.CodeLinks)
+            // BC (UB SIDE) — od 2026-10-14 rozkład Any: zwykła liczba („2 H12-nn-160 UB SIDE”), nie „2x1”
+            if ((layerCode == BeamGeometry.CodeBoth || layerCode == BeamGeometry.CodeLinks)
                 && countDisplay.HasValue && count > 0
                 && countDisplay.Value % count == 0 && countDisplay.Value / count >= 2)
                 return I(countDisplay.Value / count) + "x" + I(count);

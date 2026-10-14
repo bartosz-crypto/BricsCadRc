@@ -214,6 +214,13 @@ namespace BricsCadRc.Core
         /// </summary>
         public string CutZones { get; set; } = "";
 
+        /// <summary>
+        /// Strzemiona 4-cięte belki (decyzja użytkownika 2026-10-14): przesunięcie drugiego (zachodzącego) strzemienia wzdłuż osi pręta
+        /// względem widocznego — w rzucie rysowany drugi pręt o jeden rozstaw dalej, od drugiego lica belki (B strzemienia 2-ciętego − B4);
+        /// 0 — brak (XData [32]).
+        /// </summary>
+        public double PairShift { get; set; }
+
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };
 

@@ -547,6 +547,7 @@ namespace BricsCadRc.Commands
             bool horizontal = !alongY;
             sourceBar.Direction       = horizontal ? "X" : "Y";
             sourceBar.SymbolDirection = mirror ? "Down" : "Up";
+            sourceBar.SymbolSide      = "Right";   // Any: zagięcie przy końcu odcinka jak w podglądzie („Left” — odbicie wzdłuż, MIRROR)
             sourceBar.Pt1X = ins.X; sourceBar.Pt1Y = ins.Y;
             sourceBar.BarsSpan = 0;
 

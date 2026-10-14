@@ -1740,7 +1740,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.SkewStart),          // [19]
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.CountDisplay ?? -1)), // [20] CountDisplay (-1 = null)
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)), // [21] IsLabelManual
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ElbowExt > 0 ? bar.ElbowExt : -1.0) // [22] ElbowExt (-1 = domyślny)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ElbowExt > 0 ? bar.ElbowExt : -1.0), // [22] ElbowExt (-1 = domyślny)
+                // [23] AnnotScale (2026-10-14: skala opisu z RC_SCALE_ANNOT — bez niej przesunięcie opisu wracało do 1:50)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale > 0 ? bar.AnnotScale : 1.0)
             );
         }
 
@@ -1797,8 +1799,34 @@ namespace BricsCadRc.Core
                 try { double e = Convert.ToDouble(v[22].Value); bd.ElbowExt = e > 0 ? e : double.NaN; }
                 catch { bd.ElbowExt = double.NaN; }
             }
+            if (v.Length >= 24)
+            {
+                try { double sc = Convert.ToDouble(v[23].Value); bd.AnnotScale = sc > 0 ? sc : 1.0; }
+                catch { bd.AnnotScale = 1.0; }
+            }
+            else bd.AnnotScale = SourceAnnotScale(entity, bd.SourceBlockHandle);   // starsze opisy — skala z rozkładu
 
             return bd;
+        }
+
+        /// <summary>Skala opisu z rozkładu-źródła (RC_BAR_BLOCK) — opisy sprzed pola [23]; brak / błąd → 1.</summary>
+        private static double SourceAnnotScale(Entity annot, string sourceHandle)
+        {
+            try
+            {
+                var db = annot?.Database;
+                if (db == null || string.IsNullOrEmpty(sourceHandle)) return 1.0;
+                long h = Convert.ToInt64(sourceHandle.TrimStart('0').PadLeft(1, '0'), 16);
+                if (!db.TryGetObjectId(new Handle(h), out ObjectId id) || id.IsNull || id.IsErased) return 1.0;
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    var bd = br != null ? BarBlockEngine.ReadXData(br) : null;
+                    tr.Commit();
+                    return bd != null && bd.AnnotScale > 0 ? bd.AnnotScale : 1.0;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AnnotationEngine.SourceAnnotScale", ex); return 1.0; }
         }
 
         public static bool IsAnnotation(Entity entity)

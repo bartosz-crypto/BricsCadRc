@@ -1115,6 +1115,18 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   (`BeamGeometry.PlanSideUBars`): tył na otulinie od lica (narożnik — lica zewnętrznego), B = Floor5(B strzemienia − 2·Ø strzemienia) = 485,
   A = C = Ceil25(tył → początek prętów bocznych + zakład 500) (koniec 525), przycięte do zakresu prętów bocznych; w rzucie ramię przy jednym boku
   z hakiem na zagięciu w stronę drugiego ramienia; opis „{n}x1 H12-nn UB SIDE”.
+  **Decyzja 2026-10-14:** liczba prętów bocznych na bok (= poziomów UB SIDE) w trybie B3 z wysokości belki — H ≤ 375 brak, 450–525: 1,
+  600–675: 2, 750–825: 3, 900–975: 4 … (`BeamGeometry.SideLevelsForHeight` = ⌊(H − 300) / 150⌋; próg [26] nieużywany); UB SIDE jako
+  rozkład **Any** (cały U wypełniony w rzucie — `BuildAny`, SymbolSide „Left” = tył U przy początku odcinka, SymbolDirection = strona
+  drugiego ramienia), opis „{n} H12-nn-{rozstaw pionowy} UB SIDE” (rozstaw = `SideLevelSpacing`, osie dół / góra / (n + 1), w dół do 5).
+  **Decyzja 2026-10-14 (2):** przekrój — opis pręta bocznego BS obok każdej kropki w obrysie belki (lewy bok na prawo, prawy na lewo,
+  `Dot.Side`); strzemiona 4-cięte: drugie strzemię przy drugim licu PASA belki (rozkład w rzucie ma szerokość B4) i z własnym opisem
+  ze strzałką; rzut — w bloku rozkładu drugi pręt o jeden rozstaw dalej od widocznego, przesunięty wzdłuż o `BarData.PairShift`
+  (XData [32] = B 2-ciętego − B4, od drugiego lica), z kółkami jak widoczny (`AddPairBar`; MIRROR wzdłuż — znak odwrócony).
+  **Decyzja 2026-10-14 (3):** rozstaw w opisie UB SIDE na stałe 150 (`UbSideLabelSpacing`); opis UB SIDE blisko pręta — krótka
+  linia odniesienia prostopadle do ramienia (600…1600 × skala opisu, najpierw na zewnątrz U). Any: wymiary A–E przy przebudowie bloku
+  z pręta wzorcowego (XData rozkładu ma tylko A — po RC_SCALE_ANNOT zostawało jedno ramię). Opis rozkładu: XData RC_BAR_ANNOT [23] =
+  AnnotScale (przesunięcie opisu po RC_SCALE_ANNOT wracało do 1:50); opisy bez [23] — skala z rozkładu-źródła.
   Pręty belki (gdy już są) nie są przeszkodą w `ResolveRepresentativeCollisions` na rzucie; opisy siatki je omijają (zasada „opisy nie nachodzą”).
   **Detal 1:25 (decyzja 2026-10-12 „wygaszajmy tak, żeby pręty na siebie nie nachodziły, jak na Generate Mesh”):** `FinishBeamDetail` woła
   `ResolveRepresentativeCollisions(ramka detalu, 250 · 0,5, beamDetail: true)` — pręty belki (BM, BU końca, BN, BS…) i UB 03 w ramce: widoczny

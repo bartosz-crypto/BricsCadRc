@@ -500,8 +500,9 @@ namespace BricsCadRc.Tests
         public void K2_SideBarModes_B1_B2_B3()
         {
             var p = new BeamParams();
-            Assert.That(p.SideBarsActive(450), Is.False, "B3: H ≤ 450 — brak");
-            Assert.That(p.SideBarsActive(525), Is.True, "B3: od 525");
+            // decyzja 2026-10-14: B3 — liczba z H (≤ 375 brak, od 450 — 1)
+            Assert.That(p.SideBarsActive(375), Is.False, "B3: H ≤ 375 — brak");
+            Assert.That(p.SideBarsActive(450), Is.True, "B3: od 450");
             p.SideMode = 1;
             Assert.That(p.SideBarsActive(750), Is.False, "B1: nigdy");
             p.SideMode = 2;
