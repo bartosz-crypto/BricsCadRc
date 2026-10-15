@@ -106,6 +106,9 @@ namespace BricsCadRc.Commands
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");
 
+                // decyzja 2026-10-15: ustawienia wydruku jak w rysunku wzorcowym (PSLTSCALE 0, rzutnie na PCN-VIEWPORT, SD-SECTION)
+                ApplyPlotSetup(doc, T);
+
                 // Teksty z layoutów GA (blok tytułowy, SLAB NOTES) — jak ASD-GAI; podgląd, Anuluj = pomiń
                 CopyLayoutTexts(src.Db, plot.Label, T);
 
@@ -119,6 +122,39 @@ namespace BricsCadRc.Commands
             finally
             {
                 src?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// RC_USTAW_WYDRUK (decyzja 2026-10-15): ustawienia wydruku jak w rysunku wzorcowym RC — na istniejących rysunkach
+        /// (RC_PRZYGOTUJ_GA robi to samo na końcu). Szczegóły: PlotSetupEngine.
+        /// </summary>
+        [CommandMethod("RC_USTAW_WYDRUK")]
+        public static void PlotSetup()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            ApplyPlotSetup(doc, "[RC WYDRUK]");
+        }
+
+        private static void ApplyPlotSetup(Document doc, string T)
+        {
+            var ed = doc.Editor;
+            try
+            {
+                PlotSetupEngine.Result r;
+                using (doc.LockDocument())
+                    r = PlotSetupEngine.Apply(doc.Database);
+                ed.WriteMessage($"\n{T} Wydruk jak we wzorcu: layouty {r.Layouts}, rzutnie przeniesione na {PlotSetupEngine.ViewportLayer} " +
+                                $"(niedrukowana, zablokowane): {r.Viewports}, znaczniki przekroju poprawione: {r.SectionMarks}, " +
+                                $"warstwy prętów przywrócone na niebieski (5): {r.BarLayers}.");
+                foreach (var m in r.Messages) ed.WriteMessage($"\n{T} {m}.");
+                ed.WriteMessage("\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("GaImportCommands.ApplyPlotSetup", ex);
+                ed.WriteMessage($"\n{T} Ustawienia wydruku — błąd: {ex.Message}\n");
             }
         }
 

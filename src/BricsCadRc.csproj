@@ -40,6 +40,8 @@
     <EmbeddedResource Include="Resources\default-bbs.xls" LogicalName="BricsCadRc.default-bbs.xls" />
     <!-- Szablon arkusza RC (RC_PRZYGOTUJ_GA, decyzja 2026-10-14): tytuły rzutów, layout A1 bez rzutni, detale PH1–PH9 -->
     <EmbeddedResource Include="Resources\rc-template.dxf.gz" LogicalName="BricsCadRc.rc-template.dxf.gz" />
+    <!-- Tabela pisaków wydruku RC (z ASD) — kopiowana do PlotStyles BricsCAD, gdy jej brak (PlotSetupEngine) -->
+    <EmbeddedResource Include="Resources\speedeck-mono.ctb" LogicalName="BricsCadRc.speedeck-mono.ctb" />
     <!-- Ikony wstazki (32 i 16 px) -->
     <EmbeddedResource Include="Resources\Icons\*.png" LogicalName="BricsCadRc.Icons.%(Filename)%(Extension)" />
   </ItemGroup>

@@ -20,8 +20,12 @@ namespace BricsCadRc.Core
         public const string DimsLayer   = "RC-SLAB-DIMS";    // wymiarowanie (cyjan)
         public const string LeaderLayer = "RC-SLAB-LEADERS"; // linie prowadzace + doty (bialy — ACI 7)
 
-        /// <summary>Nazwa stylu tekstu annotacji ("StandardNarrow", font txt.shx, XScale=0.70).</summary>
-        public const string AnnotTextStyle = "StandardNarrow";
+        /// <summary>
+        /// Styl tekstu opisów — jak ASD (decyzja 2026-10-15, porównanie z rysunkiem 322-324): „PH-LABEL” (romans.shx, styl 0,70),
+        /// w tekście opisu współczynnik szerokości 0,80 (<see cref="AnnotWidthFactor"/>), wys. 125. Dawniej „StandardNarrow” (txt.shx, 0,70).
+        /// </summary>
+        public const string AnnotTextStyle = "PH-LABEL";
+        public const double AnnotWidthFactor = 0.8;
 
         public static string GetLayerName(string layerCode)
         {
@@ -48,11 +52,12 @@ namespace BricsCadRc.Core
 
             var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
 
-            // Kolory pretow jak w ASD — preta na niebiesko, etykiety zolto
-            EnsureLayer(tr, layerTable, BotLayer1,  5);   // niebieski  (B1 — ACI 5)
-            EnsureLayer(tr, layerTable, BotLayer2,  5);   // niebieski  (B2 — ACI 5, jak B1 — ASD konwencja)
-            EnsureLayer(tr, layerTable, TopLayer1,  5);   // niebieski  (T1 — ACI 5)
-            EnsureLayer(tr, layerTable, TopLayer2,  5);   // niebieski  (T2 — ACI 5)
+            // Kolory pretow jak w ASD — preta na niebiesko (ACI 5; speedeck-mono.ctb → 0,80 mm), etykiety zolto.
+            // 2026-10-15: proba z magenta (6) cofnieta — w ASD prety sa niebieskie (Bartek)
+            EnsureLayer(tr, layerTable, BotLayer1,  BarLayerColor);   // B1
+            EnsureLayer(tr, layerTable, BotLayer2,  BarLayerColor);   // B2
+            EnsureLayer(tr, layerTable, TopLayer1,  BarLayerColor);   // T1
+            EnsureLayer(tr, layerTable, TopLayer2,  BarLayerColor);   // T2
             EnsureLayer(tr, layerTable, AnnotLayer,  2);   // zolty      (etykiety — ACI 2, jak ASD)
             EnsureLayer(tr, layerTable, DimsLayer,   4);   // cyjan      (wymiary)
             EnsureLayer(tr, layerTable, LeaderLayer, 7);   // bialy      (linie prowadzace — ACI 7)
@@ -69,6 +74,10 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // Warstwy
         // ----------------------------------------------------------------
+
+        /// <summary>Kolor warstw prętów — niebieski ACI 5 jak w ASD (speedeck-mono.ctb: 0,80 mm).</summary>
+        public const short BarLayerColor = 5;
+        public static readonly string[] BarLayers = { BotLayer1, BotLayer2, TopLayer1, TopLayer2 };
 
         private static void EnsureLayer(Transaction tr, LayerTable table, string name, short colorIndex)
         {
@@ -161,9 +170,16 @@ namespace BricsCadRc.Core
         // Style tekstu
         // ----------------------------------------------------------------
 
+        /// <summary>Styl tekstu opisów (PH-LABEL jak w ASD: romans.shx, XScale 0,70) — gdy go brak.</summary>
+        public static void EnsureAnnotTextStyle(Database db)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            EnsureTextStyle(tr, db);
+            tr.Commit();
+        }
+
         /// <summary>
-        /// Tworzy styl tekstu "StandardNarrow" (font txt.shx, XScale=0.70).
-        /// Jesli txt.shx nie jest dostepny, uzywa domyslnego fonta BricsCAD.
+        /// Tworzy styl tekstu opisów „PH-LABEL” (romans.shx, XScale 0,70 — jak w rysunkach ASD); istniejący bez zmian.
         /// </summary>
         private static void EnsureTextStyle(Transaction tr, Database db)
         {
@@ -175,9 +191,9 @@ namespace BricsCadRc.Core
             var style = new TextStyleTableRecord
             {
                 Name     = AnnotTextStyle,
-                FileName = "txt.shx",   // standardowy font CAD (wbudowany w BricsCAD)
-                TextSize = 0.0,         // 0 = wysokosc ustawiana per-obiekt
-                XScale   = 0.70,        // waski — Standard Narrow
+                FileName = "romans.shx",   // jak ASD
+                TextSize = 0.0,            // 0 = wysokosc ustawiana per-obiekt
+                XScale   = 0.70,           // styl 0,70; tekst opisu ma własny współczynnik 0,80 (AnnotWidthFactor)
             };
 
             styleTable.Add(style);

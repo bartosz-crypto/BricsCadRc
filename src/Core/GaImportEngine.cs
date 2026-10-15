@@ -838,7 +838,9 @@ namespace BricsCadRc.Core
             {
                 var mt = new MText
                 {
-                    Layer = src.Layer, Color = src.Color, TextStyleId = src.TextStyleId, TextHeight = src.TextHeight,
+                    // grubość / typ linii jak w GA (wzorzec: 0,00 mm, Continuous — 2026-10-15; dawniej ByLayer = domyślna)
+                    Layer = src.Layer, Color = src.Color, LineWeight = src.LineWeight, Linetype = src.Linetype,
+                    TextStyleId = src.TextStyleId, TextHeight = src.TextHeight,
                     Location = src.Location, Attachment = src.Attachment, Rotation = src.Rotation, Width = 0,
                     Contents = string.Join("\\P", keep)
                 };

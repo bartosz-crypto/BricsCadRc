@@ -263,7 +263,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 - `BarBlockEngine` — rozkłady (BTR + BlockReference), XData rozkładu, `GenerateFromBounds`, `UpdateBarLength`.
   Kółko końca pręta (bar end Circle, r = 35 × skala opisu) leży W długości pręta: krawędź kółka = koniec pręta,
   linia kończy się w środku kółka — długość pręta na rzucie i gripy takie same z kółkiem i bez.
-- `AnnotationEngine` — opisy rozkładów, linia rozkładu, `SyncAnnotation`, `UpdateBarLabelCount`.
+- `AnnotationEngine` — opisy rozkładów, linia rozkładu, `SyncAnnotation`, `UpdateBarLabelCount`. **Linia rozkładu ciągła** (decyzja 2026-10-15,
+  `DistLineLinetype`; dawniej _DOT / CENTER — kreskowana w rzutniach); stare opisy: `RC_OPISY_CIAGLE`.
 - `AutoRebarEngine` — automatyczne zbrojenie płyty (sekcja 4).
 - `BarGeometryBuilder`, `ShapeCodeLibrary`, `BarShape` — kształty BS 8666:2020 (W4b: formuły 2020; `BarShape.MinBendRadius`
   = Table 2 (H25 → 87; poza tabelą 2d / 3.5d), `HookDiameterQ`, `MinEndProjectionP`; 47 bez C, 64 (wymaga F), q dla d = 50
@@ -616,6 +617,16 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   rewizji kolumny By / Chkd (MText na TEXTNOTES równe dawnym DRAWN / CHECKED); A1-BL DATE = bieżący miesiąc i rok („OCTOBER 2026”),
   data w tabeli rewizji = dzisiejsza („15.10.26”) — `RcTemplateEngine.FillSheetInfo`. Wydruk arkusza: kopia ustawień 1:1 z layoutu
   szablonu (`PlotSettings.CopyFrom`) na aktywnym layoucie, zapasowo PlotSettingsValidator.
+  **Ustawienia wydruku jak we wzorcu RC (322-324, decyzja 2026-10-15, `PlotSetupEngine`, koniec RC_PRZYGOTUJ_GA i komenda
+  `RC_USTAW_WYDRUK`):** PSLTSCALE = 0 na każdym layoucie (u nas było 1 — typy linii w rzutniach kreskowane), rzutnie (poza rzutnią
+  arkusza) na PCN-VIEWPORT (niedrukowana, 0,00 mm) i zablokowane, znaczniki przekroju SD-SECTION kolor 2 / 0,00 mm (warstwa 0,00 mm),
+  opis płyty z GA zachowuje grubość / typ linii źródła (0,00 mm).
+  **speedeck-mono.ctb** (z ASD, zasób `Resources/speedeck-mono.ctb`): wszystko czarne, grubość wyłącznie wg KOLORU (grubości obiektów
+  pomijane): 1 → 0,20, 2 → 0,30, 3 → 0,40, 4 → 0,53, 5 → 0,80, 6 → 0,53, 7 → 0,30, 8 → 0,20, 9 → 0,13 mm. Warstwy prętów
+  RC-SLAB-BOT/TOP-01/02 — **niebieskie (5)** jak w ASD (próba z magentą 6 cofnięta 2026-10-15; RC_USTAW_WYDRUK przywraca 5);
+  plik kopiowany do PlotStyles BricsCAD, gdy go brak.
+  **Tekst opisów rozkładów jak ASD (2026-10-15, porównanie z 322-324):** styl `PH-LABEL` (romans.shx, styl 0,70) + współczynnik
+  szerokości tekstu 0,80, wys. 125, kolor 2 (dawniej StandardNarrow: txt.shx 0,70); istniejące opisy przestawia RC_USTAW_WYDRUK.
 - W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” albo „GARAGE n…” na SD-Text
   wewnątrz zamkniętego obrysu SD-PILED-RAFT — `PlotLabelRules.IsPlotLabel`; obrys zewnętrzny = największy zawierający opis).
   Lista: najpierw PLOT, potem GARAGE (domyślnie pierwszy PLOT). Garaż: TITLE_1 / DRAWING_NUMBER z layoutu GA (GA3215 → RC3215);

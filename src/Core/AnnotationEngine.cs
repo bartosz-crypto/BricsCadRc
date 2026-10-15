@@ -86,7 +86,7 @@ namespace BricsCadRc.Core
             using var tr = db.TransactionManager.StartTransaction();
             var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
 
-            string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            string ltName = DistLineLinetype;
 
             string blockName = $"RC_ANNOT_{posNr:D3}_{Guid.NewGuid():N}".Substring(0, 32);
             var blockTable   = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
@@ -442,7 +442,7 @@ namespace BricsCadRc.Core
             var ids = new List<ObjectId>();
             foreach (ObjectId oid in btr) if (!oid.IsErased) ids.Add(oid);
             foreach (var oid in ids) ((DBObject)tr.GetObject(oid, OpenMode.ForWrite)).Erase();
-            string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            string ltName = DistLineLinetype;
             BuildDistLineAndDots(tr, btr, bar, ltName, offset);
             BuildMLeaderInBtr(tr, btr, db, bar, pts);
             WriteAnnotXData(brRw, bar);
@@ -1074,7 +1074,8 @@ namespace BricsCadRc.Core
                 {
                     TextString  = textString,
                     Height      = scaledTextH,
-                    TextStyleId = GetTextStyleId(db)
+                    TextStyleId = GetTextStyleId(db),
+                    WidthFactor = LayerManager.AnnotWidthFactor
                 };
                 btr.AppendEntity(tmpText);
                 tr.AddNewlyCreatedDBObject(tmpText, true);
@@ -1118,6 +1119,7 @@ namespace BricsCadRc.Core
                 Position       = textPos,
                 Rotation       = textAngle,
                 TextStyleId    = GetTextStyleId(db),
+                WidthFactor    = LayerManager.AnnotWidthFactor,   // jak ASD (PH-LABEL, 0,80)
                 HorizontalMode = TextHorizontalMode.TextLeft,
                 VerticalMode   = TextVerticalMode.TextBase
             };
@@ -1545,7 +1547,7 @@ namespace BricsCadRc.Core
                 ((DBObject)tr.GetObject(oid, OpenMode.ForWrite)).Erase();
 
             // Przebudowa — BuildH/V remierzy tekst i ustawia TextLen
-            string ltName      = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            string ltName      = DistLineLinetype;
             double armTotalLen;
 
             if (updatedBar.Direction == "X")
@@ -1610,7 +1612,7 @@ namespace BricsCadRc.Core
             barData.Angle = annotBr.Rotation;
             var annotPre = ReadAnnotXData(annotBr);
             if (annotPre != null) barData.ElbowExt = annotPre.ElbowExt;
-            string ltName = ResolveLinetype(db, tr, "_DOT", "CENTER");
+            string ltName = DistLineLinetype;
             BuildDistLineAndDots(tr, btr, barData, ltName, localOffset);
 
             // p268 — Leader anchor update: pts[0] = nowa pozycja na dist line po offsecie
@@ -1925,6 +1927,129 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // Helpers
         // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Linia rozkładu w opisie — decyzja 2026-10-15: CIĄGŁA (dawniej _DOT / CENTER: w modelu przy LTSCALE 1 wyglądała na ciągłą,
+        /// ale w rzutni przy PSLTSCALE 1 kreskowała się). Linię rozkładu od leadera odróżnia geometria (<see cref="IsDistributionLine"/>).
+        /// </summary>
+        public const string DistLineLinetype = "Continuous";
+
+        /// <summary>
+        /// RC_OPISY_CIAGLE: w istniejących opisach (bloki RC_ANNOT z XData opisu) linie z typem innym niż ciągły / ByLayer →
+        /// „Continuous”. Zwraca liczbę poprawionych linii.
+        /// </summary>
+        public static int MakeAnnotTextsAsd(Database db)
+        {
+            // Teksty opisów rozkładów jak w ASD (2026-10-15): styl PH-LABEL (romans.shx), współczynnik szerokości 0,80
+            LayerManager.EnsureAnnotTextStyle(db);
+            int n = 0;
+            var tr = db.TransactionManager.StartTransaction();
+            var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            if (!st.Has(LayerManager.AnnotTextStyle)) { tr.Commit(); tr.Dispose(); return 0; }
+            var styleId = st[LayerManager.AnnotTextStyle];
+            var done = new HashSet<ObjectId>();
+            var toRebuild = new List<ObjectId>();
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            foreach (ObjectId sid in bt)
+            {
+                var space = (BlockTableRecord)tr.GetObject(sid, OpenMode.ForRead);
+                if (!space.IsLayout) continue;
+                foreach (ObjectId id in space)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br) || !IsAnnotation(br)) continue;
+                    if (!done.Add(br.BlockTableRecord)) continue;
+                    var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                    bool changed = false;
+                    foreach (ObjectId eid in btr)
+                    {
+                        if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is DBText t)) continue;
+                        if (t.TextStyleId == styleId && Math.Abs(t.WidthFactor - LayerManager.AnnotWidthFactor) < 1e-6) continue;
+                        t.UpgradeOpen();
+                        t.TextStyleId = styleId;
+                        t.WidthFactor = LayerManager.AnnotWidthFactor;
+                        n++;
+                        changed = true;
+                    }
+                    if (changed || TextAwayFromTip(tr, br, btr)) toRebuild.Add(id);
+                }
+            }
+            tr.Commit();
+            tr.Dispose();
+
+            // Nowy tekst ma inną długość — odcinek pod tekstem (landing) i położenie tekstu przeliczone tak jak przy przesunięciu
+            // opisu (UpdateLeaderInBlock na tym samym końcu odnośnika): tekst znowu kończy się na końcu linii (2026-10-15)
+            foreach (var id in toRebuild)
+            {
+                try
+                {
+                    using var tr2 = db.TransactionManager.StartOpenCloseTransaction();
+                    if (!(tr2.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    var bar = ReadAnnotXData(br);
+                    var pts = bar == null ? null : DecodeLeaderPoints(bar.LeaderPoints);
+                    if (pts == null || pts.Count < 2) continue;
+                    var tip = pts[pts.Count - 1].TransformBy(br.BlockTransform);
+                    UpdateLeaderInBlock(br, tip);
+                    tr2.Commit();
+                }
+                catch (System.Exception ex) { Log.Error("AnnotationEngine.MakeAnnotTextsAsd.Rebuild", ex); }
+            }
+            return n;
+        }
+
+        /// <summary>Tekst opisu nie kończy się przy końcu odnośnika (np. po zmianie stylu tekstu) — odstęp &gt; 2,5 × odsunięcie tekstu.</summary>
+        private static bool TextAwayFromTip(Transaction tr, BlockReference br, BlockTableRecord btr)
+        {
+            try
+            {
+                var bar = ReadAnnotXData(br);
+                var pts = bar == null ? null : DecodeLeaderPoints(bar.LeaderPoints);
+                if (pts == null || pts.Count < 2) return false;
+                var tip = pts[pts.Count - 1];
+                double lim = 2.5 * Scaled(TextArmOffset, bar);
+                foreach (ObjectId eid in btr)
+                {
+                    if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is DBText t)) continue;
+                    var e = t.GeometricExtents;
+                    double dx = Math.Max(0, Math.Max(e.MinPoint.X - tip.X, tip.X - e.MaxPoint.X));
+                    double dy = Math.Max(0, Math.Max(e.MinPoint.Y - tip.Y, tip.Y - e.MaxPoint.Y));
+                    return Math.Sqrt(dx * dx + dy * dy) > lim;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AnnotationEngine.TextAwayFromTip", ex); }
+            return false;
+        }
+
+        public static int MakeAnnotLinesContinuous(Database db)
+        {
+            int n = 0;
+            using var tr = db.TransactionManager.StartTransaction();
+            var done = new HashSet<ObjectId>();
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            foreach (ObjectId sid in bt)
+            {
+                var space = (BlockTableRecord)tr.GetObject(sid, OpenMode.ForRead);
+                if (!space.IsLayout) continue;
+                foreach (ObjectId id in space)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br) || !IsAnnotation(br)) continue;
+                    if (!done.Add(br.BlockTableRecord)) continue;
+                    var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                    foreach (ObjectId eid in btr)
+                    {
+                        if (eid.IsErased || !(tr.GetObject(eid, OpenMode.ForRead) is Entity e)) continue;
+                        if (!(e is Line || e is Polyline)) continue;
+                        string lt = e.Linetype ?? "";
+                        if (lt.Equals("Continuous", StringComparison.OrdinalIgnoreCase)
+                            || lt.Equals("ByLayer", StringComparison.OrdinalIgnoreCase)) continue;
+                        e.UpgradeOpen();
+                        e.Linetype = DistLineLinetype;
+                        n++;
+                    }
+                }
+            }
+            tr.Commit();
+            return n;
+        }
 
         private static string ResolveLinetype(Database db, Transaction tr, params string[] preferred)
         {

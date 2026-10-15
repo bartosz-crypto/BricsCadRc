@@ -56,5 +56,30 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage($"\n[RC] Błąd: {ex.Message}\n");
             }
         }
+
+        /// <summary>
+        /// RC_OPISY_CIAGLE (decyzja 2026-10-15): linie rozkładów w istniejących opisach — ciągłe (dawniej _DOT / CENTER,
+        /// kreskowane w rzutniach). Nowe opisy od razu mają linię ciągłą.
+        /// </summary>
+        [CommandMethod("RC_OPISY_CIAGLE", CommandFlags.Modal)]
+        public void RC_OPISY_CIAGLE()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            try
+            {
+                int n;
+                using (doc.LockDocument())
+                    n = AnnotationEngine.MakeAnnotLinesContinuous(doc.Database);
+                ed.Regen();
+                ed.WriteMessage($"\n[RC] Linie opisów zmienione na ciągłe: {n}.\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarFormatCommands.RC_OPISY_CIAGLE", ex);
+                ed.WriteMessage($"\n[RC] Błąd: {ex.Message}\n");
+            }
+        }
     }
 }

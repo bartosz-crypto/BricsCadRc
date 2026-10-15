@@ -693,7 +693,8 @@ namespace BricsCadRc.Core
                     void Mark(Point2d p, Vector2d dir, string mkKey, double k)
                     {
                         Tag("MARK", mkKey);
-                        var mk = new Polyline { Layer = SectionMarkLayer };
+                        // jak we wzorcu RC (2026-10-15): kolor 2, 0,00 mm
+                        var mk = new Polyline { Layer = SectionMarkLayer, ColorIndex = 2, LineWeight = LineWeight.LineWeight000 };
                         var t0 = p + nrm * (294 * k); var t1 = p + dir * (83 * k); var t2 = p + dir * (300 * k);
                         mk.AddVertexAt(0, t1, 0, 0, 0);
                         mk.AddVertexAt(1, t0, 0, 0, 0);
@@ -706,6 +707,7 @@ namespace BricsCadRc.Core
                         Add(new MText
                         {
                             Contents = letter, TextHeight = 150 * k, Layer = SectionMarkLayer, TextStyleId = titleStyle,
+                            ColorIndex = 2, LineWeight = LineWeight.LineWeight000,
                             Location = new Point3d(lp.X, lp.Y, 0), Attachment = AttachmentPoint.MiddleCenter,
                             Rotation = ctx.Input.CutAlongX ? 0 : Math.PI / 2   // litera wzdłuż linii cięcia (pionowe cięcie → obrót 90°)
                         });
