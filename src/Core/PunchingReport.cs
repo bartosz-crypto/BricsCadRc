@@ -14,6 +14,7 @@ namespace BricsCadRc.Core
     public static class PunchingReport
     {
         public const string SheetName = "Punching EC2";
+        public const string ImplicitLabel = "CAŁY RAPORT";
 
         public sealed class PileResult
         {
@@ -34,6 +35,7 @@ namespace BricsCadRc.Core
         {
             public string Label;         // "PLOT 6-8"
             public int    DeclaredPiles; // z nagłówka „(19 piles)”
+            public bool   Implicit;      // raport bez nagłówka PLOT / GARAGE (jeden model, np. Oakbee) — cały raport
             public List<PileResult> Piles = new List<PileResult>();
         }
 
@@ -98,10 +100,17 @@ namespace BricsCadRc.Core
                     }
                     continue;
                 }
-                if (col == null || cur == null) continue;
+                if (col == null) continue;
 
                 string pile = Get(c, col, "pile");
                 if (string.IsNullOrWhiteSpace(pile) || pile.Equals("Pile", StringComparison.OrdinalIgnoreCase)) continue;
+                if (cur == null)
+                {
+                    // Tabela pali przed pierwszym nagłówkiem PLOT / GARAGE — raport jednego modelu bez podziału na płyty
+                    cur = new Plot { Label = ImplicitLabel, Implicit = true };
+                    plots.Add(cur);
+                    warnings.Add("Raport bez nagłówka PLOT / GARAGE — wszystkie pale jako jedna płyta.");
+                }
 
                 var pr = new PileResult
                 {

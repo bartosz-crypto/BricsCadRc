@@ -53,6 +53,8 @@
     <Compile Include="..\src\Core\BarLabelRules.cs" />
     <Compile Include="..\src\Core\RectilinearPolygons.cs" />
     <Compile Include="..\src\Core\BeamDetailRules.cs" />
+    <Compile Include="..\src\Core\AddReinfPlanner.cs" />
+    <Compile Include="..\src\Core\TopLapSearch.cs" />
   </ItemGroup>
 
 </Project>

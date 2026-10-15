@@ -219,7 +219,9 @@ namespace BricsCadRc.Core
             using (var tr = db.TransactionManager.StartTransaction())
             using (var ttr = tpl.TransactionManager.StartOpenCloseTransaction())
             {
-                CopyPlotSettings((Layout)ttr.GetObject(tplLayId, OpenMode.ForRead), (Layout)tr.GetObject(layId, OpenMode.ForWrite), silent);
+                var dl = (Layout)tr.GetObject(layId, OpenMode.ForWrite);
+                CopyPlotSettings((Layout)ttr.GetObject(tplLayId, OpenMode.ForRead), dl, silent);
+                rep.Messages.Add($"wydruk: {dl.PlotConfigurationName} / {dl.CanonicalMediaName} / {dl.CurrentStyleSheet}");
                 ttr.Commit();
                 tr.Commit();
             }
@@ -230,18 +232,144 @@ namespace BricsCadRc.Core
             rep.Messages.Add($"layout arkusza „{name}” z szablonu (czysty: A1-BL, notatki ogólne, tabela rewizji; bez rzutni)");
         }
 
-        /// <summary>Ustawienia wydruku jak w szablonie (pc3, arkusz, tabela pisaków, obrót, skala, obszar, początek) — każde osobno, błąd = pominięte.</summary>
+        // ── Drawn / Checked / data (decyzja 2026-10-15) ─────────────────────────────
+
+        /// <summary>Ostatnio wpisane „Drawn” / „Checked” (%APPDATA%\NaSmartRc\sheet.txt) — podpowiedź przy kolejnym RC_PRZYGOTUJ_GA.</summary>
+        public static (string drawn, string chk) LoadPeople()
+        {
+            string d = "", c = "";
+            try
+            {
+                if (File.Exists(PeopleFile))
+                    foreach (var line in File.ReadAllLines(PeopleFile))
+                    {
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string k = line.Substring(0, eq).Trim(), v = line.Substring(eq + 1).Trim();
+                        if (k == "Drawn") d = v; else if (k == "Checked") c = v;
+                    }
+            }
+            catch (System.Exception ex) { Log.Error("RcTemplateEngine.LoadPeople", ex); }
+            return (CleanInitials(d), CleanInitials(c));
+        }
+
+        /// <summary>Inicjały: litery, cyfry, spacja, „.” „-” „/” i ampersand, maks. 20 znaków; inne (np. „_TK'._ZOOM” z kolejki poleceń) — puste.</summary>
+        public static string CleanInitials(string v)
+        {
+            v = (v ?? "").Trim().ToUpperInvariant();
+            return Regex.IsMatch(v, @"^[A-Z0-9 .\-/&]{1,20}$") ? v : "";
+        }
+
+        public static void SavePeople(string drawn, string chk)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PeopleFile));
+                File.WriteAllText(PeopleFile, $"Drawn={CleanInitials(drawn)}{Environment.NewLine}Checked={CleanInitials(chk)}{Environment.NewLine}");
+            }
+            catch (System.Exception ex) { Log.Error("RcTemplateEngine.SavePeople", ex); }
+        }
+
+        private static string PeopleFile => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), App.ProductInfo.FolderName, "sheet.txt");
+
+        /// <summary>Data w bloku tytułowym: „OCTOBER 2026”.</summary>
+        public static string TitleDate(DateTime d) => d.ToString("MMMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("en-GB")).ToUpperInvariant();
+
+        /// <summary>Data w tabeli rewizji: „15.10.26”.</summary>
+        public static string RevDate(DateTime d) => d.ToString("dd.MM.yy", System.Globalization.CultureInfo.InvariantCulture);
+
+        private static readonly Regex RevDateRx = new Regex(@"^\d{1,2}\.\d{1,2}\.\d{2,4}$");
+
+        /// <summary>
+        /// Arkusz RC: A1-BL DRAWN / CHECKED (puste — bez zmian) i DATE (miesiąc + rok), w tabeli rewizji (MText na TEXTNOTES)
+        /// kolumny By / Chkd (teksty równe dawnym DRAWN / CHECKED) i Date (dd.mm.rr).
+        /// </summary>
+        public static void FillSheetInfo(Database db, string layoutName, string drawn, string chk, DateTime date, Report rep)
+        {
+            drawn = CleanInitials(drawn);
+            chk = CleanInitials(chk);
+            int n = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+                if (!ld.Contains(layoutName)) { tr.Commit(); return; }
+                var lay = (Layout)tr.GetObject(ld.GetAt(layoutName), OpenMode.ForRead);
+                var btr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
+                string oldD = null, oldC = null;
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is BlockReference br)) continue;
+                    if (!(tr.GetObject(br.BlockTableRecord, OpenMode.ForRead) is BlockTableRecord bd)
+                        || !string.Equals(bd.Name, GaTitleEngine.TitleBlockName, StringComparison.OrdinalIgnoreCase)) continue;
+                    foreach (ObjectId aid in br.AttributeCollection)
+                    {
+                        if (!(tr.GetObject(aid, OpenMode.ForRead) is AttributeReference ar)) continue;
+                        string tag = ar.Tag.ToUpperInvariant();
+                        string v = tag == "DRAWN" && drawn.Length > 0 ? drawn
+                                 : tag == "CHECKED" && chk.Length > 0 ? chk
+                                 : tag == "DATE" ? TitleDate(date) : null;
+                        if (tag == "DRAWN") oldD = ar.TextString?.Trim();
+                        if (tag == "CHECKED") oldC = ar.TextString?.Trim();
+                        if (v == null || v == ar.TextString) continue;
+                        ar.UpgradeOpen();
+                        ar.TextString = v;
+                        n++;
+                    }
+                }
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is MText mt)) continue;
+                    if (!mt.Layer.Equals("TEXTNOTES", StringComparison.OrdinalIgnoreCase)) continue;
+                    string t = (mt.Text ?? "").Trim();
+                    string v = RevDateRx.IsMatch(t) ? RevDate(date)
+                             : drawn.Length > 0 && !string.IsNullOrEmpty(oldD) && t.Equals(oldD, StringComparison.OrdinalIgnoreCase) ? drawn
+                             : chk.Length > 0 && !string.IsNullOrEmpty(oldC) && t.Equals(oldC, StringComparison.OrdinalIgnoreCase) ? chk
+                             : null;
+                    if (v == null || v == t) continue;
+                    mt.UpgradeOpen();
+                    mt.Contents = v;
+                    n++;
+                }
+                tr.Commit();
+            }
+            rep.Messages.Add($"arkusz {layoutName}: Drawn {(drawn.Length > 0 ? drawn : "bez zmian")}, Checked {(chk.Length > 0 ? chk : "bez zmian")}, data {TitleDate(date)} / {RevDate(date)} ({n} pól)");
+        }
+
+        /// <summary>
+        /// Ustawienia wydruku jak w szablonie. Najpierw kopia 1:1 przez obiekt PlotSettings (jak import Page Setup — bez walidacji
+        /// pc3, dokładnie to, co ma layout szablonu: DWG To PDF.pc3, ISO full bleed A1, speedeck-mono.ctb, obszar Layout, 1:1).
+        /// Dopiero gdy arkusz się nie zgadza — PlotSettingsValidator krok po kroku (z zapasowymi nazwami arkusza A1).
+        /// </summary>
         private static void CopyPlotSettings(Layout src, Layout dst, Report rep)
         {
-            var psv = PlotSettingsValidator.Current;
             void Try(string what, Action a)
             {
                 try { a(); }
                 catch (System.Exception ex) { Log.Error("RcTemplateEngine.Plot." + what, ex); rep.Messages.Add($"wydruk: {what} — nie ustawiono ({ex.Message})"); }
             }
+            Try("kopia ustawień", () =>
+            {
+                using var ps = new PlotSettings(false);
+                ps.CopyFrom(src);
+                dst.CopyFrom(ps);
+            });
+            if (string.Equals(dst.CanonicalMediaName, src.CanonicalMediaName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(dst.PlotConfigurationName, src.PlotConfigurationName, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var psv = PlotSettingsValidator.Current;
             Try("drukarka", () => psv.SetPlotConfigurationName(dst, src.PlotConfigurationName, null));
             Try("lista", () => psv.RefreshLists(dst));
-            Try("arkusz", () => psv.SetCanonicalMediaName(dst, src.CanonicalMediaName));
+            bool media = false;
+            foreach (var m in new[] { src.CanonicalMediaName, "ISO_full_bleed_A1_(841.00_x_594.00_MM)", "ISO_A1_(841.00_x_594.00_MM)",
+                                      "ISO_expand_A1_(841.00_x_594.00_MM)", "ISO_full_bleed_A1_(594.00_x_841.00_MM)" })
+            {
+                if (string.IsNullOrEmpty(m)) continue;
+                try { psv.SetCanonicalMediaName(dst, m); media = true; break; }
+                catch (System.Exception ex) { Log.Error("RcTemplateEngine.Plot.arkusz " + m, ex); }
+            }
+            if (!media) rep.Messages.Add($"wydruk: brak arkusza A1 dla „{src.PlotConfigurationName}” — ustaw Page Setup ręcznie");
             Try("pisaki", () => psv.SetCurrentStyleSheet(dst, src.CurrentStyleSheet));
             Try("jednostki", () => psv.SetPlotPaperUnits(dst, src.PlotPaperUnits));
             Try("obrót", () => psv.SetPlotRotation(dst, src.PlotRotation));
@@ -258,7 +386,7 @@ namespace BricsCadRc.Core
                     psv.SetCustomPrintScale(dst, src.CustomPrintScale);
                 }
             });
-            // jak w szablonie: obszar „Layout”, bez centrowania, początek (0,0) — „Extents + centruj” przesuwał arkusz względem ramki
+            // jak w szablonie: obszar „Layout”, bez centrowania, początek (0,0)
             Try("obszar", () => psv.SetPlotType(dst, src.PlotType));
             Try("środek", () => psv.SetPlotCentered(dst, src.PlotCentered));
             Try("początek", () => psv.SetPlotOrigin(dst, src.PlotOrigin));

@@ -31,7 +31,8 @@ namespace BricsCadRc.Core
         public const string XApp = "RC_GA";
         public const string SlabLayer = "SD-PILED-RAFT";
         public const double RegionMargin = 1500.0;   // wokół obrysu: door threshold, opisy przy krawędzi
-        public const double TitleGap     = 2400.0;   // od rysunku płyty do tytułu rzutu
+        public const double TitleGap     = 2400.0;   // od rysunku płyty (pale, opisy) do tytułu rzutu — minimum
+        public const double TitleBelowSlab = 3000.0; // decyzja 2026-10-15: góra tytułu 3000 pod dolną krawędzią płyty (miejsce na opisy prętów)
         public const double PlanGap      = 7500.0;   // między rzutami i między rzutem a ramką szablonów
         public const double LabelMargin  = 70.0;     // ramka opisu płyty wokół tekstu
         private const double FrameWidth  = 8065.0;   // ramka szablonów (gdy brak w rysunku)
@@ -232,15 +233,17 @@ namespace BricsCadRc.Core
                 if (!tbExt.HasValue) warnings.Add("Brak tytułu rzutu dolnego (…BOTTOM LAYER) — rzut wstawiony w punkcie (0,0).");
                 if (!ttExt.HasValue) warnings.Add("Brak tytułu rzutu górnego (…TOP LAYER) — bez tytułu.");
 
-                // Rzut dolny: środek nad tytułem, dół rysunku płyty TitleGap nad tytułem
-                double cxB, botB;
+                // Rzut dolny: środek nad tytułem; dolna krawędź płyty TitleBelowSlab nad górą tytułu (i cały rysunek płyty
+                // co najmniej TitleGap nad nim)
+                double cxB, dyB;
                 if (tbExt.HasValue)
                 {
                     cxB = (tbExt.Value.MinPoint.X + tbExt.Value.MaxPoint.X) / 2;
-                    botB = tbExt.Value.MaxPoint.Y + TitleGap;
+                    double tTop = tbExt.Value.MaxPoint.Y;
+                    dyB = Math.Max(tTop + TitleGap - y0, tTop + TitleBelowSlab - plot.Outline.MinPoint.Y);
                 }
-                else { cxB = w / 2; botB = 0; }
-                var dB = new Vector3d(cxB - (x0 + x1) / 2, botB - y0, 0);
+                else { cxB = w / 2; dyB = -y0; }
+                var dB = new Vector3d(cxB - (x0 + x1) / 2, dyB, 0);
                 var dT = dB + new Vector3d(w + PlanGap, 0, 0);
 
                 // 3. Kopie

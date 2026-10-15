@@ -10,7 +10,7 @@ namespace BricsCadRc.Core
     /// Oś „along” = wzdłuż prętów (B1: X, B2: Y), „across” = oś rozkładu.
     ///   • strefa mapy: prostokąt (zakres rozkładu, z marginesem z mapy) + kontur (faktyczny obszar przekroczenia),
     ///   • pręt: kontur + ≥ 600 mm zakotwienia z każdej strony, min. 2000 mm, długość co 250, maks. 6000,
-    ///   • rozkład co 200 mm, pokrywa cały prostokąt strefy w osi rozkładu,
+    ///   • rozkład co 200 mm, pokrywa cały prostokąt strefy w osi rozkładu, min. 5 prętów,
     ///   • średnica wg wymaganego As z mapy: ≤ 2·393 → H10, ≤ 393+565 → H12, dalej H16 (ostrzeżenie > 393+1005),
     ///   • strefy blisko siebie (zachodzące wzdłuż prętów, odstęp w osi rozkładu ≤ 400) — jeden rozkład,
     ///   • położenia zaokrąglane do 50 mm względem najbliższego pala (wymiary „okrągłe”), pręty w obrysie płyty (otulina).
@@ -26,6 +26,7 @@ namespace BricsCadRc.Core
         public const double MergeGap    = 400.0;
         public const double SnapStep    = 50.0;
         public const double PileRefDist = 3000.0;
+        public const int    MinCount    = 5;          // decyzja 2026-10-15: ADD min. 5 prętów, nie mniej
 
         public const double BaseAs = 393.0;                    // H10@200 (siatka podstawowa dołem)
         public static double AsAt200(int dia) => Math.PI * dia * dia / 4.0 * 1000.0 / Spacing;   // H10 393, H12 565, H16 1005
@@ -112,7 +113,7 @@ namespace BricsCadRc.Core
                 }
                 double midA = (g.NA0 + g.NA1) / 2, midC = (g.C0 + g.C1) / 2;
 
-                int n = Math.Max(2, (int)Math.Ceiling((g.C1 - g.C0) / Spacing - 1e-9) + 1);
+                int n = Math.Max(MinCount, (int)Math.Ceiling((g.C1 - g.C0) / Spacing - 1e-9) + 1);
                 double span = (n - 1) * Spacing;
                 double a0 = midA - len / 2, c0 = midC - span / 2;
 
@@ -140,6 +141,9 @@ namespace BricsCadRc.Core
                 if (a0 + len > hi) a0 = hi - len;
 
                 var (clo, chi) = AcrossLimits(slab, horizontal, a0 + len / 2);
+                // przy brzegu płyty rozkład przesuwany do środka (zachowuje min. 5 prętów), dopiero gdy płyta za wąska — mniej prętów
+                while (c0 < clo - 1e-6 && c0 + n * Spacing <= chi + 1e-6) c0 += Spacing;
+                while (c0 + (n - 1) * Spacing > chi + 1e-6 && c0 - Spacing >= clo - 1e-6) c0 -= Spacing;
                 while (n > 1 && c0 < clo - 1e-6) { c0 += Spacing; n--; }
                 while (n > 1 && c0 + (n - 1) * Spacing > chi + 1e-6) n--;
                 span = (n - 1) * Spacing;

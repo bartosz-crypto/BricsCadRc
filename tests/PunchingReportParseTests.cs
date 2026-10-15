@@ -129,6 +129,28 @@ namespace BricsCadRc.Tests
             Assert.That(w, Is.EqualTo(new[] { "GARAGE 321: nagłówek mówi 4 pali, w tabeli 1." }));
         }
 
+        [Test]
+        public void ReportWithoutPlotHeader_OneImplicitPlot()
+        {
+            var s = new Sheet();
+            s.One("Punching Shear Verification EC2 §6.4").One("Punching Check - FEM_RG263PL001")
+             .One(" CHECK PERIMETER: control perimeter in doubt at 5 pile(s): P305, P306, P309, P312, P313.").Blank();
+            s.One("INTERNAL (2)").Header().Pile("314", "P314", "Internal", "88.2", "ADD H16@100")
+             .Pile("315", "P315", "Internal", "89.6", "ADD H16@100").Blank();
+            s.One("EDGE (1)").Header().Pile("302", "P302", "Edge", "95.1", "ADD H16@200").Blank();
+            s.One("CORNER (1)").Header().Pile("301", "P301", "Corner", "93.1", "ADD H12@200").Blank().Blank();
+            s.One("Summary").One("Max utilization: 0.961 (Pile 309)");
+
+            var w = new List<string>();
+            var plots = PunchingReport.Parse(s.Rows, w);
+            var p = plots.Single();
+            Assert.That(p.Implicit, Is.True);
+            Assert.That(p.Label, Is.EqualTo(PunchingReport.ImplicitLabel));
+            Assert.That(p.Piles.Select(x => x.PileId), Is.EqualTo(new[] { "P314", "P315", "P302", "P301" }));
+            Assert.That(p.Piles.Select(x => x.Reinf), Is.EqualTo(new[] { "ADD H16@100", "ADD H16@100", "ADD H16@200", "ADD H12@200" }));
+            Assert.That(w, Is.EqualTo(new[] { "Raport bez nagłówka PLOT / GARAGE — wszystkie pale jako jedna płyta." }));
+        }
+
         /// <summary>Dawne rozpoznanie nagłówka (PunchingReport sprzed zmiany): (etykieta, zadeklarowane, pale w tabeli).</summary>
         private static (string, int, int)[] LegacyHeaders(Rows rows)
         {

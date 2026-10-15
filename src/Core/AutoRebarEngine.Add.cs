@@ -264,18 +264,22 @@ namespace BricsCadRc.Core
             double sMin = horizontal ? slabBox.MinPoint.Y : slabBox.MinPoint.X;
             double sMax = horizontal ? slabBox.MaxPoint.Y : slabBox.MaxPoint.X;
 
-            // Leader do NAJBLIŻSZEJ rzeczywistej krawędzi płyty (cięciwa w miejscu linii rozkładu), nie do bboxa —
-            // w płycie L opis nie przechodzi przez całą płytę. Ramię 600 / 1500 za krawędzią, potem druga strona.
+            // Leader do rzeczywistej krawędzi płyty (cięciwa w miejscu linii rozkładu), nie do bboxa — w płycie L opis nie
+            // przechodzi przez całą płytę. Decyzja 2026-10-15: B1 ADD (odnośnik w osi Y) — POD płytą (jak opisy siatki), B2 — bliższa
+            // krawędź; ramię tak długie, że CAŁY tekst leży za krawędzią (dawne 600 wpychało tekst w płytę → kolizje z wymiarami),
+            // dalej coraz dłuższe ramiona, potem druga strona (PlaceLabel próbuje każde z przesunięciem w bok — opisy nie nachodzą).
+            double textArm = AddLabelArm($"{d.Count} H{d.Diameter}-00-200 {code} ADD");
             Func<Point3d, List<List<Point3d>>> leaders = ins =>
             {
                 double al = horizontal ? ins.X : ins.Y;
                 var ch = AddReinfPlanner.Chord(slabPoly, !horizontal, al, (d.C0 + d.C1) / 2);
                 if (double.IsInfinity(ch.lo) || double.IsInfinity(ch.hi)) ch = (sMin, sMax);
-                bool hiFirst = ch.hi - d.C1 <= d.C0 - ch.lo;
+                bool hiFirst = !horizontal && ch.hi - d.C1 <= d.C0 - ch.lo;
                 var list = new List<List<Point3d>>();
                 foreach (bool hi in hiFirst ? new[] { true, false } : new[] { false, true })
-                    foreach (double arm in new[] { 600.0, 1500.0, LeaderArmExtension })
+                    for (int k = 0; k <= 6; k++)
                     {
+                        double arm = textArm + k * 400.0;
                         double endC = hi ? ch.hi + arm : ch.lo - arm;
                         var start = horizontal ? new Point3d(al, hi ? d.C0 : d.C0, 0) : new Point3d(d.C0, al, 0);
                         var end = horizontal ? new Point3d(al, endC, 0) : new Point3d(endC, al, 0);
@@ -319,6 +323,14 @@ namespace BricsCadRc.Core
 
             AddDimensions(db, horizontal, code, d, slabPoly, slabTag, visibleC, lineA);
             return true;
+        }
+
+        /// <summary>Ramię odnośnika ADD za krawędzią płyty: cały tekst opisu (szerokość znaku z kalibracji) + 300 zapasu.</summary>
+        private static double AddLabelArm(string text)
+        {
+            double sc = _annotScaleOverride > 0 ? _annotScaleOverride : 1.0;
+            double h = AnnotationEngine.DefaultTextHeight * sc;
+            return 1.1 * text.Length * _charPerHeight * h + AnnotationEngine.TextArmOffset * sc + 300.0;
         }
 
         /// <summary>Pozycja pręta prostego: istniejąca (także z siatki dołem) o tej średnicy i długości albo nowa w strefie szablonów dołu.</summary>
@@ -583,7 +595,9 @@ namespace BricsCadRc.Core
                                              : e.EdgeCoord - DefaultCover - UbAddAnnotInside * tpl.LengthA;
                     double slabLo = horizontal ? slabBox.MinPoint.X : slabBox.MinPoint.Y;
                     double slabHi = horizontal ? slabBox.MaxPoint.X : slabBox.MaxPoint.Y;
-                    double leaderEnd = leftSide ? slabLo - 600.0 : slabHi + 600.0;
+                    // 2026-10-15: cały tekst opisu za krawędzią płyty (dawne 600 — tekst wchodził w płytę na wymiary i pręty)
+                    double arm = Math.Max(600.0, AddLabelArm($"{run.Count} H{e.Bar.Diameter}-00-200 {UbAddSuffix}"));
+                    double leaderEnd = leftSide ? slabLo - arm : slabHi + arm;
                     try
                     {
                         bool ok = GenerateUBDistribution(db, e.EdgeCoord, run[0], run[run.Count - 1], 0.0, 0.0,

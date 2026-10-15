@@ -231,6 +231,8 @@ namespace BricsCadRc.Commands
 
                 var res = PunchingAutoEngine.Analyze(db, plots, (choices, def) =>
                 {
+                    // Raport bez podziału na płyty: płyta z map nie ma tu odpowiednika — cały raport, bez pytania
+                    if (choices.Count == 1 && plots[0].Implicit) return 0;
                     if (!string.IsNullOrEmpty(plotLabel))
                     {
                         // POPRAWKI 24: dawna etykieta sklejona z nagłówka map („PLOT 526h = 225 mm | …”) → „PLOT 526”

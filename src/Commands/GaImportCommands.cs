@@ -46,6 +46,14 @@ namespace BricsCadRc.Commands
                 }
                 var plot = src.Plots[k];
 
+                // decyzja 2026-10-15: Drawn / Checked do arkusza RC (A1-BL i tabela rewizji By / Chkd), podpowiedź = ostatnie wpisane
+                // okno zamiast linii poleceń (2026-10-15: w linii poleceń podpowiedź łapała resztki kolejki, np. „'._ZOOM”)
+                var (lastD, lastC) = RcTemplateEngine.LoadPeople();
+                var pd = new SheetPeopleDialog(lastD, lastC);
+                if (Application.ShowModalWindow(pd) != true) return;
+                string drawn = pd.Drawn, chk = pd.Checked;
+                RcTemplateEngine.SavePeople(drawn, chk);
+
                 // decyzja 2026-10-14: brakujące elementy „pliku RC” z szablonu wtyczki — tytuły rzutów i czysty arkusz RC (bez rzutni, zawsze na nowo)
                 // przed wstawieniem płyty (rzuty ustawiane nad tytułami), detale PH1–PH9 po wstawieniu (obok rzutu górnego)
                 var tplRep = new RcTemplateEngine.Report();
@@ -62,6 +70,8 @@ namespace BricsCadRc.Commands
                             var gaData = GaTitleEngine.Read(src.Db, plot.Label);
                             string sheet = GaTitleEngine.BuildDrawingSuffix(gaData, 0) + RcTemplateEngine.TemplateRev(tpl);
                             RcTemplateEngine.CreateSheet(doc.Database, tpl, sheet, tplRep);
+                            if (tplRep.Layout != null)
+                                RcTemplateEngine.FillSheetInfo(doc.Database, tplRep.Layout, drawn, chk, DateTime.Today, tplRep);
                         }
                 }
                 catch (System.Exception ex)

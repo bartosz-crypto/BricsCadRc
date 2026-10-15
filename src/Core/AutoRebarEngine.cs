@@ -309,15 +309,14 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // Góra: pale — zakłady ≥ PileLapClearance od lica pala (chyba że geometria wymusza)
-            List<(Point2d c, double r)> piles = null;
-            if (layerCode.StartsWith("T"))
-            {
-                piles = FindPiles(db, plan.SlabVertices);
-                if (piles.Count > 0)
-                    ed.WriteMessage($"\n[AutoRebar] Pale na płycie: {piles.Count} — zakłady {layerCode} " +
-                                    $"≥ {PileLapClearance:F0} mm od lica pala.\n");
-            }
+            // Góra: pale — zakłady ≥ PileLapClearance od lica pala (chyba że geometria wymusza).
+            // Decyzja 2026-10-15 („najpierw góra”): dół też zna pale — wybierany tak, żeby zakłady GÓRY mogły je ominąć
+            // (dół ma tylko odsunięcie od góry, więc to on się dostosowuje).
+            List<(Point2d c, double r)> piles = FindPiles(db, plan.SlabVertices);
+            if (piles.Count > 0)
+                ed.WriteMessage($"\n[AutoRebar] Pale na płycie: {piles.Count} — zakłady " +
+                                (layerCode.StartsWith("T") ? $"{layerCode} ≥ {PileLapClearance:F0} mm od lica pala.\n"
+                                                           : $"{layerCode} dobrane tak, żeby zakłady góry ominęły pale.\n"));
 
             int generated = 0;
             using (doc.LockDocument())
@@ -433,8 +432,18 @@ namespace BricsCadRc.Core
                     // Plan wspólny dół+góra: TA SAMA liczba prętów w pasie, zakłady góry mijają dół
                     var pileForbidden = piles != null && piles.Count > 0
                         ? PileForbiddenForStrip(piles, strip, strip.PerpLow + cover, horizontal) : null;
-                    var joint    = ComputeJointPlan(xAvailable, spacing, ed,
-                                                    layerCode.StartsWith("T") ? pileForbidden : null);
+                    // Dół: góra tego pasa przy nibie zaczyna się na linii uskoku (o szerokość nibu dalej) — zakazy pali w jej układzie
+                    double topInLo = 0, topInHi = 0;
+                    if (!layerCode.StartsWith("T") && nib != null && piles != null && piles.Count > 0)
+                        foreach (var ne in nib.Edges.Where(ne => ne.Vertical == horizontal
+                                                                 && ne.Lo <= strip.ScanHigh + 1 && ne.Hi >= strip.ScanLow - 1))
+                        {
+                            if (Math.Abs(ne.OuterCoord - strip.PerpLow) < 1.0) topInLo = Math.Max(topInLo, ne.Width);
+                            if (Math.Abs(ne.OuterCoord - strip.PerpHigh) < 1.0) topInHi = Math.Max(topInHi, ne.Width);
+                        }
+                    var topForbidden = layerCode.StartsWith("T") || piles == null || piles.Count == 0 ? pileForbidden
+                        : PileForbiddenForStrip(piles, strip, strip.PerpLow + topInLo + cover, horizontal);
+                    var joint    = ComputeJointPlan(xAvailable, spacing, ed, topForbidden, topInLo, topInHi);
                     var distPlan = layerCode.StartsWith("T") ? joint.top : joint.bottom;
                     if (bottomView != null)
                     {
@@ -5034,7 +5043,7 @@ namespace BricsCadRc.Core
             // Liczba odcinków wzdłuż (zakładów) góry może być INNA niż dołem: najpierw najmniej zakładów,
             // zakłady ≥ LapStaggerMinGap od dołu i ≥ PileLapClearance od pali.
             var plan = PlanTopLine(available, spacing, bz, pileForbidden, ed,
-                                   $"Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}");
+                                   $"Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}", deep: true);
             if (plan != null) return plan;
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
@@ -5050,7 +5059,7 @@ namespace BricsCadRc.Core
         /// </summary>
         private static List<(double xOffset, double length)> PlanTopLine(
             double available, double spacing, List<(double lo, double hi)> bz,
-            List<(double lo, double hi)> pileForbidden, Editor ed, string where)
+            List<(double lo, double hi)> pileForbidden, Editor ed, string where, bool deep = false)
         {
             if (available <= TemplateMaxLen + 0.5)
                 return ComputeDistributionPlan(available, spacing);   // jeden pręt — bez zakładów
@@ -5077,6 +5086,19 @@ namespace BricsCadRc.Core
                         double clr = PileLapClearanceOf(t.plan, pileForbidden);
                         if (clr > bestClr + 1.0) { bestClr = clr; best = t.plan; }
                     }
+
+            // decyzja 2026-10-15: wzór „pierwszy, środkowe równe, ostatni” nie omija pali — pręty różnej długości (siatka 250),
+            // każdy zakład osobno (TopLapSearch); tylko w wywołaniu końcowym (deep), bo przeszukanie jest droższe
+            if (deep && hasPiles)
+                foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
+                {
+                    var free = TopLapSearch.Find(available, bz, pileForbidden, nMin, nMin + 4, minLen, TemplateMaxLen,
+                                                 TemplateGridStep, TopOverlapMin, TopOverlapMax, TopOverlapTarget, LapStaggerMinGap);
+                    if (free == null) continue;
+                    ed?.WriteMessage($"\n[AutoRebar] {where}: góra {free.Count} prętów wzdłuż (różne długości: " +
+                        string.Join(",", free.Select(f => f.length.ToString("F0"))) + $") — zakłady ≥ {PileLapClearance:F0} mm od pali.\n");
+                    return free;
+                }
 
             if (best != null)
                 ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] {where}: zakład góry nie może mieć {PileLapClearance:F0} mm " +
@@ -5105,7 +5127,8 @@ namespace BricsCadRc.Core
         /// </summary>
         private static (List<(double xOffset, double length)> bottom, List<(double xOffset, double length)> top)
             ComputeJointPlan(double available, double spacing, Editor ed,
-                             List<(double lo, double hi)> topPileForbidden = null)
+                             List<(double lo, double hi)> topPileForbidden = null,
+                             double topInsetLo = 0, double topInsetHi = 0)
         {
             if (available <= TemplateMaxLen + 0.5)
             {
@@ -5116,28 +5139,48 @@ namespace BricsCadRc.Core
             // Dół: najmniej prętów wzdłuż; dla każdego kandydata dołu — góra przez PlanTopLine
             // (liczba odcinków góry może być inna niż dołem; liczba prętów na krawędzi i tak jest wspólna).
             int nB0 = Math.Max(2, (int)Math.Ceiling((available - OverlapMin) / (TemplateMaxLen - OverlapMin)));
+            // Góra w swoim układzie (przy nibie krótsza o szerokość nibu z każdej strony): zakłady dołu przesunięte o topInsetLo
+            double topAvail = available - topInsetLo - topInsetHi;
+            List<(double lo, double hi)> TopBz(List<(double, double)> bPlan)
+                => LapZones(bPlan).Select(z => (z.lo - topInsetLo, z.hi - topInsetLo)).ToList();
+            bool hasPiles = topPileForbidden != null && topPileForbidden.Count > 0;
+            var groups = new List<List<((int, int, double) key, List<(double, double)> plan)>>();
             for (int N = nB0; N <= nB0 + 5; N++)
                 foreach (double minLen in new[] { TemplatePreferredMinLen, TemplateMinLen })
-                {
-                    var B = PlanCandidates(available, N, minLen, OverlapMin, OverlapMax,
-                                           OverlapPreferredMin, OverlapPreferredMax, OverlapTarget);
-                    // Najpierw plan dołu, przy którym góra omija pale; inaczej pierwszy, przy którym góra w ogóle istnieje
-                    (List<(double, double)> b, List<(double, double)> t)? fallback = null;
+                    groups.Add(PlanCandidates(available, N, minLen, OverlapMin, OverlapMax,
+                                              OverlapPreferredMin, OverlapPreferredMax, OverlapTarget));
+
+            // decyzja 2026-10-15 („najpierw góra”): przy palach szukaj dołu, przy którym GÓRA omija pale — także przy większej
+            // liczbie prętów dołu (dawniej: pierwszy plan dołu z najmniejszą liczbą prętów, góra z zakładem na palu);
+            // 1) wzór góry „pierwszy, środkowe równe, ostatni”, 2) góra z prętami różnej długości (TopLapSearch)
+            if (hasPiles)
+            {
+                foreach (var B in groups)
                     foreach (var b in B.Take(40))
                     {
-                        var bz = LapZones(b.plan);
-                        var t = PlanTopLine(available, spacing, bz, topPileForbidden, null, "");
-                        if (t == null) continue;
-                        if (LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
-                        if (fallback == null) fallback = (b.plan, t);
+                        var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "");
+                        if (t != null && LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
                     }
-                    if (fallback.HasValue)
+                foreach (var B in groups)
+                    foreach (var b in B.Take(8))
                     {
-                        var t2 = PlanTopLine(available, spacing, LapZones(fallback.Value.b), topPileForbidden, ed,
-                                             $"Pas {available:F0}mm");   // ponownie — z komunikatem
-                        return (fallback.Value.b, t2 ?? fallback.Value.t);
+                        var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "", deep: true);
+                        if (t != null && LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
                     }
+            }
+            foreach (var B in groups)
+            {
+                // pierwszy plan dołu, przy którym góra w ogóle istnieje (przy palach — najlepsza możliwa, z komunikatem)
+                foreach (var b in B.Take(40))
+                {
+                    var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "");
+                    if (t == null) continue;
+                    if (!hasPiles) return (b.plan, t);
+                    var t2 = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, ed,
+                                         $"Pas {available:F0}mm", deep: true);   // ponownie — z komunikatem
+                    return (b.plan, t2 ?? t);
                 }
+            }
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: nie znaleziono wspólnego planu " +
                              "dół/góra — góra jak dół (zakłady w tym samym miejscu!).\n");
@@ -5231,6 +5274,25 @@ namespace BricsCadRc.Core
         private static List<((int outBand, int distinct, double dO) key, List<(double xOffset, double length)> plan)>
             PlanCandidates(double available, int N, double minLen,
                            double oMin, double oMax, double pMin, double pMax, double target)
+        {
+            // pamięć wyników (2026-10-15: dół szuka planu, przy którym góra omija pale — setki wywołań z tymi samymi danymi);
+            // listy tylko do odczytu
+            var key = (Math.Round(available, 3), N, minLen, oMin, oMax, pMin, pMax, target);
+            if (_planCandCache.TryGetValue(key, out var cached)) return cached;
+            if (_planCandCache.Count > 256) _planCandCache.Clear();
+            var res = PlanCandidatesCore(available, N, minLen, oMin, oMax, pMin, pMax, target);
+            _planCandCache[key] = res;
+            return res;
+        }
+
+        private static readonly Dictionary<(double, int, double, double, double, double, double, double),
+            List<((int outBand, int distinct, double dO) key, List<(double xOffset, double length)> plan)>> _planCandCache =
+            new Dictionary<(double, int, double, double, double, double, double, double),
+                List<((int outBand, int distinct, double dO) key, List<(double xOffset, double length)> plan)>>();
+
+        private static List<((int outBand, int distinct, double dO) key, List<(double xOffset, double length)> plan)>
+            PlanCandidatesCore(double available, int N, double minLen,
+                               double oMin, double oMax, double pMin, double pMax, double target)
         {
             var result = new List<((int, int, double), List<(double, double)>)>();
             if (N < 2) return result;

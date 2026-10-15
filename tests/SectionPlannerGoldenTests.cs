@@ -263,7 +263,7 @@ namespace BricsCadRc.Tests
             // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty;
             // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
             // ostrzeżenia o otulinie UB 03 (jedyna różnica względem 644610bd… — sprawdzone: zrzut + dawna linia WARN = dawny skrót)
-            ["beam"]     = "c91b74cce076eb448eda7a576c97af960d0d34d1f694a57e3c679d2f659a67ce",
+            ["beam"]     = "eb07af0055adbcfeed79e007f8cbc0e6d96ee4b494b3074058ab995bd578c6bc",
             // wersja 3 (zakończenia prętów Z1–Z6, decyzja użytkownika 2026-10-11) — zapisane po przejrzeniu zrzutów (render: kreski
             // do wnętrza, w betonie, zasięg prętów bez zmian, zakład T1 104 / B1 05 odsunięty o 25, UB 01 / 03 — symbole na wolnych końcach,
             // strzemię bez symboli); „hole” w stylach = „hole” bez stylu (Z4: pręty przechodzą przez otwór / urwanie);
@@ -271,7 +271,7 @@ namespace BricsCadRc.Tests
             ["nib-S1"]      = "31757be0577b581dd00527b062fa1b06a453ce101ea8ed2d68487f1532694d23",   // v5 (2026-10-14): bez odsunięcia zakładów
             ["hole-S1"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
             ["fitshape-S1"] = "523c042c8ab58617cc9f3cb2355ce1a0cb4f8331d411b5d7bcdeb16b64c5131d",
-            ["beam-S1"]     = "7008be454337ee42b8d7ec232c832a93dea2afbe62ef45654d0db5839ee9f10e",
+            ["beam-S1"]     = "c36a28a18d10e020b6c92dbf8b076a3aadaa744acf0a462f078d3bbd9d00fdda",
             ["along-S1"]    = "fec85f72176d52dbb82b64000ca4095377af7304b9630097ac3c062ac660a8f8",   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
         };
 

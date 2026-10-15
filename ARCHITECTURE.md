@@ -477,8 +477,12 @@ Góra (T1/T2, Ø12, te same parametry co dół poza średnicą):
 - Zakład min. 500, preferowany **550–650**, górna granica 700 (przyjęta — do potwierdzenia).
 - **Ta sama liczba prętów na danej krawędzi co dół** (liczba prętów w rozkładzie / rozstaw). Liczba odcinków
   wzdłuż pasa (rozkładów, zakładów) góry MOŻE być inna niż dołem — np. 4 pręty zamiast 3, żeby zakłady ominęły pale.
-- Zakłady góry ≥ 500 mm od lica pali (SD-Pile); gdy żadna liczba odcinków (min … min+4) nie pozwala —
-  zakład najdalej od pali + ostrzeżenie.
+- Zakłady góry ≥ 500 mm od lica pali (SD-Pile); gdy wzór „pierwszy, środkowe równe, ostatni” przy żadnej liczbie odcinków
+  (min … min+4) nie pozwala — **pręty różnej długości** (siatka 250, każdy zakład osobno 500–700, `TopLapSearch`, decyzja
+  2026-10-15: płyta z 14 palami miała zakład na palu); dopiero gdy i to nie pozwala — zakład najdalej od pali + ostrzeżenie.
+  **„Najpierw góra” (decyzja 2026-10-15):** przy palach DÓŁ (B1/B2) wybiera plan, przy którym zakłady góry mogą ominąć pale
+  (`ComputeJointPlan` z zakazami pali w układzie góry — przy nibie góra krótsza o szerokość nibu z każdej strony), także kosztem
+  większej liczby prętów dołu; bez pali — bit w bit jak dawniej. Góra dalej liczona względem rzeczywistego dołu.
 - **Zakłady góry ≥ 750 mm w świetle od zakładów dołu.**
 - Góra i dół są na **osobnych rzutach** (dwa obrysy tej samej płyty). Góra liczona względem
   **rzeczywistych** rozkładów dołu: najpierw ten sam obrys, potem obrys przystający (przesunięty)
@@ -607,7 +611,11 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   w szablonie — pc3, A1, ctb, skala); detale PH1–PH9 (po wstawieniu płyty, PlanGap na prawo od rzutu górnego
   i ramki rebar_top) z opisami „EXTRA BARS (N/A)” / „APPLICABLE FOR PILES N/A” — wypełnia je RC_PUNCHING_AUTO. Style, warstwy,
   bloki — razem z obiektami (WblockCloneObjects, istniejące bez zmian). Element już obecny — pomijany. Blok A1-BL nowego layoutu
-  wypełnia dalej `GaTitleEngine` (teksty z GA).
+  wypełnia dalej `GaTitleEngine` (teksty z GA). **Drawn / Checked / data (2026-10-15):** po wyborze płyty okno (`SheetPeopleDialog`)
+  „Drawn:” / „Checked:” (podpowiedź = ostatnio wpisane, %APPDATA%\NaSmartRc\sheet.txt; Anuluj przerywa) → A1-BL DRAWN / CHECKED i w tabeli
+  rewizji kolumny By / Chkd (MText na TEXTNOTES równe dawnym DRAWN / CHECKED); A1-BL DATE = bieżący miesiąc i rok („OCTOBER 2026”),
+  data w tabeli rewizji = dzisiejsza („15.10.26”) — `RcTemplateEngine.FillSheetInfo`. Wydruk arkusza: kopia ustawień 1:1 z layoutu
+  szablonu (`PlotSettings.CopyFrom`) na aktywnym layoucie, zapasowo PlotSettingsValidator.
 - W otwartym pliku RC (default): wybór pliku GA (.dwg/.dxf) i płyty z listy (opis „PLOT …” albo „GARAGE n…” na SD-Text
   wewnątrz zamkniętego obrysu SD-PILED-RAFT — `PlotLabelRules.IsPlotLabel`; obrys zewnętrzny = największy zawierający opis).
   Lista: najpierw PLOT, potem GARAGE (domyślnie pierwszy PLOT). Garaż: TITLE_1 / DRAWING_NUMBER z layoutu GA (GA3215 → RC3215);
@@ -616,7 +624,8 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   koła SD-Pile, teksty SD-Text **bez „NIB TOC=…”** (opisy belek itp. zostają); podpisy pali (SD-Pile Text*)
   **tylko na rzucie górnym**. Wymiary, architektura, poziomy, kanalizacja — nie.
 - Opis płyty przebudowany: nr plotu, SSL, grubość („225mm THK SLAB”, bez „ON”); ramka dopasowana (+70 mm).
-- Rzut dolny nad tytułem „…BOTTOM LAYER” (środek, 2400 mm nad tytułem), rzut górny 7500 mm obok, tytuł „…TOP LAYER”
+- Rzut dolny nad tytułem „…BOTTOM LAYER” (środek; dolna krawędź płyty **3000 mm nad górą tytułu** — decyzja 2026-10-15, miejsce na
+  opisy prętów; cały rysunek płyty co najmniej 2400 nad tytułem), rzut górny 7500 mm obok, tytuł „…TOP LAYER”
   pod nim; ramki rebar_bottom / rebar_top 7500 mm po bokach (przesuwane razem z zawartością).
 - Nib: NAJPIERW automat domykania otwartej linii uskoku krawędzią obrysu (`NibAutoClose.TryClose`, sekcja 4 „Nib”; nowa
   polilinia z tagiem RC_GA — ponowne wywołanie ją zastępuje; „nib domknięty: n” w komunikacie, problemy z „(rzut dolny/górny)”),
@@ -672,10 +681,12 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   PH-B?-SLAB (ten sam wymiar; przy kilku — PLOT płyty z RC_GA), przesunięcie mapa → plan.
 - Strefa = prostokąt SD-B? ADD (zakres w osi rozkładu) + kontur (faktyczny obszar) + wartość As [mm²/m] (tekst w strefie).
 - Pręt: kontur + **≥ 600 mm** z każdej strony, **min. 2000**, długość co 250, maks. 6000; rozkład **co 200**, pokrywa cały
-  prostokąt strefy. Strefy zachodzące wzdłuż prętów i bliżej niż 400 mm w osi rozkładu → jeden rozkład.
+  prostokąt strefy, **min. 5 prętów** (decyzja 2026-10-15; przy brzegu płyty rozkład przesuwany do środka, mniej tylko gdy płyta za wąska). Strefy zachodzące wzdłuż prętów i bliżej niż 400 mm w osi rozkładu → jeden rozkład.
 - Średnica: As ≤ 2·393 → H10, ≤ 393+565 → **H12**, dalej **H16** (komunikat); > 393+1005 → „zaprojektuj ręcznie”.
 - Pozycja: istniejąca prosta o tej średnicy i długości (także z siatki dołem) albo nowa w strefie szablonów dołu.
-- Opis „H10-nn-200 B1 ADD” (jak siatka, pręt reprezentatywny), położenie zaokrąglone do 50 mm względem najbliższego pala;
+- Opis „H10-nn-200 B1 ADD” (jak siatka, pręt reprezentatywny), położenie zaokrąglone do 50 mm względem najbliższego pala.
+  **Opis (2026-10-15):** B1 ADD — odnośnik POD płytę (B2 — bliższa krawędź), ramię = cała długość tekstu + 300 za krawędzią (tekst nie
+  wchodzi w płytę ani na wymiary), dalej ramiona +400 i druga strona; każdy wariant z przesunięciem w bok — opisy nie nachodzą na siebie;
   **wymiary** (SPEEDECK-1-50 RC, SD-PILED-RAFT, XData RC_ADD): pal → koniec prętów i pal → skrajny pręt; bez pala — od krawędzi.
 - Ponowne wywołanie zastępuje dozbrojenie tej płyty (rozkłady „… ADD” i wymiary RC_ADD). Siatka B1/B2 nie kasuje ADD.
 - **Każdy rozkład z „ADD” w opisie jest cyan** (pręty w bloku kolor 4) — także ręczny opis i „B+T ADD” w detalach.
@@ -685,7 +696,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   odległość strefy (kontur, inaczej prostokąt) od krawędzi: mapa ≤ 750 i odległość ≤ 400 → UB ADD; mapa > 750 i ≤ 600 → UB ADD;
   dalej — nic. UB ADD = ten sam pręt co UB (ta sama pozycja), ZAWSZE 7 sztuk w połowie między istniejącymi UB, wyśrodkowane na strefie,
   opis „n H12-02-200 UB ADD” (cyan) jak przy prętach prostych: linia rozkładu w płycie na 3/4 ramienia UB od krawędzi
-  (opis UB jest w połowie), odnośnik ze środka linii rozkładu wzdłuż prętów za krawędź (600 za płytą), tekst wzdłuż odnośnika; widoczny (reprezentatywny) pręt UB ADD obok środka, nie pod odnośnikiem. Wymaga wygenerowanych UB; po ponownym UB uruchom ADD jeszcze raz.
+  (opis UB jest w połowie), odnośnik ze środka linii rozkładu wzdłuż prętów za krawędź (cały tekst za płytą, min. 600 — 2026-10-15), tekst wzdłuż odnośnika; widoczny (reprezentatywny) pręt UB ADD obok środka, nie pod odnośnikiem. Wymaga wygenerowanych UB; po ponownym UB uruchom ADD jeszcze raz.
 
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
 **Decyzja Bartka 2026-10-14 (SectionPlanner.Version 5):** przekrój „w 1 warstwie” — pręty jednego kierunku (proste siatki i ramiona
