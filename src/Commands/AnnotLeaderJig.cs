@@ -359,7 +359,11 @@ namespace BricsCadRc.Commands
                 bool yBarsCursorMoved = !_horizontal
                     && (newDir == LabelDirection.Up || newDir == LabelDirection.Down)
                     && Math.Abs(cursor.Y - _prevLastCursor.Y) > 0.01;
-                if (!yBarsCursorMoved)
+                // X-bars Left/Right (lustrzanie, zgłoszenie 2026-10-16): snap.Y idzie za kursorem, ruch w X go nie zmienia
+                bool xBarsCursorMoved = _horizontal
+                    && (newDir == LabelDirection.Left || newDir == LabelDirection.Right)
+                    && Math.Abs(cursor.X - _prevLastCursor.X) > 0.01;
+                if (!yBarsCursorMoved && !xBarsCursorMoved)
                     return SamplerStatus.NoChange;
                 // else: kursor przesunął się w Y — odśwież podgląd
             }
@@ -398,6 +402,11 @@ namespace BricsCadRc.Commands
                      && (_direction == LabelDirection.Up || _direction == LabelDirection.Down))
                 // Y-bars Up/Down: pokaż strzałkę idącą pionowo do pozycji kursora
                 arrowEnd = new Point3d(_snappedPt.X, _lastCursor.Y, 0);
+            else if (_horizontal
+                     && (_direction == LabelDirection.Left || _direction == LabelDirection.Right))
+                // X-bars Left/Right — lustrzanie do Y-bars (2026-10-16): dawniej linia leżała NA linii rozkładu
+                // (przy kursorze na wysokości środka — zerowa), podgląd pojawiał się dopiero w ETAP 3
+                arrowEnd = new Point3d(_lastCursor.X, _snappedPt.Y, 0);
             else
                 arrowEnd = _snappedPt;
             AddLine(tm, vpIds, _centerPt, arrowEnd, 2);
