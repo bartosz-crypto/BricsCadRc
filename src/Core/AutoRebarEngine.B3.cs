@@ -129,7 +129,7 @@ namespace BricsCadRc.Core
                         // w stronę opisu: przez wierzchołek (pustka) albo za dalszym prętem (płyta).
                         bool down = c.Y - minY <= maxY - c.Y;
                         double vy = down ? -1.0 : 1.0;
-                        double tipY = down ? minY - LeaderArm : maxY + LeaderArm;
+                        double tipY = down ? minY - LeaderArm - AddLabelExtra : maxY + LeaderArm + AddLabelExtra;   // ADD: +200 (2026-10-16)
                         bool far = b.Y * vy > 1e-6;
                         var dir = far ? b : b.Negate();
                         var start = far ? c + b * (B3CornerOffset + (B3Count - 1) * B3Spacing) : c + b * B3CornerOffset;

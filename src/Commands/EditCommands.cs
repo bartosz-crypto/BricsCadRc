@@ -532,8 +532,9 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
-        /// RC_SET_REPR_BAR — oznacza wybrany pret jako reprezentatywny,
-        /// pozostale prety w tej samej grupie (ten sam Mark) sa ukrywane.
+        /// RC_SET_REPR_BAR (wstążka „Single Bar View”) — wygasza pręty na wskazanych płytach jak RC_GENERATE (decyzja
+        /// użytkownika 2026-10-16; dawna wersja dla linii RC SLAB nie działała z rozkładami): w każdym rozkładzie jeden
+        /// widoczny pręt, odcinki w pasie przesunięte o rozstaw, potem odsunięcie od linii rozkładów. Odwrotność RC_SHOW_ALL_BARS.
         /// </summary>
         [CommandMethod("RC_SET_REPR_BAR", CommandFlags.Modal)]
         public void SetRepresentativeBar()
@@ -542,57 +543,33 @@ namespace BricsCadRc.Commands
             var ed = doc.Editor;
             var db = doc.Database;
 
-            var selOpts = new PromptEntityOptions("\nWybierz pret reprezentatywny: ");
-            selOpts.AddAllowedClass(typeof(Line), true);
-            var selResult = ed.GetEntity(selOpts);
-            if (selResult.Status != PromptStatus.OK) return;
+            var opts = new PromptSelectionOptions { MessageForAdding = "\nWybierz obrysy płyt (rzut dolny / górny): " };
+            var filter = new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "LWPOLYLINE") });
+            var sel = ed.GetSelection(opts, filter);
+            if (sel.Status != PromptStatus.OK) return;
 
-            using var tr = db.TransactionManager.StartTransaction();
-            var selectedEntity = (Entity)tr.GetObject(selResult.ObjectId, OpenMode.ForRead);
-            var selectedBar = XDataHelper.Read(selectedEntity);
-
-            if (selectedBar == null)
+            var slabs = new System.Collections.Generic.HashSet<ObjectId>();
+            foreach (var id in sel.Value.GetObjectIds())
             {
-                ed.WriteMessage("\nTo nie jest pret RC SLAB.\n");
-                tr.Abort();
-                return;
+                try { slabs.Add(NibDetector.OuterOf(db, id)); }
+                catch (System.Exception ex) { Log.Error("EditCommands.SetRepresentativeBar.Outer", ex); slabs.Add(id); }
             }
-
-            string targetMark = selectedBar.Mark;
-
-            // Przejdz przez wszystkie obiekty i zarzadzaj widocznoscia
-            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
-            int hidden = 0, shown = 0;
-
-            foreach (ObjectId id in space)
+            int dists = 0, hidden = 0, moved = 0;
+            foreach (var slabId in slabs)
             {
-                var entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                if (entity == null) continue;
-
-                var bar = XDataHelper.Read(entity);
-                if (bar == null || bar.Mark != targetMark) continue;
-
-                entity.UpgradeOpen();
-
-                if (id == selResult.ObjectId)
+                try
                 {
-                    // Ten pret — reprezentatywny, widoczny
-                    bar.RepresentativeFlag = 1;
-                    entity.Visible = true;
-                    shown++;
+                    var r = AutoRebarEngine.ApplyRepresentativeOnSlab(doc, slabId);
+                    dists += r.Dists; hidden += r.Hidden; moved += r.Moved;
                 }
-                else
+                catch (System.Exception ex)
                 {
-                    // Pozostale — ukryte
-                    bar.RepresentativeFlag = 0;
-                    entity.Visible = false;
-                    hidden++;
+                    Log.Error("EditCommands.SetRepresentativeBar", ex);
+                    ed.WriteMessage($"\n[RC] Błąd wygaszania: {ex.Message}");
                 }
-                XDataHelper.Write(entity, bar);
             }
-
-            tr.Commit();
-            ed.WriteMessage($"\n[RC SLAB] Ustawiono pret reprezentatywny dla grupy '{targetMark}'. Ukryto: {hidden}, widocznych: {shown}\n");
+            ed.WriteMessage($"\n[RC] Single Bar View: płyty {slabs.Count}, rozkłady {dists} — wygaszone {hidden}, " +
+                            $"przesunięte (czytelność) {moved}. Wszystkie pręty z powrotem: RC_SHOW_ALL_BARS.\n");
         }
 
         /// <summary>
@@ -896,6 +873,12 @@ namespace BricsCadRc.Commands
                         selectedIndices.Add(idx);
             }
 
+            // Podświetlenie zaznaczonych prętów (decyzja użytkownika 2026-10-16): gruba czerwona polilinia na pręcie,
+            // tymczasowa — usuwana po zakończeniu wyboru
+            using var marks = new BarPickMarks(db, bar.SourceBlockHandle);
+            foreach (int i in selectedIndices) marks.Set(i, true);
+            marks.Flush(doc);
+
             while (true)
             {
                 var opts = new PromptPointOptions("\nKliknij pręt (Enter = koniec): ");
@@ -927,12 +910,93 @@ namespace BricsCadRc.Commands
                     }
                 }
                 tr.Commit();
+                foreach (int i in Enumerable.Range(0, Math.Max(0, bar.Count))) marks.Set(i, selectedIndices.Contains(i));
+                marks.Flush(doc);
             }
 
             if (selectedIndices.Count == 0) return null;
             var sorted = new System.Collections.Generic.List<int>(selectedIndices);
             sorted.Sort();
             return string.Join(",", sorted);
+        }
+
+        /// <summary>
+        /// Tymczasowe znaczniki prętów klikanych w RC_EDIT_LABEL (wygaszanie ręczne): gruba czerwona polilinia wzdłuż pręta
+        /// rozkładu (położenie jak w <see cref="AutoRebarEngine"/> — pozycja bloku + i · rozstaw, długość A). Dispose usuwa znaczniki.
+        /// </summary>
+        private sealed class BarPickMarks : IDisposable
+        {
+            private readonly Database _db;
+            private readonly Dictionary<int, ObjectId> _ids = new Dictionary<int, ObjectId>();
+            private readonly bool _ok, _barsX;
+            private readonly Point3d _pos;
+            private readonly double _sp, _lo, _hi, _width;
+
+            public BarPickMarks(Database db, string distHandle)
+            {
+                _db = db;
+                try
+                {
+                    if (string.IsNullOrEmpty(distHandle)
+                        || !long.TryParse(distHandle, System.Globalization.NumberStyles.HexNumber, null, out long h)
+                        || !db.TryGetObjectId(new Handle(h), out ObjectId distId) || distId.IsErased) return;
+                    using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                    if (!(tr.GetObject(distId, OpenMode.ForRead) is BlockReference br) || Math.Abs(br.Rotation) > 1e-6) return;
+                    var d = BarBlockEngine.ReadXData(br);
+                    if (d == null || d.Spacing <= 0) return;
+                    _barsX = d.Direction == "X";
+                    _pos = br.Position;
+                    _sp = d.Spacing;
+                    double skewMin = Math.Min(0, Math.Min(d.SkewStart, d.SkewEnd));
+                    double skewMax = Math.Max(0, Math.Max(d.SkewStart, d.SkewEnd));
+                    _lo = (_barsX ? _pos.X : _pos.Y) + skewMin;
+                    _hi = (_barsX ? _pos.X : _pos.Y) + d.LengthA + skewMax;
+                    _width = Math.Max(30.0, Math.Min(80.0, 0.3 * _sp));
+                    _ok = _hi - _lo > 1.0;
+                }
+                catch (System.Exception ex) { Log.Error("EditCommands.BarPickMarks", ex); }
+            }
+
+            public void Set(int i, bool on)
+            {
+                if (!_ok) return;
+                bool has = _ids.TryGetValue(i, out ObjectId id);
+                if (on == has) return;
+                try
+                {
+                    using var tr = _db.TransactionManager.StartTransaction();
+                    if (on)
+                    {
+                        double c = (_barsX ? _pos.Y : _pos.X) + i * _sp;
+                        var pl = new Polyline();
+                        pl.SetDatabaseDefaults(_db);
+                        pl.AddVertexAt(0, _barsX ? new Point2d(_lo, c) : new Point2d(c, _lo), 0, _width, _width);
+                        pl.AddVertexAt(1, _barsX ? new Point2d(_hi, c) : new Point2d(c, _hi), 0, _width, _width);
+                        pl.ColorIndex = 1;
+                        var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
+                        _ids[i] = ms.AppendEntity(pl);
+                        tr.AddNewlyCreatedDBObject(pl, true);
+                    }
+                    else
+                    {
+                        if (!id.IsErased && tr.GetObject(id, OpenMode.ForWrite) is Entity e) e.Erase();
+                        _ids.Remove(i);
+                    }
+                    tr.Commit();
+                }
+                catch (System.Exception ex) { Log.Error("EditCommands.BarPickMarks.Set", ex); }
+            }
+
+            public void Flush(Document doc)
+            {
+                try { doc.TransactionManager.QueueForGraphicsFlush(); doc.TransactionManager.FlushGraphics(); doc.Editor.UpdateScreen(); }
+                catch (System.Exception ex) { Log.Error("EditCommands.BarPickMarks.Flush", ex); }
+            }
+
+            public void Dispose()
+            {
+                foreach (int i in _ids.Keys.ToList()) Set(i, false);
+            }
         }
 
         /// <summary>

@@ -168,7 +168,10 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   grupa UNDO; pomija obrys już bieżący, nierozpoznany (lista w linii poleceń) i pręt testowy; grot etykiety (back-link)
   na nowy obrys. Dane, numery, rozkłady — bez zmian.
 - `EditCommands` — `RC_EDIT_DISTRIBUTION`, `RC_EDIT_LABEL`, `RC_BAR_END`, `RC_SET_REPR_BAR`,
-  `RC_SHOW_ALL_BARS`, `RC_SCALE_ANNOT`. `RC_BAR_END` (poprawka #10, jak e7b600d) — tylko na rozkładzie (symbol końca
+  `RC_SHOW_ALL_BARS`, `RC_SCALE_ANNOT`. **2026-10-16:** `RC_SET_REPR_BAR` („Single Bar View”) — wskazane obrysy płyt, wygaszanie jak
+  RC_GENERATE (`AutoRebarEngine.ApplyRepresentativeOnSlab`: środkowy pręt, odcinki w pasie przesunięte o rozstaw, otwór — ucięty +
+  cały, UB ADD nieparzyste — obok środka, potem `ResolveRepresentativeCollisions`; belki bez zmian) — odwrotność RC_SHOW_ALL_BARS.
+  RC_EDIT_LABEL → Manual: klikane pręty podświetlone grubą czerwoną polilinią (tymczasową, usuwaną po Enter). `RC_BAR_END` (poprawka #10, jak e7b600d) — tylko na rozkładzie (symbol końca
   jest cechą rozkładu); wskazany pręt (polilinia / pręt-blok) → `[RC] Symbol końca ustawia się na rozkładzie — wskaż rozkład, nie pręt.`
 - `AutoRebarCommands` — `RC_GENERUJ_B1/B2` (Ø10, strefa szablonów `rebar_bottom`),
   `RC_GENERUJ_T1/T2` (Ø12, `rebar_top`). `AutoRebarUBCommands` — `RC_GENERUJ_UB_B1/B2`.
@@ -557,6 +560,10 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   **min. 1500** (twardo 1250), nie dłuższy niż miejsce w płycie. Opis na zewnątrz krawędzi, ramię **o 200 mm dłuższe**
   niż zwykłe; prosto, chyba że po drodze jest płyta albo wzdłuż krawędzi jest bliżej poza płytę — wtedy załamanie
   200 mm za krawędzią i dalej wzdłuż krawędzi.
+- **Odległość opisów od płyty (decyzja użytkownika 2026-10-16):** koniec tekstu zwykłego opisu (siatka B/T, UB) **2000 mm** za
+  krawędzią płyty (`LeaderArmExtension`, dawniej 2400); opisy „… ADD” (B1 / B2 ADD, UB ADD, B3 ADD — `AddLabelExtra`) i T IN NIB
+  (`NibTopLabelExtra`) — **200 mm dalej** (2200; ADD nie krócej niż cały tekst za krawędzią). Detale belek 1:25 — bez zmian
+  (`BeamDetailLeaderArm` 2400 × skala). S-REG pokaże przesunięte opisy — oczekiwana różnica.
 - Kolizje opisów (AutoRebar, `PlaceLabel`): przeszkody = teksty (opisów i rysunku) **oraz linie opisów** (leadery,
   linie rozkładów); nowy leader nie może przecinać tekstów. Kolejność: warianty leadera (druga strona płyty; T IN NIB —
   prosto / załamanie wzdłuż krawędzi w obie strony, krótsza droga najpierw), każdy bez przesunięcia i z przesunięciem
@@ -704,6 +711,8 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - Strefa = prostokąt SD-B? ADD (zakres w osi rozkładu) + kontur (faktyczny obszar) + wartość As [mm²/m] (tekst w strefie).
 - Pręt: kontur + **≥ 600 mm** z każdej strony, **min. 2000**, długość co 250, maks. 6000; rozkład **co 200**, pokrywa cały
   prostokąt strefy, **min. 5 prętów** (decyzja 2026-10-15; przy brzegu płyty rozkład przesuwany do środka, mniej tylko gdy płyta za wąska). Strefy zachodzące wzdłuż prętów i bliżej niż 400 mm w osi rozkładu → jeden rozkład.
+- Wartość As strefy: tekst SD-<mapa> ADD w prostokącie strefy; tekst wyrównany (Middle Center z map) — po punkcie wyrównania, nie po
+  `Position` (lewy dół wychodził poza wąską strefę → brak wartości → 786 → UB ADD przy 512 mm; poprawka 2026-10-16).
 - Średnica: As ≤ 2·393 → H10, ≤ 393+565 → **H12**, dalej **H16** (komunikat); > 393+1005 → „zaprojektuj ręcznie”.
 - Pozycja: istniejąca prosta o tej średnicy i długości (także z siatki dołem) albo nowa w strefie szablonów dołu.
 - Opis „H10-nn-200 B1 ADD” (jak siatka, pręt reprezentatywny), położenie zaokrąglone do 50 mm względem najbliższego pala.

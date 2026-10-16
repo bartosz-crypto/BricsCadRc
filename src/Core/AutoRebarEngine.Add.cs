@@ -197,7 +197,9 @@ namespace BricsCadRc.Core
                     }
                     else if (layer == $"SD-{code} ADD")
                     {
-                        if (e is DBText t) m.Texts.Add((t.TextString, t.Position));
+                        // tekst wyrównany (np. Middle Center z map) — punkt wyrównania; Position to lewy dół tekstu, który przy
+                        // wąskiej strefie wypada za prostokątem (2026-10-16: „580” w T2 nie znalezione → przyjęte 786 → zbędne UB ADD)
+                        if (e is DBText t) m.Texts.Add((t.TextString, t.Justify == AttachmentPoint.BaseLeft ? t.Position : t.AlignmentPoint));
                         else if (e is MText mt) m.Texts.Add((mt.Text, mt.Location));
                     }
                 }
@@ -268,7 +270,8 @@ namespace BricsCadRc.Core
             // przechodzi przez całą płytę. Decyzja 2026-10-15: B1 ADD (odnośnik w osi Y) — POD płytą (jak opisy siatki), B2 — bliższa
             // krawędź; ramię tak długie, że CAŁY tekst leży za krawędzią (dawne 600 wpychało tekst w płytę → kolizje z wymiarami),
             // dalej coraz dłuższe ramiona, potem druga strona (PlaceLabel próbuje każde z przesunięciem w bok — opisy nie nachodzą).
-            double textArm = AddLabelArm($"{d.Count} H{d.Diameter}-00-200 {code} ADD");
+            // 2026-10-16: koniec tekstu ADD 200 dalej niż zwykłe opisy (2000 + 200), ale nie mniej niż cały tekst za krawędzią
+            double textArm = Math.Max(AddLabelArm($"{d.Count} H{d.Diameter}-00-200 {code} ADD"), LeaderArm + AddLabelExtra);
             Func<Point3d, List<List<Point3d>>> leaders = ins =>
             {
                 double al = horizontal ? ins.X : ins.Y;
@@ -596,7 +599,9 @@ namespace BricsCadRc.Core
                     double slabLo = horizontal ? slabBox.MinPoint.X : slabBox.MinPoint.Y;
                     double slabHi = horizontal ? slabBox.MaxPoint.X : slabBox.MaxPoint.Y;
                     // 2026-10-15: cały tekst opisu za krawędzią płyty (dawne 600 — tekst wchodził w płytę na wymiary i pręty)
-                    double arm = Math.Max(600.0, AddLabelArm($"{run.Count} H{e.Bar.Diameter}-00-200 {UbAddSuffix}"));
+                    // 2026-10-16: koniec tekstu UB ADD 200 dalej niż zwykłe opisy (2000 + 200)
+                    double arm = Math.Max(Math.Max(600.0, AddLabelArm($"{run.Count} H{e.Bar.Diameter}-00-200 {UbAddSuffix}")),
+                                          LeaderArm + AddLabelExtra);
                     double leaderEnd = leftSide ? slabLo - arm : slabHi + arm;
                     try
                     {

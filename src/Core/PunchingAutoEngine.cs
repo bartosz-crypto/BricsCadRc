@@ -127,7 +127,7 @@ namespace BricsCadRc.Core
                     if (ent is Circle c && layer.Equals(PileLayer, StringComparison.OrdinalIgnoreCase))
                         piles.Add(new DwgPile { Id = id, C = c.Center, R = c.Radius });
                     else if (ent is DBText t)
-                        texts.Add(new DwgText { P = t.Position, Text = (t.TextString ?? "").Trim(), OnPileLayer = pileLayer });
+                        texts.Add(new DwgText { P = t.Justify == AttachmentPoint.BaseLeft ? t.Position : t.AlignmentPoint, Text = (t.TextString ?? "").Trim(), OnPileLayer = pileLayer });
                     else if (ent is MText mt)
                         texts.Add(new DwgText { P = mt.Location, Text = (mt.Text ?? "").Trim(), OnPileLayer = pileLayer });
                 }

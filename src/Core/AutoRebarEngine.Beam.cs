@@ -646,7 +646,7 @@ namespace BricsCadRc.Core
             double bx0 = verts.Min(v => v.X), bx1 = verts.Max(v => v.X), by0 = verts.Min(v => v.Y), by1 = verts.Max(v => v.Y);
             // K9: detal — obwiednia = okno detalu, ramiona w skali opisów detalu (rzut: box null, scale 1 — bez zmian)
             if (box.HasValue) { bx0 = box.Value.MinPoint.X; bx1 = box.Value.MaxPoint.X; by0 = box.Value.MinPoint.Y; by1 = box.Value.MaxPoint.Y; }
-            double arm = (LeaderArmExtension + NibTopLabelExtra) * scale;
+            double arm = ((box.HasValue ? BeamDetailLeaderArm : LeaderArmExtension) + NibTopLabelExtra) * scale;
             return ins =>
             {
                 double along = barsX ? ins.X : ins.Y;

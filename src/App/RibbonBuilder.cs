@@ -76,7 +76,7 @@ namespace BricsCadRc.App
                     Small("Label Scale", "RC_SCALE_ANNOT", "annot_scale", "Visual scale of the distribution label (text, dots, arrows)."),
                     Small("Update Bars", "RC_UPDATE_BAR", "update", "Update bar lengths in distributions after editing the bar polyline.")),
                 Column(
-                    Small("Single Bar View", "RC_SET_REPR_BAR", "repr_bar", "Show only the selected (representative) bar of a distribution."),
+                    Small("Single Bar View", "RC_SET_REPR_BAR", "repr_bar", "Hide bars on the selected slabs like Generate does: one representative bar per distribution (staggered laps, readable spacing). Show All Bars brings them back."),
                     Small("Show All Bars", "RC_SHOW_ALL_BARS", "show_all", "Show all bars of a distribution again."))));
 
             // 5. Schedule — BBS

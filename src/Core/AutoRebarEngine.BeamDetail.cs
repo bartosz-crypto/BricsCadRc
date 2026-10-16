@@ -60,7 +60,7 @@ namespace BricsCadRc.Core
         private static void SetBeamDetailOverrides(BeamDrawTarget tg)
         {
             _annotScaleOverride = tg.AnnotScale;
-            _leaderArmOverride = LeaderArmExtension * tg.AnnotScale;   // ramię opisu na papierze jak na rzucie 1:50
+            _leaderArmOverride = BeamDetailLeaderArm * tg.AnnotScale;   // ramię opisu na papierze jak dawniej na rzucie 1:50 (2400)
             _beamTemplateZone = tg.TemplateZone;
         }
 

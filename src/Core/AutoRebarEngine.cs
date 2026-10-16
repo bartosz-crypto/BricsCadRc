@@ -50,10 +50,16 @@ namespace BricsCadRc.Core
         public const double SkewBandHeight     = 1000.0;
 
         /// <summary>
-        /// Distance from last distribution bar to leader text endpoint (pre-set LeaderPoints).
-        /// Text lands at (anchorX, BarsSpan + LeaderArmExtension) in local block coords.
+        /// Koniec odnośnika opisu (koniec tekstu) za krawędzią płyty na rzucie — **2000 mm** (decyzja użytkownika 2026-10-16;
+        /// dawniej 2400). Opisy „… ADD” i T IN NIB — o <see cref="AddLabelExtra"/> / <see cref="NibTopLabelExtra"/> dalej.
         /// </summary>
-        public const double LeaderArmExtension  = 2400.0;
+        public const double LeaderArmExtension  = 2000.0;
+
+        /// <summary>Ramię opisu w detalach belek 1:25 (× skala opisów) — bez zmian po 2026-10-16 (2400 · 0,5).</summary>
+        public const double BeamDetailLeaderArm = 2400.0;
+
+        /// <summary>Opisy dozbrojenia „… ADD” (B1 / B2 ADD, UB ADD, B3 ADD) — 200 mm dalej niż zwykłe (decyzja 2026-10-16).</summary>
+        public const double AddLabelExtra       = 200.0;
 
         // Detal (RC_DETAL_OTWORU): skala opisu 1:25 i krótsze ramię opisu (tekst tuż za ramką)
         private static double _annotScaleOverride = 1.0;
@@ -1297,7 +1303,7 @@ namespace BricsCadRc.Core
                         acrossMax = isUBB1 ? z.Box.MaxPoint.Y : z.Box.MaxPoint.X;
                         annotScale = BeamDetailAnnotScale;
                         _annotScaleOverride = annotScale;
-                        _leaderArmOverride = LeaderArmExtension * annotScale;
+                        _leaderArmOverride = BeamDetailLeaderArm * annotScale;
                     }
                     try
                     {
@@ -1345,7 +1351,7 @@ namespace BricsCadRc.Core
                     double dE = isUBB1 ? z.Shift.X : z.Shift.Y, dA = isUBB1 ? z.Shift.Y : z.Shift.X;
                     double aMin = isUBB1 ? z.Box.MinPoint.Y : z.Box.MinPoint.X, aMax = isUBB1 ? z.Box.MaxPoint.Y : z.Box.MaxPoint.X;
                     _annotScaleOverride = BeamDetailAnnotScale;
-                    _leaderArmOverride = LeaderArmExtension * BeamDetailAnnotScale;
+                    _leaderArmOverride = BeamDetailLeaderArm * BeamDetailAnnotScale;
                     try
                     {
                         bool ok = GenerateUBDistribution(
