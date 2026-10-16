@@ -564,6 +564,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   krawędzią płyty (`LeaderArmExtension`, dawniej 2400); opisy „… ADD” (B1 / B2 ADD, UB ADD, B3 ADD — `AddLabelExtra`) i T IN NIB
   (`NibTopLabelExtra`) — **200 mm dalej** (2200; ADD nie krócej niż cały tekst za krawędzią). Detale belek 1:25 — bez zmian
   (`BeamDetailLeaderArm` 2400 × skala). S-REG pokaże przesunięte opisy — oczekiwana różnica.
+- **Kropka zejścia odnośnika (decyzja 2026-10-16):** rozkład ze strzałkami (> 3 pręty), odnośnik biegnie najpierw wzdłuż linii rozkładu
+  (opis przesunięty w bok) i schodzi z niej MIĘDZY strzałkami → kropka jak przy pręcie w punkcie zejścia (`AnnotationEngine.AddJunctionDot`,
+  XData RC_BAR_ANNOT [JDOT], przebudowywana z odnośnikiem). Bez kropki: prosto ze środka linii, zejście za strzałką, rozkład skośny.
 - Kolizje opisów (AutoRebar, `PlaceLabel`): przeszkody = teksty (opisów i rysunku) **oraz linie opisów** (leadery,
   linie rozkładów); nowy leader nie może przecinać tekstów. Kolejność: warianty leadera (druga strona płyty; T IN NIB —
   prosto / załamanie wzdłuż krawędzi w obie strony, krótsza droga najpierw), każdy bez przesunięcia i z przesunięciem

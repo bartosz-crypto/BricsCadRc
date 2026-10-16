@@ -1019,11 +1019,83 @@ namespace BricsCadRc.Core
         // BuildMLeaderInBtr — budowa leadera w BTR: Line segmenty + DBText + landing
         // Używana przez BuildHorizontal, BuildVertical i UpdateLeaderInBlock.
         // ----------------------------------------------------------------
+        private const string JunctionDotTag = "JDOT";
+
+        /// <summary>
+        /// Kropka w miejscu, gdzie odnośnik schodzi z linii rozkładu (decyzja użytkownika 2026-10-16): tylko rozkład ze strzałkami
+        /// (&gt; 3 pręty), odnośnik biegnie najpierw wzdłuż linii rozkładu (przesunięty opis) i schodzi z niej MIĘDZY strzałkami.
+        /// Bez kropki: odnośnik prosto ze środka linii rozkładu, zejście za strzałką (na przedłużeniu linii), rozkład skośny.
+        /// Kropka jak przy pręcie (koło + SOLID), XData RC_BAR_ANNOT [JDOT] — usuwana przy przebudowie odnośnika.
+        /// </summary>
+        private static void AddJunctionDot(Transaction tr, BlockTableRecord btr, Database db, BarData bar, List<Point3d> pts)
+        {
+            try
+            {
+                if (bar == null || bar.Count <= 3 || bar.Spacing <= 0 || pts.Count < 3) return;
+                if (Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6) return;
+                var axis = bar.Direction == "X" ? Vector3d.YAxis : Vector3d.XAxis;
+                var perp = bar.Direction == "X" ? Vector3d.XAxis : Vector3d.YAxis;
+                Point3d p0 = pts[0];
+                bool OnAxis(Point3d p) => Math.Abs((p - p0).DotProduct(perp)) < 1.0;
+                int k = 0;
+                while (k + 1 < pts.Count && OnAxis(pts[k + 1])) k++;
+                if (k == 0 || k >= pts.Count - 1) return;               // prosto ze środka albo całość na osi
+                double s = (pts[k] - p0).DotProduct(axis);
+                double half = (bar.Count - 1) * bar.Spacing / 2.0;
+                if (Math.Abs(s) < 1.0 || Math.Abs(s) > half - Scaled(10.0, bar)) return;   // środek / za strzałką
+                // nie dubluj kropki widocznego pręta
+                var vis = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
+                foreach (int i in vis)
+                    if (Math.Abs(s + half - i * bar.Spacing) < Scaled(DotRadius, bar)) return;
+
+                var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has(AnnotAppName))
+                {
+                    rat.UpgradeOpen();
+                    var rec = new RegAppTableRecord { Name = AnnotAppName };
+                    rat.Add(rec);
+                    tr.AddNewlyCreatedDBObject(rec, true);
+                }
+                var before = new HashSet<ObjectId>();
+                foreach (ObjectId id in btr) before.Add(id);
+                AddDot(tr, btr, pts[k], Scaled(DotRadius, bar));
+                foreach (ObjectId id in btr)
+                {
+                    if (before.Contains(id)) continue;
+                    var e = (Entity)tr.GetObject(id, OpenMode.ForWrite);
+                    e.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, AnnotAppName),
+                                               new TypedValue((int)DxfCode.ExtendedDataAsciiString, JunctionDotTag));
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AnnotationEngine.AddJunctionDot", ex); }
+        }
+
+        private static void EraseJunctionDots(Transaction tr, BlockTableRecord btr)
+        {
+            try
+            {
+                var ids = new List<ObjectId>();
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Entity e) || !(e is Circle || e is Hatch)) continue;
+                    using (var rb = e.GetXDataForApplication(AnnotAppName))
+                    {
+                        var v = rb?.AsArray();
+                        if (v != null && v.Length > 1 && v[1].Value as string == JunctionDotTag) ids.Add(id);
+                    }
+                }
+                foreach (var id in ids) tr.GetObject(id, OpenMode.ForWrite).Erase();
+            }
+            catch (System.Exception ex) { Log.Error("AnnotationEngine.EraseJunctionDots", ex); }
+        }
+
         private static void BuildMLeaderInBtr(
             Transaction tr, BlockTableRecord btr, Database db,
             BarData bar, List<Point3d> leaderPts)
         {
+            EraseJunctionDots(tr, btr);
             if (leaderPts.Count < 2) return;
+            AddJunctionDot(tr, btr, db, bar, leaderPts);
 
             // 1. Rysuj segmenty leadera (Line od punktu do punktu)
             for (int i = 0; i < leaderPts.Count - 1; i++)
@@ -1332,6 +1404,7 @@ namespace BricsCadRc.Core
             if (xHoriz || yHoriz)
             {
                 var btrForCircles = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                EraseJunctionDots(tr, btrForCircles);   // kropka zejścia odnośnika (koło + SOLID) — razem, bez osieroconego SOLID
 
                 // Zbierz i usuń kółka złamania (nie-prętowe)
                 var circlesToErase = new List<Circle>();
