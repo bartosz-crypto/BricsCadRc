@@ -109,8 +109,17 @@ namespace BricsCadRc.Commands
                 // decyzja 2026-10-15: ustawienia wydruku jak w rysunku wzorcowym (PSLTSCALE 0, rzutnie na PCN-VIEWPORT, SD-SECTION)
                 ApplyPlotSetup(doc, T);
 
-                // Teksty z layoutów GA (blok tytułowy, SLAB NOTES) — jak ASD-GAI; podgląd, Anuluj = pomiń
-                CopyLayoutTexts(src.Db, plot.Label, T);
+                // Teksty z layoutów GA (blok tytułowy, SLAB NOTES) — jak ASD-GAI; decyzja 2026-10-16: bez okna podglądu — od razu „Kopiuj”
+                CopyLayoutTexts(src.Db, plot.Label, T, confirm: false);
+                // tabela rewizji: App = APPROVED skopiowane z GA (2026-10-16)
+                if (tplRep.Layout != null)
+                    try
+                    {
+                        var appRep = new RcTemplateEngine.Report();
+                        using (doc.LockDocument()) RcTemplateEngine.FillRevApproved(doc.Database, tplRep.Layout, appRep);
+                        foreach (var m in appRep.Messages) ed.WriteMessage($"\n{T} Szablon RC: {m}.");
+                    }
+                    catch (System.Exception ex) { Log.Error("RC_PRZYGOTUJ_GA.RevApproved", ex); }
 
                 try { doc.SendStringToExecute("_.ZOOM _E ", false, false, false); } catch (System.Exception ex) { Log.Error("RC_PRZYGOTUJ_GA.Zoom", ex); }
             }
@@ -191,7 +200,7 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>Wspólne dla RC_PRZYGOTUJ_GA i RC_GA_TEKSTY: odczyt GA, podgląd, zapis.</summary>
-        private static void CopyLayoutTexts(Teigha.DatabaseServices.Database ga, string plotLabel, string T)
+        private static void CopyLayoutTexts(Teigha.DatabaseServices.Database ga, string plotLabel, string T, bool confirm = true)
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed = doc.Editor;
@@ -203,9 +212,12 @@ namespace BricsCadRc.Commands
                     ed.WriteMessage($"\n{T} W pliku GA nie ma bloku {GaTitleEngine.TitleBlockName} na layoutach — teksty nie zostały skopiowane.\n");
                     return;
                 }
-                var dlg = new TextConfirmDialog("Teksty z layoutu GA → layouty RC", GaTitleEngine.Preview(data, doc.Database),
-                                                "Kopiuj", "Pomiń");
-                if (Application.ShowModalWindow(dlg) != true) { ed.WriteMessage($"\n{T} Teksty z GA pominięte.\n"); return; }
+                if (confirm)
+                {
+                    var dlg = new TextConfirmDialog("Teksty z layoutu GA → layouty RC", GaTitleEngine.Preview(data, doc.Database),
+                                                    "Kopiuj", "Pomiń");
+                    if (Application.ShowModalWindow(dlg) != true) { ed.WriteMessage($"\n{T} Teksty z GA pominięte.\n"); return; }
+                }
 
                 var r = GaTitleEngine.Apply(data, doc.Database);
                 ed.WriteMessage($"\n{T} Blok tytułowy zaktualizowany na {r.TitleLayouts} layoutach, SLAB NOTES na {r.NotesLayouts}." +

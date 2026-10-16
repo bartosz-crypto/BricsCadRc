@@ -337,6 +337,40 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Tabela rewizji arkusza RC: kolumna App = APPROVED z bloku A1-BL (decyzja 2026-10-16; wołane po skopiowaniu tekstów z GA).
+        /// Wiersz rewizji = MText na TEXTNOTES na wysokości tekstu z datą (dd.mm.rr); App = skrajny prawy z nich.
+        /// </summary>
+        public static void FillRevApproved(Database db, string layoutName, Report rep)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+            if (!ld.Contains(layoutName)) { tr.Commit(); return; }
+            var lay = (Layout)tr.GetObject(ld.GetAt(layoutName), OpenMode.ForRead);
+            var btr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
+            string appr = null;
+            var notes = new List<MText>();
+            foreach (ObjectId id in btr)
+            {
+                if (id.IsErased) continue;
+                var o = tr.GetObject(id, OpenMode.ForRead);
+                if (o is MText mt && mt.Layer.Equals("TEXTNOTES", StringComparison.OrdinalIgnoreCase)) notes.Add(mt);
+                if (o is BlockReference br && tr.GetObject(br.BlockTableRecord, OpenMode.ForRead) is BlockTableRecord bd
+                    && string.Equals(bd.Name, GaTitleEngine.TitleBlockName, StringComparison.OrdinalIgnoreCase))
+                    foreach (ObjectId aid in br.AttributeCollection)
+                        if (tr.GetObject(aid, OpenMode.ForRead) is AttributeReference ar && ar.Tag.Equals("APPROVED", StringComparison.OrdinalIgnoreCase))
+                            appr = CleanInitials(ar.TextString);
+            }
+            var date = notes.FirstOrDefault(m => RevDateRx.IsMatch((m.Text ?? "").Trim()));
+            if (string.IsNullOrEmpty(appr) || date == null) { tr.Commit(); return; }
+            var app = notes.Where(m => Math.Abs(m.Location.Y - date.Location.Y) < 1.0).OrderByDescending(m => m.Location.X).FirstOrDefault();
+            if (app == null || app == date || (app.Text ?? "").Trim() == appr) { tr.Commit(); return; }
+            app.UpgradeOpen();
+            app.Contents = appr;
+            tr.Commit();
+            rep.Messages.Add($"arkusz {layoutName}: App w tabeli rewizji = {appr} (APPROVED z GA)");
+        }
+
+        /// <summary>
         /// Ustawienia wydruku jak w szablonie. Najpierw kopia 1:1 przez obiekt PlotSettings (jak import Page Setup — bez walidacji
         /// pc3, dokładnie to, co ma layout szablonu: DWG To PDF.pc3, ISO full bleed A1, speedeck-mono.ctb, obszar Layout, 1:1).
         /// Dopiero gdy arkusz się nie zgadza — PlotSettingsValidator krok po kroku (z zapasowymi nazwami arkusza A1).
