@@ -98,6 +98,15 @@ namespace BricsCadRc.Core
 
             string newMark = RebuildMark(me.Mark, me.Diameter, newNr);
             Log.Info($"PositionReconciler: {me.Mark} → {newMark}");
+            // Zgłoszenie kolegi 2026-10-16: kopia pręta bez etykiety — widoczna etykieta należy do oryginału i zostaje ze starym numerem
+            if (string.IsNullOrEmpty(me.LabelHandle))
+                try
+                {
+                    Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor.WriteMessage(
+                        $"\n[RC] Pręt przenumerowany {me.Mark} → {newMark}, ale nie ma własnej etykiety (kopia bez opisu) — " +
+                        "etykieta obok należy do pręta oryginalnego. Dodaj etykietę temu prętowi.\n");
+                }
+                catch (System.Exception ex) { Log.Error("PositionReconciler.NoLabel", ex); }
 
             using (var tr = db.TransactionManager.StartTransaction())
             {

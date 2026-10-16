@@ -392,6 +392,7 @@ namespace BricsCadRc.Core
                     else if ((e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase))
                     {
                         if (e is Polyline pl && !GeometryHelper.IsEffectivelyClosed(pl)) openPl.Add(e.ObjectId);
+                        else if (e is Line) openPl.Add(e.ObjectId);   // 2026-10-16: krawędź nibu z linii (zgłoszenie kolegi)
                         if (e is Polyline || e is Line || e is Arc) nibPieces.Add(e.ObjectId);
                     }
                 }
@@ -442,10 +443,23 @@ namespace BricsCadRc.Core
             {
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    joined += JoinLoops(tr, msId, openPl, plot.Label, view);
+                    joined += JoinLoops(tr, msId, openPl, plot.Label, view, outline);
                     tr.Commit();
                 }
             }
+
+            // 2026-10-16 (zgłoszenie kolegi: nib z GA nierozpoznany, płyta z prostą krawędzią): kawałki SD-PILED-RAFT, które zostały
+            // otwarte i leżą tuż ZA obrysem (zewnętrzna krawędź nibu) — ostrzeżenie zamiast milczenia
+            if (!outline.IsNull)
+                try
+                {
+                    int loose = LooseOutsidePieces(db, outline, openPl.Where(id => !id.IsErased).ToList());
+                    if (loose > 0)
+                        warnings.Add($"Nib: {loose} otwartych kawałków krawędzi {SlabLayer} tuż za obrysem płyty nie tworzy zamkniętej pętli — " +
+                                     $"nib nie został rozpoznany (krawędź płyty prosta). Domknij obrys zewnętrzny (PEDIT → Join) i uruchom ponownie " +
+                                     $"({(view == "B" ? "rzut dolny" : "rzut górny")}).");
+                }
+                catch (System.Exception ex) { Log.Error("GaImport.CloneInto.LoosePieces", ex); }
 
             // K8: GA bez stref SD-Thickening-Zone — strefy belek z opisów „xxxTHK” (po JoinLoops: obrys zewnętrzny z otwartych kawałków
             // jest już zamknięty — NibDetector widzi nib). Holbrook (strefy z GA) — bez zmian.
@@ -886,13 +900,59 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Łączy otwarte polilinie (bez łuków), których końce się stykają, w zamknięte pętle.</summary>
-        private static int JoinLoops(Transaction tr, ObjectId msId, List<ObjectId> open, string plot, string view)
+        /// <summary>Otwarte kawałki (polilinie / linie) w całości poza obrysem lub na nim, z punktem ≤ 300 mm za obrysem.</summary>
+        private static int LooseOutsidePieces(Database db, ObjectId outlineId, List<ObjectId> pieces)
+        {
+            if (pieces.Count == 0) return 0;
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            if (!(tr.GetObject(outlineId, OpenMode.ForRead) is Polyline opl)) return 0;
+            var poly = GeometryHelper.GetPolylineVertices(opl);
+            double Dist(Point2d p)
+            {
+                double best = double.MaxValue;
+                for (int i = 0; i < poly.Count; i++)
+                {
+                    Point2d a = poly[i], b = poly[(i + 1) % poly.Count];
+                    var ab = b - a; double L2 = ab.DotProduct(ab);
+                    double t = L2 > 1e-9 ? Math.Max(0, Math.Min(1, (p - a).DotProduct(ab) / L2)) : 0;
+                    best = Math.Min(best, (a + ab * t - p).Length);
+                }
+                return best;
+            }
+            int n = 0;
+            foreach (var id in pieces)
+            {
+                var ent = tr.GetObject(id, OpenMode.ForRead);
+                List<Point2d> v = ent is Line ln
+                    ? new List<Point2d> { new Point2d(ln.StartPoint.X, ln.StartPoint.Y), new Point2d(ln.EndPoint.X, ln.EndPoint.Y) }
+                    : ent is Polyline pl ? GeometryHelper.GetPolylineVertices(pl) : null;
+                if (v == null || v.Count < 2) continue;
+                bool anyInside = v.Any(p => Dist(p) > 1.0 && GeometryHelper.IsPointInsidePolygon(poly, p));
+                bool anyOutNear = v.Any(p => !GeometryHelper.IsPointInsidePolygon(poly, p) && Dist(p) > 1.0 && Dist(p) <= 300.0);
+                if (!anyInside && anyOutNear) n++;
+            }
+            return n;
+        }
+
+        private static int JoinLoops(Transaction tr, ObjectId msId, List<ObjectId> open, string plot, string view,
+                                     ObjectId outlineId = default)
         {
             const double tol = 1.0;
+            // pętla z udziałem LINII (2026-10-16) — tylko gdy obejmuje obrys płyty (zewnętrzna krawędź nibu), żeby linie
+            // stref / uskoku nie sklejały się w pasy, których NibDetector nie uznaje
+            List<Point2d> outerOf = null;
+            if (!outlineId.IsNull && tr.GetObject(outlineId, OpenMode.ForRead) is Polyline opl0) outerOf = GeometryHelper.GetPolylineVertices(opl0);
+            var lineIds = new HashSet<ObjectId>();
             var parts = new List<(ObjectId id, List<Point2d> v)>();
             foreach (var id in open)
             {
-                var pl = (Polyline)tr.GetObject(id, OpenMode.ForRead);
+                var ent = tr.GetObject(id, OpenMode.ForRead);
+                if (ent is Line ln)
+                {
+                    if (ln.Length > tol) { parts.Add((id, new List<Point2d> { new Point2d(ln.StartPoint.X, ln.StartPoint.Y), new Point2d(ln.EndPoint.X, ln.EndPoint.Y) })); lineIds.Add(id); }
+                    continue;
+                }
+                if (!(ent is Polyline pl)) continue;
                 bool arcs = false;
                 for (int i = 0; i < pl.NumberOfVertices; i++) if (Math.Abs(pl.GetBulgeAt(i)) > 1e-9) arcs = true;
                 if (!arcs) parts.Add((id, GeometryHelper.GetPolylineVertices(pl)));
@@ -922,8 +982,26 @@ namespace BricsCadRc.Core
                 }
                 if (members.Count < 2 || chain[0].GetDistanceTo(chain[chain.Count - 1]) > tol) continue;
                 chain.RemoveAt(chain.Count - 1);
+                if (members.Any(lineIds.Contains))
+                {
+                    if (outerOf == null) continue;
+                    var loop = chain;
+                    bool Covers(Point2d p)
+                    {
+                        if (GeometryHelper.IsPointInsidePolygon(loop, p)) return true;
+                        for (int i = 0; i < loop.Count; i++)
+                        {
+                            Point2d a = loop[i], b = loop[(i + 1) % loop.Count];
+                            var ab = b - a; double L2 = ab.DotProduct(ab);
+                            double t = L2 > 1e-9 ? Math.Max(0, Math.Min(1, (p - a).DotProduct(ab) / L2)) : 0;
+                            if ((a + ab * t - p).Length < tol) return true;
+                        }
+                        return false;
+                    }
+                    if (!outerOf.All(Covers)) continue;
+                }
 
-                var first = (Polyline)tr.GetObject(members[0], OpenMode.ForRead);
+                var first = (Entity)tr.GetObject(members[0], OpenMode.ForRead);
                 var pl = new Polyline { Layer = first.Layer, Color = first.Color, LinetypeId = first.LinetypeId,
                                         LineWeight = first.LineWeight };
                 for (int i = 0; i < chain.Count; i++) pl.AddVertexAt(i, chain[i], 0, 0, 0);

@@ -220,7 +220,8 @@ namespace BricsCadRc.Core
                     catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.DetailMark", ex); }
                 }
 
-                int nDist = 0;
+                int nDist = 0, foreignDists = 0;
+                var staleTag = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                 var shapes = new Dictionary<string, (List<(double X, double Y)> pts, string code, double[] dims)?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (br, bar) in dists)
                 {
@@ -234,9 +235,21 @@ namespace BricsCadRc.Core
                         if (det.win.Contains(mid.X, mid.Y)) pos -= det.shift;
                     }
                     string tag = ReadSlabTag(br);
+                    bool tagOfView = tag != null && views.Any(v => SameHandle(tag, v.handle));
                     foreach (var (delta, handle, poly) in views)
                     {
-                        bool inside = tag != null ? SameHandle(tag, handle) : GeometryHelper.IsPointInsidePolygon(poly, pos);
+                        bool inside;
+                        if (tag == null) inside = GeometryHelper.IsPointInsidePolygon(poly, pos);
+                        else if (tagOfView) inside = SameHandle(tag, handle);
+                        else
+                        {
+                            // 2026-10-16: znacznik obrysu, którego już nie ma (obrys narysowany od nowa, dawny obrys = linia uskoku)
+                            // — po położeniu; znacznik innej, istniejącej płyty — pominięty z komunikatem
+                            string key = tag + "|" + handle;
+                            if (!staleTag.TryGetValue(key, out bool st)) staleTag[key] = st = SlabTagIsStale(db, tag, poly);
+                            inside = GeometryHelper.IsPointInsidePolygon(poly, pos);
+                            if (inside && !st) { foreignDists++; inside = false; }
+                        }
                         if (!inside) continue;
                         string pos2 = SectionPlanner.PosNrOf(bar.Mark);
                         bool beamBar = BeamGeometry.IsBeamCode(bar.LayerCode);
@@ -334,6 +347,9 @@ namespace BricsCadRc.Core
                 ctx.Info.Add($"Rzuty płyty: {views.Count}, rozkłady: {nDist}, nib: {(nib != null ? nib.Edges.Count + " krawędzi" : "brak")}, " +
                              $"otwory: {inp.Holes.Count}, pale: {inp.Piles.Count}" +
                              (inp.Beams.Count > 0 ? $", belki na linii cięcia: {inp.Beams.Count}." : "."));
+                if (foreignDists > 0)
+                    ctx.Info.Add($"Pominięto {foreignDists} rozkład(ów) w obrysie przypisanych do innego obrysu płyty — jeśli należą do tej płyty, " +
+                                 "uruchom RC_RELINK (przypisz rozkłady do obrysu).");
                 if (ctx.ThicknessSource == null) ctx.Info.Add("Nie znaleziono grubości płyty w opisie (… THK SLAB) — przyjęto 225.");
                 if (ctx.SslSource == null) ctx.Info.Add("Nie znaleziono SSL w opisie płyty.");
             }

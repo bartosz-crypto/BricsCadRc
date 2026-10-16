@@ -115,8 +115,24 @@ namespace BricsCadRc.Core
             _annotDragStart.Clear();
         }
 
+        // Rozkłady z pokazanymi gripami (BTR, pozycja) — przy kilku zaznaczonych drag na klonie trafiał w OSTATNI
+        // rozkład z gripami, nie przeciągany (zgłoszenie kolegi 2026-10-16). Klon ma ten sam BTR i pozycję co oryginał.
+        private static readonly Dictionary<ObjectId, (ObjectId btr, Point3d pos)> _gripOwners
+            = new Dictionary<ObjectId, (ObjectId btr, Point3d pos)>();
+
         private static ObjectId RealId(BlockReference br)
-            => br.ObjectId.IsNull ? _lastGripOwner : br.ObjectId;
+        {
+            if (!br.ObjectId.IsNull) return br.ObjectId;
+            ObjectId hit = ObjectId.Null;
+            int n = 0;
+            foreach (var kv in _gripOwners)
+            {
+                if (kv.Key.IsErased || kv.Value.btr != br.BlockTableRecord) continue;
+                if (kv.Value.pos.DistanceTo(br.Position) > 1e-4) continue;
+                hit = kv.Key; n++;
+            }
+            return n == 1 ? hit : _lastGripOwner;
+        }
 
         /// <summary>
         /// Zapisuje do bazy zmiany z zakończonego grip-dragu (wołane z CommandEnded).
@@ -333,7 +349,12 @@ namespace BricsCadRc.Core
                 _dragOrigPos.Remove(0L);          // wyczyść też cache klonu z poprzedniego drag
                 _annotDragStart.Remove(br.ObjectId.Handle.Value);
                 _annotDragStart.Remove(0L);
-                if (!br.ObjectId.IsNull) _lastGripOwner = br.ObjectId;
+                if (!br.ObjectId.IsNull)
+                {
+                    _lastGripOwner = br.ObjectId;
+                    if (_gripOwners.Count > 500) _gripOwners.Clear();
+                    _gripOwners[br.ObjectId] = (br.BlockTableRecord, br.Position);
+                }
                 ClearGripTransients();
 
                 gripPoints.Add(BarBlockEngine.GripLateral(br, barBlock)); // [0] krawedz plyty (cover offset)
@@ -575,6 +596,9 @@ namespace BricsCadRc.Core
             var barBlock = BarBlockEngine.ReadXData(br);
             if (barBlock != null)
             {
+                // Rozkład Any: jeden pręt w bloku, liczba w opisie (RC_EDIT_DISTRIBUTION) — RegenerateBarBlock go nie przebudowuje,
+                // więc bez podglądu wielu prętów (podgląd obiecywał zmianę, której nie było — zgłoszenie 2026-10-16)
+                if (isGrip1 && BarBlockEngine.IsAny(barBlock)) return;
                 if (isGrip1)
                 {
                     // Offset w WCS → układ lokalny bloku (obrócone rozkłady rozciągały się

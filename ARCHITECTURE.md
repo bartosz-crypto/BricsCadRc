@@ -567,6 +567,23 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - **Kropka zejścia odnośnika (decyzja 2026-10-16):** rozkład ze strzałkami (> 3 pręty), odnośnik biegnie najpierw wzdłuż linii rozkładu
   (opis przesunięty w bok) i schodzi z niej MIĘDZY strzałkami → kropka jak przy pręcie w punkcie zejścia (`AnnotationEngine.AddJunctionDot`,
   XData RC_BAR_ANNOT [JDOT], przebudowywana z odnośnikiem). Bez kropki: prosto ze środka linii, zejście za strzałką, rozkład skośny.
+- **Poprawki ze zgłoszeń kolegi (2026-10-16):**
+  - przebudowa rozkładu / opisu (`RebuildVisibility`, `Regenerate…`, `Rebuild…`, przebudowy odnośnika, tekst w RC_EDIT_LABEL) na
+    WŁASNYM BTR — `BarBlockEngine.OwnBtrForWrite` klonuje BTR współdzielony przez kopie (przeciągnięcie z Ctrl, ROTATE/SCALE Copy,
+    REDO po COPY) — wygaszenie jednego rozkładu nie zmienia kopii;
+  - `SyncAnnotation` bez opisu (puste [11]) nie szuka już opisu po samym Mark (tylko opis bez [16], jedyny z tym Mark — stare rysunki);
+    RC_EDIT_DISTRIBUTION: [11] wskazujące opis innego rozkładu → odłączone, opcja „Dodaj opis”; RC_EDIT_LABEL: opis bez pary
+    z rozkładem — tylko tekst, bez zmiany widoczności;
+  - RC_EDIT_LABEL Manual: indeks klikniętego pręta i podświetlenie w układzie ROZKŁADU (BlockTransform bloku prętów);
+  - znacznik płyty nieaktualny (obiekt usunięty / polilinia w całości w obrysie — dawny obrys = linia uskoku) → rozkład po położeniu
+    (`SlabTagIsStale`: przekrój, `BelongsToCurrentSlab`); znacznik innej istniejącej płyty — pominięty z komunikatem;
+    **RC_RELINK** („Relink Bars”) przepina rozkłady w obrysie na wskazany obrys;
+  - grip rozkładu przy kilku zaznaczonych — właściciel klonu po BTR + pozycji (`_gripOwners`), nie ostatni z gripami; rozkład Any —
+    bez podglądu zmiany liczby (liczba w RC_EDIT_DISTRIBUTION);
+  - przenumerowanie kopii pręta bez etykiety — komunikat (etykieta obok należy do oryginału);
+  - Prepare GA: linie SD-PILED-RAFT też sklejane w pętle (tylko pętla obejmująca obrys); otwarte kawałki tuż za obrysem — ostrzeżenie
+    „nib nie rozpoznany”.
+  - Przekrój: poziom pręta z kodu warstwy (B1/B2/T1/T2) niezależnie od kierunku — bez zmian i bez komunikatu (decyzja użytkownika).
 - Kolizje opisów (AutoRebar, `PlaceLabel`): przeszkody = teksty (opisów i rysunku) **oraz linie opisów** (leadery,
   linie rozkładów); nowy leader nie może przecinać tekstów. Kolejność: warianty leadera (druga strona płyty; T IN NIB —
   prosto / załamanie wzdłuż krawędzi w obie strony, krótsza droga najpierw), każdy bez przesunięcia i z przesunięciem

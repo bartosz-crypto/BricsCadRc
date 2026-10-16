@@ -95,6 +95,39 @@ namespace BricsCadRc.Commands
         /// RC_SECTION_CHECK — aktualność przekrojów rysunku (bezpiecznik, etap 1): lista ze statusem i przyczynami, synchronizacja
         /// chmurek „NIEAKTUALNY” (warstwa niedrukowana RC-SECTION-STATUS; zapis tylko przy zmianie stanu). Przeliczenie tylko do odczytu.
         /// </summary>
+        /// <summary>
+        /// RC_RELINK — przypisz rozkłady w obrysie do tego obrysu płyty (po narysowaniu obrysu od nowa / rozkładach skopiowanych
+        /// z innej płyty przekrój ich nie widział). Obrysy rzutu dolnego i górnego — osobno.
+        /// </summary>
+        [CommandMethod("RC_RELINK", CommandFlags.Modal)]
+        public static void Relink()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            const string T = "[RC RELINK]";
+            try
+            {
+                var opts = new PromptSelectionOptions { MessageForAdding = "\nWybierz obrysy płyt (rzut dolny / górny): " };
+                var sel = ed.GetSelection(opts, new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "LWPOLYLINE") }));
+                if (sel.Status != PromptStatus.OK) return;
+                var done = new System.Collections.Generic.HashSet<ObjectId>();
+                foreach (var id0 in sel.Value.GetObjectIds())
+                {
+                    var id = NibDetector.OuterOf(doc.Database, id0);
+                    if (!done.Add(id)) continue;
+                    var (n, already) = AutoRebarEngine.RelinkDistributions(doc, id);
+                    ed.WriteMessage($"\n{T} Obrys {id.Handle}: przypisano {n} rozkład(ów), {already} już przypisanych.");
+                }
+                ed.WriteMessage($"\n{T} Gotowe — przekroje: RC_SECTION_CHECK / RC_SECTION_UPDATE.\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_RELINK", ex);
+                ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
+
         [CommandMethod("RC_SECTION_CHECK", CommandFlags.Modal)]
         public static void SectionCheck()
         {

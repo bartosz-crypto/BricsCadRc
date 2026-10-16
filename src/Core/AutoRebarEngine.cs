@@ -2135,9 +2135,45 @@ namespace BricsCadRc.Core
         {
             string tag = ReadSlabTag(br);
             if (tag != null && _currentSlabHandle != null)
-                return SameHandle(tag, _currentSlabHandle);
+            {
+                if (SameHandle(tag, _currentSlabHandle)) return true;
+                // znacznik nieaktualny (obrys narysowany od nowa / dawny obrys = linia uskoku) — po położeniu (2026-10-16)
+                if (!SlabTagIsStale(br.Database, tag, slabVertices)) return false;
+            }
             return GeometryHelper.IsPointInsidePolygon(
                 slabVertices, new Point2d(br.Position.X, br.Position.Y));
+        }
+
+        /// <summary>
+        /// Znacznik płyty rozkładu jest nieaktualny (zgłoszenie kolegi 2026-10-16 — po zmianie obrysu przekroje i ponowne
+        /// generowanie nie widziały rozkładów): obiekt znacznika nie istnieje / usunięty / nie jest polilinią, albo jest polilinią
+        /// leżącą w całości w obrysie <paramref name="poly"/> (dawny obrys, teraz linia uskoku nibu tej płyty). Wtedy rozkład
+        /// należy do płyty po położeniu. Znacznik innego, istniejącego obrysu — aktualny (rozkład innej płyty).
+        /// </summary>
+        internal static bool SlabTagIsStale(Database db, string tag, List<Point2d> poly)
+        {
+            try
+            {
+                if (db == null || poly == null || poly.Count < 3) return false;
+                if (!long.TryParse(tag, System.Globalization.NumberStyles.HexNumber, null, out long v) || v == 0) return true;
+                if (!db.TryGetObjectId(new Handle(v), out ObjectId id) || id.IsNull || id.IsErased) return true;
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)) return true;
+                var vs = GeometryHelper.GetPolylineVertices(pl);
+                bool Near(Point2d p)
+                {
+                    for (int i = 0; i < poly.Count; i++)
+                    {
+                        Point2d a = poly[i], b = poly[(i + 1) % poly.Count];
+                        var ab = b - a; double L2 = ab.DotProduct(ab);
+                        double t = L2 > 1e-9 ? Math.Max(0, Math.Min(1, (p - a).DotProduct(ab) / L2)) : 0;
+                        if ((a + ab * t - p).Length < 1.0) return true;
+                    }
+                    return false;
+                }
+                return vs.Count > 0 && vs.All(p => Near(p) || GeometryHelper.IsPointInsidePolygon(poly, p));
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.SlabTagIsStale", ex); return false; }
         }
 
         private static void TagWithSlab(Database db, ObjectId blockRefId)

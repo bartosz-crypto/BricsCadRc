@@ -85,5 +85,45 @@ namespace BricsCadRc.Core
             res.Moved = ResolveRepresentativeCollisions(doc, slabId);
             return res;
         }
+
+        /// <summary>
+        /// RC_RELINK (2026-10-16): rozkłady (RC_BAR_BLOCK) z punktem wstawienia w obrysie dostają znacznik płyty = ten obrys
+        /// (XData RC_AUTOREBAR_SLAB). Po narysowaniu obrysu od nowa / skopiowaniu rozkładów z innej płyty — przekroje i ponowne
+        /// generowanie widzą je jako rozkłady tej płyty. Zwraca (przepięte, już przypisane).
+        /// </summary>
+        public static (int relinked, int already) RelinkDistributions(Document doc, ObjectId slabId)
+        {
+            var db = doc.Database;
+            int relinked = 0, already = 0;
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline pl)) return (0, 0);
+                var verts = GeometryHelper.GetPolylineVertices(pl);
+                string handle = pl.Handle.ToString();
+                var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has(XSlabApp))
+                {
+                    rat.UpgradeOpen();
+                    var rec = new RegAppTableRecord { Name = XSlabApp };
+                    rat.Add(rec);
+                    tr.AddNewlyCreatedDBObject(rec, true);
+                }
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId oid in ms)
+                {
+                    if (oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
+                    if (BarBlockEngine.ReadXData(br) == null) continue;
+                    if (!GeometryHelper.IsPointInsidePolygon(verts, new Point2d(br.Position.X, br.Position.Y))) continue;
+                    string tag = ReadSlabTag(br);
+                    if (tag != null && SameHandle(tag, handle)) { already++; continue; }
+                    br.UpgradeOpen();
+                    br.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, XSlabApp), XLink.Write(handle));
+                    relinked++;
+                }
+                tr.Commit();
+            }
+            return (relinked, already);
+        }
     }
 }

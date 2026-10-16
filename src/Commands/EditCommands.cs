@@ -143,6 +143,32 @@ namespace BricsCadRc.Commands
                     annotMissing = true;
             }
 
+            // Zgłoszenie kolegi 2026-10-16: kopia rozkładu bez opisu z nieaktualnym [11] (opis oryginału) — opis nie wskazuje
+            // [16] z powrotem na ten rozkład. Wtedy „brak opisu” (opcja Dodaj opis) i [11] czyszczone — przebudowa nie rusza
+            // opisu oryginału.
+            if (!annotMissing)
+            {
+                try
+                {
+                    using var trL = db.TransactionManager.StartTransaction();
+                    ObjectId aId = ObjectId.Null;
+                    if (long.TryParse(bar.AnnotHandle, System.Globalization.NumberStyles.HexNumber, null, out long aH))
+                        db.TryGetObjectId(new Handle(aH), out aId);
+                    var brL = trL.GetObject(blockRefId, OpenMode.ForWrite) as BlockReference;
+                    if (!aId.IsNull && brL != null && !BarEraseCascade.AnnotBelongsTo(trL, aId, brL.Handle.Value.ToString("X8")))
+                    {
+                        annotMissing = true;
+                        bar.AnnotHandle = "";
+                        var xd = BarBlockEngine.ReadXData(brL);
+                        if (xd != null) { xd.AnnotHandle = ""; BarBlockEngine.WriteXData(brL, xd); }
+                        ed.WriteMessage("\n[RC] Opis wskazywany przez ten rozkład należy do innego rozkładu (kopia bez opisu) — " +
+                                        "rozkład odłączony; użyj „Dodaj opis”.\n");
+                    }
+                    trL.Commit();
+                }
+                catch (System.Exception ex) { Log.Error("EditCommands.EditDistribution.Link", ex); }
+            }
+
             // Krok 2 — dialog z live preview
             var dlg = new EditDistributionDialog(bar, (cnt, sp, cv, span) => ApplyPreview(cnt, sp, cv, span), annotMissing);
 
@@ -602,6 +628,34 @@ namespace BricsCadRc.Commands
             if (bar == null)
             { ed.WriteMessage("\nNie znaleziono danych etykiety."); return; }
 
+            // Zgłoszenie kolegi 2026-10-16: opis skopiowany osobno ma [16] rozkładu oryginału — zmiany widoczności trafiały w
+            // oryginał. Opis, którego rozkład [16] nie wskazuje [11] z powrotem na ten opis — odłączony (tylko tekst opisu).
+            bool unlinkedAnnot = false;
+            if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
+            {
+                try
+                {
+                    using var trL = db.TransactionManager.StartOpenCloseTransaction();
+                    bool linked = false;
+                    if (long.TryParse(bar.SourceBlockHandle, System.Globalization.NumberStyles.HexNumber, null, out long sH)
+                        && db.TryGetObjectId(new Handle(sH), out ObjectId sId) && !sId.IsErased
+                        && trL.GetObject(sId, OpenMode.ForRead) is BlockReference sBr)
+                    {
+                        var sXd = BarBlockEngine.ReadXData(sBr);
+                        linked = sXd != null && XLink.Same(sXd.AnnotHandle, selRes.ObjectId.Handle.Value.ToString("X8"));
+                    }
+                    trL.Commit();
+                    if (!linked)
+                    {
+                        bar.SourceBlockHandle = "";
+                        unlinkedAnnot = true;
+                        ed.WriteMessage("\n[RC] Ten opis nie jest powiązany z rozkładem (np. skopiowany osobno) — zmienisz tylko tekst; " +
+                                        "wygaszanie prętów: RC_EDIT_DISTRIBUTION → Dodaj opis na właściwym rozkładzie.\n");
+                    }
+                }
+                catch (System.Exception ex) { Log.Error("EditCommands.EditLabel.Link", ex); }
+            }
+
             // Krok 3 — odczytaj ShowSpacing z RC_BAR_BLOCK (flaga nie jest w RC_BAR_ANNOT)
             bool showSpacing = true;
             if (!string.IsNullOrEmpty(bar.SourceBlockHandle) &&
@@ -629,7 +683,7 @@ namespace BricsCadRc.Commands
 
             // Obsługa Manual — user klika pręty
             string newVisibleIndices = bar.VisibleIndices ?? "";
-            if (dlg.ResultVisibility == BarVisibilityMode.Manual)
+            if (dlg.ResultVisibility == BarVisibilityMode.Manual && !unlinkedAnnot)
             {
                 // Tymczasowo pokaż WSZYSTKIE pręty — user musi widzieć co klika
                 if (!string.IsNullOrEmpty(bar.SourceBlockHandle))
@@ -662,7 +716,7 @@ namespace BricsCadRc.Commands
                 bar.CountDisplay   = (dlg.ResultCount != bar.Count) ? (int?)dlg.ResultCount : null;
                 bar.Mark           = dlg.ResultMark;
                 bar.Spacing        = dlg.ResultSpacing;
-                bar.VisibilityMode = dlg.ResultVisibility;
+                bar.VisibilityMode = unlinkedAnnot ? bar.VisibilityMode : dlg.ResultVisibility;   // opis bez rozkładu — widoczność bez zmian
                 bar.VisibleIndices = newVisibleIndices;
                 // bar.Diameter — nie zmieniamy, pochodzi z pręta
                 bar.IsLabelManual  = true;  // p334: manual override after RC_EDIT_LABEL
@@ -698,8 +752,8 @@ namespace BricsCadRc.Commands
                     }
                 }
 
-                // Zaktualizuj TextString w DBText wewnątrz BTR
-                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                // Zaktualizuj TextString w DBText wewnątrz BTR (własny BTR — opis skopiowany nie zmienia oryginału)
+                var btr = BarBlockEngine.OwnBtrForWrite(tr, br);
                 foreach (ObjectId oid in btr)
                 {
                     if (oid.IsErased) continue;
@@ -894,12 +948,14 @@ namespace BricsCadRc.Commands
                     var barData = AnnotationEngine.ReadAnnotXData(annotBr);
                     if (barData != null && barData.Spacing > 0)
                     {
-                        var inv   = annotBr.BlockTransform.Inverse();
-                        var local = res.Value.TransformBy(inv);
-
-                        double coord   = barData.Direction == "X" ? local.Y : local.X;
-                        int    nearest = (int)Math.Round(coord / barData.Spacing);
-                        nearest = Math.Max(0, Math.Min(barData.Count - 1, nearest));
+                        // indeks w układzie ROZKŁADU (bloku prętów); bez rozkładu — dawniej, w układzie opisu
+                        int nearest = marks.IndexAt(res.Value);
+                        if (nearest < 0)
+                        {
+                            var local = res.Value.TransformBy(annotBr.BlockTransform.Inverse());
+                            double coord = barData.Direction == "X" ? local.Y : local.X;
+                            nearest = Math.Max(0, Math.Min(barData.Count - 1, (int)Math.Round(coord / barData.Spacing)));
+                        }
 
                         if (selectedIndices.Contains(nearest))
                             selectedIndices.Remove(nearest);
@@ -910,7 +966,7 @@ namespace BricsCadRc.Commands
                     }
                 }
                 tr.Commit();
-                foreach (int i in Enumerable.Range(0, Math.Max(0, bar.Count))) marks.Set(i, selectedIndices.Contains(i));
+                foreach (int i in Enumerable.Range(0, Math.Max(marks.Count, bar.Count))) marks.Set(i, selectedIndices.Contains(i));
                 marks.Flush(doc);
             }
 
@@ -921,16 +977,20 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
-        /// Tymczasowe znaczniki prętów klikanych w RC_EDIT_LABEL (wygaszanie ręczne): gruba czerwona polilinia wzdłuż pręta
-        /// rozkładu (położenie jak w <see cref="AutoRebarEngine"/> — pozycja bloku + i · rozstaw, długość A). Dispose usuwa znaczniki.
+        /// Rozkład klikany w RC_EDIT_LABEL (wygaszanie ręczne): indeks pręta pod kliknięciem i tymczasowe znaczniki (gruba czerwona
+        /// polilinia wzdłuż pręta). Wszystko w układzie ROZKŁADU (BlockTransform bloku prętów: pręt i = i · rozstaw) — zgłoszenie
+        /// kolegi 2026-10-16: indeks liczony w układzie opisu wypadał o kilka prętów obok, gdy opis był przesunięty / dodany osobno.
+        /// Dispose usuwa znaczniki.
         /// </summary>
         private sealed class BarPickMarks : IDisposable
         {
             private readonly Database _db;
             private readonly Dictionary<int, ObjectId> _ids = new Dictionary<int, ObjectId>();
-            private readonly bool _ok, _barsX;
-            private readonly Point3d _pos;
+            private readonly bool _barsX;
+            private readonly Matrix3d _xf, _inv;
             private readonly double _sp, _lo, _hi, _width;
+            public bool Ok { get; }
+            public int Count { get; }
 
             public BarPickMarks(Database db, string distHandle)
             {
@@ -941,25 +1001,34 @@ namespace BricsCadRc.Commands
                         || !long.TryParse(distHandle, System.Globalization.NumberStyles.HexNumber, null, out long h)
                         || !db.TryGetObjectId(new Handle(h), out ObjectId distId) || distId.IsErased) return;
                     using var tr = db.TransactionManager.StartOpenCloseTransaction();
-                    if (!(tr.GetObject(distId, OpenMode.ForRead) is BlockReference br) || Math.Abs(br.Rotation) > 1e-6) return;
+                    if (!(tr.GetObject(distId, OpenMode.ForRead) is BlockReference br)) return;
                     var d = BarBlockEngine.ReadXData(br);
                     if (d == null || d.Spacing <= 0) return;
                     _barsX = d.Direction == "X";
-                    _pos = br.Position;
+                    _xf = br.BlockTransform;
+                    _inv = _xf.Inverse();
                     _sp = d.Spacing;
-                    double skewMin = Math.Min(0, Math.Min(d.SkewStart, d.SkewEnd));
-                    double skewMax = Math.Max(0, Math.Max(d.SkewStart, d.SkewEnd));
-                    _lo = (_barsX ? _pos.X : _pos.Y) + skewMin;
-                    _hi = (_barsX ? _pos.X : _pos.Y) + d.LengthA + skewMax;
+                    Count = Math.Max(1, d.Count);
+                    _lo = Math.Min(0, Math.Min(d.SkewStart, d.SkewEnd));
+                    _hi = d.LengthA + Math.Max(0, Math.Max(d.SkewStart, d.SkewEnd));
                     _width = Math.Max(30.0, Math.Min(80.0, 0.3 * _sp));
-                    _ok = _hi - _lo > 1.0;
+                    Ok = _hi - _lo > 1.0;
                 }
                 catch (System.Exception ex) { Log.Error("EditCommands.BarPickMarks", ex); }
             }
 
+            /// <summary>Indeks pręta najbliższego klikniętemu punktowi (układ rozkładu); -1 — brak rozkładu.</summary>
+            public int IndexAt(Point3d wcs)
+            {
+                if (!Ok) return -1;
+                var l = wcs.TransformBy(_inv);
+                double c = _barsX ? l.Y : l.X;
+                return Math.Max(0, Math.Min(Count - 1, (int)Math.Round(c / _sp)));
+            }
+
             public void Set(int i, bool on)
             {
-                if (!_ok) return;
+                if (!Ok) return;
                 bool has = _ids.TryGetValue(i, out ObjectId id);
                 if (on == has) return;
                 try
@@ -967,12 +1036,13 @@ namespace BricsCadRc.Commands
                     using var tr = _db.TransactionManager.StartTransaction();
                     if (on)
                     {
-                        double c = (_barsX ? _pos.Y : _pos.X) + i * _sp;
+                        double c = i * _sp;
                         var pl = new Polyline();
                         pl.SetDatabaseDefaults(_db);
                         pl.AddVertexAt(0, _barsX ? new Point2d(_lo, c) : new Point2d(c, _lo), 0, _width, _width);
                         pl.AddVertexAt(1, _barsX ? new Point2d(_hi, c) : new Point2d(c, _hi), 0, _width, _width);
                         pl.ColorIndex = 1;
+                        pl.TransformBy(_xf);
                         var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
                         _ids[i] = ms.AppendEntity(pl);
                         tr.AddNewlyCreatedDBObject(pl, true);

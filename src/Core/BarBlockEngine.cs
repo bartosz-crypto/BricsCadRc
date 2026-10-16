@@ -720,7 +720,7 @@ namespace BricsCadRc.Core
 
             // Przebuduj BTR
             using var tr = br.Database.TransactionManager.StartTransaction();
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
 
             EraseAllInBtr(tr, btr);
 
@@ -762,7 +762,7 @@ namespace BricsCadRc.Core
             ClearSkewCache(br.BlockTableRecord.Handle.Value);
             WriteXData(br, bar);
             using var tr = br.Database.TransactionManager.StartTransaction();
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
             EraseAllInBtr(tr, btr);
             BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
             tr.Commit();
@@ -787,7 +787,7 @@ namespace BricsCadRc.Core
             bar.VisibleIndices = visibleIndices ?? "";
             WriteXData(br, bar);
 
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
             EraseAllInBtr(tr, btr);
 
             BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
@@ -815,7 +815,7 @@ namespace BricsCadRc.Core
             bar.SymbolDirection = symDir;
             WriteXData(br, bar);
 
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
             EraseAllInBtr(tr, btr);
 
             BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
@@ -843,7 +843,7 @@ namespace BricsCadRc.Core
             bar.ViewSegmentIndex = viewSegmentIndex;
             WriteXData(br, bar);
 
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
             EraseAllInBtr(tr, btr);
 
             BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, bar.Count);
@@ -889,7 +889,7 @@ namespace BricsCadRc.Core
 
             WriteXData(br, bar);
 
-            var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            var btr = OwnBtrForWrite(tr, br);
             EraseAllInBtr(tr, btr);
 
             BuildBars(tr, btr, bar, bar.Direction == "X", bar.LengthA, newCount);
@@ -1237,7 +1237,7 @@ namespace BricsCadRc.Core
                 bar.LengthA = newLengthA;
                 WriteXData(br, bar);
 
-                var btr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                var btr = OwnBtrForWrite(tr, br);
                 EraseAllInBtr(tr, btr);
 
                 BuildBars(tr, btr, bar, bar.Direction == "X", newLengthA, bar.Count);
@@ -1251,6 +1251,56 @@ namespace BricsCadRc.Core
         // ----------------------------------------------------------------
         // Helpers
         // ----------------------------------------------------------------
+
+        private static readonly System.Text.RegularExpressions.Regex OwnBtrPrefixRx =
+            new System.Text.RegularExpressions.Regex(@"^(RC_SLAB_BARS_\d{3}|RC_ANNOT_\d{3})");
+
+        /// <summary>
+        /// BTR bloku do zapisu — własny (zgłoszenie kolegi 2026-10-16: wygaszenie / przebudowa jednego rozkładu zmieniała wszystkie
+        /// kopie). Gdy z BTR korzysta więcej niż jedna referencja (kopia przeciągnięciem z Ctrl, ROTATE / SCALE z opcją Copy,
+        /// REDO po COPY — poza listą komend BarCopyWatcher), BTR jest klonowany z zawartością do nowego, a <paramref name="br"/>
+        /// przepięty na klon. Nazwa: prefiks RC_SLAB_BARS_nnn / RC_ANNOT_nnn + GUID (wybór po nazwie właściciela działa dalej).
+        /// </summary>
+        internal static BlockTableRecord OwnBtrForWrite(Transaction tr, BlockReference br)
+        {
+            var oldBtr = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+            try
+            {
+                var db = br.Database;
+                if (db == null || br.ObjectId.IsNull) return (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                var refs = oldBtr.GetBlockReferenceIds(true, false);
+                int live = 0;
+                foreach (ObjectId r in refs) if (!r.IsErased) live++;
+                if (live <= 1) return (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+
+                var m = OwnBtrPrefixRx.Match(oldBtr.Name ?? "");
+                string name = m.Success ? $"{m.Value}_{Guid.NewGuid():N}" : "*U";
+                if (name.Length > 255) name = name.Substring(0, 255);
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
+                var newBtr = new BlockTableRecord
+                {
+                    Name         = name,
+                    Origin       = oldBtr.Origin,
+                    Units        = oldBtr.Units,
+                    Explodable   = oldBtr.Explodable,
+                    BlockScaling = oldBtr.BlockScaling
+                };
+                var newId = bt.Add(newBtr);
+                tr.AddNewlyCreatedDBObject(newBtr, true);
+                var ids = new ObjectIdCollection();
+                foreach (ObjectId id in oldBtr) if (!id.IsNull && !id.IsErased) ids.Add(id);
+                if (ids.Count > 0) db.DeepCloneObjects(ids, newId, new IdMapping(), false);
+                if (!br.IsWriteEnabled) br.UpgradeOpen();
+                br.BlockTableRecord = newId;
+                Log.Info($"BarBlockEngine.OwnBtrForWrite: {oldBtr.Name} ({live} ref.) → własny {name} dla {br.Handle}");
+                return (BlockTableRecord)tr.GetObject(newId, OpenMode.ForWrite);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("BarBlockEngine.OwnBtrForWrite", ex);
+                return (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+            }
+        }
 
         private static void EraseAllInBtr(Transaction tr, BlockTableRecord btr)
         {

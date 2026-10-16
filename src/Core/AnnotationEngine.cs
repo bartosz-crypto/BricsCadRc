@@ -438,7 +438,7 @@ namespace BricsCadRc.Core
             pts = ApplyElbow(bar, pts, offset);
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
-            var btr = (BlockTableRecord)tr.GetObject(brRw.BlockTableRecord, OpenMode.ForWrite);
+            var btr = BarBlockEngine.OwnBtrForWrite(tr, brRw);
             var ids = new List<ObjectId>();
             foreach (ObjectId oid in btr) if (!oid.IsErased) ids.Add(oid);
             foreach (var oid in ids) ((DBObject)tr.GetObject(oid, OpenMode.ForWrite)).Erase();
@@ -869,8 +869,7 @@ namespace BricsCadRc.Core
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
             // Kasuj stare: Line (Continuous, ColorIndex=7) i DBText
-            var btr = (BlockTableRecord)tr.GetObject(
-                brRw.BlockTableRecord, OpenMode.ForWrite);
+            var btr = BarBlockEngine.OwnBtrForWrite(tr, brRw);
             var idsToErase = new List<ObjectId>();
             foreach (ObjectId eid in btr)
             {
@@ -986,8 +985,7 @@ namespace BricsCadRc.Core
 
             bar.LeaderPoints = EncodeLeaderPoints(pts);
 
-            var btr = (BlockTableRecord)tr.GetObject(
-                brRw.BlockTableRecord, OpenMode.ForWrite);
+            var btr = BarBlockEngine.OwnBtrForWrite(tr, brRw);
             var idsToErase = new List<ObjectId>();
             foreach (ObjectId eid in btr)
             {
@@ -1403,7 +1401,7 @@ namespace BricsCadRc.Core
             // Zaktualizuj kółko złamania — usuń stare (jeśli istnieje) i dodaj nowe
             if (xHoriz || yHoriz)
             {
-                var btrForCircles = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                var btrForCircles = BarBlockEngine.OwnBtrForWrite(tr, br);
                 EraseJunctionDots(tr, btrForCircles);   // kropka zejścia odnośnika (koło + SOLID) — razem, bez osieroconego SOLID
 
                 // Zbierz i usuń kółka złamania (nie-prętowe)
@@ -1471,7 +1469,7 @@ namespace BricsCadRc.Core
                     }
                 }
 
-                var btrWriteStem = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                var btrWriteStem = BarBlockEngine.OwnBtrForWrite(tr, br);
                 if (stemLine != null)
                 {
                     stemLine.UpgradeOpen();
@@ -1516,7 +1514,7 @@ namespace BricsCadRc.Core
                     }
                 }
 
-                var btrWriteStem2 = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForWrite);
+                var btrWriteStem2 = BarBlockEngine.OwnBtrForWrite(tr, br);
                 if (stemLine != null)
                 {
                     stemLine.UpgradeOpen();
@@ -1610,7 +1608,7 @@ namespace BricsCadRc.Core
             }
 
             updatedBar.Angle = annotBr.Rotation;   // geometria leadera/tekstu zależy od obrotu bloku annotacji
-            var btr = (BlockTableRecord)tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite);
+            var btr = BarBlockEngine.OwnBtrForWrite(tr, annotBr);
 
             // Wymazanie calej zawartosci BTR
             var ids = new List<ObjectId>();
@@ -1658,7 +1656,7 @@ namespace BricsCadRc.Core
             if (annotBr == null || barData == null || db == null) return;
 
             using var tr = db.TransactionManager.StartTransaction();
-            var btr = tr.GetObject(annotBr.BlockTableRecord, OpenMode.ForWrite) as BlockTableRecord;
+            var btr = BarBlockEngine.OwnBtrForWrite(tr, annotBr);
             if (btr == null) { tr.Commit(); return; }
 
             // 1. Kasuj dist line, doty, strzałki, ticki, leader, text — cały BTR.
@@ -1740,14 +1738,22 @@ namespace BricsCadRc.Core
         {
             using var tr = db.TransactionManager.StartOpenCloseTransaction();
             var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+            ObjectId found = ObjectId.Null;
             foreach (ObjectId oid in space)
             {
                 if (oid.IsErased) continue;
                 if (!(tr.GetObject(oid, OpenMode.ForRead) is BlockReference br)) continue;
                 var data = ReadAnnotXData(br);
-                if (data != null && data.Mark == mark) return oid;
+                // Zgłoszenie kolegi 2026-10-16: kopia rozkładu bez opisu (puste AnnotHandle) przebudowywała opis ORYGINAŁU
+                // o tym samym Mark. Teraz tylko opis bez powiązania z rozkładem (stary rysunek) i jedyny z tym Mark.
+                if (data != null && data.Mark == mark)
+                {
+                    if (!string.IsNullOrEmpty(data.SourceBlockHandle)) continue;   // opis innego rozkładu
+                    if (found != ObjectId.Null) return ObjectId.Null;              // kilka — nie zgadujemy
+                    found = oid;
+                }
             }
-            return ObjectId.Null;
+            return found;
         }
 
         // ----------------------------------------------------------------
