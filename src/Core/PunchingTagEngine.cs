@@ -118,7 +118,7 @@ namespace BricsCadRc.Core
         }
 
         // ----------------------------------------------------------------
-        // DeleteSummaryBars — erase all 501/502 summary entities.
+        // DeleteSummaryBars — erase all summary entities (RC_PH [SUMMARY] tag or legacy 501/502).
         // Called at start of RC_PUNCHING_SUMMARY_BARS for idempotent re-runs.
         // ----------------------------------------------------------------
 
@@ -134,7 +134,7 @@ namespace BricsCadRc.Core
                 var ms = (BlockTableRecord)tr.GetObject(
                     bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
 
-                // Phase 1a: find RC_SINGLE_BAR polylines with Mark = "H12-501" / "H16-502"
+                // Phase 1a: find RC_SINGLE_BAR summary bars (tag RC_PH SUMMARY, legacy Mark "H12-501" / "H16-502")
                 var summaryPolylineHandles = new HashSet<long>();
                 var toErase = new HashSet<long>();
 
@@ -142,7 +142,8 @@ namespace BricsCadRc.Core
                 foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
                 {
                     var sxd = be.Read();
-                    if (sxd == null || !IsSummaryMark(sxd.Mark)) continue;
+                    // pręt oznaczony RC_PH [SUMMARY] (numer z serii 101+) albo dawny „H12-501” / „H16-502”
+                    if (sxd == null || !(PunchingAutoEngine.IsSummaryTagged(be.Entity, out _) || IsSummaryMark(sxd.Mark))) continue;
 
                     summaryPolylineHandles.Add(be.Entity.Handle.Value);
                     toErase.Add(be.Entity.Handle.Value);

@@ -48,12 +48,14 @@ namespace BricsCadRc.App
                 Large("Opening Detail", "RC_OPENING_DETAIL", "opening",
                     "Opening detail: DETAIL 'n' frame on the plan plus H16 bars and U-bars around the opening."),
                 Large("Punching", "RC_PUNCHING_AUTO", "punching",
-                    "Punching detailing: PH1–9 tags at piles, detail notes (APPLICABLE FOR), bars 501 / 502 for the BBS. Uses the report and plot loaded with Import Analysis; without it asks for the xlsx report."),
+                    "Punching detailing: PH1–9 tags at piles, detail notes (APPLICABLE FOR), summary bars H12 / H16 for the BBS (top series 101+). Uses the report and plot loaded with Import Analysis; without it asks for the xlsx report."),
                 Column(
                     Small("3D Model", "RC_MODEL_3D", "model3d",
                         "Preview 3D model of the slab reinforcement (B1, B2, UB, T1, T2, concrete with openings, piles) next to the drawing."),
                     Small("Summary Bars", "RC_PUNCHING_SUMMARY_BARS", "summary_bars",
-                        "Summary bars 501 / 502 from PH zone counts."))));
+                        "Summary bars H12 L2250 / H16 L2500 from PH zone counts (top series 101+)."),
+                    Small("Update PH", "RC_PH_UPDATE", "update",
+                        "Update PH details: bar labels (e.g. 7 H12-113-200 T) get the numbers of the summary bars on the drawing (H12 L2250, H16 L2500); PH titles centred. Use after changing a bar number."))));
 
             // 3. Bars — ręczne pręty
             tab.Panels.Add(Panel("Bars", "RC_PANEL_BAR",

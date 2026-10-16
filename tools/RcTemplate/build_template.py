@@ -12,6 +12,16 @@ import sys, re, gzip, io
 import ezdxf
 from ezdxf import bbox
 
+def normalize_title(t):
+    """Jak PhDetailRules.NormalizeTitle (C#): łamanie po „PHn” przed „EXTRA BARS”, akapity do środka, bez ^I
+    (decyzja użytkownika 2026-10-16)."""
+    t = re.sub(r'(PILE\s+CONDITION\s+PH\s*[1-9])(?!\d)[ \t]+(?=EXTRA\s+BARS)', lambda m: m.group(1) + '\\P', t, flags=re.I)
+    t = re.sub(r'\\p([^;\\]*);', lambda m: '\\p' + re.sub(r'(^x|^|,)q[^,]*', lambda k: k.group(1) + 'qc', m.group(1)) + ';', t)
+    t = t.replace('^I', '')
+    if 'qc;' not in t and 'qc,' not in t:
+        t = '\\pxqc;' + t
+    return t
+
 src, out = sys.argv[1], sys.argv[2]
 doc = ezdxf.readfile(src)
 msp = doc.modelspace()
@@ -35,7 +45,7 @@ for e in list(msp):
             t = e.text
             t = re.sub(r'EXTRA BARS \([^)]*\)', 'EXTRA BARS (N/A)', t)
             t = re.sub(r'APPLICABLE\s+FOR\s+PILE(?:/S|S)?[^\\}]*', 'APPLICABLE FOR PILES N/A', t)
-            e.text = t
+            e.text = normalize_title(t) if re.search(r'PILE\s+CONDITION\s+PH\d', t) else t
     else:
         msp.delete_entity(e)
 print('model: kept', keep, 'PH area', round(x0), round(y0), round(x1), round(y1))

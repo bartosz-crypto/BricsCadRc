@@ -16,7 +16,9 @@ namespace BricsCadRc.Core
     ///      Reentrant, FAIL / SHEAR RAILS albo nieznane zbrojenie,
     ///   4. na planie: tag PHn + kreskowanie pala (XData RC_PH — ponowne uruchomienie czyści poprzednie),
     ///   5. szablony detali (MText na AP-TEXT): „(nNo LOCATIONS)” i „APPLICABLE FOR PILES …”; nieużyte przekreślone,
-    ///   6. liczby prętów do BBS: 501 = H12 L2250 × 14 (PH1–3), 502 = H16 L2500 × 14 (PH4–6) / × 28 (PH7–9).
+    ///   6. liczby prętów do BBS: H12 L2250 × 14 (PH1–3), H16 L2500 × 14 (PH4–6) / × 28 (PH7–9) — numery z serii
+    ///      górnej (101+): istniejący pręt o tym samym Ø i długości → ten sam numer, inaczej następny wolny,
+    ///   7. opisy prętów w detalach („7 H12-113-200 T”) → numer użytego pręta (<see cref="UpdateDetails"/>, RC_PH_UPDATE).
     /// </summary>
     public static class PunchingAutoEngine
     {
@@ -28,6 +30,9 @@ namespace BricsCadRc.Core
         public const string TemplateLayer = "AP-TEXT";
         public const string NotUsedLayer  = "AP-NOTUSED";
         public const string TagStyle      = "WYG_0MS";
+
+        /// <summary>XData RC_PH [kod] pręta zbiorczego przebicia (pręt w elewacji) — [2] = średnica.</summary>
+        public const string SummaryCode = "SUMMARY";
 
         public const int BarsPerDetail      = 14;   // 7 + 7 prętów (H12@200 / H16@200)
         public const int BarsPerDetailDense = 28;   // 14 + 14 prętów (H16@100)
@@ -259,7 +264,8 @@ namespace BricsCadRc.Core
                             string code0 = v.Length > 1 ? v[1].Value as string : "";
                             string pile0 = v.Length > 2 ? v[2].Value as string : "";
                             string plot0 = v.Length > 3 ? v[3].Value as string : "";
-                            erase = code0 == "NOTUSED"
+                            erase = code0 == SummaryCode ? false   // pręty zbiorcze — osobno (DeleteSummaryBars)
+                                 : code0 == "NOTUSED"
                                  || string.Equals(plot0, plotKey, StringComparison.OrdinalIgnoreCase)
                                  || (!string.IsNullOrEmpty(pile0) && plotPiles.Contains(pile0))
                                  || code0 == "MANUAL-NOTE" && !PlotLabelRules.IsReportPlotKey(plot0);   // notatka bez płyty (stara wersja)
@@ -372,7 +378,7 @@ namespace BricsCadRc.Core
                             : n == 1 ? "APPLICABLE FOR PILE " + list[0]
                                      : "APPLICABLE FOR PILES " + string.Join(", ", list);
                 string loc = n == 0 ? "(N/A)" : n == 1 ? "(1No LOCATION)" : $"({n}No LOCATIONS)";
-                string upd = applRx.Replace(raw, appl.Replace("$", "$$"), 1);
+                string upd = PhDetailRules.NormalizeTitle(applRx.Replace(raw, appl.Replace("$", "$$"), 1));
                 if (locRx.IsMatch(upd)) upd = locRx.Replace(upd, loc, 1);
                 else st.Warnings.Add($"Szablon {ph}: brak „(nNo LOCATIONS)” — liczba lokalizacji nie wpisana.");
                 if (upd != raw) { mt.UpgradeOpen(); mt.Contents = upd; }
@@ -383,7 +389,7 @@ namespace BricsCadRc.Core
                     // Nieużyty detal: przekreślenie (usuwane przy kolejnym uruchomieniu)
                     try
                     {
-                        var e = mt.GeometricExtents;
+                        var e = TextBox(mt);
                         foreach (var (a, b) in new[] { (e.MinPoint, e.MaxPoint),
                                                        (new Point3d(e.MinPoint.X, e.MaxPoint.Y, 0), new Point3d(e.MaxPoint.X, e.MinPoint.Y, 0)) })
                         {
@@ -399,6 +405,216 @@ namespace BricsCadRc.Core
             }
             if (seen.Count == 0)
                 st.Warnings.Add("Brak szablonów detali PH1–PH9 (MText na AP-TEXT z „APPLICABLE FOR PILES”) — opisy detali nie zaktualizowane.");
+        }
+
+        /// <summary>
+        /// Zakres samego tekstu MText (fragmenty po rozbiciu), nie ramki o szerokości MText — przekreślenie trafia w tytuł
+        /// także gdy ramka jest szersza niż tekst (PH1 w szablonie). Błąd rozbicia → GeometricExtents.
+        /// </summary>
+        private static Extents3d TextBox(MText mt)
+        {
+            try
+            {
+                using (var parts = new DBObjectCollection())
+                {
+                    mt.Explode(parts);
+                    Extents3d? box = null;
+                    foreach (DBObject o in parts)
+                    {
+                        try
+                        {
+                            if (o is Entity pe)
+                            {
+                                var x = pe.GeometricExtents;
+                                if (box == null) box = x;
+                                else { var b = box.Value; b.AddExtents(x); box = b; }
+                            }
+                        }
+                        catch (System.Exception ex) { Log.Error("PunchingAuto.TextBox.Part", ex); }
+                        finally { o.Dispose(); }
+                    }
+                    if (box != null) return box.Value;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("PunchingAuto.TextBox", ex); }
+            return mt.GeometricExtents;
+        }
+
+        // ----------------------------------------------------------------
+        // Pręty zbiorcze i opisy detali (RC_PH_UPDATE)
+        // ----------------------------------------------------------------
+
+        /// <summary>Wynik aktualizacji detali PH.</summary>
+        public sealed class DetailStats
+        {
+            public int Titles, Labels, LabelsChanged;
+            public Dictionary<int, int> Numbers = new Dictionary<int, int>();
+            public List<string> Warnings = new List<string>();
+        }
+
+        /// <summary>Czy encja jest prętem zbiorczym przebicia (XData RC_PH [SUMMARY]); dia — średnica z tagu.</summary>
+        public static bool IsSummaryTagged(Entity e, out int dia)
+        {
+            dia = 0;
+            using (var rb = e.GetXDataForApplication(XApp))
+            {
+                if (rb == null) return false;
+                var v = rb.AsArray();
+                if (v.Length < 2 || !(v[1].Value is string c) || c != SummaryCode) return false;
+                if (v.Length > 2 && v[2].Value is string d) int.TryParse(d, out dia);
+                return true;
+            }
+        }
+
+        /// <summary>Oznacza pręt zbiorczy przebicia (XData RC_PH). Encja otwarta do zapisu.</summary>
+        public static void TagSummary(Transaction tr, Database db, Entity e, int dia)
+        {
+            EnsureApp(tr, db);
+            e.XData = new ResultBuffer(
+                new TypedValue((int)DxfCode.ExtendedDataRegAppName, XApp),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, SummaryCode),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, dia.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, ""));
+        }
+
+        /// <summary>Pręty z rysunku (Ø, kształt, A, numer, czy zbiorczy przebicia) — polilinie i pręty-bloki.</summary>
+        private static List<(int Dia, string Shape, double LengthA, int Nr, bool Summary)> ScanBars(Transaction tr, Database db)
+        {
+            var list = new List<(int, string, double, int, bool)>();
+            foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+            {
+                var b = be.Read();
+                if (b == null) continue;
+                int nr = SingleBarEngine.ExtractPosNr(b.Mark);
+                if (nr <= 0) continue;
+                list.Add((b.Diameter, b.ShapeCode, b.LengthA, nr, IsSummaryTagged(be.Entity, out _)));
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// Numery nowych prętów zbiorczych (przed usunięciem poprzednich): istniejący pręt o tym samym Ø i długości
+        /// w serii górnej 101–499 (także poprzedni pręt zbiorczy) → ten sam numer; inaczej następny wolny numer
+        /// serii górnej (<see cref="PositionCounter.NextAutoTop"/>).
+        /// </summary>
+        /// <remarks><paramref name="reused"/>: opisy prętów, których numer wzięto z istniejącego pręta (nie z poprzedniego
+        /// pręta zbiorczego) — do ostrzeżenia w okienku (decyzja użytkownika 2026-10-16).</remarks>
+        public static Dictionary<int, int> ResolveSummaryNumbers(Database db, IEnumerable<int> dias, List<string> reused = null)
+        {
+            List<(int Dia, string Shape, double LengthA, int Nr, bool Summary)> bars;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                bars = ScanBars(tr, db);
+                tr.Commit();
+            }
+            var used = PositionCounter.GetUsedPositionNumbers(db);
+            var res = new Dictionary<int, int>();
+            foreach (int dia in dias)
+            {
+                double len = PhDetailRules.SummaryLength(dia);
+                int nr = PhDetailRules.PickNumber(dia, len, bars.Select(b => (b.Dia, b.Shape, b.LengthA, b.Nr)),
+                    PositionCounter.TopSeriesStart, PositionCounter.SeparateSeriesStart,
+                    () => PositionCounter.NextAutoTop(db, used));
+                used.Add(nr);
+                res[dia] = nr;
+                if (bars.Any(b => !b.Summary && b.Nr == nr && b.Dia == dia))
+                    reused?.Add($"H{dia} L{len:F0}: taki sam pręt już istnieje na rysunku — użyty jego numer {nr:D2} (H{dia}-{nr:D2}).");
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Numery prętów zbiorczych na rysunku (do opisów detali): pręt oznaczony RC_PH [SUMMARY] tej średnicy, inaczej
+        /// pręt prosty o tym Ø i długości (seria górna, potem dawne 501/502). Kilka różnych numerów — ostrzeżenie, najmniejszy.
+        /// </summary>
+        public static Dictionary<int, int> FindSummaryNumbers(Database db, List<string> warnings)
+        {
+            List<(int Dia, string Shape, double LengthA, int Nr, bool Summary)> bars;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                bars = ScanBars(tr, db);
+                tr.Commit();
+            }
+            var res = new Dictionary<int, int>();
+            foreach (var (dia, len) in PhDetailRules.SummaryBars)
+            {
+                bool Fits(int d, string sh, double a)
+                    => d == dia && string.Equals(string.IsNullOrEmpty(sh) ? "00" : sh, "00", StringComparison.OrdinalIgnoreCase)
+                       && Math.Abs(a - len) <= 1.0;
+                var nums = bars.Where(b => b.Summary && b.Dia == dia).Select(b => b.Nr).Distinct().OrderBy(n => n).ToList();
+                if (nums.Count == 0)
+                    nums = bars.Where(b => Fits(b.Dia, b.Shape, b.LengthA) && b.Nr >= PositionCounter.TopSeriesStart
+                                           && b.Nr < PositionCounter.SeparateSeriesStart)
+                               .Select(b => b.Nr).Distinct().OrderBy(n => n).ToList();
+                if (nums.Count == 0)
+                    nums = bars.Where(b => Fits(b.Dia, b.Shape, b.LengthA) && b.Nr >= PositionCounter.SeparateSeriesStart)
+                               .Select(b => b.Nr).Distinct().OrderBy(n => n).ToList();
+                if (nums.Count == 0) continue;
+                if (nums.Count > 1)
+                    warnings?.Add($"H{dia} L{len:F0}: kilka numerów prętów ({string.Join(", ", nums)}) — w opisach detali użyty {nums[0]}.");
+                res[dia] = nums[0];
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Detale PH na rysunku: tytuły (łamanie po „PHn”, wyśrodkowanie) i opisy prętów „7 H12-113-200 T” →
+        /// numery prętów zbiorczych z rysunku (<see cref="FindSummaryNumbers"/>). Opisy brane z warstwy
+        /// <see cref="PhDetailRules.LabelLayer"/> w obszarze detali (obwiednia tytułów PH, jak w szablonie).
+        /// Dokument musi być zablokowany.
+        /// </summary>
+        public static DetailStats UpdateDetails(Database db)
+        {
+            var st = new DetailStats();
+            st.Numbers = FindSummaryNumbers(db, st.Warnings);
+            var titleRx = new Regex(@"PILE\s+CONDITION\s+PH\s*[1-9]", RegexOptions.IgnoreCase);
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+                var labels = new List<ObjectId>();
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased) continue;
+                    var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent is MText mt && mt.Layer.Equals(TemplateLayer, StringComparison.OrdinalIgnoreCase)
+                        && titleRx.IsMatch(mt.Text ?? ""))
+                    {
+                        x0 = Math.Min(x0, mt.Location.X); x1 = Math.Max(x1, mt.Location.X);
+                        y0 = Math.Min(y0, mt.Location.Y); y1 = Math.Max(y1, mt.Location.Y);
+                        string upd = PhDetailRules.NormalizeTitle(mt.Contents ?? "");
+                        if (upd != mt.Contents) { mt.UpgradeOpen(); mt.Contents = upd; st.Titles++; }
+                    }
+                    else if (ent != null && (ent is MText || ent is DBText)
+                             && ent.Layer.Equals(PhDetailRules.LabelLayer, StringComparison.OrdinalIgnoreCase))
+                        labels.Add(id);
+                }
+                if (x0 == double.MaxValue)
+                    st.Warnings.Add("Brak detali PH1–PH9 (tytuły „… PILE CONDITION PHn” na AP-TEXT) — opisy prętów nie zaktualizowane.");
+                else if (st.Numbers.Count == 0)
+                    st.Warnings.Add("Brak prętów zbiorczych przebicia (H12 L2250 / H16 L2500) — opisy prętów w detalach bez zmian.");
+                else
+                {
+                    // obszar detali jak w szablonie (build_template.py): tytuły −2500 / +6000 w X, −2000 / +6000 w Y
+                    x0 -= 2500; x1 += 6000; y0 -= 2000; y1 += 6000;
+                    foreach (var id in labels)
+                    {
+                        var ent = (Entity)tr.GetObject(id, OpenMode.ForRead);
+                        Point3d p = ent is MText m ? m.Location : ((DBText)ent).Position;
+                        if (p.X < x0 || p.X > x1 || p.Y < y0 || p.Y > y1) continue;
+                        string raw = ent is MText m2 ? m2.Contents ?? "" : ((DBText)ent).TextString ?? "";
+                        if (!PhDetailRules.IsBarLabel(raw)) continue;
+                        st.Labels++;
+                        string upd = PhDetailRules.ReplaceBarNumber(raw, st.Numbers);
+                        if (upd == raw) continue;
+                        ent.UpgradeOpen();
+                        if (ent is MText m3) m3.Contents = upd; else ((DBText)ent).TextString = upd;
+                        st.LabelsChanged++;
+                    }
+                }
+                tr.Commit();
+            }
+            return st;
         }
 
         public static List<string> SortIds(IEnumerable<string> ids)
@@ -425,7 +641,7 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, plotKey ?? ""));
         }
 
-        private static void EnsureApp(Transaction tr, Database db)
+        internal static void EnsureApp(Transaction tr, Database db)
         {
             var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
             if (rat.Has(XApp)) return;

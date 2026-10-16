@@ -432,7 +432,7 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   boczny H10 L5500 = B1 H10 L5500 siatki, pręt w nibie H16 L5500 = BB H16 L5500 — wspólny numer; BTR rozkładu siatki dostaje wtedy
   sufiks unikalnej nazwy).
 - `PositionCounter.NextAuto(db, used)` = max(licznik w rysunku, max użyty < 500) + 1, min. 4,
-  pomija zajęte. Seria **501+** (przebicie) nie podbija licznika.
+  pomija zajęte. Seria **501+** (dawne pręty przebicia; od 2026-10-16 przebicie w serii 101+) nie podbija licznika.
 - Jeden numer = jeden kształt pręta. Pręt, któremu zmieniono wymiary, a jego numer ma inny pręt
   o innych wymiarach → dostaje numer istniejącej identycznej pozycji albo nowy (`PositionReconciler`).
   UB i 501+ nie są przenumerowywane.
@@ -583,8 +583,19 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   MANUAL: Util > 100 %, Reentrant, FAIL / SHEAR RAILS, nieznane zbrojenie — tag MANUAL (czerwony) + notatka nad płytą.
 - Ponowne uruchomienie czyści poprzednie tagi/kreskowanie tej płyty i przekreślenia szablonów.
 - Szablony detali (MText AP-TEXT): „(nNo LOCATIONS)”, „APPLICABLE FOR PILES …” (tylko do końca akapitu).
-- Pręty do BBS: 501 = H12 L2250 × 14 na detal PH1–3; 502 = H16 L2500 × 14 (PH4–6) / × 28 (PH7–9).
-  Poprzednie 501/502 usuwane dopiero po wskazaniu punktów (Esc nic nie kasuje).
+- Pręty do BBS: H12 L2250 × 14 na detal PH1–3; H16 L2500 × 14 (PH4–6) / × 28 (PH7–9).
+  Poprzednie pręty zbiorcze usuwane dopiero po wskazaniu punktów (Esc nic nie kasuje).
+- **Numery prętów zbiorczych (decyzja użytkownika 2026-10-16; dawniej 501 / 502):** seria górna 101+ — istniejący pręt prosty
+  o tym samym Ø i długości w serii 101–499 (także poprzedni pręt zbiorczy) → ten sam numer, inaczej następny wolny
+  (`NextAutoTop`; ostatni 105 → 106 / 107). Numery liczone przed usunięciem poprzednich prętów (`ResolveSummaryNumbers`).
+  Pręt w elewacji ma XData `RC_PH` [SUMMARY, Ø] — po nim usuwane przy ponownym uruchomieniu (dawne „H12-501” / „H16-502” też).
+- Detale PH (`PhDetailRules`, `PunchingAutoEngine.UpdateDetails`, komenda **RC_PH_UPDATE**, wstążka „Update PH”):
+  opisy prętów „7 H12-113-200 T” (warstwa „AutoCAD_Structural_Detailing_Distribution description”, obszar detali =
+  obwiednia tytułów PH −2500/+6000 X, −2000/+6000 Y) dostają numer pręta zbiorczego tej średnicy z rysunku (tag SUMMARY,
+  potem pręt H12 L2250 / H16 L2500 serii 101+, potem 501+). Wywoływane też na końcu RC_PUNCHING_AUTO i SUMMARY_BARS.
+  Tytuły: „… PILE CONDITION PHn” w 1. linii, „EXTRA BARS (…)” od 2., wszystkie akapity wyśrodkowane (q* → qc, bez ^I) —
+  także w szablonie rc-template.dxf.gz. Przekreślenie nieużytego detalu po zakresie samego tekstu (rozbite fragmenty MText),
+  nie ramki MText (PH1 ma szerszą ramkę).
 
 ## 4c. Import map zbrojenia (RC_IMPORT_MAP) — jak ASD-IMR
 - Plik …_punching_reinf_maps.dxf: kolumny płyt (PH-SLAB-HEADER „PLOT …”), ramki PH-FRAME, rodzaj mapy wg

@@ -55,6 +55,7 @@
     <Compile Include="..\src\Core\BeamDetailRules.cs" />
     <Compile Include="..\src\Core\AddReinfPlanner.cs" />
     <Compile Include="..\src\Core\TopLapSearch.cs" />
+    <Compile Include="..\src\Core\PhDetailRules.cs" />
   </ItemGroup>
 
 </Project>

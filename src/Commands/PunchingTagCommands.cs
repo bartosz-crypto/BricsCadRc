@@ -46,24 +46,29 @@ namespace BricsCadRc.Commands
                 if (Application.ShowModalWindow(dlg) != true) return;
 
                 // Punkty PRZED usunięciem poprzednich prętów — Esc nie kasuje poprzedniego wyniku
-                var placements = new List<(int posNr, int realCount, Point3d insertPt)>();
+                var placements = new List<(int dia, int realCount, Point3d insertPt)>();
                 if (dlg.Wants501)
                 {
-                    var ptRes = ed.GetPoint("\nClick placement point for Poz. 501 (H12 × 2250mm): ");
+                    var ptRes = ed.GetPoint("\nClick placement point for H12 × 2250mm: ");
                     if (ptRes.Status != PromptStatus.OK) return;
-                    placements.Add((501, dlg.Count501, ptRes.Value));
+                    placements.Add((12, dlg.Count501, ptRes.Value));
                 }
                 if (dlg.Wants502)
                 {
-                    var ptRes = ed.GetPoint("\nClick placement point for Poz. 502 (H16 × 2500mm): ");
+                    var ptRes = ed.GetPoint("\nClick placement point for H16 × 2500mm: ");
                     if (ptRes.Status != PromptStatus.OK) return;
-                    placements.Add((502, dlg.Count502, ptRes.Value));
+                    placements.Add((16, dlg.Count502, ptRes.Value));
                 }
 
+                // Numery przed usunięciem poprzednich prętów — poprzedni pręt zbiorczy zachowuje swój numer
+                var reused = new List<string>();
+                var numbers = PunchingAutoEngine.ResolveSummaryNumbers(db, placements.Select(p => p.dia), reused);
+                WarnReused(reused);
                 int prevErased = PunchingTagEngine.DeleteSummaryBars(doc);
                 if (prevErased > 0)
                     ed.WriteMessage($"\n[RC_PUNCHING_SUMMARY_BARS] Removed {prevErased} entities from previous run.");
-                PlaceSummaryBars(doc, placements, "[RC_PUNCHING_SUMMARY_BARS]");
+                PlaceSummaryBars(doc, placements, numbers, "[RC_PUNCHING_SUMMARY_BARS]");
+                ReportDetails(doc, "[RC_PUNCHING_SUMMARY_BARS]", null);
             }
             catch (System.Exception ex)
             {
@@ -73,26 +78,40 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
-        /// Pręty zbiorcze do BBS: 501 = H12 L2250, 502 = H16 L2500. Pręt w elewacji + rozkład z 1 prętem
+        /// Pręty zbiorcze do BBS: H12 L2250, H16 L2500. Pręt w elewacji + rozkład z 1 prętem
         /// na rysunku, prawdziwa liczba w CountDisplay (BBS liczy EffectiveCount).
+        /// Numery z <paramref name="numbers"/> (Ø → numer, <see cref="PunchingAutoEngine.ResolveSummaryNumbers"/>):
+        /// seria górna 101+, istniejący pręt o tym samym Ø i długości → ten sam numer (decyzja użytkownika 2026-10-16;
+        /// dawniej 501 / 502). Pręt w elewacji oznaczony XData RC_PH [SUMMARY, Ø].
         /// </summary>
-        public static void PlaceSummaryBars(Document doc, List<(int posNr, int realCount, Point3d insertPt)> placements, string tag)
+        public static void PlaceSummaryBars(Document doc, List<(int dia, int realCount, Point3d insertPt)> placements,
+                                            Dictionary<int, int> numbers, string tag)
         {
             var db = doc.Database;
             var ed = doc.Editor;
             using (doc.LockDocument())
             {
-                foreach (var (posNr, realCount, insertPt) in placements)
+                foreach (var (dia, realCount, insertPt) in placements)
                 {
                     if (realCount <= 0) continue;
-                    int    dia     = posNr == 501 ? 12 : 16;
-                    double lenA    = posNr == 501 ? 2250.0 : 2500.0;
+                    double lenA = PhDetailRules.SummaryLength(dia);
+                    if (lenA <= 0 || !numbers.TryGetValue(dia, out int posNr) || posNr <= 0)
+                    {
+                        ed.WriteMessage($"\n{tag} Brak numeru pręta H{dia} — pominięty.");
+                        continue;
+                    }
                     const  string layerCode = "T1";
 
                     // 1) RC_BAR — elevation polyline
                     var elevBar = BuildSummaryBarData(dia, posNr, lenA, layerCode);
-                    elevBar.Mark = BarData.FormatMark(dia, posNr, 0, 1);  // "H12-501"
+                    elevBar.Mark = BarData.FormatMark(dia, posNr, 0, 1);  // "H12-106"
                     ObjectId barId = SingleBarEngine.PlaceBar(db, elevBar, insertPt);
+                    using (var trTag = db.TransactionManager.StartTransaction())
+                    {
+                        if (trTag.GetObject(barId, OpenMode.ForWrite) is Entity barTag)
+                            PunchingAutoEngine.TagSummary(trTag, db, barTag, dia);
+                        trTag.Commit();
+                    }
 
                     // 2) Elevation label: arrow at bar body, text above-right
                     Point3d textPt = new Point3d(insertPt.X + lenA * 0.5, insertPt.Y + 200.0, 0);
@@ -118,7 +137,7 @@ namespace BricsCadRc.Commands
                     }
 
                     // 3) RC_DISTRIBUTION — 1 bar drawn visually, realCount in XData.
-                    //    Opis bez sztucznego rozstawu (1 pręt na rysunku): „N H12-501”.
+                    //    Opis bez sztucznego rozstawu (1 pręt na rysunku): „N H12-106”.
                     var distBar = BuildSummaryBarData(dia, posNr, lenA, layerCode);
                     distBar.Mark            = BarData.FormatMark(dia, posNr, 0, 1);
                     distBar.Spacing         = 1000.0;
@@ -169,7 +188,7 @@ namespace BricsCadRc.Commands
                     if (annotResult.BlockRefId != ObjectId.Null)
                         BarBlockEngine.LinkAnnotation(db, barResult.BlockRefId, annotResult.BlockRefId);
 
-                    // 5) Seria 501+ — nie podnosi licznika (PositionCounter pomija serię oddzielną)
+                    // 5) Seria górna 101+ — nie podnosi licznika dołu (PositionCounter.Increment ją pomija)
                     PositionCounter.CommitUsed(db, posNr);
 
                     ed.WriteMessage($"\n{tag} Poz. {posNr}: {realCount} × {distBar.Mark} L={lenA:F0}");
@@ -274,7 +293,7 @@ namespace BricsCadRc.Commands
                 sb.AppendLine();
                 sb.AppendLine($"Tagi: {stats.Tagged}, MANUAL: {stats.Manual}, usunięte stare: {stats.Cleaned}.");
                 sb.AppendLine($"Szablony detali: {stats.TemplatesUpdated} zaktualizowane, {stats.TemplatesCrossed} nieużyte (przekreślone).");
-                sb.AppendLine($"BBS: 501 = {res.Bars501} × H12 L2250, 502 = {res.Bars502} × H16 L2500.");
+                sb.AppendLine($"BBS: {res.Bars501} × H12 L2250, {res.Bars502} × H16 L2500 (numery z serii górnej 101+).");
                 sb.AppendLine();
                 sb.AppendLine("Pal | Typ | Util | Reinf. | PH");
                 foreach (var it in res.Items.OrderBy(i => i.Code).ThenBy(i => i.R.PileId))
@@ -282,23 +301,28 @@ namespace BricsCadRc.Commands
 
                 foreach (var line in sb.ToString().Split('\n').Take(16)) ed.WriteMessage($"\n{T} {line.TrimEnd()}");
 
-                // Pręty zbiorcze 501/502 (Enter = pomiń)
-                var placements = new List<(int posNr, int realCount, Point3d insertPt)>();
-                foreach (var (pos, n, desc) in new[] { (501, res.Bars501, "H12 L=2250"), (502, res.Bars502, "H16 L=2500") })
+                // Pręty zbiorcze H12 / H16 (Enter = pomiń) — numery z serii górnej 101+
+                var placements = new List<(int dia, int realCount, Point3d insertPt)>();
+                foreach (var (dia, n, desc) in new[] { (12, res.Bars501, "H12 L=2250"), (16, res.Bars502, "H16 L=2500") })
                 {
                     if (n <= 0) continue;
-                    var ppo = new PromptPointOptions($"\n{T} Punkt dla prętów {pos} ({n} × {desc}) do BBS <Enter = pomiń>: ")
+                    var ppo = new PromptPointOptions($"\n{T} Punkt dla prętów {desc} ({n} szt.) do BBS <Enter = pomiń>: ")
                         { AllowNone = true };
                     var ppr = ed.GetPoint(ppo);
                     if (ppr.Status == PromptStatus.Cancel) break;
-                    if (ppr.Status == PromptStatus.OK) placements.Add((pos, n, ppr.Value));
+                    if (ppr.Status == PromptStatus.OK) placements.Add((dia, n, ppr.Value));
                 }
                 if (placements.Count > 0)
                 {
+                    var reused = new List<string>();
+                    var numbers = PunchingAutoEngine.ResolveSummaryNumbers(db, placements.Select(p => p.dia), reused);
+                    WarnReused(reused);
+                    warnings.AddRange(reused);
                     int prev = PunchingTagEngine.DeleteSummaryBars(doc);
-                    if (prev > 0) ed.WriteMessage($"\n{T} Usunięto poprzednie pręty 501/502 ({prev} obiektów).");
-                    PlaceSummaryBars(doc, placements, T);
+                    if (prev > 0) ed.WriteMessage($"\n{T} Usunięto poprzednie pręty zbiorcze ({prev} obiektów).");
+                    PlaceSummaryBars(doc, placements, numbers, T);
                 }
+                ReportDetails(doc, T, warnings);
 
                 Application.ShowModalWindow(new PunchingTagResultsDialog(sb.ToString().TrimEnd(), warnings));
                 ed.WriteMessage($"\n{T} Gotowe.\n");
@@ -308,6 +332,58 @@ namespace BricsCadRc.Commands
                 Log.Error("RC_PUNCHING_AUTO", ex);
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
             }
+        }
+
+        // ----------------------------------------------------------------
+        // RC_PH_UPDATE — opisy detali PH po zmianie numerów prętów
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Aktualizacja detali PH: opisy prętów „7 H12-113-200 T” → numery prętów zbiorczych z rysunku (H12 L2250,
+        /// H16 L2500), tytuły „… PILE CONDITION PHn” / „EXTRA BARS …” wyśrodkowane. Po zmianie numeru pręta.
+        /// </summary>
+        [CommandMethod("RC_PH_UPDATE")]
+        public static void RcPhUpdate()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            try
+            {
+                ReportDetails(doc, "[RC PH UPDATE]", null);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_PH_UPDATE", ex);
+                doc.Editor.WriteMessage($"\n[RC PH UPDATE] Błąd: {ex.Message}\n");
+            }
+        }
+
+        /// <summary>Aktualizacja detali PH + komunikat w linii poleceń; ostrzeżenia do <paramref name="warnings"/> (null → linia poleceń).</summary>
+        private static void ReportDetails(Document doc, string tag, List<string> warnings)
+        {
+            var ed = doc.Editor;
+            PunchingAutoEngine.DetailStats st;
+            using (doc.LockDocument())
+                st = PunchingAutoEngine.UpdateDetails(doc.Database);
+            string nums = st.Numbers.Count == 0 ? "brak"
+                : string.Join(", ", st.Numbers.OrderBy(k => k.Key).Select(k => $"H{k.Key} = {k.Value:D2}"));
+            ed.WriteMessage($"\n{tag} Detale PH: pręty {nums}; opisy prętów {st.LabelsChanged} zmienione z {st.Labels}"
+                          + (st.Titles > 0 ? $", tytuły {st.Titles} poprawione" : "") + ".");
+            foreach (var w in st.Warnings)
+            {
+                if (warnings != null) warnings.Add(w);
+                else ed.WriteMessage($"\n  {w}");
+            }
+        }
+
+        /// <summary>Okienko z ostrzeżeniem: pręt zbiorczy dostał numer istniejącego, takiego samego pręta.</summary>
+        private static void WarnReused(List<string> reused)
+        {
+            if (reused == null || reused.Count == 0) return;
+            System.Windows.MessageBox.Show(
+                string.Join("\n", reused) + "\n\nPręty przebicia będą liczone w BBS razem z istniejącą pozycją.",
+                "Punching — pręt już istnieje",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
 
         private static BarData BuildSummaryBarData(

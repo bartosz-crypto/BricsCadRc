@@ -31,11 +31,11 @@ namespace BricsCadRc.Dialogs
                 $"PH3: {ph("PH3"),-6}  PH6: {ph("PH6"),-6}  PH9: {ph("PH9")}";
 
             string s501 = Count501 > 0
-                ? $"Poz. 501: H12 × 2250mm × {Count501}"
-                : "Poz. 501: (skip — 0 piles)";
+                ? $"H12 × 2250mm × {Count501} (nr z serii 101+)"
+                : "H12 × 2250mm: (skip — 0 piles)";
             string s502 = Count502 > 0
-                ? $"Poz. 502: H16 × 2500mm × {Count502}"
-                : "Poz. 502: (skip — 0 piles)";
+                ? $"H16 × 2500mm × {Count502} (nr z serii 101+)"
+                : "H16 × 2500mm: (skip — 0 piles)";
             SummaryBlock.Text = s501 + "\n" + s502;
 
             bool anyActive = Count501 > 0 || Count502 > 0;
