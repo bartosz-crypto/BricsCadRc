@@ -710,6 +710,17 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (opis UB jest w połowie), odnośnik ze środka linii rozkładu wzdłuż prętów za krawędź (cały tekst za płytą, min. 600 — 2026-10-15), tekst wzdłuż odnośnika; widoczny (reprezentatywny) pręt UB ADD obok środka, nie pod odnośnikiem. Wymaga wygenerowanych UB; po ponownym UB uruchom ADD jeszcze raz.
 
 ## 4g. Przekrój płyty (RC_SECTION) — rzeczywiste cięcie
+**Decyzja Bartka 2026-10-16 (SectionPlanner.Version 6):** pale — cięcie przecina pal → rzeczywiste położenie (cięciwa); nie przecina,
+a pal jest ≤ 4000 od znacznika (wzdłuż odcinka cięcia) → jeden pal (pełna średnica) z osią 500 od najbliższej krawędzi płyty
+(jak na typowych A-A / B-B). Styl pala jak na typowych przekrojach: głowica 30 w betonie (czerwona przerywana: góra skala 3,
+boki skala 1), trzon 226 pod spodem (s-Pile), urwanie — łuki w dół na całej szerokości + łuk w górę na lewej połowie, oś CENTER
+skala 7,5. Opisy kropek pod kropką; nie przecinają linii pala (boki i oś są przeszkodami — opis między linią a osią dozwolony).
+T IN NIB w nibie płyty — pręty dwóch kierunków warstwami: spinka UB 03 w widoku z kierunku 1 (kod …1) → kropki T IN NIB LEŻĄ NA
+jej górnym ramieniu; z kierunku 2 (kod …2) → kropki POD górnym ramieniem (w środku spinki). Przekrój z belką bez zmian (pod ramieniem
+UB 03, decyzja 2026-10-14).
+Kropka T IN NIB nie wchodzi w inny pręt w widoku (zagięcie / ramię UB 02 w przekroju w drugim kierunku) — odsunięcie wzdłuż
+ramienia UB 03 do styku lic (`ClearDotOfBars`). Przekrój z nibem: nad przekrojem opis „NOMINAL TOP COVER TO NIB REINFORCEMENT- 30mm”
+(SD-Text, kolor 2, ROMANS NARROW 60, ramka 1107 × 217, jak na typowym A-A; względem krawędzi nibu i wierzchu płyty).
 **Decyzja Bartka 2026-10-14 (SectionPlanner.Version 5):** przekrój „w 1 warstwie” — pręty jednego kierunku (proste siatki i ramiona
 U-barów) na jednej linii poziomu swojej warstwy, bez odsunięcia zakładów Z2 (`OffsetLaps` wyłączone; od 5895ac7 pręt prosty przy
 U-barze odsuwany o 25 w głąb — B1 lądował nad B2, kropki na prętach). Symbole zakończeń S1 (kreska 45°) bez zmian. Obrys pręta

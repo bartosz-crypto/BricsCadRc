@@ -70,7 +70,7 @@ namespace BricsCadRc.Tests
 
         // ── wejścia ─────────────────────────────────────────────────────
 
-        private static List<(double X, double Y)> Rect(double x0, double y0, double x1, double y1)
+        internal static List<(double X, double Y)> Rect(double x0, double y0, double x1, double y1)
             => new List<(double X, double Y)> { (x0, y0), (x1, y0), (x1, y1), (x0, y1) };
 
         internal static SectionPlanner.Dist D(string mark, string layer, bool alongX, double x0, double y0, double lenA, double span,
@@ -254,25 +254,27 @@ namespace BricsCadRc.Tests
         /// <summary>Skróty zapisane na niezmienionym kodzie SectionPlanner (przed polami Used* / Source*).</summary>
         private static readonly Dictionary<string, string> Golden = new Dictionary<string, string>
         {
-            ["nib"]      = "0815e56d32a92f640f660a1bc9f6ab7213064d0dd3fd7946b752f6a47fa4f13f",
+            // v6 (2026-10-16, decyzja użytkownika): nib / nib-S1 — T IN NIB leży na górnym ramieniu UB 03 (−126 → −104); piles / beam / beam-S1 /
+            // along-S1 — pal: głowica 30 (było 35), 226 pod spodem (było 230), opisy nie przecinają linii pala (boki, oś) — sprawdzone na zrzutach
+            ["nib"]      = "1ce474bc46cbd49b2db8443094b87a3e02e31430024a7e8602f9ee1ac6caaa11",
             ["hole"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
-            ["piles"]    = "e62159df1d8a97d4402e43e2746a34ddd7757689d0fa221837fb35744c928832",
+            ["piles"]    = "849730a0fbbd4c1bfcadb2fe7965c68eca27e19d21756de563e2c163a0bbe4c8",
             ["vertical"] = "b7d453c9093a86c4321faf50aeeec03595182eb84263d1da37ed2c37b8fb85d2",
             ["fitshape"] = "6dfb28cfe9e7068c845c0e3044b357f7457cf890f53f24fbfd38ff5657dd9452",
             // plan belek E5 + E4b (2026-10-10): przekrój przez belkę — zapisany po przejrzeniu zrzutu (profil, kropki, strzemię, boczne, nib, wymiary);
             // poprawki recenzji: + UB 03 i T IN NIB w wejściu, BN w narożach spinki, T IN NIB w trzonie na poziomie płyty;
             // otuliny belki 2026-10-10 (boki 45, dół 50): strzemię 265 × 510, kropki 223 … 697 / −307; K2 (PLAN_BELKI_PRAKTYKA): bez
             // ostrzeżenia o otulinie UB 03 (jedyna różnica względem 644610bd… — sprawdzone: zrzut + dawna linia WARN = dawny skrót)
-            ["beam"]     = "eb07af0055adbcfeed79e007f8cbc0e6d96ee4b494b3074058ab995bd578c6bc",
+            ["beam"]     = "ede9186b58eec69ebbd72ded2109ba8dc137e4353880e660244900a21d42abe9",
             // wersja 3 (zakończenia prętów Z1–Z6, decyzja użytkownika 2026-10-11) — zapisane po przejrzeniu zrzutów (render: kreski
             // do wnętrza, w betonie, zasięg prętów bez zmian, zakład T1 104 / B1 05 odsunięty o 25, UB 01 / 03 — symbole na wolnych końcach,
             // strzemię bez symboli); „hole” w stylach = „hole” bez stylu (Z4: pręty przechodzą przez otwór / urwanie);
             // kreska 30 mm (2026-10-11): względem 50 mm zmieniają się tylko linie BAR z kreskami (ramię skrócone o 30/√2), opisy bez zmian
-            ["nib-S1"]      = "31757be0577b581dd00527b062fa1b06a453ce101ea8ed2d68487f1532694d23",   // v5 (2026-10-14): bez odsunięcia zakładów
+            ["nib-S1"]      = "83ced0f4f23dc14d247499ffb7375317f252229aee0f8769519814fef0434337",   // v5 (2026-10-14): bez odsunięcia zakładów
             ["hole-S1"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
             ["fitshape-S1"] = "523c042c8ab58617cc9f3cb2355ce1a0cb4f8331d411b5d7bcdeb16b64c5131d",
-            ["beam-S1"]     = "c36a28a18d10e020b6c92dbf8b076a3aadaa744acf0a462f078d3bbd9d00fdda",
-            ["along-S1"]    = "fec85f72176d52dbb82b64000ca4095377af7304b9630097ac3c062ac660a8f8",   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
+            ["beam-S1"]     = "a149fa28faf2ff9161213e18c76a50cb06500f0ee6911329f153574ca3734cca",
+            ["along-S1"]    = "a802e5c780f85315bab3461b04395d632f1eb3f383b583d6bfc81e3627be942a",   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
         };
 
         [TestCaseSource(nameof(Cases))]

@@ -30,8 +30,10 @@ namespace BricsCadRc.Core
         /// i top” — nowy rodzaj rozkładu BN „2+1 … T+B IN NIB” (3 kropki); rozkłady starsze (T IN NIB, B IN NIB) bez zmian — wersja nadal 4.
         /// Wersja 5 (2026-10-14): bez odsunięcia zakładów Z2 — pręty jednego kierunku (proste i U-bary) na jednej linii poziomu;
         /// obrys pręta w narożnikach (zagięcia, kreski S1) — dokładne ścięcie po dwusiecznej normalnych (krawędzie równoległe do osi).
+        /// Wersja 6 (2026-10-16): pal jak na typowych A-A / B-B (głowica 30, 226 pod spodem), pal ≤ 4000 od znacznika bez przecięcia —
+        /// z osią 500 od krawędzi; T IN NIB w nibie płyty leży na górnym ramieniu UB 03; opisy kropek nie przecinają linii pala.
         /// </summary>
-        public const int Version = 5;
+        public const int Version = 6;
 
         /// <summary>
         /// Styl symbolu zakończenia pręta w widoku (Z1–Z6, decyzja użytkownika 2026-10-11): None — bez symboli (dawny rysunek, złote testy
@@ -196,6 +198,8 @@ namespace BricsCadRc.Core
             public List<(double U, double V)> Outline;
             /// <summary>Bez własnego opisu (drugie strzemię 4-cięte — jeden opis pozycji; decyzja użytkownika 2026-10-11).</summary>
             internal bool NoLabel;
+            /// <summary>Kod warstwy rozkładu (B1 / B2 / T1 / T2 …) — kierunek pręta w widoku (T IN NIB, 2026-10-16).</summary>
+            internal string Code;
         }
 
         public sealed class Pile
@@ -288,8 +292,12 @@ namespace BricsCadRc.Core
         public const double TextHeight   = 50.0;   // 2.5 mm w 1:20
         public const double LabelGap     = 15.0;
         public const double LabelRowStep = 75.0;
-        public const double PileEmbed    = 35.0;
-        public const double PileDepth    = 230.0;
+        // pal jak na typowych przekrojach A-A / B-B (decyzja 2026-10-16): głowica 30 w płycie, 226 poniżej spodu
+        public const double PileEmbed    = 30.0;
+        public const double PileDepth    = 226.0;
+        /// <summary>Pal w pobliżu cięcia (≤ 4000 od znacznika, nie przecięty) — rysowany z osią 500 od krawędzi płyty (decyzja 2026-10-16).</summary>
+        public const double PileNearDist = 4000.0;
+        public const double PileNearEdge = 500.0;
         /// <summary>Wymiary: linia wymiarowa poziomego (szerokość nibu) nad wierzchem płyty, pionowych — od krawędzi.</summary>
         public const double DimHorizV    = 300.0;
         public const double DimOffset    = 250.0;
@@ -561,7 +569,7 @@ namespace BricsCadRc.Core
                                 bool open = Dist2(axis[0], axis[axis.Count - 1]) > 1.0;
                                 res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, dia),
                                                            Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Kind = d.Kind,
-                                                           End0 = open, End1 = open });
+                                                           End0 = open, End1 = open, Code = d.LayerCode });
                                 MarkUsed(res, d);
                                 continue;
                             }
@@ -576,7 +584,7 @@ namespace BricsCadRc.Core
                                 if (part.Count >= 2)
                                 {
                                     res.Bars.Add(RealEnds(new BarLine { Path = part, Outline = OutlineOf(part, dia),
-                                                                        Diameter = d.Diameter, PosNr = d.PosNr, Top = top }, endA, endB));
+                                                                        Diameter = d.Diameter, PosNr = d.PosNr, Top = top, Code = d.LayerCode }, endA, endB));
                                     MarkUsed(res, d);
                                 }
                         }
@@ -593,17 +601,24 @@ namespace BricsCadRc.Core
             //     reszta co rozstaw nominalny — jakby nibu nie było. Krawędź bez nibu: pierwszy pręt na otulinie.
             AlignMesh(res, inp, InConcrete, bands);
 
-            // T IN NIB w spince UB 03: tuż pod jej górnym ramieniem (jak na rysunkach ASD)
+            // T IN NIB w nibie PŁYTY (decyzja 2026-10-16): pręty dwóch kierunków w nibie leżą warstwami — spinka UB 03 w widoku z kierunku 1
+            // (kod …1, warstwa górna) → kropki T IN NIB NA jej górnym ramieniu; z kierunku 2 (kod …2, warstwa niższa) → kropki POD górnym
+            // ramieniem (w środku spinki). Bez spinki pod kropką — otulina wierzchu nibu. Przekrój z belką (decyzja 2026-10-14) — pod ramieniem.
             foreach (var dot in res.Dots.Where(x => x.TinNib))
             {
-                // belka (E5): T IN NIB w trzonie belki zostaje na poziomie płyty (BeamNibShift) — nie pod ramieniem UB 03
+                // belka (E5): T IN NIB w trzonie belki zostaje na poziomie płyty (BeamNibShift) — nie przy ramieniu UB 03
                 if (bands.Any(b => dot.U > b.U0 + 0.5 && dot.U < b.U1 - 0.5)) continue;
                 var hp = res.Bars.Where(b => b.Kind == DistKind.NibUB)
                                  .Where(b => b.Path.Min(q => q.U) - 1 <= dot.U && b.Path.Max(q => q.U) + 1 >= dot.U)
                                  .FirstOrDefault();
                 if (hp == null) continue;
                 double topLeg = hp.Path.Max(q => q.V);
-                dot.V = topLeg - hp.Diameter / 2.0 - dot.Diameter / 2.0;
+                bool under = bands.Count > 0 || Dir(hp.Code) == "2";
+                dot.V = under ? topLeg - hp.Diameter / 2.0 - dot.Diameter / 2.0
+                              : topLeg + hp.Diameter / 2.0 + dot.Diameter / 2.0;
+                // decyzja 2026-10-16 (przekrój w drugim kierunku): kropka nie może wchodzić w inny pręt w widoku (zagięcie / ramię UB 02)
+                // — przesunięcie w poziomie wzdłuż ramienia UB 03, po tej stronie, po której już leży, do styku lic
+                if (bands.Count == 0) ClearDotOfBars(res, dot, hp);
             }
 
             // 3b. Kolizje: kropka nie może leżeć na pionowym ramieniu pręta w widoku (np. UB) — przesunięcie w głąb płyty
@@ -626,6 +641,42 @@ namespace BricsCadRc.Core
                     res.Piles.Add(new Pile { U = u, Width = 2 * hw, Top = bot + PileEmbed, Bottom = bot - PileDepth, Base = bot });
                     res.UsedPiles.Add((px, py, r));
                 }
+
+            // 4b. Decyzja 2026-10-16: cięcie nie przecina żadnego pala, a w odległości ≤ 4000 od znacznika (wzdłuż odcinka cięcia) jest
+            //     pal — jeden pal (pełna średnica) z osią 500 od najbliższej krawędzi płyty (jak na typowych A-A / B-B)
+            if (inp.DrawPiles && res.Piles.Count == 0)
+            {
+                (double px, double py, double r, double along, double dd)? near = null;
+                foreach (var (px, py, r) in inp.Piles)
+                {
+                    double perp = inp.CutAlongX ? py : px, along = inp.CutAlongX ? px : py;
+                    double dd = Math.Abs(perp - c);
+                    if (dd > PileNearDist || along < s0 || along > s1) continue;
+                    if (near == null || dd < near.Value.dd) near = (px, py, r, along, dd);
+                }
+                if (near.HasValue)
+                {
+                    double ua = U(near.Value.along);
+                    double best = double.MaxValue, uPile = double.NaN;
+                    foreach (var sg in res.Segments)
+                        foreach (var (uE, kind, inward) in new[] { (sg.U0, sg.End0, +1), (sg.U1, sg.End1, -1) })
+                        {
+                            if (kind != EndKind.Edge || Math.Abs(ua - uE) >= best) continue;
+                            double u = uE + inward * PileNearEdge;
+                            if (u <= Math.Min(sg.U0, sg.U1) || u >= Math.Max(sg.U0, sg.U1)) continue;
+                            best = Math.Abs(ua - uE); uPile = u;
+                        }
+                    if (!double.IsNaN(uPile))
+                    {
+                        double bot = BotAt(uPile);
+                        if (InConcrete(uPile, bot + 1.0))
+                        {
+                            res.Piles.Add(new Pile { U = uPile, Width = 2 * near.Value.r, Top = bot + PileEmbed, Bottom = bot - PileDepth, Base = bot });
+                            res.UsedPiles.Add((near.Value.px, near.Value.py, near.Value.r));
+                        }
+                    }
+                }
+            }
 
             // 5. Wymiary: grubość przy lewym końcu, nib (szerokość, uskok, wysokość) przy każdym końcu z nibem
             var first = res.Segments.First();
@@ -1260,6 +1311,11 @@ namespace BricsCadRc.Core
                 occupied.Add((sg.U0 + sg.Nib0, -T, sg.U1 - sg.Nib1, 0));
                 occupied.Add((sg.U0, -T, sg.U1, vNibTop));
             }
+            // decyzja 2026-10-16 (poprawka): opisy nie przecinają LINII pala — boki i oś (od głowicy do urwania) są przeszkodami;
+            // opis pod kropką wewnątrz obrysu pala, między linią a osią, jest dozwolony (jak na typowym przekroju)
+            foreach (var pl in res.Piles)
+                foreach (double lu in new[] { pl.U - pl.Width / 2, pl.U, pl.U + pl.Width / 2 })
+                    occupied.Add((lu, pl.Bottom - 40, lu, pl.Top + 35));
             int fixedCount = occupied.Count;
             double TopAt(double u)
             {
@@ -1317,6 +1373,7 @@ namespace BricsCadRc.Core
                     var shifts = !dot.Top && row == 0 && !Free(dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight)
                                  && FreeOfLabels(dot.U - w / 2, vb, dot.U + w / 2, vb + TextHeight)
                         ? new[] { 0.0, -15, 15, -30, 30, -45, 45, -60, 60 } : new[] { 0.0 };
+
                     foreach (double du in shifts)
                     {
                         double u = dot.U + du;
@@ -1871,6 +1928,39 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Kropka na pionowym ramieniu pręta w widoku (np. UB) → odsunięcie od ramienia po swojej stronie.</summary>
+        /// <summary>Kropka (T IN NIB na UB 03) z dala od pozostałych prętów w widoku: odsunięcie w poziomie co 2 mm (maks. 150).</summary>
+        private static void ClearDotOfBars(Result res, Dot dot, BarLine rest)
+        {
+            double Dist(BarLine b, double u, double v)
+            {
+                double best = double.MaxValue;
+                for (int i = 0; i + 1 < b.Path.Count; i++)
+                {
+                    var (au, av) = b.Path[i]; var (bu, bv) = b.Path[i + 1];
+                    double du = bu - au, dv = bv - av, l2 = du * du + dv * dv;
+                    double t = l2 < 1e-12 ? 0 : Math.Max(0, Math.Min(1, ((u - au) * du + (v - av) * dv) / l2));
+                    double x = au + t * du - u, y = av + t * dv - v;
+                    best = Math.Min(best, Math.Sqrt(x * x + y * y));
+                }
+                return best;
+            }
+            BarLine Hit(double u) => res.Bars.FirstOrDefault(b => b != rest && b.Path.Count > 1
+                                                             && Dist(b, u, dot.V) < (dot.Diameter + b.Diameter) / 2.0 + 1.0);
+            var hit = Hit(dot.U);
+            if (hit == null) return;
+            // kierunek: od najbliższego punktu przeszkody
+            double cu = hit.Path.OrderBy(q => Math.Abs(q.V - dot.V) + Math.Abs(q.U - dot.U)).First().U;
+            int sgn = dot.U >= cu ? 1 : -1;
+            double uMin = rest.Path.Min(q => q.U), uMax = rest.Path.Max(q => q.U);
+            for (double k = 2; k <= 150; k += 2)
+                foreach (int sg in new[] { sgn, -sgn })
+                {
+                    double u = dot.U + sg * k;
+                    if (u < uMin || u > uMax) continue;
+                    if (Hit(u) == null) { dot.U = u; return; }
+                }
+        }
+
         private static void ResolveDotCollisions(Result res)
         {
             foreach (var dot in res.Dots)

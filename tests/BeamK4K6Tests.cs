@@ -210,7 +210,7 @@ namespace BricsCadRc.Tests
             Assert.That(r.Bars.Any(b => b.PosNr == "09" || b.PosNr == "10"), Is.False);
             // wersja 4 (2026-10-11: siatka równoległa do belki nie wchodzi w belkę — bez kropek w trzonie; decyzja „do 40mm side cover”
             // zmienia tylko wejście — wersja bez zmian); BC / BU nadal pominięte
-            Assert.That(SectionPlanner.Version, Is.EqualTo(5));
+            Assert.That(SectionPlanner.Version, Is.EqualTo(6));   // 2026-10-16: pale, T IN NIB w nibie płyty, opisy przy palu
         }
 
         // ── decyzje użytkownika 2026-10-11: pręty płyty RÓWNOLEGŁE do belki nie wchodzą w belkę (E2), PROSTOPADŁE wchodzą w belkę

@@ -70,7 +70,7 @@ namespace BricsCadRc.Tests
             var r = SectionPlanner.Plan(SectionPlannerGoldenTests.CaseBeam());
             var pile = r.Piles.Single();
             Assert.That(pile.Base, Is.EqualTo(-375));
-            Assert.That(pile.Top, Is.EqualTo(-340));
+            Assert.That(pile.Top, Is.EqualTo(-375 + SectionPlanner.PileEmbed));   // głowica w betonie (30 od 2026-10-16)
             // nib belki: uskok 225 (0 → −225) i wysokość 150; H = 375 (dalej od krawędzi), szerokość 600 pod belką; grubość płyty na prawym końcu
             Assert.That(r.Dims.Any(d => d.Vertical && d.V1 == 0 && d.V2 == -225 && d.LineU == -250), Is.True);
             Assert.That(r.Dims.Any(d => d.Vertical && d.V1 == -225 && d.V2 == -375 && d.LineU == -250), Is.True);

@@ -16,6 +16,8 @@ namespace BricsCadRc.Core
     public static partial class AutoRebarEngine
     {
         public const string SectionMarkLayer = "SD-SECTION";
+        /// <summary>Opis otuliny nibu nad przekrojem (decyzja 2026-10-16) — warstwa jak na typowym A-A.</summary>
+        public const string NibNoteLayer = "SD-Text";
         public const string SectionSlabLayer = "s-Slab";
         public const string SectionPileLayer = "s-Pile";
         public const string SectionBarLayer  = "RC-SECTION-BARS";
@@ -573,9 +575,11 @@ namespace BricsCadRc.Core
                     Tag("PILE", "PILE#" + idx++);
                     double l = p.U - p.Width / 2, rr = p.U + p.Width / 2;
                     double pb = double.IsNaN(p.Base) ? -T : p.Base;   // spód betonu nad palem (belka E5: −H; bez belki = −T)
-                    Add(Ln(l, p.Top, rr, p.Top, SectionPileLayer, "DASHED", 3));
-                    Add(Ln(l, pb, l, p.Top, SectionPileLayer, "DASHED", 3));
-                    Add(Ln(rr, pb, rr, p.Top, SectionPileLayer, "DASHED", 3));
+                    // jak na typowych A-A / B-B (decyzja 2026-10-16): głowica w betonie — czerwona przerywana (górna skala 3, boki 1),
+                    // trzon ciągły (warstwa), urwanie u dołu: łuki w dół na całej szerokości + łuk w górę na LEWEJ połowie, oś CENTER skala 7,5
+                    Add(Ln(l, p.Top, rr, p.Top, SectionPileLayer, "DASHED", 3, 1));
+                    Add(Ln(l, pb, l, p.Top, SectionPileLayer, "DASHED", 1, 1));
+                    Add(Ln(rr, pb, rr, p.Top, SectionPileLayer, "DASHED", 1, 1));
                     Add(Ln(l, pb, l, p.Bottom, SectionPileLayer));
                     Add(Ln(rr, pb, rr, p.Bottom, SectionPileLayer));
                     const double bulge = 0.426;
@@ -585,11 +589,11 @@ namespace BricsCadRc.Core
                     low.AddVertexAt(2, new Point2d(ox + rr, oy + p.Bottom), 0, 0, 0);
                     Add(low);
                     var up = new Polyline { Layer = SectionPileLayer };
-                    up.AddVertexAt(0, new Point2d(ox + p.U, oy + p.Bottom), -bulge, 0, 0);
-                    up.AddVertexAt(1, new Point2d(ox + rr, oy + p.Bottom), 0, 0, 0);
+                    up.AddVertexAt(0, new Point2d(ox + l, oy + p.Bottom), -bulge, 0, 0);
+                    up.AddVertexAt(1, new Point2d(ox + p.U, oy + p.Bottom), 0, 0, 0);
                     Add(up);
-                    // oś pala jak na rysunkach ASD: warstwa SD-Pile, CENTER, skala linii 2, kolor czerwony
-                    Add(Ln(p.U, p.Top + 33, p.U, p.Bottom - 35, AxisLayer, "CENTER", 2, 1));
+                    // oś pala: warstwa SD-Pile, CENTER, skala linii 7,5, kolor czerwony
+                    Add(Ln(p.U, p.Top + 33, p.U, p.Bottom - 35, AxisLayer, "CENTER", 7.5, 1));
                 }
 
                 // Wymiary
@@ -667,6 +671,34 @@ namespace BricsCadRc.Core
                         Location = W(tu + 26, 117), Attachment = AttachmentPoint.TopLeft, ColorIndex = 2
                     };
                     Add(sslTxt);
+                }
+
+                // decyzja 2026-10-16: przekrój z nibem — nad przekrojem opis otuliny nibu, DOKŁADNIE jak na typowym A-A (SD-Text, kolor 2,
+                // ROMANS NARROW 60, ramka); położenie względem krawędzi nibu i wierzchu płyty (prawy nib; lewy — lustrzanie)
+                {
+                    var nibSeg = r.Segments.FirstOrDefault(x => x.Nib1 > 0) ?? r.Segments.FirstOrDefault(x => x.Nib0 > 0);
+                    if (nibSeg != null)
+                    {
+                        bool right = nibSeg.Nib1 > 0;
+                        double uE = right ? nibSeg.U1 : nibSeg.U0;
+                        const double fw = 1107.069, fOut = 46.509, fv0 = 505.939, fv1 = 723.11, tIn = 27.122, tDown = 25.607;
+                        double f0 = right ? uE + fOut - fw : uE - fOut, f1 = f0 + fw;
+                        EnsureSectionLayer(tr, db, NibNoteLayer, 2);
+                        Tag("NIBNOTE", "NIBNOTE.FRAME");
+                        var fr = Pl(new List<(double, double)> { (f0, fv0), (f1, fv0), (f1, fv1), (f0, fv1) }, NibNoteLayer, true);
+                        fr.ColorIndex = 2; fr.LineWeight = LineWeight.LineWeight000;
+                        if (ltTable.Has("Continuous")) fr.Linetype = "Continuous";
+                        fr.LinetypeScale = 100;
+                        Add(fr);
+                        Tag("NIBNOTE", "NIBNOTE.TEXT");
+                        var nt = new MText
+                        {
+                            Contents = "\\A1;\\pxql;NOMINAL TOP COVER TO NIB\\PREINFORCEMENT- 30mm", TextHeight = 60, Width = 1079.946,
+                            Layer = NibNoteLayer, TextStyleId = textStyle, ColorIndex = 2, LineWeight = LineWeight.LineWeight000,
+                            Location = W(f0 + tIn, fv1 - tDown), Attachment = AttachmentPoint.TopLeft, LinetypeScale = 100
+                        };
+                        Add(nt);
+                    }
                 }
 
                 // Tytuł
