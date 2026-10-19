@@ -936,10 +936,22 @@ namespace BricsCadRc.Core
                     pts[pts.Count - 2] = pts[pts.Count - 2] + segD * (dT.X * segD.X + dT.Y * segD.Y);
                 }
             }
+            // 2026-10-19: leader prosty prostopadły do linii rozkładu (UB ADD — ze środka linii wzdłuż prętów), przesunięty
+            // w bok → kink na linii rozkładu w środku, dalej ślizga się po linii rozkładu (jak w ręcznym opisie)
+            Vector3d distAxis = bar.Direction == "X" ? Vector3d.YAxis : Vector3d.XAxis;
+            if (pts.Count == 2 && !oblique && Math.Abs(bar.SkewEnd - bar.SkewStart) < 1e-6 && perpLocal.Length > 1e-6)
+            {
+                var seg2 = pts[1] - pts[0];
+                bool alongAxis = bar.Direction == "X" ? Math.Abs(seg2.Y) >= Math.Abs(seg2.X) : Math.Abs(seg2.X) >= Math.Abs(seg2.Y);
+                if (!alongAxis) pts.Insert(1, pts[0]);
+            }
             if (pts.Count >= 3 && !skewArm)
             {
                 var armVec = pts[pts.Count - 2] - pts[0];
                 double armLen = armVec.Length;
+                // kink w samym środku linii rozkładu (ramię zerowe) — ślizga się po osi rozkładu (dawniej stał, a ostatni
+                // odcinek robił się skośny)
+                if (armLen <= 1e-9 && pts.Count == 3 && !oblique) { armVec = distAxis; armLen = 1.0; }
                 if (armLen > 1e-9)
                 {
                     var armDir = new Vector3d(armVec.X / armLen, armVec.Y / armLen, 0.0);
@@ -1027,24 +1039,51 @@ namespace BricsCadRc.Core
         /// </summary>
         private static void AddJunctionDot(Transaction tr, BlockTableRecord btr, Database db, BarData bar, List<Point3d> pts)
         {
+            string why = null;
             try
             {
-                if (bar == null || bar.Count <= 3 || bar.Spacing <= 0 || pts.Count < 3) return;
-                if (Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6) return;
-                var axis = bar.Direction == "X" ? Vector3d.YAxis : Vector3d.XAxis;
-                var perp = bar.Direction == "X" ? Vector3d.XAxis : Vector3d.YAxis;
-                Point3d p0 = pts[0];
-                bool OnAxis(Point3d p) => Math.Abs((p - p0).DotProduct(perp)) < 1.0;
+                string P() => string.Join(" ", pts.Select(p => $"({p.X:F0},{p.Y:F0})"));
+                if (bar == null || bar.Count <= 3 || bar.Spacing <= 0 || pts.Count < 2)
+                { why = $"count={bar?.Count} sp={bar?.Spacing:F0} pts={pts.Count}"; return; }
+                if (Math.Abs(bar.SkewEnd - bar.SkewStart) > 1e-6) { why = "skos"; return; }
+                // 2026-10-19: wszystko z RZECZYWISTEJ geometrii bloku opisu — linia rozkładu (końce = strzałki, > 3 pręty) i kropki
+                // widocznych prętów (koła na linii). Dawniej z założenia „pts[0] = środek, kropki wg VisibleIndices w XData” —
+                // kropka zejścia raz była, raz nie (zgłoszenie Bartka przy UB ADD).
+                Line dl = null;
+                var dots = new List<Point3d>();
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased) continue;
+                    var o = tr.GetObject(id, OpenMode.ForRead);
+                    if (dl == null && o is Line ln0 && IsDistributionLine(ln0, bar)) dl = ln0;
+                    else if (o is Circle c0) dots.Add(c0.Center);
+                }
+                if (dl == null) { why = "brak linii rozkładu"; return; }
+                Point3d a = dl.StartPoint, b = dl.EndPoint;
+                var ab = b - a;
+                double L = ab.Length;
+                if (L < 1e-6) { why = "linia zerowa"; return; }
+                var u = ab / L;
+                double Along(Point3d p) => (p - a).DotProduct(u);
+                bool OnLine(Point3d p)
+                {
+                    double t = Along(p);
+                    return t >= -1.0 && t <= L + 1.0 && (a + u * Math.Max(0, Math.Min(L, t)) - p).Length < 1.0;
+                }
+                if (!OnLine(pts[0])) { why = $"start poza linią pts={P()}"; return; }
                 int k = 0;
-                while (k + 1 < pts.Count && OnAxis(pts[k + 1])) k++;
-                if (k == 0 || k >= pts.Count - 1) return;               // prosto ze środka albo całość na osi
-                double s = (pts[k] - p0).DotProduct(axis);
-                double half = (bar.Count - 1) * bar.Spacing / 2.0;
-                if (Math.Abs(s) < 1.0 || Math.Abs(s) > half - Scaled(10.0, bar)) return;   // środek / za strzałką
-                // nie dubluj kropki widocznego pręta
-                var vis = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
-                foreach (int i in vis)
-                    if (Math.Abs(s + half - i * bar.Spacing) < Scaled(DotRadius, bar)) return;
+                while (k + 1 < pts.Count && OnLine(pts[k + 1])) k++;
+                if (k >= pts.Count - 1) { why = $"całość na linii pts={P()}"; return; }
+                // 2026-10-19 (Bartek: kropka od razu, także gdy odnośnik wychodzi prosto ze środka — UB ADD): zejście w punkcie k;
+                // odcinek dalej RÓWNOLEGŁY do linii rozkładu = odnośnik biegnie wzdłuż linii za strzałkę (siatka) — bez kropki
+                var segN = pts[k + 1] - pts[k];
+                if (segN.Length > 1e-6 && Math.Abs(segN.X * u.Y - segN.Y * u.X) / segN.Length < 0.02)
+                { why = $"wzdłuż linii za strzałkę pts={P()}"; return; }
+                double tk = Along(pts[k]);
+                double marg = Scaled(10.0, bar);
+                if (tk < marg || tk > L - marg) { why = $"na końcu / za strzałką t={tk:F0} L={L:F0}"; return; }
+                double r = Scaled(DotRadius, bar);
+                if (dots.Any(c => c.DistanceTo(pts[k]) < r)) { why = "kropka pręta w tym miejscu"; return; }
 
                 var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
                 if (!rat.Has(AnnotAppName))
@@ -1066,6 +1105,7 @@ namespace BricsCadRc.Core
                 }
             }
             catch (System.Exception ex) { Log.Error("AnnotationEngine.AddJunctionDot", ex); }
+            finally { Log.Info(why == null ? $"JunctionDot: {bar?.Mark} — kropka" : $"JunctionDot: {bar?.Mark} — bez kropki: {why}"); }
         }
 
         private static void EraseJunctionDots(Transaction tr, BlockTableRecord btr)

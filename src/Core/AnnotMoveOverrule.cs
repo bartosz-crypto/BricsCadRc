@@ -708,7 +708,15 @@ namespace BricsCadRc.Core
                     double projPerp  = offset.X * perpDir.X + offset.Y * perpDir.Y;
 
                     Vector3d perpShift, alongShift;
-                    if (pts.Count == 2)
+                    // 2026-10-19: leader prosty PROSTOPADŁY do linii rozkładu (UB ADD: ze środka linii wzdłuż prętów) —
+                    // przesunięcie w bok tworzy kink na linii rozkładu (UpdateLastSegmentWithShift), jak w ręcznym opisie;
+                    // leader prosty WZDŁUŻ linii rozkładu (siatka) — jak dotąd tylko wydłużanie
+                    bool segAlongAxis = barAnnot.Direction == "X" ? Math.Abs(segLocal.Y) >= Math.Abs(segLocal.X)
+                                                                  : Math.Abs(segLocal.X) >= Math.Abs(segLocal.Y);
+                    bool straightPerp = pts.Count == 2 && !segAlongAxis
+                                        && Math.Abs(barAnnot.SkewEnd - barAnnot.SkewStart) < 1e-6
+                                        && !AnnotationEngine.IsOblique(barAnnot.Angle);
+                    if (pts.Count == 2 && !straightPerp)
                     {
                         // Leader prosty bez kinku — tylko wydłużanie wzdłuż segmentu
                         perpShift  = new Vector3d(0, 0, 0);

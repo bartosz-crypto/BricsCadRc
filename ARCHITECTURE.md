@@ -566,7 +566,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (`BeamDetailLeaderArm` 2400 × skala). S-REG pokaże przesunięte opisy — oczekiwana różnica.
 - **Kropka zejścia odnośnika (decyzja 2026-10-16):** rozkład ze strzałkami (> 3 pręty), odnośnik biegnie najpierw wzdłuż linii rozkładu
   (opis przesunięty w bok) i schodzi z niej MIĘDZY strzałkami → kropka jak przy pręcie w punkcie zejścia (`AnnotationEngine.AddJunctionDot`,
-  XData RC_BAR_ANNOT [JDOT], przebudowywana z odnośnikiem). Bez kropki: prosto ze środka linii, zejście za strzałką, rozkład skośny.
+  XData RC_BAR_ANNOT [JDOT], przebudowywana z odnośnikiem). Od 2026-10-19 także odnośnik prosto z linii (np. UB ADD ze środka); liczone z geometrii BTR opisu (linia rozkładu, koła prętów). Bez kropki: odnośnik wzdłuż linii rozkładu za strzałkę (siatka), zejście za strzałką, w miejscu kropki pręta, rozkład skośny, ≤ 3 pręty.
 - **Poprawki ze zgłoszeń kolegi (2026-10-16):**
   - przebudowa rozkładu / opisu (`RebuildVisibility`, `Regenerate…`, `Rebuild…`, przebudowy odnośnika, tekst w RC_EDIT_LABEL) na
     WŁASNYM BTR — `BarBlockEngine.OwnBtrForWrite` klonuje BTR współdzielony przez kopie (przeciągnięcie z Ctrl, ROTATE/SCALE Copy,
@@ -584,6 +584,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   - Prepare GA: linie SD-PILED-RAFT też sklejane w pętle (tylko pętla obejmująca obrys); otwarte kawałki tuż za obrysem — ostrzeżenie
     „nib nie rozpoznany”.
   - Przekrój: poziom pręta z kodu warstwy (B1/B2/T1/T2) niezależnie od kierunku — bez zmian i bez komunikatu (decyzja użytkownika).
+- **Opis z odnośnikiem prostopadłym do linii rozkładu** (UB ADD: ze środka linii wzdłuż prętów, 2 punkty) — grip tekstu w bok
+  wstawia kink na linii rozkładu i przesuwa go po niej (2026-10-19, jak opis ręczny); kropka zejścia wg reguły wyżej. Kink w samym
+  środku (ramię zerowe) ślizga się po osi rozkładu. Generowanie — wszystkie ścieżki tworzą opisy przez `AnnotationEngine.CreateLeader`.
 - Kolizje opisów (AutoRebar, `PlaceLabel`): przeszkody = teksty (opisów i rysunku) **oraz linie opisów** (leadery,
   linie rozkładów); nowy leader nie może przecinać tekstów. Kolejność: warianty leadera (druga strona płyty; T IN NIB —
   prosto / załamanie wzdłuż krawędzi w obie strony, krótsza droga najpierw), każdy bez przesunięcia i z przesunięciem

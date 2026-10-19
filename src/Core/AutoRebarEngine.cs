@@ -4405,7 +4405,8 @@ namespace BricsCadRc.Core
             distBar.LeaderPoints = PlaceLabel(
                 ubCandidates, ref annotInsertPt,
                 $"{distBar.CountText} {distBar.Mark}", distBar.AnnotScale,
-                ubAlongMin, ubAlongMax, isXBars);
+                ubAlongMin, ubAlongMax, isXBars,
+                kinkHalfSpan: leaderEndAlong.HasValue ? Math.Max(0, distBar.BarsSpan) / 2.0 : 0);
             if (leaderEndAlong.HasValue)
             {
                 var fin = AnnotationEngine.DecodeLeaderPoints(distBar.LeaderPoints);
@@ -4637,7 +4638,7 @@ namespace BricsCadRc.Core
         /// z załamaniem: odcinek za załamaniem (tylko dalej od linii rozkładu).
         /// </summary>
         private static string PlaceLabel(List<string> candidates, ref Point3d annotInsertPt, string text,
-            double annotScale, double alongMin, double alongMax, bool barsAlongX)
+            double annotScale, double alongMin, double alongMax, bool barsAlongX, double kinkHalfSpan = 0)
         {
             candidates = candidates.Where(c => AnnotationEngine.DecodeLeaderPoints(c).Count >= 2).ToList();
             if (candidates.Count == 0) return "";
@@ -4714,7 +4715,15 @@ namespace BricsCadRc.Core
                         if (straight)
                         {
                             bool alongBars = barsAlongX ? vArm : !vArm;
-                            if (!alongBars) continue;
+                            if (!alongBars)
+                            {
+                                // 2026-10-19: odnośnik prosto ze środka linii rozkładu wzdłuż prętów (UB ADD) — w bok przez
+                                // załamanie NA linii rozkładu (między strzałkami), zamiast odlatywać daleko w model
+                                if (kinkHalfSpan <= 0 || k * step > kinkHalfSpan - 50.0) continue;
+                                var kinked = new List<Point3d> { pts[0], pts[0] + shift, pts[1] + shift };
+                                if (Free(annotInsertPt, kinked)) return Accept(annotInsertPt, kinked, ref annotInsertPt);
+                                continue;
+                            }
                             var ins2 = annotInsertPt + shift;
                             double along = barsAlongX ? ins2.X : ins2.Y;
                             if (along < alongMin || along > alongMax) continue;
