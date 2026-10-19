@@ -83,6 +83,8 @@ namespace BricsCadRc.App
 
             // 5. Schedule — BBS
             tab.Panels.Add(Panel("Schedule", "RC_PANEL_BBS",
+                Large("Layouts", "RC_LAYOUT", "layout",
+                    "Finished A1 sheets: viewports of the bottom / top plans (1:50), sections (1:20), used PH details and beam / opening details (1:25) on the sheet from Prepare GA. If it does not fit — further sheets with consecutive drawing numbers (bottom layer + sections, details, top layer + PH details). Title block TITLE_3 / SCALE, notes under nib sections and SEE DRG. references filled in. Run again to rebuild the sheets."),
                 Large("BBS", "RC_BBS", "bbs",
                     "Bar bending schedule (.xls, Speedeck template) straight from the drawing: preview with warnings, BOTTOM / TOP layouts, accessories from SLAB AREA."),
                 Column(

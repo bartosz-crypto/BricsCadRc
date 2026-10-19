@@ -232,6 +232,64 @@ namespace BricsCadRc.Core
             rep.Messages.Add($"layout arkusza „{name}” z szablonu (czysty: A1-BL, notatki ogólne, tabela rewizji; bez rzutni)");
         }
 
+        /// <summary>
+        /// RC_LAYOUT (decyzja użytkownika 2026-10-19): kolejny arkusz jako kopia arkusza bazowego — ustawienia wydruku z arkusza
+        /// bazowego, treść <paramref name="content"/> (obiekty przestrzeni papieru arkusza bazowego bez rzutni: A1-BL, notatki, tabela
+        /// rewizji) skopiowana DeepClone. Layout o tej nazwie — usuwany wcześniej. Zwraca layout i mapę oryginał → kopia.
+        /// Wywołanie w kontekście komendy (LayoutManager); na końcu aktywny jest nowy layout.
+        /// </summary>
+        internal static ObjectId CreateSheetFrom(Database db, ObjectId baseLayId, string name, int tabOrder, ObjectIdCollection content,
+                                                 Dictionary<ObjectId, ObjectId> clones, Report rep)
+        {
+            var lm = LayoutManager.Current;
+            try { lm.CurrentLayout = "Model"; } catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheetFrom.Model", ex); }
+            bool exists;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                exists = ((DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead)).Contains(name);
+                tr.Commit();
+            }
+            if (exists)
+            {
+                try { lm.DeleteLayout(name); }
+                catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheetFrom.Delete", ex); rep.Messages.Add($"layout „{name}” — nie usunięto ({ex.Message})"); name += "~new"; }
+            }
+            ObjectId layId = lm.CreateLayout(name);
+            // ustawienia wydruku na AKTYWNYM layoucie (jak CreateSheet)
+            try { lm.CurrentLayout = name; } catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheetFrom.Activate", ex); }
+            ObjectId psId;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var lay = (Layout)tr.GetObject(layId, OpenMode.ForWrite);
+                // „Create viewport in new layouts” — BricsCAD dokłada rzutnię całego modelu (2026-10-19: pusta rzutnia na arkuszu);
+                // zostaje tylko rzutnia arkusza (najmniejszy uchwyt)
+                var nbtr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
+                var vps = new List<ObjectId>();
+                foreach (ObjectId id in nbtr)
+                    if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Viewport) vps.Add(id);
+                foreach (var id in vps.OrderBy(v => v.Handle.Value).Skip(1))
+                    tr.GetObject(id, OpenMode.ForWrite).Erase();
+                CopyPlotSettings((Layout)tr.GetObject(baseLayId, OpenMode.ForRead), lay, rep);
+                try { lay.TabOrder = tabOrder; } catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheetFrom.Tab", ex); }
+                psId = lay.BlockTableRecordId;
+                tr.Commit();
+            }
+            if (content != null && content.Count > 0)
+                using (var map = new IdMapping())
+                {
+                    db.DeepCloneObjects(content, psId, map, false);
+                    foreach (IdPair p in map)
+                        if (p.IsCloned && p.IsPrimary && clones != null) clones[p.Key] = p.Value;
+                }
+            var silent = new Report();
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                CopyPlotSettings((Layout)tr.GetObject(baseLayId, OpenMode.ForRead), (Layout)tr.GetObject(layId, OpenMode.ForWrite), silent);
+                tr.Commit();
+            }
+            return layId;
+        }
+
         // ── Drawn / Checked / data (decyzja 2026-10-15) ─────────────────────────────
 
         /// <summary>Ostatnio wpisane „Drawn” / „Checked” (%APPDATA%\NaSmartRc\sheet.txt) — podpowiedź przy kolejnym RC_PRZYGOTUJ_GA.</summary>

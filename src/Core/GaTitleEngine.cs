@@ -86,7 +86,7 @@ namespace BricsCadRc.Core
             return null;
         }
 
-        private static IEnumerable<BlockReference> TitleBlocks(Transaction tr, ObjectId btrId)
+        internal static IEnumerable<BlockReference> TitleBlocks(Transaction tr, ObjectId btrId)
         {
             var btr = (BlockTableRecord)tr.GetObject(btrId, OpenMode.ForRead);
             foreach (ObjectId id in btr)
