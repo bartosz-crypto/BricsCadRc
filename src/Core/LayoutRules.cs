@@ -49,6 +49,9 @@ namespace BricsCadRc.Core
             public double W, H;
             /// <summary>Przekrój z nibem (na pierwszy arkusz w pierwszej kolejności).</summary>
             public bool Nib;
+            /// <summary>Przekrój: klucz detalu, na którym jest jego linia cięcia — na tym samym arkuszu co detal (decyzja Bartka
+            /// 2026-10-19); null — przekrój samodzielny.</summary>
+            public string Group;
             public override string ToString() => Key;
         }
 
@@ -81,6 +84,8 @@ namespace BricsCadRc.Core
             private readonly List<Rect> _free = new List<Rect>();
             private readonly Rect _area;
             public Packer(Rect area) { _area = area; _free.Add(area); }
+            public List<Rect> Snapshot() => new List<Rect>(_free);
+            public void Restore(List<Rect> free) { _free.Clear(); _free.AddRange(free); }
 
             /// <summary>Zajęcie prostokąta (z odstępem — wywołujący powiększa o Gap).</summary>
             public void Occupy(Rect r)
@@ -157,6 +162,21 @@ namespace BricsCadRc.Core
                 Fixed(it, new Rect(g.X0 + Gap / 2, g.Y0 + Gap / 2, g.X1 - Gap / 2, g.Y1 - Gap / 2));
                 return true;
             }
+
+            /// <summary>Wszystkie elementy jednostki (detal + jego przekroje) albo żaden.</summary>
+            public bool TryPlaceAll(IList<Item> unit)
+            {
+                var free = _p.Snapshot();
+                int n = Sheet.Placed.Count;
+                foreach (var it in unit)
+                    if (!TryPlace(it, CornerOf(it)))
+                    {
+                        _p.Restore(free);
+                        Sheet.Placed.RemoveRange(n, Sheet.Placed.Count - n);
+                        return false;
+                    }
+                return true;
+            }
         }
 
         private static Corner CornerOf(Item it) => it.Kind == Kind.Ph ? Corner.BottomLeft : Corner.TopLeft;
@@ -205,44 +225,57 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // 2) kilka arkuszy
-            var rest = new List<Item>();
+            // 2) kilka arkuszy — jednostki: przekrój samodzielny / detal razem z przekrojami z jego linią cięcia / PH
+            var units = new List<List<Item>>();
+            foreach (var it in secs.Where(x => !IsGrouped(x, dets))) units.Add(new List<Item> { it });
+            foreach (var d in dets) units.Add(new List<Item> { d }.Concat(secs.Where(x => x.Group == d.Key)).ToList());
+            var rest = new List<List<Item>>();
             {
                 var sb = new SheetBuilder();
                 PlacePlans(sb, b, null);
-                foreach (var it in secs.Concat(dets))
-                    if (!sb.TryPlace(it, Corner.TopLeft)) rest.Add(it);
+                foreach (var u in units)
+                    if (!sb.TryPlaceAll(u)) rest.Add(u);
                 if (b != null || sb.Sheet.Placed.Count > 0) plan.Sheets.Add(sb.Sheet);
             }
             FillSheets(plan, rest);
 
-            var restPh = new List<Item>();
+            var restPh = new List<List<Item>>();
             if (t != null || phs.Count > 0)
             {
                 var sb = new SheetBuilder();
                 PlacePlans(sb, null, t);
                 foreach (var it in phs)
-                    if (!sb.TryPlace(it, Corner.BottomLeft)) restPh.Add(it);
+                    if (!sb.TryPlace(it, Corner.BottomLeft)) restPh.Add(new List<Item> { it });
                 if (t != null || sb.Sheet.Placed.Count > 0) plan.Sheets.Add(sb.Sheet);
             }
             FillSheets(plan, restPh);
             return plan;
         }
 
-        /// <summary>Elementy na kolejnych arkuszach (bez rzutów); element za duży na pusty arkusz — sam, w lewym górnym rogu.</summary>
-        private static void FillSheets(Plan plan, List<Item> rest)
+        private static bool IsGrouped(Item sec, List<Item> dets)
+            => !string.IsNullOrEmpty(sec.Group) && dets.Any(d => d.Key == sec.Group);
+
+        /// <summary>
+        /// Jednostki na kolejnych arkuszach (bez rzutów). Jednostka za duża na pusty arkusz — jej pierwszy element sam w lewym górnym
+        /// rogu, reszta jednostki obok, jeśli się zmieści (inaczej na kolejnym arkuszu).
+        /// </summary>
+        private static void FillSheets(Plan plan, List<List<Item>> rest)
         {
             while (rest.Count > 0)
             {
                 var sb = new SheetBuilder();
-                var left = new List<Item>();
-                foreach (var it in rest)
-                    if (!sb.TryPlace(it, CornerOf(it))) left.Add(it);
+                var left = new List<List<Item>>();
+                foreach (var u in rest)
+                    if (!sb.TryPlaceAll(u)) left.Add(u);
                 if (sb.Sheet.Placed.Count == 0)
                 {
-                    var it = left[0];
+                    var u = left[0];
+                    var it = u[0];
                     sb.Fixed(it, new Rect(AreaX0, AreaY1 - it.H, AreaX0 + it.W, AreaY1));
+                    var tail = new List<Item>();
+                    foreach (var x in u.Skip(1)) if (!sb.TryPlace(x, CornerOf(x))) tail.Add(x);
                     left.RemoveAt(0);
+                    foreach (var x in tail) left.Insert(0, new List<Item> { x });
                 }
                 plan.Sheets.Add(sb.Sheet);
                 rest = left;
@@ -308,6 +341,31 @@ namespace BricsCadRc.Core
         public static List<string> CrossRefLines(IEnumerable<(string Title3, string Number)> others)
             => others.Select(o => (o.Title3 ?? "").TrimEnd('.', ' ') + " SEE DRG. " + o.Number).ToList();
 
+        /// <summary>Znaków w linii odsyłacza (ROMANS NARROW 4 mm, ramka 89 mm; wzór — arkusz PLOT 9-10).</summary>
+        public const int CrossRefChars = 28;
+
+        /// <summary>
+        /// Odsyłacz do jednego arkusza — osobna ramka (decyzja Bartka 2026-10-19): „&lt;TITLE_3&gt; SEE” łamane po słowach do
+        /// <see cref="CrossRefChars"/> znaków, w ostatniej linii „DRG. &lt;numer&gt;” (jak „BOTTOM LAYER &amp; SECTIONS SEE / DRG. CV129QD001-RC0090”).
+        /// </summary>
+        public static List<string> CrossRefBlock(string title3, string number, int maxChars = CrossRefChars)
+        {
+            var lines = new List<string>();
+            string cur = "";
+            foreach (var w in ((title3 ?? "").TrimEnd('.', ' ') + " SEE").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (cur.Length > 0 && cur.Length + 1 + w.Length > maxChars) { lines.Add(cur); cur = w; }
+                else cur = cur.Length == 0 ? w : cur + " " + w;
+            }
+            if (cur.Length > 0) lines.Add(cur);
+            lines.Add("DRG. " + (number ?? ""));
+            return lines;
+        }
+
+        /// <summary>Wysokość ramki odsyłacza dla n linii (mm papieru; 2 linie = 16,7 jak na arkuszu wzorcowym).</summary>
+        public static double CrossRefBoxHeight(int lines) => 10.03 + Math.Max(0, lines - 1) * 6.67;
+
+
         /// <summary>
         /// Notatka pod przekrojem z nibem (teksty z arkuszy wzorcowych; decyzja Bartka 2026-10-19): notatka „A-A” — przekrój
         /// w kierunku 1 („fixed to the bottom of the U-bars, and on top of the U-bars”), notatka „B-B” — przekrój w kierunku 2
@@ -352,6 +410,19 @@ namespace BricsCadRc.Core
             {
                 if (kv.Key.StartsWith("SEG#", StringComparison.Ordinal) && (NumField(kv.Value, "N0") > 0 || NumField(kv.Value, "N1") > 0)) return true;
                 if (kv.Key.StartsWith("DIST:", StringComparison.Ordinal) && Field(kv.Value, "Kind") == "NibUB") return true;
+            }
+            return false;
+        }
+
+        /// <summary>Przekrój przez belkę / pogrubienie (składnik BEAM:… albo rozkład Kind:Beam) — bez notatki o prętach w nibie
+        /// (decyzja Bartka 2026-10-20).</summary>
+        public static bool IsBeamSection(IDictionary<string, string> components)
+        {
+            if (components == null) return false;
+            foreach (var kv in components)
+            {
+                if (kv.Key.StartsWith("BEAM:", StringComparison.Ordinal)) return true;
+                if (kv.Key.StartsWith("DIST:", StringComparison.Ordinal) && Field(kv.Value, "Kind") == "Beam") return true;
             }
             return false;
         }

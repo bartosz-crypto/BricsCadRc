@@ -62,10 +62,8 @@ namespace BricsCadRc.App
             // 3. Bars — ręczne pręty
             tab.Panels.Add(Panel("Bars", "RC_PANEL_BAR",
                 Large("New Bar", "RC_BAR", "new_bar", "Create a single bar (shape code BS 8666) in elevation."),
-                Large("Distribution", "RC_DISTRIBUTION", "distribution", "Distribute the selected bar on the plan."),
-                Column(
-                    Small("Bar Format", "RC_BAR_FORMAT", "new_bar",
-                        "Format of new bars: Polyline (default; drawings for the old plugin) or Block (end grip / STRETCH of a straight bar changes its length, mark, distributions and label)."))));
+                // „Bar Format” (RC_BAR_FORMAT, Plan C) zdjęty ze wstążki 2026-10-20 — komenda zostaje (wpisywana ręcznie)
+                Large("Distribution", "RC_DISTRIBUTION", "distribution", "Distribute the selected bar on the plan.")));
 
             // 4. Edit — kolumny małych przycisków
             tab.Panels.Add(Panel("Edit", "RC_PANEL_EDIT",
@@ -83,8 +81,11 @@ namespace BricsCadRc.App
 
             // 5. Schedule — BBS
             tab.Panels.Add(Panel("Schedule", "RC_PANEL_BBS",
-                Large("Layouts", "RC_LAYOUT", "layout",
+                Column(
+                    Small("Layouts", "RC_LAYOUT", "layout",
                     "Finished A1 sheets: viewports of the bottom / top plans (1:50), sections (1:20), used PH details and beam / opening details (1:25) on the sheet from Prepare GA. If it does not fit — further sheets with consecutive drawing numbers (bottom layer + sections, details, top layer + PH details). Title block TITLE_3 / SCALE, notes under nib sections and SEE DRG. references filled in. Run again to rebuild the sheets."),
+                    Small("Layout Texts", "RC_LAYOUT_TEXTS", "layout",
+                        "Fill in the texts of existing sheets from their viewports: TITLE_3 and SCALE from what each sheet shows, consecutive drawing numbers (and layout names), notes under nib sections and SEE DRG. references in separate frames. Viewports are not changed.")),
                 Large("BBS", "RC_BBS", "bbs",
                     "Bar bending schedule (.xls, Speedeck template) straight from the drawing: preview with warnings, BOTTOM / TOP layouts, accessories from SLAB AREA."),
                 Column(

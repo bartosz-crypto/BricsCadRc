@@ -416,6 +416,7 @@ namespace BricsCadRc.Core
                 dims.Add((P(lineA, eC), P(lineA, bC), P(lineA - DimOff, (eC + bC) / 2), rotAcross));
             }
 
+            RcTemplateEngine.EnsureStyles(db);   // styl wymiarów ADD (SPEEDECK-1-50 RC) — u kolegi brak → wymiary niewidoczne (2026-10-20)
             try
             {
                 using var tr = db.TransactionManager.StartTransaction();

@@ -31,8 +31,7 @@ namespace BricsCadRc.Core
         /// <summary>Zasięg opisów wokół ramki detalu belki / otworu (mm modelu; strefa szablonów detalu otworu zaczyna się 3000 dalej).</summary>
         public const double DetailMargin = 2500.0;
         /// <summary>Odsyłacz nad CONSTRUCTION ISSUE (arkusz wzorcowy PLOT 9-10, mm papieru).</summary>
-        private const double XrefX0 = 721.1, XrefX1 = 810.3, XrefY0 = 252.8, XrefH1 = 16.7, XrefLine = 6.67,
-                             XrefTextX = 723.28, XrefTextTop = 2.6, XrefTextW = 85.635;
+        private const double XrefX0 = 721.1, XrefX1 = 810.3, XrefY0 = 252.8, XrefTextX = 723.28, XrefTextTop = 2.6;
 
         private static readonly Regex PhRx = new Regex(@"PILE\s+CONDITION\s+PH\s*([1-9])(?!\d)", RegexOptions.IgnoreCase);
         private static readonly Regex PhUnusedRx = new Regex(@"APPLICABLE\s+FOR\s+PILE(?:/S|S)?\s+N/A", RegexOptions.IgnoreCase);
@@ -77,6 +76,8 @@ namespace BricsCadRc.Core
             public double VpW, VpH;
             public string Letter;
             public int NibDir;
+            /// <summary>Przekrój: środki znaczników cięcia (MARK) — na rzucie albo na detalu.</summary>
+            public List<(double X, double Y)> Marks = new List<(double, double)>();
             public int Order;
         }
 
@@ -116,7 +117,56 @@ namespace BricsCadRc.Core
             FindBase(db, currentLayout, ctx);
             if (ctx.BaseLayoutId.IsNull) { ctx.Errors.Add("brak arkusza z blokiem A1-BL — najpierw Prepare GA (RC_PRZYGOTUJ_GA)"); return ctx; }
 
+            Collect(db, ctx);
+
+            // 5. wymiary na papierze i rozmieszczenie
+            foreach (var s in ctx.Items)
+            {
+                s.VpW = s.Ext.W / s.Scale + 2 * LayoutRules.Pad;
+                s.VpH = s.Ext.H / s.Scale + 2 * LayoutRules.Pad;
+                s.Item.W = s.VpW;
+                s.Item.H = s.VpH;
+                if (s.Item.Kind == LayoutRules.Kind.Section && s.NibDir > 0)
+                {
+                    s.Item.W = Math.Max(s.VpW, LayoutRules.NibNoteMinWidth);
+                    s.Item.H = s.VpH + LayoutRules.NibNoteBox;
+                }
+            }
+            ctx.Items = ctx.Items.OrderBy(s => s.Order).ToList();
+            ctx.Plan = LayoutRules.Arrange(ctx.Items.Select(s => s.Item).ToList());
+            ctx.Warnings.AddRange(ctx.Plan.Warnings);
+
+            for (int k = 0; k < ctx.Plan.Sheets.Count; k++)
+            {
+                var sh = ctx.Plan.Sheets[k];
+                string num = LayoutRules.IncrementDrawingNumber(ctx.BaseNumber, k);
+                ctx.Sheets.Add(new SheetInfo
+                {
+                    Layout = k == 0 ? ctx.BaseLayoutName : LayoutRules.DrawingSuffix(num) + ctx.Rev,
+                    Number = num,
+                    Title3 = LayoutRules.Title3(sh),
+                    Scale = LayoutRules.ScaleText(sh.Placed.Select(p => LayoutRules.ScaleOf(p.Item.Kind))),
+                    Contents = sh.Placed.Select(p => p.Item.Key).ToList()
+                });
+            }
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+                foreach (var sh in ctx.Sheets.Skip(1))
+                    if (ld.Contains(sh.Layout) && !ctx.OldSheets.Contains(sh.Layout, StringComparer.OrdinalIgnoreCase)) ctx.Overwrite.Add(sh.Layout);
+                tr.Commit();
+            }
+            return ctx;
+        }
+
+        /// <summary>
+        /// Zawartość arkuszy z przestrzeni modelu (przekroje, PH, detale, rzuty) → ctx.Items (zakresy w modelu, skale). Płyta przy kilku —
+        /// wg TITLE_1 arkusza ctx.BaseLayoutId. Wspólne dla RC_LAYOUT i RC_LAYOUT_TEXTS.
+        /// </summary>
+        private static void Collect(Database db, Ctx ctx)
+        {
             var ents = new List<Ent>();
+            var layerUse = new Dictionary<string, (int all, int map)>(StringComparer.OrdinalIgnoreCase);
             var byId = new Dictionary<ObjectId, Ent>();
             var gaTags = new List<(Ent e, string plot, string view)>();
             var planTitles = new List<(Ent e, string view)>();
@@ -147,7 +197,10 @@ namespace BricsCadRc.Core
                         }
                         // mapy zbrojenia (RC_MAP) — warstwy zamrażane w rzutniach arkuszy (kreskowania map: błędy rysowania BricsCAD)
                         using (var rbm = e.GetXDataForApplication(MapImportEngine.XApp))
-                            if (rbm != null) ctx.MapLayers.Add(en.Layer);
+                        {
+                            layerUse.TryGetValue(en.Layer, out var u);
+                            layerUse[en.Layer] = (u.all + 1, u.map + (rbm != null ? 1 : 0));
+                        }
                         var bd = BeamStore.ReadDetail(e);
                         if (bd != null && !string.IsNullOrEmpty(bd.Value.zone) && bd.Value.role != BeamStore.RolePlanRef)
                         { beamParts.Add((en, XLink.Norm(bd.Value.zone), bd.Value.nr, bd.Value.role)); continue; }
@@ -170,6 +223,10 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
 
+            // warstwy zamrażane w rzutniach: tylko takie, na których są WYŁĄCZNIE obiekty map (mapa na „0” itp. — warstwa zostaje)
+            foreach (var kv in layerUse)
+                if (kv.Value.map > 0 && kv.Value.map == kv.Value.all) ctx.MapLayers.Add(kv.Key);
+
             int order = 0;
             // 1. przekroje
             foreach (var s in SectionStore.ReadAll(db, false).OrderBy(s => s.Letter, StringComparer.OrdinalIgnoreCase))
@@ -183,19 +240,23 @@ namespace BricsCadRc.Core
                 var box = te.Box; te.Claimed = true;
                 // nib: składniki rekordu (segment z nibem / UB 03) albo opis otuliny nibu (NIBNOTE — przekroje od 2026-10-16)
                 bool nib = LayoutRules.IsNibSection(s.Record?.Components);
+                var marks = new List<(double, double)>();
                 foreach (var (pid, role, _) in s.Parts)
                 {
+                    if (role == "MARK" && byId.TryGetValue(pid, out var me)) marks.Add((me.Box.Cx, me.Box.Cy));
                     if (role == "MARK" || role == "MARKTXT" || role == AutoRebarEngine.RoleCloud) continue;
                     if (role == "NIBNOTE") nib = true;
                     if (byId.TryGetValue(pid, out var pe)) { box.Add(pe.Box); pe.Claimed = true; }
                 }
+                // przekrój przez belkę — bez notatki o prętach w nibie (decyzja Bartka 2026-10-20)
+                if (LayoutRules.IsBeamSection(s.Record?.Components)) nib = false;
                 // decyzja Bartka 2026-10-19: notatka „A-A” — przekrój w kierunku 1, „B-B” — w kierunku 2
                 int dir = nib ? LayoutRules.SectionDir(s.Record?.Components, s.Record?.CutAlongX ?? true) : 0;
                 if (s.Status == SectionStatus.Nieaktualny) ctx.Warnings.Add($"przekrój {s.Label} jest NIEAKTUALNY — zaktualizuj (RC_SECTION_UPDATE) przed wydrukiem");
                 ctx.Items.Add(new Src
                 {
                     Item = new LayoutRules.Item { Key = "SECTION " + s.Label, Kind = LayoutRules.Kind.Section, Nib = nib && dir > 0 },
-                    Ext = box, Scale = 20, Letter = s.Letter, NibDir = dir, Order = order++
+                    Ext = box, Scale = 20, Letter = s.Letter, NibDir = dir, Order = order++, Marks = marks
                 });
             }
 
@@ -277,6 +338,12 @@ namespace BricsCadRc.Core
                         Item = new LayoutRules.Item { Key = d.key, Kind = LayoutRules.Kind.Detail },
                         Ext = d.box, Scale = 25, Order = 500 + d.nr
                     });
+                // decyzja Bartka 2026-10-19: przekrój z linią cięcia na detalu — na arkuszu tego detalu
+                foreach (var sec in ctx.Items.Where(i => i.Item.Kind == LayoutRules.Kind.Section))
+                {
+                    var host = dets.FirstOrDefault(d => sec.Marks.Any(m => d.box.HasPoint(m.X, m.Y)));
+                    if (host.key != null) sec.Item.Group = host.key;
+                }
                 var dup = dets.GroupBy(d => d.nr).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
                 if (dup.Count > 0) ctx.Warnings.Add("numer detalu użyty kilka razy: " + string.Join(", ", dup.Select(n => "DETAIL '" + n + "'")));
             }
@@ -329,44 +396,6 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // 5. wymiary na papierze i rozmieszczenie
-            foreach (var s in ctx.Items)
-            {
-                s.VpW = s.Ext.W / s.Scale + 2 * LayoutRules.Pad;
-                s.VpH = s.Ext.H / s.Scale + 2 * LayoutRules.Pad;
-                s.Item.W = s.VpW;
-                s.Item.H = s.VpH;
-                if (s.Item.Kind == LayoutRules.Kind.Section && s.NibDir > 0)
-                {
-                    s.Item.W = Math.Max(s.VpW, LayoutRules.NibNoteMinWidth);
-                    s.Item.H = s.VpH + LayoutRules.NibNoteBox;
-                }
-            }
-            ctx.Items = ctx.Items.OrderBy(s => s.Order).ToList();
-            ctx.Plan = LayoutRules.Arrange(ctx.Items.Select(s => s.Item).ToList());
-            ctx.Warnings.AddRange(ctx.Plan.Warnings);
-
-            for (int k = 0; k < ctx.Plan.Sheets.Count; k++)
-            {
-                var sh = ctx.Plan.Sheets[k];
-                string num = LayoutRules.IncrementDrawingNumber(ctx.BaseNumber, k);
-                ctx.Sheets.Add(new SheetInfo
-                {
-                    Layout = k == 0 ? ctx.BaseLayoutName : LayoutRules.DrawingSuffix(num) + ctx.Rev,
-                    Number = num,
-                    Title3 = LayoutRules.Title3(sh),
-                    Scale = LayoutRules.ScaleText(sh.Placed.Select(p => LayoutRules.ScaleOf(p.Item.Kind))),
-                    Contents = sh.Placed.Select(p => p.Item.Key).ToList()
-                });
-            }
-            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
-            {
-                var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
-                foreach (var sh in ctx.Sheets.Skip(1))
-                    if (ld.Contains(sh.Layout) && !ctx.OldSheets.Contains(sh.Layout, StringComparer.OrdinalIgnoreCase)) ctx.Overwrite.Add(sh.Layout);
-                tr.Commit();
-            }
-            return ctx;
         }
 
         /// <summary>
@@ -407,19 +436,6 @@ namespace BricsCadRc.Core
             }
             catch (System.Exception ex) { Log.Error("LayoutEngine.ExtentsOf", ex); }
             return b.IsEmpty ? gx : b;
-        }
-
-        /// <summary>Styl wizualny „2D Wireframe” (nazwy AutoCAD / BricsCAD); brak — Null.</summary>
-        private static ObjectId WireframeStyle(Transaction tr, Database db)
-        {
-            try
-            {
-                var d = (DBDictionary)tr.GetObject(db.VisualStyleDictionaryId, OpenMode.ForRead);
-                foreach (var n in new[] { "2dWireframe", "2D Wireframe", "2DWireframe", "Wireframe" })
-                    if (d.Contains(n)) return d.GetAt(n);
-            }
-            catch (System.Exception ex) { Log.Error("LayoutEngine.WireframeStyle", ex); }
-            return ObjectId.Null;
         }
 
         /// <summary>Skala opisowa 1:n z rysunku (ACDB_ANNOTATIONSCALES); brak — dodana. null — błąd (komunikat w log).</summary>
@@ -528,6 +544,80 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, key ?? ""));
         }
 
+        // ── teksty arkusza (wspólne dla RC_LAYOUT i RC_LAYOUT_TEXTS) ──────
+
+        private static void AddNibNote(Transaction tr, Database db, BlockTableRecord btr, string layer, ObjectId style,
+                                       string letter, int dir, double x, double yTop, string key)
+        {
+            var note = new MText();
+            note.SetDatabaseDefaults(db);
+            note.Contents = LayoutRules.NibNote(letter, dir);
+            note.Layer = layer;
+            note.TextStyleId = style;
+            note.TextHeight = LayoutRules.NibNoteHeight;
+            note.Width = LayoutRules.NibNoteWidth;
+            note.Attachment = AttachmentPoint.TopLeft;
+            note.Location = new Point3d(x, yTop, 0);
+            btr.AppendEntity(note);
+            tr.AddNewlyCreatedDBObject(note, true);
+            Tag(tr, db, note, RoleNote, key);
+        }
+
+        /// <summary>
+        /// Odsyłacze nad CONSTRUCTION ISSUE (decyzja Bartka 2026-10-19): każdy inny arkusz w osobnej ramce („… SEE / DRG. …”),
+        /// ramki jedna nad drugą od y 252,8 — pierwszy arkusz na górze.
+        /// </summary>
+        private static void AddCrossRefs(Transaction tr, Database db, BlockTableRecord btr, string layer, ObjectId style,
+                                         List<(string Title3, string Number)> others)
+        {
+            double y0 = XrefY0;
+            for (int i = others.Count - 1; i >= 0; i--)
+            {
+                var lines = LayoutRules.CrossRefBlock(others[i].Title3, others[i].Number);
+                double top = y0 + LayoutRules.CrossRefBoxHeight(lines.Count);
+                var fr = new Polyline();
+                fr.SetDatabaseDefaults(db);
+                fr.Layer = "0";
+                fr.AddVertexAt(0, new Point2d(XrefX0, y0), 0, 0, 0);
+                fr.AddVertexAt(1, new Point2d(XrefX1, y0), 0, 0, 0);
+                fr.AddVertexAt(2, new Point2d(XrefX1, top), 0, 0, 0);
+                fr.AddVertexAt(3, new Point2d(XrefX0, top), 0, 0, 0);
+                fr.Closed = true;
+                btr.AppendEntity(fr);
+                tr.AddNewlyCreatedDBObject(fr, true);
+                Tag(tr, db, fr, RoleXref, "FRAME " + others[i].Number);
+                var xt = new MText();
+                xt.SetDatabaseDefaults(db);
+                xt.Contents = "\\C3;" + string.Join("\\P", lines);
+                xt.Layer = layer;
+                xt.TextStyleId = style;
+                xt.TextHeight = LayoutRules.NibNoteHeight;
+                xt.Width = XrefX1 - XrefTextX - 0.5;   // łamanie tylko jawne (\P) — bez zawijania przez MText
+                xt.Attachment = AttachmentPoint.TopLeft;
+                xt.Location = new Point3d(XrefTextX, top - XrefTextTop, 0);
+                btr.AppendEntity(xt);
+                tr.AddNewlyCreatedDBObject(xt, true);
+                Tag(tr, db, xt, RoleXref, "TEXT " + others[i].Number);
+                y0 = top;
+            }
+        }
+
+        private static void SetTitleAttrs(Transaction tr, ObjectId layoutBtrId, string number, string title3, string scale)
+        {
+            foreach (var br in GaTitleEngine.TitleBlocks(tr, layoutBtrId).ToList())
+                foreach (ObjectId aid in br.AttributeCollection)
+                {
+                    if (!(tr.GetObject(aid, OpenMode.ForRead) is AttributeReference ar)) continue;
+                    string nv = null;
+                    if (ar.Tag.Equals("DRAWING_NUMBER", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(number)) nv = number;
+                    else if (ar.Tag.Equals("TITLE_3", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(title3)) nv = title3;
+                    else if (ar.Tag.Equals("SCALE", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(scale)) nv = scale;
+                    if (nv == null || nv == ar.TextString) continue;
+                    ar.UpgradeOpen();
+                    ar.TextString = nv;
+                }
+        }
+
         // ── wykonanie ────────────────────────────────────────────────────
 
         public sealed class Result
@@ -617,7 +707,7 @@ namespace BricsCadRc.Core
                     var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
                     ObjectId noteStyle = st.Has(NoteStyle) ? st[NoteStyle] : db.Textstyle;
                     string noteLayer = lt.Has(NoteLayer) ? NoteLayer : "0";
-                    ObjectId wire = WireframeStyle(tr, db);
+                    ObjectId wire = PlotSetupEngine.WireframeStyle(tr, db);
 
                     foreach (var pl in sheet.Placed)
                     {
@@ -671,65 +761,15 @@ namespace BricsCadRc.Core
 
                         if (s.Item.Kind == LayoutRules.Kind.Section && s.NibDir > 0)
                         {
-                            var note = new MText();
-                            note.SetDatabaseDefaults(db);
-                            note.Contents = LayoutRules.NibNote(s.Letter, s.NibDir);
-                            note.Layer = noteLayer;
-                            note.TextStyleId = noteStyle;
-                            note.TextHeight = LayoutRules.NibNoteHeight;
-                            note.Width = LayoutRules.NibNoteWidth;
-                            note.Attachment = AttachmentPoint.TopLeft;
-                            note.Location = new Point3d(x0, y1 - s.VpH - LayoutRules.NibNoteGap, 0);
-                            btr.AppendEntity(note);
-                            tr.AddNewlyCreatedDBObject(note, true);
-                            Tag(tr, db, note, RoleNote, pl.Item.Key);
+                            AddNibNote(tr, db, btr, noteLayer, noteStyle, s.Letter, s.NibDir, x0, y1 - s.VpH - LayoutRules.NibNoteGap, pl.Item.Key);
                             res.Notes++;
                         }
                     }
 
-                    // odsyłacz do pozostałych arkuszy
+                    // odsyłacze do pozostałych arkuszy — każdy w osobnej ramce
                     if (ctx.Sheets.Count > 1)
-                    {
-                        var lines = LayoutRules.CrossRefLines(ctx.Sheets.Where((_, j) => j != k).Select(o => (o.Title3, o.Number)));
-                        double top = XrefY0 + XrefH1 + (lines.Count - 1) * XrefLine;
-                        var fr = new Polyline();
-                        fr.SetDatabaseDefaults(db);
-                        fr.Layer = "0";
-                        fr.AddVertexAt(0, new Point2d(XrefX0, XrefY0), 0, 0, 0);
-                        fr.AddVertexAt(1, new Point2d(XrefX1, XrefY0), 0, 0, 0);
-                        fr.AddVertexAt(2, new Point2d(XrefX1, top), 0, 0, 0);
-                        fr.AddVertexAt(3, new Point2d(XrefX0, top), 0, 0, 0);
-                        fr.Closed = true;
-                        btr.AppendEntity(fr);
-                        tr.AddNewlyCreatedDBObject(fr, true);
-                        Tag(tr, db, fr, RoleXref, "FRAME");
-                        var xt = new MText();
-                        xt.SetDatabaseDefaults(db);
-                        xt.Contents = "\\C3;" + string.Join("\\P", lines);
-                        xt.Layer = noteLayer;
-                        xt.TextStyleId = noteStyle;
-                        xt.TextHeight = LayoutRules.NibNoteHeight;
-                        xt.Width = XrefTextW;
-                        xt.Attachment = AttachmentPoint.TopLeft;
-                        xt.Location = new Point3d(XrefTextX, top - XrefTextTop, 0);
-                        btr.AppendEntity(xt);
-                        tr.AddNewlyCreatedDBObject(xt, true);
-                        Tag(tr, db, xt, RoleXref, "TEXT");
-                    }
-
-                    // A1-BL
-                    foreach (var br in GaTitleEngine.TitleBlocks(tr, lay.BlockTableRecordId).ToList())
-                        foreach (ObjectId aid in br.AttributeCollection)
-                        {
-                            if (!(tr.GetObject(aid, OpenMode.ForRead) is AttributeReference ar)) continue;
-                            string nv = null;
-                            if (ar.Tag.Equals("DRAWING_NUMBER", StringComparison.OrdinalIgnoreCase) && info.Number.Length > 0) nv = info.Number;
-                            else if (ar.Tag.Equals("TITLE_3", StringComparison.OrdinalIgnoreCase) && info.Title3.Length > 0) nv = info.Title3;
-                            else if (ar.Tag.Equals("SCALE", StringComparison.OrdinalIgnoreCase) && info.Scale.Length > 0) nv = info.Scale;
-                            if (nv == null || nv == ar.TextString) continue;
-                            ar.UpgradeOpen();
-                            ar.TextString = nv;
-                        }
+                        AddCrossRefs(tr, db, btr, noteLayer, noteStyle, ctx.Sheets.Where((_, j) => j != k).Select(o => (o.Title3, o.Number)).ToList());
+                    SetTitleAttrs(tr, lay.BlockTableRecordId, info.Number, info.Title3, info.Scale);
                     tr.Commit();
                 }
             }
@@ -745,6 +785,173 @@ namespace BricsCadRc.Core
             catch (System.Exception ex) { Log.Error("LayoutEngine.Apply.Back", ex); }
             try { Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor.Regen(); }
             catch (System.Exception ex) { Log.Error("LayoutEngine.Apply.Regen", ex); }
+            return res;
+        }
+
+        // ── RC_LAYOUT_TEXTS: opisy istniejących arkuszy (decyzja Bartka 2026-10-19) ─────────────────
+
+        public sealed class TextsSheet
+        {
+            public ObjectId LayoutId;
+            public string Layout, NewLayout, Number, Title3, Scale;
+            public List<string> Contents = new List<string>();
+            internal List<(string Letter, int Dir, double X, double YTop, string Key)> Notes = new List<(string, int, double, double, string)>();
+        }
+
+        public sealed class TextsCtx
+        {
+            public List<TextsSheet> Sheets = new List<TextsSheet>();
+            public List<string> Warnings = new List<string>();
+            public List<string> Errors = new List<string>();
+            public bool AnyRename => Sheets.Any(s => !string.Equals(s.Layout, s.NewLayout, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Opisy arkuszy z rzutni (tylko odczyt): arkusze = layouty z A1-BL wg kolejności zakładek; w każdej rzutni (poza rzutnią arkusza)
+        /// rozpoznane elementy modelu (rzut dolny / górny, przekrój, PH, detal — środek zakresu w oknie rzutni) i skala rzutni →
+        /// TITLE_3, SCALE; numery rysunków po kolei od numeru pierwszego arkusza; nazwa layoutu = numer + REV; notatki pod przekrojami
+        /// z nibem (gdy w layoucie nie ma już takiej notatki); odsyłacze w ramkach. Zapis — <see cref="ApplyTexts"/>.
+        /// </summary>
+        public static TextsCtx PrepareTexts(Database db)
+        {
+            var t = new TextsCtx();
+            var lays = new List<(ObjectId id, string name, int tab, ObjectId btr)>();
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+                foreach (DBDictionaryEntry e in ld)
+                {
+                    var lay = (Layout)tr.GetObject(e.Value, OpenMode.ForRead);
+                    if (lay.ModelType || !GaTitleEngine.TitleBlocks(tr, lay.BlockTableRecordId).Any()) continue;
+                    lays.Add((e.Value, lay.LayoutName, lay.TabOrder, lay.BlockTableRecordId));
+                }
+                tr.Commit();
+            }
+            lays = lays.OrderBy(l => l.tab).ToList();
+            if (lays.Count == 0) { t.Errors.Add("brak arkuszy z blokiem A1-BL"); return t; }
+
+            var ctx = new Ctx { BaseLayoutId = lays[0].id };
+            Collect(db, ctx);
+            t.Warnings.AddRange(ctx.Warnings);
+            string baseNumber = BaseAttr(db, lays[0].id, "DRAWING_NUMBER").Trim();
+            string rev = BaseAttr(db, lays[0].id, "REV").Trim();
+            if (baseNumber.Length == 0) t.Warnings.Add($"{lays[0].name}: A1-BL bez DRAWING_NUMBER — numery rysunków bez zmian");
+
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                for (int k = 0; k < lays.Count; k++)
+                {
+                    var (lid, name, _, btrId) = lays[k];
+                    var sh = new TextsSheet { LayoutId = lid, Layout = name };
+                    sh.Number = baseNumber.Length > 0 ? LayoutRules.IncrementDrawingNumber(baseNumber, k) : BaseAttr(db, lid, "DRAWING_NUMBER");
+                    sh.NewLayout = baseNumber.Length > 0 ? LayoutRules.DrawingSuffix(sh.Number) + rev : name;
+                    var btr = (BlockTableRecord)tr.GetObject(btrId, OpenMode.ForRead);
+                    ObjectId overall = OverallViewport(tr, btr);
+                    var kinds = new HashSet<LayoutRules.Kind>();
+                    var scales = new List<int>();
+                    string allText = "";
+                    foreach (ObjectId id in btr)
+                        if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is MText mt && Role(mt) == null) allText += "\n" + (mt.Text ?? "");
+                    foreach (ObjectId id in btr)
+                    {
+                        if (id.IsErased || id == overall || !(tr.GetObject(id, OpenMode.ForRead) is Viewport vp) || vp.Height < 1e-6) continue;
+                        double sc = vp.ViewHeight / vp.Height;
+                        int n = (int)Math.Round(sc);
+                        if (n <= 0) continue;
+                        if (Math.Abs(vp.TwistAngle) > 1e-6) t.Warnings.Add($"{name}: rzutnia {vp.Handle} obrócona — zawartość rozpoznana w przybliżeniu");
+                        double cx = vp.ViewTarget.X + vp.ViewCenter.X, cy = vp.ViewTarget.Y + vp.ViewCenter.Y;
+                        double hw = vp.ViewHeight * vp.Width / vp.Height / 2, hh = vp.ViewHeight / 2;
+                        var win = new Box { X0 = cx - hw, Y0 = cy - hh, X1 = cx + hw, Y1 = cy + hh };
+                        bool any = false;
+                        foreach (var it in ctx.Items)
+                        {
+                            if (!win.HasPoint(it.Ext.Cx, it.Ext.Cy)) continue;
+                            any = true;
+                            kinds.Add(it.Item.Kind);
+                            if (!sh.Contents.Contains(it.Item.Key)) sh.Contents.Add(it.Item.Key);
+                            if (it.Item.Kind == LayoutRules.Kind.Section && it.NibDir > 0
+                                && allText.IndexOf("Section " + it.Letter + "-" + it.Letter + " has longitudinal", StringComparison.OrdinalIgnoreCase) < 0)
+                            {
+                                // pod przekrojem: lewa krawędź przekroju w rzutni, pod dolną krawędzią rzutni
+                                double px = vp.CenterPoint.X + (Math.Max(it.Ext.X0, win.X0) - cx) / n;
+                                double py = vp.CenterPoint.Y - vp.Height / 2 - LayoutRules.NibNoteGap;
+                                sh.Notes.Add((it.Letter, it.NibDir, px, py, it.Item.Key));
+                            }
+                        }
+                        if (any) scales.Add(n);
+                    }
+                    if (sh.Contents.Count == 0) t.Warnings.Add($"{name}: w rzutniach nie rozpoznano rzutów / przekrojów / detali — TITLE_3 i SCALE bez zmian");
+                    sh.Title3 = sh.Contents.Count == 0 ? "" : LayoutRules.Title3(kinds.Contains(LayoutRules.Kind.PlanBottom), kinds.Contains(LayoutRules.Kind.PlanTop),
+                        kinds.Contains(LayoutRules.Kind.Section), kinds.Contains(LayoutRules.Kind.Detail), kinds.Contains(LayoutRules.Kind.Ph));
+                    sh.Scale = LayoutRules.ScaleText(scales);
+                    t.Sheets.Add(sh);
+                }
+                tr.Commit();
+            }
+            return t;
+        }
+
+        public sealed class TextsResult
+        {
+            public int Notes, CrossRefs, Renamed, Removed;
+            public List<string> Messages = new List<string>();
+        }
+
+        /// <summary>
+        /// Zapis opisów arkuszy: usuwa poprzednie odsyłacze / notatki RC_LAYOUT, dopisuje notatki pod przekrojami z nibem, odsyłacze
+        /// (przy kilku arkuszach), atrybuty A1-BL; <paramref name="rename"/> — nazwy layoutów wg numerów (w dwóch krokach, bez kolizji).
+        /// </summary>
+        public static TextsResult ApplyTexts(Database db, TextsCtx t, bool rename)
+        {
+            var res = new TextsResult();
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+                ObjectId noteStyle = st.Has(NoteStyle) ? st[NoteStyle] : db.Textstyle;
+                string noteLayer = lt.Has(NoteLayer) ? NoteLayer : "0";
+                for (int k = 0; k < t.Sheets.Count; k++)
+                {
+                    var sh = t.Sheets[k];
+                    var lay = (Layout)tr.GetObject(sh.LayoutId, OpenMode.ForRead);
+                    var btr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForWrite);
+                    foreach (ObjectId id in btr)
+                    {
+                        if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Entity e) || e is Viewport) continue;
+                        string role = Role(e);
+                        if (role != RoleXref && role != RoleNote) continue;
+                        e.UpgradeOpen(); e.Erase(); res.Removed++;
+                    }
+                    foreach (var n in sh.Notes) { AddNibNote(tr, db, btr, noteLayer, noteStyle, n.Letter, n.Dir, n.X, n.YTop, n.Key); res.Notes++; }
+                    if (t.Sheets.Count > 1)
+                    {
+                        var others = t.Sheets.Where((_, j) => j != k).Select(o => (o.Title3, o.Number)).ToList();
+                        AddCrossRefs(tr, db, btr, noteLayer, noteStyle, others);
+                        res.CrossRefs += others.Count;
+                    }
+                    SetTitleAttrs(tr, lay.BlockTableRecordId, sh.Number, sh.Title3, sh.Scale);
+                }
+                tr.Commit();
+            }
+            if (rename && t.AnyRename)
+            {
+                var lm = LayoutManager.Current;
+                var todo = t.Sheets.Where(s => !string.Equals(s.Layout, s.NewLayout, StringComparison.OrdinalIgnoreCase) && s.NewLayout.Length > 0).ToList();
+                foreach (var s in todo)
+                {
+                    try { lm.RenameLayout(s.Layout, s.Layout + "~rc"); s.Layout += "~rc"; }
+                    catch (System.Exception ex) { Log.Error("LayoutEngine.ApplyTexts.Rename1", ex); res.Messages.Add($"layout „{s.Layout}” — nie zmieniono nazwy ({ex.Message})"); }
+                }
+                foreach (var s in todo.Where(s => s.Layout.EndsWith("~rc", StringComparison.Ordinal)))
+                {
+                    try { lm.RenameLayout(s.Layout, s.NewLayout); res.Renamed++; s.Layout = s.NewLayout; }
+                    catch (System.Exception ex)
+                    {
+                        Log.Error("LayoutEngine.ApplyTexts.Rename2", ex);
+                        res.Messages.Add($"nazwa „{s.NewLayout}” zajęta — layout zostaje jako „{s.Layout}” ({ex.Message})");
+                    }
+                }
+            }
             return res;
         }
     }

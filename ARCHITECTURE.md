@@ -1337,6 +1337,70 @@ domyślne = rozstrzygnięcia 1b / 1c planu i wymagania 2026-10-10 (E4b) — **do
   i detal), L528A / L539A (Auto na Holbrook, ręczne 2-cięte — ostrzeżenie, PDF), LH20 (H16 → H20 i ponowne Beam), LMAN (RC-BEAM-MANUAL na 526 →
   strefy obu rzutów, belka w płycie — 2-cięte, bez duplikatów, ponowne Prepare GA); jednostkowe `BeamLinkLegsTests`.
 
+## 4j. Gotowe arkusze (RC_LAYOUT, wstążka Schedule → „Layouts”) — decyzja użytkownika 2026-10-19
+
+Wzór: arkusze PLOT 30 / 20 / 206 / 9-10 (pliki Bartka). Silnik `LayoutEngine` (BricsCAD), czyste reguły `LayoutRules` (testy `LayoutRulesTests`).
+- **Zawartość** (przestrzeń modelu): rzut dolny / górny 1:50 = obiekty RC_GA danej płyty i rzutu (obrys itd.) + tytuł „REINFORCEMENT DETAILS … LAYER” +
+  obiekty w całości w obrysie powiększonym o `PlanMargin` 3500 (granica w połowie odległości do drugiego rzutu); przekroje 1:20 = tytuł RC_SECTION + części
+  (bez MARK / MARKTXT / CLOUD); detale PH 1:25 — tylko UŻYTE (tytuł bez „APPLICABLE FOR PILES N/A”), obiekty przypisane do najbliższego tytułu PH (strefa
+  tytułu −700…+1500 w X (od max(prawa krawędź tytułu, lewa + 3800)), −300…+4200 w Y; nieużyte detale też są kotwicami, przekreślenia AP-NOTUSED pominięte); detale belek (RC_BEAM_DETAIL bez PLANREF)
+  i otworów (ramka RC_DETAIL + tytuł „DETAIL 'n'”/„SCALE”) 1:25 + obiekty w całości w ramce powiększonej o `DetailMargin` 2500 (strefa szablonów detalu
+  otworu zaczyna się 3000 od ramki — poza zasięgiem). Kolejność przypisań: przekroje → PH → detale → rzuty (obiekt należy do jednego elementu).
+- **Arkusz**: pole rysunku A1 x 11…672, y 11…582 (na prawo kolumna notatek i tabelka); margines rzutni 2 mm, odstęp 6 mm. Rzut dolny — lewy górny róg,
+  górny — prawy górny róg (jeden rzut na arkuszu — lewy górny róg); przekroje i detale od góry/lewej (MaxRects), PH od dołu/lewej.
+- **Podział** (gdy wszystko nie mieści się na jednym): 1) rzut dolny + przekroje (najpierw z nibem) + detale, które się zmieszczą; 2) reszta przekrojów
+  i detali (kolejne arkusze); 3) rzut górny + PH; 4) nadmiar PH — osobne arkusze. Numery rysunków po kolei (ostatnia grupa cyfr +1), nazwa layoutu =
+  część po ostatnim „-” + REV (RC0091C1). TITLE_3 wg zawartości („BOTTOM LAYER, TOP LAYER, DETAILS & SECTIONS.”, „TOP LAYER & PH DETAILS.”, same PH —
+  „PH DETAILS.”; same detale PH bez detali belek / otworów — zawsze „PH DETAILS”, np. „BOTTOM LAYER, TOP LAYER & PH DETAILS.” — decyzja Bartka 2026-10-19), SCALE („1:50, 1:25 & 1:20 @ A1”). Notatki ogólne / płyty / pali / zbrojenia — bez zmian (z Prepare GA).
+- **Arkusz bazowy** = layout z A1-BL bez znacznika RC_LAYOUT (bieżący, jeśli taki; inaczej pierwszy). Kolejne arkusze: `RcTemplateEngine.CreateSheetFrom`
+  (ustawienia wydruku z bazowego, DeepClone treści papieru bez rzutni i obiektów RC_LAYOUT); ich A1-BL dostaje XData RC_LAYOUT [1]="SHEET".
+- **Notatka pod przekrojem z nibem** (MText SD-Text, ROMANS NARROW 4, szer. 115,7, TopLeft pod rzutnią). Nib: składniki rekordu (SEG… N0/N1 > 0
+  albo DIST… Kind:NibUB) lub część NIBNOTE. Decyzja Bartka 2026-10-19: notatka „A-A” („fixed to the bottom of the U-bars, and on top of the U-bars”)
+  — przekrój w kierunku 1, notatka „B-B” („fixed to the top of the U-bars, and to the underside”) — w kierunku 2. Kierunek przekroju
+  (`LayoutRules.SectionDir`): Lay prętów głównych leżących w płaszczyźnie cięcia (AX = kierunek cięcia); same kropki — kierunek przeciwny;
+  brak prętów — cięcie wzdłuż X = 1.
+- **Zakresy MText / MLeader** TYLKO z fragmentów po rozbiciu (GeometricExtents MText w BricsCAD bywa za mały — ucięte tytuły i opisy detali PH —
+  albo za duży — zadana wysokość ramki, rzutnia PH1 „schodziła” w dół); GeometricExtents tylko, gdy rozbicie nic nie da.
+- **Skala opisowa rzutni** = skala rzutni (CustomScale + AnnotationScale 1:n, brak w rysunku — dodana) i ANNOALLVISIBLE = 1 na arkuszach
+  (sama ViewHeight zostawiała 1:1 — obiekty opisowe rzutu górnego niewidoczne).
+- Rzutnia: SetDatabaseDefaults, widok z góry, styl wizualny 2D Wireframe (kreskowania nie rysowały się); warstwy map zbrojenia (RC_MAP)
+  zamrożone w rzutniach (kreskowania map ANSI31 dawały „error while rendering entity”).
+- **Rzutnie**: wszystkie warstwy odmrożone w każdej rzutni RC_LAYOUT (warstwy „VP Freeze w nowych rzutniach” chowały pale, tagi PH, opisy,
+  okręgi detali PH). Nowy arkusz: rzutnia całego modelu z „Create viewport in new layouts” usuwana (zostaje tylko rzutnia arkusza).
+- **Odsyłacze** przy kilku arkuszach (decyzja Bartka 2026-10-19): każdy inny arkusz w OSOBNEJ ramce (warstwa 0, x 721,1…810,3), ramki jedna
+  nad drugą od y 252,8 (nad CONSTRUCTION ISSUE), pierwszy arkusz na górze. Tekst MText SD-Text ROMANS NARROW 4: „<TITLE_3> SEE” łamane po słowach
+  do 28 znaków + „DRG. <numer>” w ostatniej linii (`LayoutRules.CrossRefBlock`), wysokość ramki 10,03 + 6,67·(linie − 1) (2 linie = 16,7).
+- **Przekrój z linią cięcia na detalu** (znacznik MARK w zakresie detalu belki / otworu) — `Item.Group` = klucz detalu: przy podziale na arkusze
+  detal i jego przekroje są jedną jednostką (na tym samym arkuszu; SCALE np. „1:25 & 1:20”).
+- **Warstwy map** (RC_MAP) zamrażane w rzutniach tylko wtedy, gdy są na nich WYŁĄCZNIE obiekty map.
+- **Fatal error po przejściu na layout (2026-10-20, rysunek kolegi PLOTS 376-381):** BricsCAD przy tworzeniu layoutu („Create viewport in new
+  layouts”) dokłada rzutnię całego modelu z widokiem skopiowanym z modelu — po RC_MODEL_3D / SHADEMODE styl „Building modeling” (render 6,
+  widok 3D). Rysowanie modelu w takiej rzutni: „error while rendering entity” przy kreskowaniach i zawieszenie BricsCAD. Poprawki:
+  `RcTemplateEngine.EraseAutoViewports` (Prepare GA i RC_LAYOUT — zostaje tylko rzutnia arkusza), `PlotSetupEngine.Apply` (RC_USTAW_WYDRUK, koniec
+  Prepare GA / RC_LAYOUT) przełącza każdą rzutnię (poza rzutnią arkusza) na 2D Wireframe.
+- **XData RC_LAYOUT** [1] rola (VP / NOTE / XREF / SHEET), [2] klucz. Ponowne RC_LAYOUT: usuwa layouty z A1-BL „SHEET”, obiekty RC_LAYOUT arkusza
+  bazowego, rzutnie ręczne — tylko po potwierdzeniu; layout o nazwie kolejnego arkusza zrobiony ręcznie — zastępowany tylko po potwierdzeniu.
+- Na końcu `PlotSetupEngine.Apply` (rzutnie na PCN-VIEWPORT, zablokowane, tagi PH odmrożone). Bez notatki „Quantity of members … typical detail”
+  (liczba elementów detalu nie jest zapisana) — v2.
+
+### RC_LAYOUT_TEXTS (wstążka Schedule → „Layout Texts”) — opisy istniejących arkuszy (decyzja Bartka 2026-10-19)
+Arkusze = layouty z A1-BL wg zakładek (ręczne albo z RC_LAYOUT). Zawartość tak jak RC_LAYOUT (`LayoutEngine.Collect`); w każdej rzutni (poza
+rzutnią arkusza) element „pokazany”, gdy środek jego zakresu leży w oknie rzutni (ViewTarget + ViewCenter, ViewHeight, bez obrotu); skala rzutni
+= ViewHeight / Height (zaokrąglona). Zapis: TITLE_3 i SCALE wg pokazanych elementów i skal rzutni, DRAWING_NUMBER po kolei od numeru pierwszego
+arkusza, nazwa layoutu = numer + REV (za zgodą; zmiana w dwóch krokach przez „~rc”), notatki pod przekrojami z nibem (pod dolną krawędzią rzutni,
+od lewej krawędzi przekroju; pominięte, gdy layout ma już tekst „Section X-X has longitudinal”), odsyłacze w ramkach. Poprzednie odsyłacze /
+notatki RC_LAYOUT (XData RC_LAYOUT NOTE / XREF) usuwane. Rzutni nie zmienia.
+
+### Poprawki 2026-10-20 (decyzje Bartka)
+- **Notatka „Section X-X has longitudinal lacer bars…”** (RC_LAYOUT / RC_LAYOUT_TEXTS) — nie przy przekrojach przez belkę (`LayoutRules.IsBeamSection`:
+  składnik BEAM:… albo rozkład Kind:Beam).
+- **Opis „NOMINAL TOP COVER TO NIB…” (NIBNOTE) w przekroju przez belkę** — tylko gdy żaden inny przekrój w rysunku go nie ma
+  (`AutoRebarEngine.OtherSectionHasNibNote`); przekroje nibu bez belki — jak dotąd zawsze.
+- **Style z szablonu** (`RcTemplateEngine.EnsureStyles`): Prepare GA kopiuje z rc-template wszystkie brakujące style tekstu, style wymiarowe i typy
+  linii (istniejące bez zmian); przed wymiarami ADD i przed rysowaniem przekroju — to samo, gdy brakuje któregoś stylu wtyczki
+  (SPEEDECK-1-50 RC, CADS_DIM_20, ROMANS, ROMANS NARROW, PH-LABEL; raz na rysunek w sesji). U kolegi wymiary ADD były niewidoczne (styl Standard).
+- **Wstążka**: Layouts / Layout Texts — małe przyciski w jednej kolumnie; „Bar Format” zdjęty ze wstążki (RC_BAR_FORMAT zostaje jako komenda).
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
    plan recenzuje ChatGPT: `scripts/recenzja-gpt.ps1 -Plan <plik>`.

@@ -24,7 +24,7 @@ namespace BricsCadRc.Core
 
         public sealed class Result
         {
-            public int Layouts, Viewports, SectionMarks, BarLayers, LabelTexts, ThawedTags;
+            public int Layouts, Viewports, SectionMarks, BarLayers, LabelTexts, ThawedTags, VisualStyles;
             public List<string> Messages = new List<string>();
         }
 
@@ -46,6 +46,7 @@ namespace BricsCadRc.Core
                     res.BarLayers++;
                 }
 
+                ObjectId wire = WireframeStyle(tr, db);
                 var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
                 foreach (DBDictionaryEntry e in ld)
                 {
@@ -78,6 +79,14 @@ namespace BricsCadRc.Core
                         foreach (var ln in new[] { PunchingAutoEngine.TagLayer, PunchingAutoEngine.HatchLayer })
                             if (lt.Has(ln) && vp.IsLayerFrozenInViewport(lt[ln])) thaw.Add(lt[ln]);
                         if (thaw.Count > 0) { vp.ThawLayersInViewport(thaw.GetEnumerator()); changed = true; res.ThawedTags += thaw.Count; }
+                        // styl wizualny rzutni = 2D Wireframe (2026-10-20): rzutnia utworzona przez BricsCAD przy nowym layoucie kopiuje widok
+                        // modelu — po RC_MODEL_3D / SHADEMODE „Building modeling” (render 6); rysowanie modelu w takiej rzutni dawało
+                        // „error while rendering entity” przy kreskowaniach i fatal error BricsCAD po przejściu na layout
+                        if (!wire.IsNull && vp.VisualStyleId != wire)
+                        {
+                            try { vp.VisualStyleId = wire; res.VisualStyles++; changed = true; }
+                            catch (System.Exception ex) { Log.Error("PlotSetupEngine.VisualStyle", ex); }
+                        }
                         if (changed) res.Viewports++;
                     }
                 }
@@ -87,6 +96,7 @@ namespace BricsCadRc.Core
             EnsureCtbInstalled(res);
             try { res.LabelTexts = AnnotationEngine.MakeAnnotTextsAsd(db); }
             catch (System.Exception ex) { Log.Error("PlotSetupEngine.LabelTexts", ex); }
+            if (res.VisualStyles > 0) res.Messages.Add($"rzutnie przełączone na styl 2D Wireframe (były cieniowane jak widok modelu — błędy rysowania / zawieszenie BricsCAD): {res.VisualStyles}");
             if (res.ThawedTags > 0) res.Messages.Add($"tagi PH (warstwy {PunchingAutoEngine.TagLayer} / {PunchingAutoEngine.HatchLayer}) odmrożone w rzutniach: {res.ThawedTags}");
             if (res.LabelTexts > 0) res.Messages.Add($"opisy rozkładów jak ASD (PH-LABEL, romans, szer. 0,80): {res.LabelTexts} tekstów");
             return res;
@@ -96,6 +106,19 @@ namespace BricsCadRc.Core
         /// speedeck-mono.ctb w folderze tabel pisaków BricsCAD (ustawienie „Plot styles path”; zapasowo
         /// %APPDATA%\Bricsys\BricsCAD\V*\*\PlotStyles). Plik już jest — bez zmian.
         /// </summary>
+        /// <summary>Styl wizualny „2D Wireframe” (nazwy AutoCAD / BricsCAD); brak — Null.</summary>
+        internal static ObjectId WireframeStyle(Transaction tr, Database db)
+        {
+            try
+            {
+                var d = (DBDictionary)tr.GetObject(db.VisualStyleDictionaryId, OpenMode.ForRead);
+                foreach (var n in new[] { "2dWireframe", "2D Wireframe", "2DWireframe", "Wireframe" })
+                    if (d.Contains(n)) return d.GetAt(n);
+            }
+            catch (System.Exception ex) { Log.Error("PlotSetupEngine.WireframeStyle", ex); }
+            return ObjectId.Null;
+        }
+
         public static void EnsureCtbInstalled(Result res)
         {
             try

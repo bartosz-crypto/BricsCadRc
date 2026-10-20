@@ -80,5 +80,65 @@ namespace BricsCadRc.Commands
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
             }
         }
+
+        /// <summary>
+        /// RC_LAYOUT_TEXTS (decyzja Bartka 2026-10-19) — opisy istniejących arkuszy (ułożonych ręcznie albo przez RC_LAYOUT): z rzutni
+        /// rozpoznaje zawartość i skale → TITLE_3, SCALE, numery rysunków po kolei (+ nazwy layoutów), notatki pod przekrojami z nibem,
+        /// odsyłacze „SEE DRG.” w osobnych ramkach. Rzutni nie zmienia.
+        /// </summary>
+        [CommandMethod("RC_LAYOUT_TEXTS", CommandFlags.Modal)]
+        public static void LayoutTexts() => RunTexts();
+
+        [CommandMethod("RC_ARKUSZE_OPISY", CommandFlags.Modal)]
+        public static void LayoutTextsPl() => RunTexts();
+
+        private static void RunTexts()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            var db = doc.Database;
+            const string T = "[RC LAYOUT TEXTS]";
+            try
+            {
+                var t = LayoutEngine.PrepareTexts(db);
+                foreach (var e in t.Errors) ed.WriteMessage($"\n{T} BŁĄD: {e}.");
+                if (t.Sheets.Count == 0) { ed.WriteMessage("\n"); return; }
+                foreach (var w in t.Warnings) ed.WriteMessage($"\n{T} uwaga: {w}.");
+                ed.WriteMessage($"\n{T} Arkuszy: {t.Sheets.Count}.");
+                foreach (var s in t.Sheets)
+                    ed.WriteMessage($"\n{T}   {s.Layout}" + (string.Equals(s.Layout, s.NewLayout, StringComparison.OrdinalIgnoreCase) ? "" : $" → {s.NewLayout}") +
+                                    $"  {s.Number}  „{s.Title3}”  {s.Scale}:  {string.Join(", ", s.Contents)}" +
+                                    (s.Notes.Count > 0 ? $"  (+ notatki nib: {s.Notes.Count})" : ""));
+
+                var ko = new PromptKeywordOptions($"\nZapisać opisy arkuszy? [Tak/Nie] <Tak>: ", "Tak Nie") { AllowNone = true };
+                ko.Keywords.Default = "Tak";
+                var kr = ed.GetKeywords(ko);
+                if (kr.Status == PromptStatus.Cancel || (kr.Status == PromptStatus.OK && kr.StringResult == "Nie")) { ed.WriteMessage($"\n{T} Przerwano — nic nie zmieniono.\n"); return; }
+                bool rename = false;
+                if (t.AnyRename)
+                {
+                    var ro = new PromptKeywordOptions($"\nZmienić też nazwy layoutów wg numerów rysunków? [Tak/Nie] <Tak>: ", "Tak Nie") { AllowNone = true };
+                    ro.Keywords.Default = "Tak";
+                    var rr = ed.GetKeywords(ro);
+                    if (rr.Status == PromptStatus.Cancel) return;
+                    rename = rr.Status == PromptStatus.None || rr.StringResult == "Tak";
+                }
+                LayoutEngine.TextsResult r;
+                using (doc.LockDocument())
+                    r = LayoutEngine.ApplyTexts(db, t, rename);
+                ed.WriteMessage($"\n{T} Gotowe: odsyłacze {r.CrossRefs}, notatki pod przekrojami {r.Notes}" +
+                                (r.Renamed > 0 ? $", nowe nazwy layoutów {r.Renamed}" : "") +
+                                (r.Removed > 0 ? $", usunięte stare opisy {r.Removed}" : "") + ".");
+                foreach (var m in r.Messages) ed.WriteMessage($"\n{T} {m}.");
+                ed.WriteMessage("\n");
+                try { ed.Regen(); } catch (System.Exception ex) { Log.Error("RC_LAYOUT_TEXTS.Regen", ex); }
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_LAYOUT_TEXTS", ex);
+                ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
     }
 }

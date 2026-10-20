@@ -95,6 +95,88 @@ namespace BricsCadRc.Core
             rep.Messages.Add($"tytuły rzutów z szablonu: {ids.Count}");
         }
 
+        // ── style tekstu / wymiarów / typy linii (decyzja Bartka 2026-10-20) ─────────────────────────
+
+        /// <summary>Style używane przez wtyczkę (brak w rysunku → wymiary ADD / przekroje / opisy w stylu Standard — u kolegi niewidoczne).</summary>
+        public static readonly string[] RequiredDimStyles = { "SPEEDECK-1-50 RC", "CADS_DIM_20" };
+        public static readonly string[] RequiredTextStyles = { "ROMANS", "ROMANS NARROW", "PH-LABEL" };
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Database, object> _stylesTried =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<Database, object>();
+
+        /// <summary>
+        /// Wszystkie style tekstu, style wymiarowe i typy linii z szablonu, których w rysunku nie ma (istniejące — bez zmian).
+        /// Prepare GA — zawsze; inne komendy — <see cref="EnsureStyles(Database)"/>. Zwraca liczbę dodanych.
+        /// </summary>
+        public static int EnsureStyles(Database db, Database tpl, Report rep)
+        {
+            int added = 0;
+            try
+            {
+                var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var tid in new[] { db.TextStyleTableId, db.DimStyleTableId, db.LinetypeTableId })
+                        foreach (ObjectId id in (SymbolTable)tr.GetObject(tid, OpenMode.ForRead))
+                            if (tr.GetObject(id, OpenMode.ForRead) is SymbolTableRecord r) have.Add(tid.Handle + "|" + r.Name);
+                    tr.Commit();
+                }
+                var groups = new[] { (tpl.TextStyleTableId, db.TextStyleTableId), (tpl.LinetypeTableId, db.LinetypeTableId), (tpl.DimStyleTableId, db.DimStyleTableId) };
+                foreach (var (src, dst) in groups)
+                {
+                    var ids = new ObjectIdCollection();
+                    using (var tr = tpl.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        foreach (ObjectId id in (SymbolTable)tr.GetObject(src, OpenMode.ForRead))
+                        {
+                            if (!(tr.GetObject(id, OpenMode.ForRead) is SymbolTableRecord r) || string.IsNullOrEmpty(r.Name)) continue;
+                            if (r is TextStyleTableRecord ts && ts.IsShapeFile) continue;
+                            if (r.Name.IndexOf('|') >= 0 || r.Name.IndexOf('$') >= 0) continue;   // z xref / bind
+                            if (!have.Contains(dst.Handle + "|" + r.Name)) ids.Add(id);
+                        }
+                        tr.Commit();
+                    }
+                    if (ids.Count == 0) continue;
+                    using (var map = new IdMapping())
+                        tpl.WblockCloneObjects(ids, dst, map, DuplicateRecordCloning.Ignore, false);
+                    added += ids.Count;
+                }
+                if (added > 0) rep?.Messages.Add($"style tekstu / wymiarów / typy linii z szablonu: {added}");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RcTemplateEngine.EnsureStyles", ex);
+                rep?.Messages.Add("style z szablonu — błąd: " + ex.Message);
+            }
+            return added;
+        }
+
+        /// <summary>
+        /// Przed rysowaniem (wymiary ADD, przekroje): gdy brakuje któregoś stylu wtyczki — style z szablonu (raz na rysunek w sesji).
+        /// Wymaga zablokowanego dokumentu, poza otwartą transakcją rysunku.
+        /// </summary>
+        public static void EnsureStyles(Database db)
+        {
+            if (db == null || _stylesTried.TryGetValue(db, out _)) return;
+            bool missing = false;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var dst = (DimStyleTable)tr.GetObject(db.DimStyleTableId, OpenMode.ForRead);
+                var st = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+                missing = RequiredDimStyles.Any(n => !dst.Has(n)) || RequiredTextStyles.Any(n => !st.Has(n));
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("RcTemplateEngine.EnsureStyles.Check", ex); }
+            _stylesTried.Add(db, new object());
+            if (!missing) return;
+            using var tpl = OpenTemplate();
+            if (tpl == null) return;
+            int n = EnsureStyles(db, tpl, null);
+            if (n > 0)
+                try { Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor.WriteMessage($"\n[RC] Dodano brakujące style z szablonu wtyczki: {n}."); }
+                catch (System.Exception ex) { Log.Error("RcTemplateEngine.EnsureStyles.Msg", ex); }
+        }
+
         /// <summary>Czy rysunek ma layout z blokiem tytułowym A1-BL.</summary>
         private static bool HasSheet(Database db)
         {
@@ -205,6 +287,7 @@ namespace BricsCadRc.Core
             using (var ttr = tpl.TransactionManager.StartOpenCloseTransaction())
             {
                 var lay = (Layout)tr.GetObject(layId, OpenMode.ForWrite);
+                EraseAutoViewports(tr, lay);
                 var src = (Layout)ttr.GetObject(tplLayId, OpenMode.ForRead);
                 CopyPlotSettings(src, lay, rep);
                 try { lay.TabOrder = 1; } catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheet.Tab", ex); }
@@ -263,12 +346,7 @@ namespace BricsCadRc.Core
                 var lay = (Layout)tr.GetObject(layId, OpenMode.ForWrite);
                 // „Create viewport in new layouts” — BricsCAD dokłada rzutnię całego modelu (2026-10-19: pusta rzutnia na arkuszu);
                 // zostaje tylko rzutnia arkusza (najmniejszy uchwyt)
-                var nbtr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
-                var vps = new List<ObjectId>();
-                foreach (ObjectId id in nbtr)
-                    if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Viewport) vps.Add(id);
-                foreach (var id in vps.OrderBy(v => v.Handle.Value).Skip(1))
-                    tr.GetObject(id, OpenMode.ForWrite).Erase();
+                EraseAutoViewports(tr, lay);
                 CopyPlotSettings((Layout)tr.GetObject(baseLayId, OpenMode.ForRead), lay, rep);
                 try { lay.TabOrder = tabOrder; } catch (System.Exception ex) { Log.Error("RcTemplateEngine.CreateSheetFrom.Tab", ex); }
                 psId = lay.BlockTableRecordId;
@@ -288,6 +366,20 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
             return layId;
+        }
+
+        /// <summary>
+        /// „Create viewport in new layouts” — BricsCAD dokłada do nowego layoutu rzutnię całego modelu z widokiem jak w modelu (także
+        /// cieniowanym po RC_MODEL_3D — fatal error po przejściu na layout, 2026-10-20). Zostaje tylko rzutnia arkusza (najmniejszy uchwyt).
+        /// </summary>
+        private static void EraseAutoViewports(Transaction tr, Layout lay)
+        {
+            var nbtr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
+            var vps = new List<ObjectId>();
+            foreach (ObjectId id in nbtr)
+                if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Viewport) vps.Add(id);
+            foreach (var id in vps.OrderBy(v => v.Handle.Value).Skip(1))
+                tr.GetObject(id, OpenMode.ForWrite).Erase();
         }
 
         // ── Drawn / Checked / data (decyzja 2026-10-15) ─────────────────────────────

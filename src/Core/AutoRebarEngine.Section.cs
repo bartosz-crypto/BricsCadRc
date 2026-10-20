@@ -489,6 +489,7 @@ namespace BricsCadRc.Core
             double ox = topLeft.X - r.UMin, oy = topLeft.Y;
             Point3d W(double u, double v) => new Point3d(ox + u, oy + v, 0);
 
+            RcTemplateEngine.EnsureStyles(db);   // ROMANS / CADS_DIM_20 z szablonu, gdy brak (2026-10-20)
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 EnsureSectionLayer(tr, db, SectionMarkLayer, 1);
@@ -693,6 +694,9 @@ namespace BricsCadRc.Core
                 // ROMANS NARROW 60, ramka); położenie względem krawędzi nibu i wierzchu płyty (prawy nib; lewy — lustrzanie)
                 {
                     var nibSeg = r.Segments.FirstOrDefault(x => x.Nib1 > 0) ?? r.Segments.FirstOrDefault(x => x.Nib0 > 0);
+                    // decyzja Bartka 2026-10-20: przekrój przez belkę — opis otuliny nibu tylko, gdy żaden inny przekrój go jeszcze nie ma
+                    // (opis stoi przy przekrojach nibu A-A / B-B)
+                    if (nibSeg != null && r.UsedBeams.Count > 0 && OtherSectionHasNibNote(tr, ms, rec?.Guid)) nibSeg = null;
                     if (nibSeg != null)
                     {
                         bool right = nibSeg.Nib1 > 0;
@@ -805,6 +809,25 @@ namespace BricsCadRc.Core
             }
             title.XData = TitleXData(rec.Guid, rec.Letter, ctx.PickedHandle, ctx.OuterHandle, th);
             WriteRecord(tr, title, rec);
+        }
+
+        /// <summary>Czy w modelu jest opis otuliny nibu (część NIBNOTE) innego przekroju niż <paramref name="guid"/>.</summary>
+        private static bool OtherSectionHasNibNote(Transaction tr, BlockTableRecord ms, string guid)
+        {
+            foreach (ObjectId id in ms)
+            {
+                if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Entity e)) continue;
+                try
+                {
+                    using var rb = e.GetXDataForApplication(SectionPartApp);
+                    var v = rb?.AsArray();
+                    if (v == null || v.Length < 3 || Convert.ToString(v[2].Value, CultureInfo.InvariantCulture) != "NIBNOTE") continue;
+                    string g = v.Length > 4 ? Convert.ToString(v[4].Value, CultureInfo.InvariantCulture) : "";
+                    if (string.IsNullOrEmpty(guid) || g != guid) return true;
+                }
+                catch (System.Exception ex) { Log.Error("AutoRebar.OtherSectionHasNibNote", ex); }
+            }
+            return false;
         }
 
         internal static ResultBuffer PartXData(string titleHandle, string role, string key, string guid)

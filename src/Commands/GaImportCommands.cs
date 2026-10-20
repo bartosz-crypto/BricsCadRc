@@ -65,6 +65,8 @@ namespace BricsCadRc.Commands
                     else
                         using (doc.LockDocument())
                         {
+                            RcTemplateEngine.EnsureStyles(doc.Database, tpl, tplRep);   // decyzja 2026-10-20: wszystkie style wtyczki od razu
+                            RcTemplateEngine.EnsureStyles(doc.Database, tpl, tplRep);   // decyzja 2026-10-20: wszystkie style wtyczki od razu
                             RcTemplateEngine.EnsureTitles(doc.Database, tpl, tplRep);
                             // czysty arkusz RC nazwany wg GA (GA0300… → RC0300 + rewizja szablonu, np. RC0300C1)
                             var gaData = GaTitleEngine.Read(src.Db, plot.Label);
