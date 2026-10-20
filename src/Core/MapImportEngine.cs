@@ -196,6 +196,7 @@ namespace BricsCadRc.Core
                 foreach (var kv in perMap) foreach (var id in kv.Value) rowOf[id] = kv.Key;
 
                 var idMap = new IdMapping();
+                var hatches = new List<ObjectId>();
                 src.Db.WblockCloneObjects(ids, SymbolUtilityServices.GetBlockModelSpaceId(db), idMap,
                                           DuplicateRecordCloning.Ignore, false);
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -213,9 +214,11 @@ namespace BricsCadRc.Core
                             new TypedValue((int)DxfCode.ExtendedDataAsciiString, plot.Label),
                             new TypedValue((int)DxfCode.ExtendedDataAsciiString, row));
                         result[row] = (result.TryGetValue(row, out int n) ? n : 0) + 1;
+                        if (e is Hatch) hatches.Add(pair.Value);
                     }
                     tr.Commit();
                 }
+                // HatchRepair (przeliczanie) wycofany 2026-10-20 — pogarszał: zapis psuł się już po Prepare GA
             }
             return result;
         }

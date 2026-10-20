@@ -66,6 +66,8 @@ namespace BricsCadRc.Core
             public Box Box;
             public string Layer;
             public bool Claimed;
+            /// <summary>Okrąg: promień (0 — inny obiekt).</summary>
+            public double Radius;
         }
 
         internal sealed class Src
@@ -184,7 +186,7 @@ namespace BricsCadRc.Core
                     Box b = ExtentsOf(e);
                     if (b.IsEmpty) continue;   // obiekt bez zakresu (np. pusty tekst)
                     if (b.W > 1e6 || b.H > 1e6 || double.IsNaN(b.X0)) continue;
-                    var en = new Ent { Id = id, Box = b, Layer = e.Layer ?? "" };
+                    var en = new Ent { Id = id, Box = b, Layer = e.Layer ?? "", Radius = e is Circle ci ? ci.Radius : 0 };
                     ents.Add(en);
                     byId[id] = en;
                     try
@@ -266,6 +268,14 @@ namespace BricsCadRc.Core
                 {
                     var b = p.e.Box;
                     var zone = new Box { X0 = b.X0 - 700, Y0 = b.Y0 - 300, X1 = Math.Max(b.X1, b.X0 + 3800) + 1500, Y1 = b.Y1 + 4200 };
+                    // detal PH = duży okrąg (zbrojenie płyty w okręgu) nad tytułem — strefa wg okręgu: bez obiektów nad detalem
+                    // (np. opis pręta zbiorczego „112 H16-111” wpadał do rzutni PH1, 2026-10-20); opisy prętów i „MAIN SLAB …” na prawo
+                    var circle = ents.Where(c => c.Radius > 1000 && c.Radius < 3500
+                                                 && c.Box.Cx > b.X0 - 1000 && c.Box.Cx < b.X0 + 5000 && c.Box.Cy > b.Y1 && c.Box.Cy < b.Y1 + 5000)
+                                     .OrderBy(c => Math.Abs(c.Box.Cx - b.Cx) + Math.Abs(c.Box.Cy - (b.Y1 + 2000))).FirstOrDefault();
+                    if (circle != null)
+                        zone = new Box { X0 = Math.Min(circle.Box.X0, b.X0) - 600, Y0 = b.Y0 - 300,
+                                         X1 = Math.Max(circle.Box.X1 + 1800, b.X1 + 300), Y1 = circle.Box.Y1 + 800 };
                     p.e.Claimed = true;
                     return (p, zone, ax: b.Cx, ay: b.Y1 + 1500, box: b);
                 }).ToList();
@@ -438,7 +448,11 @@ namespace BricsCadRc.Core
             return b.IsEmpty ? gx : b;
         }
 
-        /// <summary>Skala opisowa 1:n z rysunku (ACDB_ANNOTATIONSCALES); brak — dodana. null — błąd (komunikat w log).</summary>
+        /// <summary>
+        /// Skala opisowa 1:n z listy skal rysunku (ACDB_ANNOTATIONSCALES); brak — null (rzutnia bez skali opisowej, ANNOALLVISIBLE = 1).
+        /// 2026-10-20: NIE dodajemy nowych skal (new AnnotationScale + AddContext) — podejrzane o uszkodzenie rysunku w BricsCAD
+        /// (błędy rysowania kreskowań, „Failed to save the file”).
+        /// </summary>
         private static AnnotationScale AnnoScale(Database db, int n)
         {
             try
@@ -447,11 +461,9 @@ namespace BricsCadRc.Core
                 foreach (ObjectContext oc in occ)
                     if (oc is AnnotationScale a && a.DrawingUnits > 0 && Math.Abs(a.PaperUnits / a.DrawingUnits - 1.0 / n) < 1e-9)
                         return a;
-                var ns = new AnnotationScale { Name = "1:" + n.ToString(CultureInfo.InvariantCulture), PaperUnits = 1, DrawingUnits = n };
-                occ.AddContext(ns);
-                return ns;
             }
-            catch (System.Exception ex) { Log.Error("LayoutEngine.AnnoScale", ex); return null; }
+            catch (System.Exception ex) { Log.Error("LayoutEngine.AnnoScale", ex); }
+            return null;
         }
 
         private static string BaseAttr(Database db, ObjectId layId, string tag)
@@ -510,10 +522,12 @@ namespace BricsCadRc.Core
         /// <summary>Rzutnia arkusza (papieru) = pierwsza (najmniejszy uchwyt) — jak PlotSetupEngine.</summary>
         private static ObjectId OverallViewport(Transaction tr, BlockTableRecord btr)
         {
-            ObjectId overall = ObjectId.Null; long minH = long.MaxValue;
-            foreach (ObjectId id in btr)
-                if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Viewport && id.Handle.Value < minH) { minH = id.Handle.Value; overall = id; }
-            return overall;
+            if (!btr.LayoutId.IsNull && tr.GetObject(btr.LayoutId, OpenMode.ForRead) is Layout lay)
+            {
+                var o = PlotSetupEngine.OverallViewportId(tr, lay, btr);
+                if (!o.IsNull) return o;
+            }
+            return ObjectId.Null;   // nierozpoznana — wywołujący nie usuwa / nie zmienia rzutni
         }
 
         private static string Role(Entity e)
@@ -660,7 +674,8 @@ namespace BricsCadRc.Core
                     if (e is Viewport)
                     {
                         if (id == overall) continue;
-                        if (role != null || removeUserViewports) { e.UpgradeOpen(); e.Erase(); res.Removed++; }
+                        // rzutnia arkusza nierozpoznana — usuwamy tylko własne (RC_LAYOUT), nigdy ręcznych (mogłaby to być rzutnia arkusza)
+                        if (role != null || (removeUserViewports && !overall.IsNull)) { e.UpgradeOpen(); e.Erase(); res.Removed++; }
                         continue;
                     }
                     if (role != null) { e.UpgradeOpen(); e.Erase(); res.Removed++; continue; }
@@ -696,9 +711,6 @@ namespace BricsCadRc.Core
                 var info = ctx.Sheets[k];
                 var sheet = ctx.Plan.Sheets[k];
                 try { lm.CurrentLayout = info.Layout; } catch (System.Exception ex) { Log.Error("LayoutEngine.Apply.Activate", ex); }
-                // obiekty opisowe bez skali rzutni też widoczne (ANNOALLVISIBLE zapisywane per layout)
-                try { Bricscad.ApplicationServices.Application.SetSystemVariable("ANNOALLVISIBLE", 1); }
-                catch (System.Exception ex) { Log.Error("LayoutEngine.Apply.AnnoAllVisible", ex); }
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     var lay = (Layout)tr.GetObject(layIds[k], OpenMode.ForRead);
@@ -855,6 +867,7 @@ namespace BricsCadRc.Core
                     foreach (ObjectId id in btr)
                     {
                         if (id.IsErased || id == overall || !(tr.GetObject(id, OpenMode.ForRead) is Viewport vp) || vp.Height < 1e-6) continue;
+                        if (Math.Abs(vp.ViewHeight - vp.Height) < 1e-3 && (vp.ViewCenter - new Point2d(vp.CenterPoint.X, vp.CenterPoint.Y)).Length < 1e-3) continue;   // rzutnia arkusza
                         double sc = vp.ViewHeight / vp.Height;
                         int n = (int)Math.Round(sc);
                         if (n <= 0) continue;

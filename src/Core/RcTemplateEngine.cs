@@ -120,8 +120,9 @@ namespace BricsCadRc.Core
                             if (tr.GetObject(id, OpenMode.ForRead) is SymbolTableRecord r) have.Add(tid.Handle + "|" + r.Name);
                     tr.Commit();
                 }
-                var groups = new[] { (tpl.TextStyleTableId, db.TextStyleTableId), (tpl.LinetypeTableId, db.LinetypeTableId), (tpl.DimStyleTableId, db.DimStyleTableId) };
-                foreach (var (src, dst) in groups)
+                // 2026-10-20: tylko style wtyczki (zależności — np. styl tekstu stylu wymiarowego — dochodzą same); bez kopiowania całych tabel
+                var groups = new[] { (tpl.TextStyleTableId, db.TextStyleTableId, RequiredTextStyles), (tpl.DimStyleTableId, db.DimStyleTableId, RequiredDimStyles) };
+                foreach (var (src, dst, names) in groups)
                 {
                     var ids = new ObjectIdCollection();
                     using (var tr = tpl.TransactionManager.StartOpenCloseTransaction())
@@ -131,6 +132,7 @@ namespace BricsCadRc.Core
                             if (!(tr.GetObject(id, OpenMode.ForRead) is SymbolTableRecord r) || string.IsNullOrEmpty(r.Name)) continue;
                             if (r is TextStyleTableRecord ts && ts.IsShapeFile) continue;
                             if (r.Name.IndexOf('|') >= 0 || r.Name.IndexOf('$') >= 0) continue;   // z xref / bind
+                            if (!names.Contains(r.Name, StringComparer.OrdinalIgnoreCase)) continue;
                             if (!have.Contains(dst.Handle + "|" + r.Name)) ids.Add(id);
                         }
                         tr.Commit();
@@ -140,7 +142,7 @@ namespace BricsCadRc.Core
                         tpl.WblockCloneObjects(ids, dst, map, DuplicateRecordCloning.Ignore, false);
                     added += ids.Count;
                 }
-                if (added > 0) rep?.Messages.Add($"style tekstu / wymiarów / typy linii z szablonu: {added}");
+                if (added > 0) rep?.Messages.Add($"style tekstu / wymiarów wtyczki z szablonu: {added}");
             }
             catch (System.Exception ex)
             {
@@ -259,6 +261,8 @@ namespace BricsCadRc.Core
                     var lay = (Layout)tr.GetObject(e.Value, OpenMode.ForRead);
                     if (lay.ModelType) continue;
                     if (string.Equals(lay.LayoutName, name, StringComparison.OrdinalIgnoreCase)) { toDelete.Add(lay.LayoutName); continue; }
+                    // decyzja Bartka 2026-10-20: Prepare GA zastępuje płytę — arkusze RC poprzedniej płyty (layout z A1-BL, np. RC0090C1) też usuwane
+                    if (GaTitleEngine.TitleBlocks(tr, lay.BlockTableRecordId).Any()) { toDelete.Add(lay.LayoutName); continue; }
                     if (Regex.IsMatch(lay.LayoutName, @"^Layout\d+$", RegexOptions.IgnoreCase))
                     {
                         var btr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
@@ -375,11 +379,12 @@ namespace BricsCadRc.Core
         private static void EraseAutoViewports(Transaction tr, Layout lay)
         {
             var nbtr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
-            var vps = new List<ObjectId>();
+            // rzutnia arkusza rozpoznana po geometrii (PlotSetupEngine.OverallViewportId); bez pewności nic nie usuwamy
+            var overall = PlotSetupEngine.OverallViewportId(tr, lay, nbtr);
+            if (overall.IsNull) { Log.Info($"RcTemplateEngine.EraseAutoViewports: {lay.LayoutName} — rzutnia arkusza nierozpoznana, bez zmian"); return; }
             foreach (ObjectId id in nbtr)
-                if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Viewport) vps.Add(id);
-            foreach (var id in vps.OrderBy(v => v.Handle.Value).Skip(1))
-                tr.GetObject(id, OpenMode.ForWrite).Erase();
+                if (!id.IsErased && id != overall && tr.GetObject(id, OpenMode.ForRead) is Viewport)
+                    tr.GetObject(id, OpenMode.ForWrite).Erase();
         }
 
         // ── Drawn / Checked / data (decyzja 2026-10-15) ─────────────────────────────

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Teigha.Colors;
 using Teigha.DatabaseServices;
 
@@ -57,14 +58,20 @@ namespace BricsCadRc.Core
                         && !lay.CurrentStyleSheet.Equals(PlotStyleTable, StringComparison.OrdinalIgnoreCase))
                         res.Messages.Add($"layout {lay.LayoutName}: tabela pisaków {lay.CurrentStyleSheet} (wzorzec: {PlotStyleTable}) — sprawdź Page Setup");
                     var btr = (BlockTableRecord)tr.GetObject(lay.BlockTableRecordId, OpenMode.ForRead);
-                    // rzutnia arkusza = pierwsza rzutnia w layoucie (najmniejszy uchwyt) — bez zmian
-                    ObjectId overall = ObjectId.Null; long minH = long.MaxValue;
+                    // rzutnia arkusza: Layout.GetViewports()[0] (zapas — najmniejszy uchwyt) — bez zmian
+                    ObjectId overall = OverallViewportId(tr, lay, btr); long minH = long.MaxValue;
                     var vps = new List<ObjectId>();
                     foreach (ObjectId id in btr)
                     {
                         if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Viewport)) continue;
                         vps.Add(id);
-                        if (id.Handle.Value < minH) { minH = id.Handle.Value; overall = id; }
+                        if (id.Handle.Value < minH) minH = id.Handle.Value;
+                    }
+                    if (overall.IsNull)
+                    {
+                        // rzutnia arkusza nierozpoznana: jedna rzutnia w layoucie = rzutnia arkusza (nic do zmiany); kilka — layout pomijany
+                        if (vps.Count > 1) res.Messages.Add($"layout {lay.LayoutName}: rzutnia arkusza nierozpoznana — rzutnie bez zmian");
+                        continue;
                     }
                     foreach (var id in vps)
                     {
@@ -106,6 +113,31 @@ namespace BricsCadRc.Core
         /// speedeck-mono.ctb w folderze tabel pisaków BricsCAD (ustawienie „Plot styles path”; zapasowo
         /// %APPDATA%\Bricsys\BricsCAD\V*\*\PlotStyles). Plik już jest — bez zmian.
         /// </summary>
+        /// <summary>
+        /// Rzutnia arkusza (papieru) layoutu — po geometrii, nie po uchwycie / kolejności (2026-10-20): rzutnia arkusza pokazuje
+        /// przestrzeń papieru 1:1, więc jej wysokość widoku = wysokość, a środek widoku = środek rzutni (rysunek kolegi: 222,18 / 222,18,
+        /// (128,5; 97,5) = (128,5; 97,5); rzutnia modelu BricsCAD: 32949 / 156, środek widoku (0,0)). Dokładnie jedna taka rzutnia —
+        /// jej Id; żadna albo kilka — Null (wtedy nic nie usuwamy ani nie zmieniamy). Usunięcie rzutni arkusza psuje layout:
+        /// „error while rendering entity” przy kreskowaniach (także w bloku A1-BL) i „Failed to save the file”.
+        /// </summary>
+        internal static ObjectId OverallViewportId(Transaction tr, Layout lay, BlockTableRecord btr)
+        {
+            var hits = new List<ObjectId>();
+            try
+            {
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Viewport vp) || vp.Height <= 1e-9) continue;
+                    double tol = Math.Max(1e-6, vp.Height * 1e-4);
+                    var c = vp.CenterPoint;
+                    var vc = vp.ViewCenter;
+                    if (Math.Abs(vp.ViewHeight - vp.Height) <= tol && Math.Abs(vc.X - c.X) <= tol && Math.Abs(vc.Y - c.Y) <= tol) hits.Add(id);
+                }
+            }
+            catch (System.Exception ex) { Log.Error("PlotSetupEngine.OverallViewportId", ex); }
+            return hits.Count == 1 ? hits[0] : ObjectId.Null;
+        }
+
         /// <summary>Styl wizualny „2D Wireframe” (nazwy AutoCAD / BricsCAD); brak — Null.</summary>
         internal static ObjectId WireframeStyle(Transaction tr, Database db)
         {

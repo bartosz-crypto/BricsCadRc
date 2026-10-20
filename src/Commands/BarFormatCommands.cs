@@ -19,36 +19,14 @@ namespace BricsCadRc.Commands
             if (doc == null) return;
             var ed = doc.Editor;
 
+            // decyzja Bartka 2026-10-20: pręty zawsze jak dawniej (polilinia); przełącznik wyłączony, stary plik ustawienia usuwany
             try
             {
-                var cur = BarFormat.Current;
-                string def = cur == BarFormatKind.Block ? "Blok" : "Polilinia";
-                ed.WriteMessage($"\n[RC] Nowe pręty: {BarFormat.DisplayName(cur)}.");
-
-                var pko = new PromptKeywordOptions($"\n[RC] Format nowych prętów [Polilinia/Blok] <{def}>: ");
-                pko.Keywords.Add("Polilinia");
-                pko.Keywords.Add("Blok");
-                pko.Keywords.Default = def;
-                pko.AppendKeywordsToMessage = false;
-                pko.AllowNone = true;
-                var kr = ed.GetKeywords(pko);
-                if (kr.Status != PromptStatus.OK && kr.Status != PromptStatus.None) return;
-
-                var kind = BarFormat.Parse(kr.StringResult) ?? cur;
-                if (BarFormat.Set(kind, persist: true))
-                    ed.WriteMessage($"\n[RC] Nowe pręty: {BarFormat.DisplayName(kind)} (zapisane).\n");
-                else
-                    ed.WriteMessage($"\n[RC] Nowe pręty: {BarFormat.DisplayName(kind)}. " +
-                                    "Nie zapisano ustawienia — obowiązuje do końca sesji.\n");
-                string env = BarFormat.EnvOverride();
-                if (env != null)
-                    ed.WriteMessage($"[RC] Uwaga: ustawiona zmienna środowiskowa {BarFormat.EnvVar}={env} — " +
-                                    "po ponownym uruchomieniu ma pierwszeństwo przed tym ustawieniem.\n");
-                if (kind == BarFormatKind.Block)
-                    ed.WriteMessage("[RC] Pręt-blok: grip końca / STRETCH pręta prostego zmienia długość, numer pozycji, rozkłady " +
-                                    "i opis; pręty gięte — tylko przesunięcie (długość przez RC_EDIT_BAR). " +
-                                    "Rysunki dla starej wtyczki (BricsCadRc) — format Polilinia.\n");
-                Log.Info($"[RC] RC_BAR_FORMAT: {kind}");
+                string path = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                                                     App.ProductInfo.FolderName, BarFormat.FileName);
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                BarFormat.Set(BarFormatKind.Polyline, persist: false);
+                ed.WriteMessage("\n[RC] Nowe pręty: zawsze polilinia (jak dawniej). Format blokowy wyłączony.\n");
             }
             catch (System.Exception ex)
             {

@@ -1361,7 +1361,8 @@ Wzór: arkusze PLOT 30 / 20 / 206 / 9-10 (pliki Bartka). Silnik `LayoutEngine` (
   brak prętów — cięcie wzdłuż X = 1.
 - **Zakresy MText / MLeader** TYLKO z fragmentów po rozbiciu (GeometricExtents MText w BricsCAD bywa za mały — ucięte tytuły i opisy detali PH —
   albo za duży — zadana wysokość ramki, rzutnia PH1 „schodziła” w dół); GeometricExtents tylko, gdy rozbicie nic nie da.
-- **Skala opisowa rzutni** = skala rzutni (CustomScale + AnnotationScale 1:n, brak w rysunku — dodana) i ANNOALLVISIBLE = 1 na arkuszach
+- **Skala opisowa rzutni** = skala rzutni (CustomScale + AnnotationScale 1:n tylko z listy skal rysunku — od 2026-10-20 NIE dodajemy nowych skal
+  (podejrzenie uszkodzenia rysunku: błędy rysowania kreskowań, „Failed to save”); ANNOALLVISIBLE nie ustawiane (eInvalidInput)
   (sama ViewHeight zostawiała 1:1 — obiekty opisowe rzutu górnego niewidoczne).
 - Rzutnia: SetDatabaseDefaults, widok z góry, styl wizualny 2D Wireframe (kreskowania nie rysowały się); warstwy map zbrojenia (RC_MAP)
   zamrożone w rzutniach (kreskowania map ANSI31 dawały „error while rendering entity”).
@@ -1400,6 +1401,16 @@ notatki RC_LAYOUT (XData RC_LAYOUT NOTE / XREF) usuwane. Rzutni nie zmienia.
   linii (istniejące bez zmian); przed wymiarami ADD i przed rysowaniem przekroju — to samo, gdy brakuje któregoś stylu wtyczki
   (SPEEDECK-1-50 RC, CADS_DIM_20, ROMANS, ROMANS NARROW, PH-LABEL; raz na rysunek w sesji). U kolegi wymiary ADD były niewidoczne (styl Standard).
 - **Wstążka**: Layouts / Layout Texts — małe przyciski w jednej kolumnie; „Bar Format” zdjęty ze wstążki (RC_BAR_FORMAT zostaje jako komenda).
+- **Rzutnia arkusza (2026-10-20, „Failed to save the file” + błędy rysowania kreskowań, też w bloku A1-BL):** rozpoznawana WYŁĄCZNIE po
+  geometrii (`PlotSetupEngine.OverallViewportId`: wysokość widoku = wysokość rzutni i środek widoku = środek rzutni; dokładnie jedna taka),
+  nie po uchwycie ani Layout.GetViewports — usunięcie rzutni arkusza (EraseAutoViewports przy nowym layoucie) psuło layout. Bez pewności:
+  nic nie usuwamy (Prepare GA, RC_LAYOUT), PlotSetupEngine pomija layout, RC_LAYOUT usuwa tylko własne rzutnie (XData RC_LAYOUT).
+- **Kreskowania z baz DXF (2026-10-20, „Failed to save the file” po imporcie map, logo A1-BL bez wypełnień):** `HatchRepair` — ponowne
+  ustawienie wzoru (standardowe: kąt, skala, SetHatchPattern) i EvaluateHatch w rysunku docelowym. Wołane: po imporcie map (klony kreskowań),
+  na końcu Prepare GA (wszystkie kreskowania rysunku), ręcznie RC_HATCH_FIX / RC_NAPRAW_KRESKOWANIA (naprawa starszych rysunków).
+  Prepare GA usuwa też layouty z A1-BL poprzedniej płyty (decyzja Bartka).
+- **Format prętów (decyzja Bartka 2026-10-20): zawsze polilinia, jak dawniej.** `BarFormat.UserSettingEnabled = false` (plik barformat.txt
+  ignorowany), `RC_BAR_FORMAT` tylko usuwa stary plik i potwierdza polilinię. Pręt-blok (Plan C) — wyłącznie w testach (Set / RC_REG_BARFORMAT).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

@@ -22,7 +22,9 @@ namespace BricsCadRc.Core
 
         // Krok 3f (0-POPRAWKI p.1): ustawienie użytkownika (plik) czytane i zapisywane (RC_BAR_FORMAT).
         // Testy przełączają format bez zapisu (Set(kind, false) / zmienna środowiskowa).
-        internal static readonly bool UserSettingEnabled = true;
+        // Decyzja Bartka 2026-10-20: pręty jak dawniej (polilinia) — ustawienie z pliku wyłączone (plik ignorowany, RC_BAR_FORMAT
+        // nie przełącza). Format blokowy tylko w testach (Set / zmienna środowiskowa RC_REG_BARFORMAT).
+        internal static readonly bool UserSettingEnabled = false;
 
         private static bool _loaded;
         private static BarFormatKind _current = BarFormatKind.Polyline;
