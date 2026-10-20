@@ -305,8 +305,11 @@ namespace BricsCadRc.Core
                                 h.SetDatabaseDefaults(db);
                                 h.Layer = HatchLayer;
                                 h.ColorIndex = 1;
-                                h.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
+                                // 2026-10-20 (kreskowania PH się nie rysowały): skala i kąt PRZED SetHatchPattern — linie wzoru liczone są
+                                // przy jego ustawieniu (skala zmieniona po — wzór w środku kreskowania niespójny z zapisaną skalą)
+                                h.PatternAngle = 0.0;
                                 h.PatternScale = 10.0;
+                                h.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
                                 h.Associative = false;
                                 ms.AppendEntity(h);
                                 tr.AddNewlyCreatedDBObject(h, true);

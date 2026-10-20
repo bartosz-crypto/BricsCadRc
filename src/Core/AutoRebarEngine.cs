@@ -2284,6 +2284,14 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Scan old UB distributions on slab (identified by Mark suffix " UB").</summary>
+        /// <summary>Numer pozycji UB z opisu rozkładu — także „H10-03 UB” (1 pręt, bez rozstawu: numer z pierwszego członu).</summary>
+        internal static int UbPosNr(string mark)
+        {
+            int pnr = SingleBarEngine.ExtractPosNr(mark);
+            if (pnr == 0 && !string.IsNullOrEmpty(mark)) pnr = SingleBarEngine.ExtractPosNr(mark.Trim().Split(' ')[0]);
+            return pnr;
+        }
+
         private static List<(ObjectId, ObjectId)> ScanOldUBDistributions(
             Database db, Transaction tr, List<Point2d> slabVertices, string layerCode, string filterDirection,
             Func<int, bool> keepPos = null)
@@ -2300,10 +2308,10 @@ namespace BricsCadRc.Core
                 if (string.IsNullOrEmpty(bar.Mark)) continue;
                 if (!bar.Mark.EndsWith($" {UBSuffix}")) continue;
                 if (bar.Direction != filterDirection) continue;
-                int pnr = SingleBarEngine.ExtractPosNr(bar.Mark);
-                // UB 03 w detalu belki (znacznik strefy, decyzja 2026-10-11): rozkład z 1 prętem „1 H10-03 UB” (opis bez rozstawu) — numer z pierwszego
-                // członu opisu (ExtractPosNr daje 0); rozkłady bez znacznika strefy — jak dotąd (bit w bit)
-                if (pnr == 0 && !string.IsNullOrEmpty(BeamStore.ReadTag(br))) pnr = SingleBarEngine.ExtractPosNr(bar.Mark.Split(' ')[0]);
+                // rozkład z 1 prętem „1 H10-03 UB” (opis bez rozstawu; ExtractPosNr daje 0) — numer z pierwszego członu opisu: w detalu belki
+                // (decyzja 2026-10-11) i na rzucie (UB 03 na uskoku po stronie płyty, 2026-10-13). 2026-10-20: wcześniej tylko w detalu —
+                // pojedyncze UB 03 rzutu nie były usuwane przy ponownym Mesh / UB i dublowały się (opis „1 H10-03 UB” na rzucie)
+                int pnr = UbPosNr(bar.Mark);
                 if (keepPos != null && !keepPos(pnr)) continue;
                 if (!BelongsToCurrentSlab(br, slabVertices)) continue;
 

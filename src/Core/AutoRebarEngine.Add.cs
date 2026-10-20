@@ -423,6 +423,7 @@ namespace BricsCadRc.Core
                 EnsureRegApp(tr, db, XAddDimApp);
                 var dst = (DimStyleTable)tr.GetObject(db.DimStyleTableId, OpenMode.ForRead);
                 ObjectId styleId = dst.Has(AddDimStyle) ? dst[AddDimStyle] : db.Dimstyle;
+                var dsr = (DimStyleTableRecord)tr.GetObject(styleId, OpenMode.ForRead);
                 var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
                 var space = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
                 foreach (var (p1, p2, line, rot) in dims)
@@ -430,6 +431,13 @@ namespace BricsCadRc.Core
                     var dim = new RotatedDimension(rot, p1, p2, line, "", styleId);
                     dim.SetDatabaseDefaults(db);
                     dim.DimensionStyle = styleId;
+                    // 2026-10-20: SetDatabaseDefaults w BricsCAD wpisuje do wymiaru nadpisania z bieżącego stylu rysunku (np. ISO-25:
+                    // DIMSCALE 1, tekst i strzałki 2,5 mm — wymiary ADD niewidoczne / „inny styl”) — wielkości jawnie jak w stylu ADD
+                    dim.Dimscale = dsr.Dimscale; dim.Dimtxt = dsr.Dimtxt; dim.Dimasz = dsr.Dimasz; dim.Dimexo = dsr.Dimexo;
+                    dim.Dimexe = dsr.Dimexe; dim.Dimgap = dsr.Dimgap; dim.Dimdli = dsr.Dimdli; dim.Dimcen = dsr.Dimcen;
+                    dim.TextStyleId = dsr.Dimtxsty; dim.Dimtad = dsr.Dimtad; dim.Dimdec = dsr.Dimdec;
+                    // kolory też (nadpisania ISO-25 dawały ByBlock → kolor warstwy SD-PILED-RAFT, zielony); styl: linie żółte, tekst biały
+                    dim.Dimclrd = dsr.Dimclrd; dim.Dimclre = dsr.Dimclre; dim.Dimclrt = dsr.Dimclrt; dim.Dimtdec = dsr.Dimtdec;
                     if (lt.Has(AddDimLayer)) dim.Layer = AddDimLayer;
                     space.AppendEntity(dim);
                     tr.AddNewlyCreatedDBObject(dim, true);
@@ -503,7 +511,7 @@ namespace BricsCadRc.Core
                     var bar = BarBlockEngine.ReadXData(br);
                     if (bar == null || bar.LayerCode != ubCode || string.IsNullOrEmpty(bar.Mark) || !bar.Mark.EndsWith(" " + UBSuffix)) continue;
                     if (!string.Equals(bar.Direction, dir, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (SingleBarEngine.ExtractPosNr(bar.Mark) == NibUBPosNr) continue;            // UB 03 — nie
+                    if (UbPosNr(bar.Mark) == NibUBPosNr) continue;                               // UB 03 — nie (także „H10-03 UB”, 1 pręt)
                     if (Math.Abs(br.Rotation) > 1e-6 || !BelongsToCurrentSlab(br, verts)) continue;
                     double along0 = horizontal ? br.Position.X : br.Position.Y;                     // początek pręta
                     double scan0  = horizontal ? br.Position.Y : br.Position.X;                     // pierwszy UB
