@@ -14,6 +14,24 @@ namespace BricsCadRc.Core
     {
         /// <summary>Okno: margines za bokiem strefy (końce wzdłuż i lico wewnętrzne) [mm].</summary>
         public const double Margin = 600.0;
+
+        /// <summary>Znacznik przekroju na detalu (decyzja Bartka 2026-10-20): w tym samym miejscu co na rzucie (koniec linii cięcia
+        /// przesunięty do detalu) — także POZA ramką detalu, jeśli koniec jest najwyżej o tyle za ramką.</summary>
+        public const double MarkMaxOut = 1500.0;
+        /// <summary>Koniec cięcia dalej niż <see cref="MarkMaxOut"/> za ramką — znacznik tyle za ramką.</summary>
+        public const double MarkOut = 300.0;
+
+        /// <summary>
+        /// Położenie znacznika przekroju na detalu: <paramref name="clip"/> — przecięcie linii cięcia z ramką detalu, <paramref name="planEnd"/>
+        /// — koniec linii cięcia z rzutu przesunięty do detalu (leży na tej samej prostej, na zewnątrz od clip albo w nim). Koniec najwyżej
+        /// <see cref="MarkMaxOut"/> od ramki — dokładnie jak na rzucie; dalej — <see cref="MarkOut"/> za ramką wzdłuż linii cięcia.
+        /// </summary>
+        public static (double X, double Y) DetailMarkEnd((double X, double Y) clip, (double X, double Y) planEnd)
+        {
+            double dx = planEnd.X - clip.X, dy = planEnd.Y - clip.Y, d = Math.Sqrt(dx * dx + dy * dy);
+            if (d <= MarkMaxOut) return planEnd;
+            return (clip.X + dx / d * MarkOut, clip.Y + dy / d * MarkOut);
+        }
         /// <summary>Okno: wysunięcie poza krawędź płyty przy strefie [mm].</summary>
         public const double OutsideEdge = 300.0;
         /// <summary>Krawędź płyty uznana za „przy boku strefy”, gdy leży na zewnątrz boku najdalej o tyle [mm] (nib ≤ 255).</summary>

@@ -114,5 +114,18 @@ namespace BricsCadRc.Tests
             Assert.That(BeamDetailRules.Congruent(Box(20160, 30160, 20800, 35840), zone, s), Is.False, "strefa zmieniona po detalu");
             Assert.That(BeamDetailRules.MapToPlan((20500, 31000), s), Is.EqualTo((500.0, 1000.0)));
         }
-    }
+    
+        [Test]
+        public void DetailMarkEnd_LikePlan()
+        {
+            // koniec cięcia 267 za ramką — jak na rzucie
+            Assert.That(BeamDetailRules.DetailMarkEnd((100, 44097), (100, 43830)), Is.EqualTo((100.0, 43830.0)));
+            // koniec w ramce (clip = koniec) — bez zmian
+            Assert.That(BeamDetailRules.DetailMarkEnd((100, 500), (100, 500)), Is.EqualTo((100.0, 500.0)));
+            // koniec daleko za ramką — 300 za ramką
+            var e = BeamDetailRules.DetailMarkEnd((0, 1000), (0, 9000));
+            Assert.That(e.X, Is.EqualTo(0).Within(1e-9));
+            Assert.That(e.Y, Is.EqualTo(1300).Within(1e-9));
+        }
+}
 }

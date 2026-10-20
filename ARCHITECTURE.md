@@ -1411,6 +1411,9 @@ notatki RC_LAYOUT (XData RC_LAYOUT NOTE / XREF) usuwane. Rzutni nie zmienia.
   Prepare GA usuwa też layouty z A1-BL poprzedniej płyty (decyzja Bartka).
 - **Format prętów (decyzja Bartka 2026-10-20): zawsze polilinia, jak dawniej.** `BarFormat.UserSettingEnabled = false` (plik barformat.txt
   ignorowany), `RC_BAR_FORMAT` tylko usuwa stary plik i potwierdza polilinię. Pręt-blok (Plan C) — wyłącznie w testach (Set / RC_REG_BARFORMAT).
+- **Wymiary ADD (2026-10-20):** `SetDatabaseDefaults` w BricsCAD wpisuje do wymiaru nadpisania z bieżącego stylu rysunku (ISO-25: DIMSCALE 1, tekst / strzałki 2,5 mm — wymiary niewidoczne). `AddDimensions` ustawia jawnie wielkości ze stylu „SPEEDECK-1-50 RC” (Dimscale, Dimtxt, Dimasz, Dimexo, Dimexe, Dimgap, Dimdli, Dimcen, styl tekstu, Dimtad, Dimdec). Stare wymiary — ponowne Generate → Add.
+- **Pojedyncze UB 03 (2026-10-20):** opis „H10-03 UB” (1 pręt, bez rozstawu) — numer pozycji przez `UbPosNr` (pierwszy człon opisu). Wcześniej tylko dla UB 03 w detalu: pojedyncze UB 03 rzutu (uskok po stronie płyty, 2026-10-13) nie były usuwane przy ponownym Mesh / UB (dublowały się) i ADD brało je za krawędź UB 01/02.
+- **Znaczniki przekroju na detalu belki (decyzja Bartka 2026-10-20):** w tym samym miejscu co na rzucie — koniec linii cięcia przesunięty do detalu, także poza ramką detalu (`BeamDetailRules.DetailMarkEnd`: koniec ≤ 1500 za ramką — jak na rzucie; dalej — 300 za ramką). Wcześniej znaczniki na ramce (w środku czerwonej obwódki).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

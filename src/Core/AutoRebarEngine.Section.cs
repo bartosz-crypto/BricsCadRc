@@ -214,7 +214,10 @@ namespace BricsCadRc.Core
                         if (clip.HasValue && !ctx.DetailMarks.Any(m => m.Key == "D" + anr))
                         {
                             double sc = detailScale.TryGetValue(XLink.Norm(zh), out var ds) ? ds : DetailScale;
-                            ctx.DetailMarks.Add((clip.Value.a, clip.Value.b, sc / 50.0, "D" + anr));
+                            // decyzja 2026-10-20: znaczniki tam, gdzie na rzucie (poza ramką detalu), nie na ramce
+                            var ea = BeamDetailRules.DetailMarkEnd((clip.Value.a.X, clip.Value.a.Y), ((ctx.P1 + off).X, (ctx.P1 + off).Y));
+                            var eb = BeamDetailRules.DetailMarkEnd((clip.Value.b.X, clip.Value.b.Y), ((ctx.P2 + off).X, (ctx.P2 + off).Y));
+                            ctx.DetailMarks.Add((new Point2d(ea.X, ea.Y), new Point2d(eb.X, eb.Y), sc / 50.0, "D" + anr));
                         }
                     }
                     catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.DetailMark", ex); }
