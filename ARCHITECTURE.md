@@ -487,6 +487,7 @@ Góra (T1/T2, Ø12, te same parametry co dół poza średnicą):
   **„Najpierw góra” (decyzja 2026-10-15):** przy palach DÓŁ (B1/B2) wybiera plan, przy którym zakłady góry mogą ominąć pale
   (`ComputeJointPlan` z zakazami pali w układzie góry — przy nibie góra krótsza o szerokość nibu z każdej strony), także kosztem
   większej liczby prętów dołu; bez pali — bit w bit jak dawniej. Góra dalej liczona względem rzeczywistego dołu.
+  **„Najpierw góra” do końca (decyzja Bartka 2026-10-20):** gdy żaden dół ze wzoru nie pozwala — `TopLapSearch.TopFirst`: góra swobodnie (pręty różnej długości, zakłady 500–700 ≥ 500 od lica pali, bez dołu), potem dół swobodnie (zakłady 400–650 ≥ 750 od zakładów góry, bez pali, do nB0+5 prętów). Przykład Drawing2 (pale co ~2250): wcześniej zakład góry 93 mm od lica i pręty 5750/3250/3250/3250/5750; plan awaryjny „najdalej od pali” dopiero gdy i to nie wychodzi.
 - **Zakłady góry ≥ 750 mm w świetle od zakładów dołu.**
 - Góra i dół są na **osobnych rzutach** (dwa obrysy tej samej płyty). Góra liczona względem
   **rzeczywistych** rozkładów dołu: najpierw ten sam obrys, potem obrys przystający (przesunięty)
@@ -555,7 +556,7 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   (w narożu zagięcia UB 03: krawędź + 40 + Ø UB 03 10 + d/2 = 55; przy licu belki: linia uskoku − 40; odstęp min. 40) + 1 dołem w dolnym
   narożu UB 03 (pod prętem górą przy krawędzi), opis `2+1 H10-nn T+B IN NIB`. Zastępuje 2 × T IN NIB w nibie (60e8a9c) i B IN NIB (K5).
   Płyty bez stref belek i krawędzie bez belki — bit w bit jak dotąd.
-  Za końcem nibu pręty wchodzą **600 mm w płytę** (liczone od końca nibu), jeśli płyta tam jest (narożnik wklęsły);
+  Za końcem nibu pręty wchodzą **600 mm w płytę** (liczone od końca nibu; w narożniku wklęsłym z nibem na krawędzi prostopadłej — od linii uskoku tamtej krawędzi, decyzja Bartka 2026-10-20), jeśli płyta tam jest (narożnik wklęsły);
   przy narożniku wypukłym pręt zaczyna się na otulinie 40. Jeden pręt: długość siatka 250 **w górę** (lepiej za długi),
   **min. 1500** (twardo 1250), nie dłuższy niż miejsce w płycie. Opis na zewnątrz krawędzi, ramię **o 200 mm dłuższe**
   niż zwykłe; prosto, chyba że po drodze jest płyta albo wzdłuż krawędzi jest bliżej poza płytę — wtedy załamanie

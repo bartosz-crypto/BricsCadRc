@@ -78,5 +78,35 @@ namespace BricsCadRc.Core
             }
             return null;
         }
+
+        /// <summary>
+        /// „Najpierw góra” do końca (decyzja Bartka 2026-10-20, płyta z palami co ok. 2250 mm — przy dole ze wzoru „pierwszy, środkowe
+        /// równe, ostatni” góra nie mieściła zakładów między palami i dostawała zakład 93 mm od lica): GÓRA swobodnie (pręty różnej
+        /// długości z siatki, zakłady poza strefami pali, bez dołu), potem DÓŁ swobodnie dopasowany do góry (zakłady ≥ gap w świetle
+        /// od zakładów góry, bez pali). <paramref name="topInsetLo"/> — przesunięcie układu góry względem dołu (nib): x_dołu = x_góry + inset.
+        /// Najpierw najmniej prętów góry, potem dołu. Null — nie da się.
+        /// </summary>
+        public static (List<(double xOffset, double length)> bottom, List<(double xOffset, double length)> top)? TopFirst(
+            double available, double topAvail, double topInsetLo, IList<(double lo, double hi)> topForbidden,
+            int nBMin, int nTMin, IList<double> minLens, double maxLen, double gridStep,
+            double bMin, double bMax, double bTarget, double tMin, double tMax, double tTarget, double staggerGap)
+        {
+            var none = new List<(double lo, double hi)>();
+            for (int nt = nTMin; nt <= nTMin + 4; nt++)
+                foreach (double minT in minLens)
+                {
+                    var top = Find(topAvail, none, topForbidden, nt, nt, minT, maxLen, gridStep, tMin, tMax, tTarget, 0);
+                    if (top == null) continue;
+                    var tl = new List<(double lo, double hi)>();
+                    for (int i = 0; i + 1 < top.Count; i++)
+                        tl.Add((top[i + 1].xOffset + topInsetLo, top[i].xOffset + top[i].length + topInsetLo));
+                    foreach (double minB in minLens)
+                    {
+                        var bottom = Find(available, tl, none, nBMin, nBMin + 5, minB, maxLen, gridStep, bMin, bMax, bTarget, staggerGap);
+                        if (bottom != null) return (bottom, top);
+                    }
+                }
+            return null;
+        }
     }
 }

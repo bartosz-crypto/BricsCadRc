@@ -2974,6 +2974,16 @@ namespace BricsCadRc.Core
                 // Za końcem nibu pręty wchodzą do 600 mm w płytę, jeśli płyta tam jest (narożnik wklęsły);
                 // przy narożniku wypukłym — otulina od krawędzi.
                 double runLo = e.Lo - NibTopAnchorage, runHi = e.Hi + NibTopAnchorage;
+                // 2026-10-20 (uwaga Bartka, test3: pręt wchodził tylko 465 za uskok): w narożniku wklęsłym, gdzie krawędź prostopadła też
+                // ma nib, koniec nibu = linia uskoku tamtej krawędzi (pełna płyta zaczyna się dopiero za nią) — 600 liczone od niej
+                foreach (var pe in nib.Edges.Where(x => x.Vertical != e0.Vertical
+                                                        && x.Lo - 1.0 <= e0.OuterCoord && e0.OuterCoord <= x.Hi + 1.0))
+                {
+                    if (Math.Abs(pe.OuterCoord - e0.Hi) < 1.0 && pe.InnerCoord > e0.Hi && !cutHi)
+                        runHi = Math.Max(runHi, pe.InnerCoord + NibTopAnchorage);
+                    if (Math.Abs(pe.OuterCoord - e0.Lo) < 1.0 && pe.InnerCoord < e0.Lo && !cutLo)
+                        runLo = Math.Min(runLo, pe.InnerCoord - NibTopAnchorage);
+                }
                 double spaceLo = double.NegativeInfinity, spaceHi = double.PositiveInfinity;   // granice płyty (z otuliną)
                 foreach (double p in new[] { p1, p2 })
                 {
@@ -5226,6 +5236,21 @@ namespace BricsCadRc.Core
                         var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "", deep: true);
                         if (t != null && LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
                     }
+                // decyzja Bartka 2026-10-20 („najpierw góra” do końca): dół ze wzoru nie pozwala góry ominąć pali — GÓRA swobodnie
+                // (zakłady ≥ PileLapClearance od lica pali), DÓŁ swobodnie dopasowany do niej (zakłady ≥ LapStaggerMinGap od góry),
+                // także kosztem większej liczby prętów dołu; dopiero gdy i to nie wychodzi — plan awaryjny niżej (ostrzeżenie)
+                int nT0 = Math.Max(2, (int)Math.Ceiling((topAvail - TopOverlapMin) / (TemplateMaxLen - TopOverlapMin)));
+                var tf = TopLapSearch.TopFirst(available, topAvail, topInsetLo, topPileForbidden, nB0, nT0,
+                                               new[] { TemplatePreferredMinLen, TemplateMinLen }, TemplateMaxLen, TemplateGridStep,
+                                               OverlapMin, OverlapMax, OverlapTarget, TopOverlapMin, TopOverlapMax, TopOverlapTarget,
+                                               LapStaggerMinGap);
+                if (tf != null)
+                {
+                    ed?.WriteMessage($"\n[AutoRebar] Pas {available:F0}mm: najpierw góra — góra " +
+                        string.Join(",", tf.Value.top.Select(x => x.length.ToString("F0"))) + $" (zakłady ≥ {PileLapClearance:F0} mm od pali), dół " +
+                        string.Join(",", tf.Value.bottom.Select(x => x.length.ToString("F0"))) + ".\n");
+                    return (tf.Value.bottom, tf.Value.top);
+                }
             }
             foreach (var B in groups)
             {
