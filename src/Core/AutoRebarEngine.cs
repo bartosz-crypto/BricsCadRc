@@ -845,7 +845,24 @@ namespace BricsCadRc.Core
             var ubZones = nibUB ? NibUbZones(db, slabPolyId, nib.Outer) : null;
             var segTargets = new List<NibUbTarget>();
 
+            // uwaga Bartka 2026-10-21 (wsporniki): UB 03 bez odcinka krawędzi, przez który przechodzi wspornik (RC-CANTILEVER) —
+            // krawędź dzielona na części; UB 01/02 bez zmian. Bez wsporników — jedna część = cała krawędź (bez zmian).
+            var pieces = new List<(GeometryHelper.PolylineEdge seg, double lo, double hi)>();
+            int cantCuts = 0;
             foreach (var seg in candidates)
+            {
+                double eC = isUBB1 ? seg.Start.X : seg.Start.Y;
+                double eLo = isUBB1 ? Math.Min(seg.Start.Y, seg.End.Y) : Math.Min(seg.Start.X, seg.End.X);
+                double eHi = isUBB1 ? Math.Max(seg.Start.Y, seg.End.Y) : Math.Max(seg.Start.X, seg.End.X);
+                var spans = nibUB ? CantileverSpansOnEdge(db, isUBB1, eC) : null;
+                if (spans == null || spans.Count == 0) { pieces.Add((seg, eLo, eHi)); continue; }
+                cantCuts += spans.Count;
+                foreach (var (pLo, pHi) in SubtractSpans(eLo, eHi, spans)) pieces.Add((seg, pLo, pHi));
+            }
+            if (cantCuts > 0)
+                ed.WriteMessage($"\n[AutoRebar UB] UB 03: {cantCuts} wspornik(ów) — bez UB 03 na odcinku wspornika.\n");
+
+            foreach (var (seg, pieceLo, pieceHi) in pieces)
             {
                 if (seg.Length < UBMinSegmentLength)
                 {
@@ -870,6 +887,8 @@ namespace BricsCadRc.Core
                     segLow    = Math.Min(seg.Start.X, seg.End.X);
                     segHigh   = Math.Max(seg.Start.X, seg.End.X);
                 }
+                segLow = Math.Max(segLow, pieceLo); segHigh = Math.Min(segHigh, pieceHi);
+                if (segHigh - segLow < 1.0) continue;
 
                 // UB 03: tylko krawędzie z nibem, w zakresie nibu
                 NibUbTarget ubTarget = null;

@@ -78,5 +78,141 @@ namespace BricsCadRc.Tests
             Assert.That(CantileverRules.ParseToc("GB-600x300mm deep TOC=8.525"), Is.EqualTo(8.525).Within(1e-9));
             Assert.That(CantileverRules.ParseToc("NIB TOC=8.575"), Is.Null);
         }
+
+        [Test]
+        public void Plan_Plot28_WithRoot()
+        {
+            // GB 600 × 300, wysięg 788, strefa przy palu 375THK × 735
+            var p = CantileverRules.PlanBars(788, 600, 300, 735, 375);
+            Assert.That(p.Columns, Is.EqualTo(4));
+            Assert.That(p.Links.Count, Is.EqualTo(3));
+            var ls = p.Links[0];
+            Assert.That((ls.Dia, ls.Spacing, ls.A, ls.Legs, ls.B), Is.EqualTo((12, 150.0, 215.0, 4, 370.0)));
+            var lr = p.Links[1];
+            Assert.That((lr.Dia, lr.Spacing, lr.A), Is.EqualTo((12, 200.0, 290.0)));
+            Assert.That(p.UBars.Count, Is.EqualTo(2));
+            Assert.That(p.UBars.All(u => u.A == 1050 && u.Dia == 16), Is.True);
+            Assert.That(p.UBars[0].Back, Is.EqualTo(743).Within(1e-9));
+            Assert.That(p.UBars[1].Back, Is.EqualTo(-678).Within(1e-9), "tył w środku strzemion strefy: −735 + 45 + 12");
+            Assert.That(p.Straight, Is.Empty);
+        }
+
+        [Test]
+        public void Plan_Plot28_FromStep_ShapesAndPileCapBothDirections()
+        {
+            // PLOT 28 od uskoku (linia nibu 135 od krawędzi): wspornik 923, strefa przy palu 600 (rysunek biura: 600 / 923)
+            var p = CantileverRules.PlanBars(923, 600, 300, 600, 375);
+            Assert.That(p.Links.Count, Is.EqualTo(3));
+            Assert.That((p.Links[0].Shape, p.Links[0].AlongAxis), Is.EqualTo(("63", false)), "wspornik poza płytą — 63");
+            Assert.That((p.Links[1].Shape, p.Links[1].AlongAxis), Is.EqualTo(("51", false)), "strefa przy palu — 51");
+            var l2 = p.Links[2];
+            Assert.That((l2.Shape, l2.AlongAxis, l2.L0, l2.L1), Is.EqualTo(("51", true, -600.0, 0.0)), "drugi kierunek w strefie przy palu");
+            // drugi kierunek wewnątrz pierwszego (uwaga Bartka 2026-10-22: 290 − 2·12 = 266 → 265 — w dół, żeby wewnętrzne się zmieściło)
+            Assert.That((l2.Dia, l2.A, l2.Legs, l2.B), Is.EqualTo((12, 265.0, 4, 370.0)));
+            Assert.That(p.Links[1].A, Is.EqualTo(290.0));
+            Assert.That(l2.S0, Is.EqualTo(0)); Assert.That(l2.S1, Is.EqualTo(600));
+            Assert.That(l2.First, Is.GreaterThan(0)); Assert.That(l2.First + (l2.Count - 1) * l2.Step, Is.LessThan(600));
+            Assert.That(p.UBars.All(u => u.A == 1050), Is.True);
+            Assert.That(p.UBars.All(u => u.B == 190), Is.True, "U-bar w strzemieniu: 215 − 24 = 191 → 190 (w dół, jak rysunek biura)");
+            Assert.That(CantileverRules.PlanBars(840, 450, 225, 0, 0).Links.Single().Shape, Is.EqualTo("63"));
+        }
+
+        [Test]
+        public void Plan_Test4_Deep_TwoLegLinks_SideUBars()
+        {
+            // test4.dwg: GB 600 × 525, pile cap 600THK; od uskoku wspornik 652,5, strefa 600 — zasady belek (H > 375 → 2-cięte, boki)
+            var p = CantileverRules.PlanBars(652.5, 600, 525, 600, 600);
+            Assert.That((p.Links[0].Legs, p.Links[0].B, p.Links[0].A, p.Links[0].Shape), Is.EqualTo((2, 510.0, 440.0, "63")));
+            Assert.That((p.Links[1].Legs, p.Links[1].B, p.Links[1].A, p.Links[1].Shape), Is.EqualTo((2, 510.0, 515.0, "51")));
+            Assert.That((p.Links[2].Legs, p.Links[2].B, p.Links[2].A), Is.EqualTo((2, 510.0, 490.0)), "drugi kierunek: 515 − 24 → 490");
+            Assert.That(p.SideLevels, Is.EqualTo(1));
+            Assert.That(p.SideUBars.Count, Is.EqualTo(2));
+            Assert.That(p.SideUBars.All(u => u.B == 485 && u.Dia == 12 && u.A == 850), Is.True);
+            Assert.That(p.SideStraight, Is.Empty);
+            Assert.That(CantileverRules.PlanBars(923, 600, 300, 600, 375).SideLevels, Is.EqualTo(0), "h 300 — bez prętów bocznych");
+        }
+
+        [Test]
+        public void SecondDirLinkA_Minus2DiaDownTo5()
+        {
+            Assert.That(CantileverRules.SecondDirLinkA(290, 12), Is.EqualTo(265));
+            Assert.That(CantileverRules.SecondDirLinkA(215, 12), Is.EqualTo(190));
+            Assert.That(CantileverRules.SecondDirLinkA(140, 10), Is.EqualTo(120)); Assert.That(CantileverRules.SecondDirLinkA(665, 12), Is.EqualTo(640));
+        }
+
+        [Test]
+        public void TabRecord_OutlineKeptOnDrawing_EffectiveWithoutTab()
+        {
+            // obrys z języczkiem jak w GA (PLOT 28) — rysunek bez zmian, obliczenia bez języczka
+            var poly = P(0, 0, 4000, 0, 4000, -788, 4600, -788, 4600, 0, 10000, 0, 10000, 8000, 0, 8000);
+            var u = CantileverRules.FindTabs(poly).Single().Shape;
+            var rec = CantileverRules.TabRec.Parse(CantileverRules.TabRec.Of(u).ToString());
+            Assert.That((rec.Dir, rec.Width, rec.Depth), Is.EqualTo(("-Y", 600.0, 788.0)));
+            var eff = CantileverRules.EffectiveOutline(poly, new[] { rec });
+            Assert.That(eff.Count, Is.EqualTo(4));
+            Assert.That(CantileverRules.FindTabs(eff), Is.Empty);
+            // przesunięty obrys (MOVE) — rekord bez współrzędnych nadal pasuje
+            var moved = poly.Select(q => (q.X + 12345.0, q.Y - 777.0)).ToList();
+            Assert.That(CantileverRules.EffectiveOutline(moved, new[] { rec }).Count, Is.EqualTo(4));
+            // inny języczek (bez rekordu) zostaje; brak rekordu — null (obrys jak na rysunku)
+            Assert.That(CantileverRules.EffectiveOutline(poly, new[] { new CantileverRules.TabRec { Dir = "+X", Width = 600, Depth = 788 } }), Is.Null);
+            Assert.That(CantileverRules.EffectiveOutline(poly, null), Is.Null);
+            // przywrócenie: obrys przecięty + InsertTab = języczek z rekordem
+            var back = CantileverRules.InsertTab(eff, u);
+            Assert.That(CantileverRules.RecordedTabs(back, new[] { rec }).Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void StepCut_NibLineNearEdge()
+        {
+            // krawędź y = 8415, koniec wspornika niżej (7627), linia uskoku 8550 (w płycie, 135) i dalsza krawędź 20000
+            Assert.That(CantileverRules.StepCut(new[] { 8550.0, 20000.0, 7000.0 }, 8415, 7627), Is.EqualTo(8550));
+            Assert.That(CantileverRules.StepCut(new[] { 9000.0 }, 8415, 7627), Is.Null, "dalej niż 300 — nie uskok");
+            Assert.That(CantileverRules.StepCut(new[] { 8415.0 }, 8415, 7627), Is.Null, "na krawędzi");
+            // wspornik w +X: koniec 5000, krawędź 4000, uskok 3865
+            Assert.That(CantileverRules.StepCut(new[] { 3865.0, 4100.0 }, 4000, 5000), Is.EqualTo(3865));
+            Assert.That(CantileverRules.StepCut(null, 4000, 5000), Is.Null);
+        }
+
+        [Test]
+        public void Plan_BlockC_LongArm_StraightBars()
+        {
+            // GB 600 × 225, wysięg 1525, strefa 300THK × 735 → ramię 1425 > 1300: U-bary 750 + pręty proste H16
+            var p = CantileverRules.PlanBars(1525, 600, 225, 735, 300);
+            Assert.That(p.Links[0].Dia, Is.EqualTo(10));
+            Assert.That(p.Links[0].Spacing, Is.EqualTo(100));
+            Assert.That(p.UBars.All(u => u.A == 750), Is.True);
+            Assert.That(p.Straight.Count, Is.EqualTo(1));
+            var st = p.Straight[0];
+            Assert.That(st.Dia, Is.EqualTo(16));
+            // zakład z oboma U-barami ≥ 650
+            Assert.That(p.UBars[1].LineEnd - st.S0, Is.GreaterThanOrEqualTo(650 - 1e-6));
+            Assert.That(st.S1 - p.UBars[0].LineStart, Is.GreaterThanOrEqualTo(650 - 1e-6));
+        }
+
+        [Test]
+        public void Plan_NoRoot_StraightH12IntoSlab()
+        {
+            var p = CantileverRules.PlanBars(840, 450, 225, 0, 0);
+            Assert.That(p.Columns, Is.EqualTo(3));
+            Assert.That(p.Links.Count, Is.EqualTo(1));
+            Assert.That(p.UBars.Count, Is.EqualTo(1));
+            Assert.That(p.Straight.Count, Is.EqualTo(1));
+            var st = p.Straight[0];
+            Assert.That(st.Dia, Is.EqualTo(12));
+            Assert.That(st.S0, Is.LessThanOrEqualTo(-1000 + 1e-6), "min. 1000 za krawędź");
+            Assert.That(st.S1 - p.UBars[0].LineStart, Is.GreaterThanOrEqualTo(650 - 1e-6), "zakład z U-barem");
+            Assert.That(CantileverRules.PlanBars(800, 800, 300, 0, 0).Columns, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void InsertTab_RestoresOutline()
+        {
+            var poly = P(0, 0, 10000, 0, 10000, 8000, 0, 8000);
+            var u = CantileverRules.TryU(P(4000, 0, 4000, -788, 4600, -788, 4600, 0));
+            var r = CantileverRules.InsertTab(poly, u);
+            Assert.That(r.Count, Is.EqualTo(8));
+            Assert.That(CantileverRules.FindTabs(r).Count, Is.EqualTo(1));
+        }
     }
 }

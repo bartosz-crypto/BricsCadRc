@@ -31,9 +31,9 @@ namespace BricsCadRc.Core
 
             double xMin = double.MaxValue, yMin = double.MaxValue;
             double xMax = double.MinValue, yMax = double.MinValue;
-            for (int i = 0; i < pl.NumberOfVertices; i++)
+            // obrys z wspornikami — obwiednia obrysu do obliczeń (bez języczków), jak GetPolylineVertices
+            foreach (var p in GetPolylineVertices(pl))
             {
-                var p = pl.GetPoint2dAt(i);
                 if (p.X < xMin) xMin = p.X;
                 if (p.X > xMax) xMax = p.X;
                 if (p.Y < yMin) yMin = p.Y;
@@ -249,12 +249,49 @@ namespace BricsCadRc.Core
             return segments;
         }
 
+        /// <summary>
+        /// Wierzchołki polilinii do obliczeń. Obrys płyty z wspornikami (XData <see cref="CantileverRules.TabApp"/>) — bez języczków
+        /// wsporników (krawędź prosto przez nasadę); polilinia na rysunku zostaje z języczkiem jak w GA (uwaga Bartka 2026-10-22).
+        /// Inne polilinie — bez zmian.
+        /// </summary>
         public static List<Point2d> GetPolylineVertices(Polyline pline)
+        {
+            var pts = GetRawPolylineVertices(pline);
+            try
+            {
+                var rec = CantileverTabRecord(pline);
+                if (rec != null && rec.Count > 0)
+                {
+                    var eff = CantileverRules.EffectiveOutline(pts.ConvertAll(p => (p.X, p.Y)), rec);
+                    if (eff != null && eff.Count >= 3) return eff.ConvertAll(q => new Point2d(q.X, q.Y));
+                }
+            }
+            catch (Exception ex) { Log.Error("GeometryHelper.GetPolylineVertices.CantileverTabs", ex); }
+            return pts;
+        }
+
+        /// <summary>Wierzchołki polilinii dokładnie jak na rysunku (z języczkami wsporników).</summary>
+        public static List<Point2d> GetRawPolylineVertices(Polyline pline)
         {
             var pts = new List<Point2d>();
             for (int i = 0; i < pline.NumberOfVertices; i++)
                 pts.Add(pline.GetPoint2dAt(i));
             return pts;
+        }
+
+        /// <summary>Rekord języczków wsporników obrysu (XData RC_CANT_TAB); null — brak.</summary>
+        public static List<CantileverRules.TabRec> CantileverTabRecord(Entity e)
+        {
+            if (e == null) return null;
+            using (var rb = e.GetXDataForApplication(CantileverRules.TabApp))
+            {
+                if (rb == null) return null;
+                var res = new List<CantileverRules.TabRec>();
+                foreach (var tv in rb.AsArray())
+                    if (tv.TypeCode == (short)DxfCode.ExtendedDataAsciiString && CantileverRules.TabRec.Parse(tv.Value as string) is CantileverRules.TabRec r)
+                        res.Add(r);
+                return res;
+            }
         }
 
         // ----------------------------------------------------------------

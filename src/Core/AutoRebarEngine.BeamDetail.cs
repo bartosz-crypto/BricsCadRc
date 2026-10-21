@@ -453,7 +453,8 @@ namespace BricsCadRc.Core
         /// Null — błąd (komunikat).
         /// </summary>
         private static BeamDrawTarget PrepareBeamDetail(Document doc, BeamView bottom, BeamView top, string zbHandle, List<Point2d> zbPoly,
-                                                        Action<string> msg, List<Point2d> textPoly = null)
+                                                        Action<string> msg, List<Point2d> textPoly = null, bool offsetFrame = false,
+                                                        List<((double X, double Y) A, (double X, double Y) B)> extraLines = null)
         {
             var db = doc.Database;
             string name = $"belka {zbHandle}";
@@ -461,8 +462,9 @@ namespace BricsCadRc.Core
             {
                 var zoneT = zbPoly.Select(v => (v.X, v.Y)).ToList();
                 var outlT = bottom.Verts.Select(v => (v.X, v.Y)).ToList();
-                // decyzja użytkownika 2026-10-13: ramka = offset strefy (L / U jak strefa), okno = jej obwiednia
-                var frameT = BeamDetailRules.FramePolygon(zoneT, outlT);
+                // decyzja użytkownika 2026-10-13: ramka = offset strefy (L / U jak strefa), okno = jej obwiednia;
+                // offsetFrame (wspornik, uwaga Bartka 2026-10-21) — sam offset strefy, bez przycinania do obrysu + 300
+                var frameT = BeamDetailRules.FramePolygon(zoneT, offsetFrame ? null : outlT);
                 var win = frameT != null ? BeamDetailRules.Bbox(frameT) : BeamDetailRules.Window(zoneT, outlT);
                 if (frameT == null) frameT = BeamDetailRules.RectPoly(win);
 
@@ -598,6 +600,13 @@ namespace BricsCadRc.Core
                     }
                     AddLines(lines, outlStyle);
                     AddLines(nibLines, nibStyle);
+                    // dodatkowe linie (uskok w poprzek wspornika) — bez dublowania linii uskoku nibu już narysowanej w tym miejscu
+                    if (extraLines != null)
+                        AddLines(extraLines.Where(x =>
+                        {
+                            var m = ((x.A.X + x.B.X) / 2, (x.A.Y + x.B.Y) / 2);
+                            return !nibLines.Any(s => BeamDetailRules.DistToSegment(s.A, s.B, m) < 1.0);
+                        }).Select(x => BeamDetailRules.ClipToPolygon(frameT, x.A, x.B)).SelectMany(x => x).ToList(), nibStyle);
                     // pozostałe linie rzutu w oknie (np. uskok w nibie na końcu belki — uwaga Bartka 2026-10-12 „nie zbiera tego z rzutu”)
                     foreach (var (segsO, st) in others) AddLines(segsO, st);
 

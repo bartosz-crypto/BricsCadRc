@@ -402,6 +402,12 @@ namespace BricsCadRc.Core
             var legLayers = p.UsesBothMark ? new List<(int n, int d)> { (p.BottomCount, p.BottomDia) }
                                            : new List<(int n, int d)> { (p.BottomCount, p.BottomDia), (p.TopCount, p.TopDia) };
             var legNotes = new HashSet<string>();
+            // zasada Bartka 2026-10-21/22: strzemiona elementów W PŁYCIE zawsze 51, POZA PŁYTĄ zawsze 63 (kod z okna RC_BEAM nie decyduje)
+            string linkShape = GeometryHelper.IsPointInsidePolygon(bottom.Verts, CentroidOf(effPoly))
+                ? CantileverRules.LinkShapeInSlab : CantileverRules.LinkShapeOutside;
+            if (!string.IsNullOrEmpty(p.StirrupShape) && p.StirrupShape != linkShape)
+                msg($"{name}: strzemiona {linkShape} (belka {(linkShape == CantileverRules.LinkShapeInSlab ? "w płycie" : "poza płytą")} — zasada " +
+                    $"51 w płycie / 63 poza płytą), zamiast {p.StirrupShape} z rekordu.");
             foreach (var s in segs)
             {
                 double B51 = BeamGeometry.StirrupWidth(s.Width, p.CoverSide);
@@ -414,7 +420,7 @@ namespace BricsCadRc.Core
                                                          edgeBeam: s.OuterSide != 0);
                     if (legNotes.Add(legs.Note)) msg($"{name}: {legs.Note}");
                     bool four = legs.Legs == 4;
-                    var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: p.StirrupShape ?? "51",
+                    var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: linkShape,
                                                        a: Aseg, b: four ? legs.B4 : B51, code: BeamGeometry.CodeLinks);
                     // K2: pierwsze strzemię w osi otulina + Ø/2 od lica (także przy U-barach); Q7 [33]: niezależnie od UB 03 (domyślne)
                     var ubAlong = p.StirrupsAtUb03 ? Ub03Along(ub03, s) : null;
@@ -706,7 +712,7 @@ namespace BricsCadRc.Core
         /// (Count 1, CountDisplay = liczba poziomów — BBS liczy wszystkie).
         /// </summary>
         private static bool BeamSideUBar(Database db, Editor ed, BeamView view, BeamGeometry.SideUBarRun r, string zoneHandle,
-                                         double levelSpacing, BeamDrawTarget tg = null)
+                                         double levelSpacing, BeamDrawTarget tg = null, bool standardLeader = false)
         {
             var tpl = FindOrCreateBeamTemplate(db, ed, view.Box, top: false, d: r.Dia, shape: "21", a: r.A, b: r.B,
                                                code: BeamGeometry.CodeSideU, c: r.C);
@@ -725,7 +731,8 @@ namespace BricsCadRc.Core
             // 2026-10-14: opis blisko pręta — krótka linia odniesienia prostopadle do ramienia, najpierw na zewnątrz U (od drugiego ramienia),
             // zamiast za okno detalu / obrys płyty
             double sc = tg != null ? tg.AnnotScale : 1.0;
-            Func<Point3d, List<List<Point3d>>> leader = ins =>
+            // standardLeader (wspornik, uwaga Bartka 2026-10-22): opis jak pozostałe — w stałej odległości za oknem detalu
+            Func<Point3d, List<List<Point3d>>> leader = standardLeader ? null : (Func<Point3d, List<List<Point3d>>>)(ins =>
             {
                 var res = new List<List<Point3d>>();
                 foreach (int sg in new[] { -1, 1 })
@@ -735,7 +742,7 @@ namespace BricsCadRc.Core
                         res.Add(new List<Point3d> { ins, barsX ? new Point3d(ins.X, ins.Y + l, 0) : new Point3d(ins.X + l, ins.Y, 0) });
                     }
                 return res;
-            };
+            });
             return BeamDistribution(db, view, tpl, x0, y0, x1, y1, barsX, r.Dia, r.LineLength, withSp ? levelSpacing : 200, double.NaN,
                                     BeamGeometry.CodeSideU, BeamGeometry.SuffixSideU, noSpacing: !withSp, shape: "21", repr: -1,
                                     zoneHandle: zoneHandle, leaderFor: leader,

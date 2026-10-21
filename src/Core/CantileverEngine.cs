@@ -12,7 +12,9 @@ namespace BricsCadRc.Core
     ///   • Wspornik = zamknięta polilinia (prostokąt: nasada na krawędzi płyty → koniec) na warstwie <see cref="LayerName"/> z XData
     ///     <see cref="App"/>: [1] FormatVersion (Int16, 1) [2] szerokość [3] wysokość GB (0 = brak opisu) [4] TOC [m] (0 = brak)
     ///     [5] grubość strefy przy palu „xxxTHK” (0 = brak strefy / opisu) [6] długość strefy przy palu w płycie (0 = brak)
-    ///     [7] kierunek wysięgu („+X” / „-X” / „+Y” / „-Y”). Bez powiązań handle (CloneRemap niepotrzebny); płyta = obrys, na którego
+    ///     [7] kierunek wysięgu („+X” / „-X” / „+Y” / „-Y”) [8] wysięg poza krawędź płyty [9] długość strefy wspornika w płycie
+    ///     (2026-10-21, uwaga Bartka „niech nakłada się na płytę jak BEAM”: prostokąt od końca wspornika do końca strefy przy palu,
+    ///     bez strefy — CantileverRules.NoRootExtension). Bez powiązań handle (CloneRemap niepotrzebny); płyta = obrys, na którego
     ///     krawędzi leży nasada. Znacznik RC_GA skopiowany z obrysu / kawałka obrysu — ponowne Prepare GA usuwa wspornik razem z płytą.
     ///   • Strefa przy palu (przerywany U w płycie po drugiej stronie nasady) — przeniesiona na tę samą warstwę (bez rekordu).
     ///   • Obrys płyty: języczek usunięty (krawędź prosto przez nasadę) — Mesh / UB / nib / T IN NIB / B3 / Add jak bez wspornika.
@@ -37,6 +39,8 @@ namespace BricsCadRc.Core
         {
             public double Width, Height, Toc, RootThk, RootLen;
             public string Dir = "";
+            /// <summary>[8] wysięg poza krawędź płyty, [9] długość strefy wspornika w płycie (od krawędzi w głąb).</summary>
+            public double Reach, Ext;
         }
 
         /// <summary>Opis z rysunku: treść, punkt (MText — środek, MLeader — grot, DBText — środek).</summary>
@@ -75,7 +79,7 @@ namespace BricsCadRc.Core
             if (v == null) return null;
             double R(int i) => v.Length > i && v[i].Value is double d ? d : 0.0;
             return new Data { Width = R(2), Height = R(3), Toc = R(4), RootThk = R(5), RootLen = R(6),
-                              Dir = v.Length > 7 ? v[7].Value?.ToString() ?? "" : "" };
+                              Dir = v.Length > 7 ? v[7].Value?.ToString() ?? "" : "", Reach = R(8), Ext = R(9) };
         }
 
         private static void Write(Transaction tr, Database db, Entity e, Data d)
@@ -90,7 +94,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal, d.Toc),               // [4]
                 new TypedValue((int)DxfCode.ExtendedDataReal, d.RootThk),           // [5]
                 new TypedValue((int)DxfCode.ExtendedDataReal, d.RootLen),           // [6]
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, d.Dir ?? "")); // [7]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, d.Dir ?? ""),  // [7]
+                new TypedValue((int)DxfCode.ExtendedDataReal, d.Reach),             // [8]
+                new TypedValue((int)DxfCode.ExtendedDataReal, d.Ext));              // [9]
         }
 
         /// <summary>Kolor warstwy RC-CANTILEVER — magenta jak strefy belek RC-BEAM (2026-10-21: wspornik ma być widoczny jak strefa belki).</summary>
@@ -158,7 +164,8 @@ namespace BricsCadRc.Core
 
         private static Data Describe(CantileverRules.UShape stub, CantileverRules.UShape root, int gb, int thk, IList<Txt> texts)
         {
-            var d = new Data { Width = stub.Width, Dir = CantileverRules.DirCode(stub.Out), RootLen = root?.Depth ?? 0 };
+            var d = new Data { Width = stub.Width, Dir = CantileverRules.DirCode(stub.Out), RootLen = root?.Depth ?? 0,
+                               Reach = stub.Depth, Ext = root?.Depth ?? CantileverRules.NoRootExtension };
             if (gb >= 0)
             {
                 var g = CantileverRules.ParseGb(texts[gb].Text).Value;
@@ -178,8 +185,104 @@ namespace BricsCadRc.Core
 
         // ── encje ─────────────────────────────────────────────────────────
 
+        /// <summary>Wierzchołki jak na rysunku (z języczkami — wykrywanie wsporników).</summary>
         private static List<(double X, double Y)> Pts(Polyline pl)
-            => GeometryHelper.GetPolylineVertices(pl).Select(p => (p.X, p.Y)).ToList();
+            => GeometryHelper.GetRawPolylineVertices(pl).Select(p => (p.X, p.Y)).ToList();
+
+        /// <summary>Dopisuje języczki do rekordu RC_CANT_TAB obrysu (obrys na rysunku bez zmian).</summary>
+        private static void AddTabRecord(Transaction tr, Database db, Polyline pl, IEnumerable<CantileverRules.TabRec> add)
+        {
+            var all = GeometryHelper.CantileverTabRecord(pl) ?? new List<CantileverRules.TabRec>();
+            all.AddRange(add);
+            BeamStore.EnsureApp(tr, db, CantileverRules.TabApp);
+            if (!pl.IsWriteEnabled) pl.UpgradeOpen();
+            var tv = new List<TypedValue> { new TypedValue((int)DxfCode.ExtendedDataRegAppName, CantileverRules.TabApp) };
+            foreach (var r in all) tv.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, r.ToString()));
+            pl.XData = new ResultBuffer(tv.ToArray());
+        }
+
+        /// <summary>Kształt U języczka wspornika z prostokąta strefy RC_CANT (kierunek [7], wysięg od krawędzi [8]); null — za mało danych.</summary>
+        private static CantileverRules.UShape StubShape(List<(double X, double Y)> zone, Data d)
+        {
+            if (d == null || d.Dir == null || d.Dir.Length != 2 || d.Reach <= 1.0 || zone.Count < 4) return null;
+            bool ax = d.Dir[1] == 'X'; int sg = d.Dir[0] == '-' ? -1 : 1;
+            double a0 = ax ? zone.Min(q => q.X) : zone.Min(q => q.Y), a1 = ax ? zone.Max(q => q.X) : zone.Max(q => q.Y);
+            double c0 = ax ? zone.Min(q => q.Y) : zone.Min(q => q.X), c1 = ax ? zone.Max(q => q.Y) : zone.Max(q => q.X);
+            double end = sg > 0 ? a1 : a0, root = end - sg * d.Reach;
+            (double X, double Y) P(double al, double ac) => ax ? (al, ac) : (ac, al);
+            return new CantileverRules.UShape
+            {
+                A = P(root, c0), C1 = P(end, c0), C2 = P(end, c1), B = P(root, c1),
+                Width = c1 - c0, Depth = d.Reach, Out = ax ? (sg, 0.0) : (0.0, sg)
+            };
+        }
+
+        /// <summary>
+        /// Uwaga Bartka 2026-10-22 („Prepare GA zmienia faktyczny obrys płyty”): obrys na rysunku ma mieć języczek wspornika jak w GA.
+        /// Dla każdego wspornika RC_CANT, którego nasada leży na krawędzi obrysu: obrys bez języczka (poprzednia wersja przecinała obrys,
+        /// wspornik z osobnego kawałka U — JoinLoops skleił krawędź prosto) → języczek wstawiony z powrotem; języczek w rekordzie RC_CANT_TAB
+        /// (obliczenia — obrys bez języczka). Liczba przywróconych / dopisanych.
+        /// </summary>
+        public static int RestoreOutlineTabs(Database db, IEnumerable<ObjectId> outlines, List<string> messages = null)
+        {
+            int n = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                var stubs = new List<CantileverRules.UShape>();
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline zp) || !IsStub(zp)) continue;
+                    var u = StubShape(Pts(zp), Read(zp));
+                    if (u != null) stubs.Add(u);
+                }
+                if (stubs.Count == 0) { tr.Commit(); return 0; }
+                foreach (var oid in outlines.Distinct())
+                {
+                    if (oid.IsNull || oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                    if (!GeometryHelper.IsEffectivelyClosed(pl) || HasArcs(pl) || IsStub(pl)) continue;
+                    var raw = Pts(pl);
+                    var rec = GeometryHelper.CantileverTabRecord(pl) ?? new List<CantileverRules.TabRec>();
+                    var recorded = CantileverRules.RecordedTabs(raw, rec);
+                    var add = new List<CantileverRules.TabRec>();
+                    var cur = raw;
+                    foreach (var u in stubs)
+                    {
+                        // już w rekordzie (ten sam języczek na rysunku)
+                        if (recorded.Any(t => CantileverRules.Near(t.Shape.C1, u.C1) && CantileverRules.Near(t.Shape.C2, u.C2)
+                                           || CantileverRules.Near(t.Shape.C1, u.C2) && CantileverRules.Near(t.Shape.C2, u.C1))) continue;
+                        // języczek jest na rysunku, ale bez rekordu
+                        var tabs = CantileverRules.FindTabs(cur);
+                        if (tabs.Any(t => CantileverRules.Near(t.Shape.C1, u.C1) && CantileverRules.Near(t.Shape.C2, u.C2)
+                                       || CantileverRules.Near(t.Shape.C1, u.C2) && CantileverRules.Near(t.Shape.C2, u.C1)))
+                        {
+                            add.Add(CantileverRules.TabRec.Of(u));
+                            continue;
+                        }
+                        // obrys przecięty — wstawienie języczka (nasada na krawędzi obrysu)
+                        var ins = CantileverRules.InsertTab(cur, u);
+                        if (ins.Count <= cur.Count) continue;
+                        if (!CantileverRules.FindTabs(ins).Any(t => CantileverRules.TabRec.Of(u).Matches(t.Shape))) continue;
+                        cur = ins;
+                        add.Add(CantileverRules.TabRec.Of(u));
+                    }
+                    if (add.Count == 0) continue;
+                    if (!ReferenceEquals(cur, raw))
+                    {
+                        pl.UpgradeOpen();
+                        int old = pl.NumberOfVertices;
+                        for (int i = 0; i < cur.Count; i++) pl.AddVertexAt(old + i, new Point2d(cur[i].X, cur[i].Y), 0, 0, 0);
+                        for (int i = 0; i < old; i++) pl.RemoveVertexAt(0);
+                        pl.Closed = true;
+                    }
+                    AddTabRecord(tr, db, pl, add);
+                    n += add.Count;
+                }
+                tr.Commit();
+            }
+            if (n > 0) messages?.Add($"[RC CANT] obrys płyty z języczkiem wspornika jak w GA: {n} (do obliczeń program bierze krawędź prosto przez nasadę).");
+            return n;
+        }
 
         private static bool HasArcs(Polyline pl)
         {
@@ -203,7 +306,7 @@ namespace BricsCadRc.Core
         {
             EnsureLayer(tr, db);
             var pl = new Polyline { Layer = LayerName, Color = Color.FromColorIndex(ColorMethod.ByLayer, 256) };
-            var pts = new[] { u.A, u.C1, u.C2, u.B };
+            var pts = ZonePts(u, d.Ext);
             for (int i = 0; i < 4; i++) pl.AddVertexAt(i, new Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
             pl.Closed = true;
             if (like != null) { pl.LinetypeId = like.LinetypeId; pl.LineWeight = like.LineWeight; }
@@ -213,6 +316,13 @@ namespace BricsCadRc.Core
             if (like != null) CopyGaTag(like, pl);
             Write(tr, db, pl, d);
             return pl.ObjectId;
+        }
+
+        /// <summary>Prostokąt strefy wspornika: nasady A / B przesunięte w głąb płyty o ext (A', C1, C2, B').</summary>
+        private static (double X, double Y)[] ZonePts(CantileverRules.UShape u, double ext)
+        {
+            (double X, double Y) In((double X, double Y) q) => (q.X - u.Out.X * ext, q.Y - u.Out.Y * ext);
+            return new[] { In(u.A), u.C1, u.C2, In(u.B) };
         }
 
         private static void MoveToLayer(Transaction tr, Database db, ObjectId id)
@@ -317,6 +427,9 @@ namespace BricsCadRc.Core
                     spl.Layer = LayerName;
                     spl.Color = Color.FromColorIndex(ColorMethod.ByLayer, 256);
                     spl.Closed = true;
+                    var zp = ZonePts(stub, d.Ext);
+                    spl.SetPointAt(0, new Point2d(zp[0].X, zp[0].Y));
+                    spl.SetPointAt(3, new Point2d(zp[3].X, zp[3].Y));
                     Write(tr, db, spl, d);
                     openPl.Remove(sid); nibPieces.Remove(sid);
                     if (root.u != null)
@@ -364,8 +477,11 @@ namespace BricsCadRc.Core
                         continue;
                     }
                     var accepted = new List<(CantileverRules.Tab t, Data d, ObjectId rootId)>();
+                    // języczki już będące wspornikami (rekord RC_CANT_TAB — ponowne RC_CANTILEVER / Prepare GA) — pominięte
+                    var done = CantileverRules.RecordedTabs(pts, GeometryHelper.CantileverTabRecord(pl));
                     foreach (var t in tabs)
                     {
+                        if (done.Any(x => x.IdxE0 == t.IdxE0 && x.IdxE1 == t.IdxE1)) continue;
                         var root = us.FirstOrDefault(x => CantileverRules.IsRootOf(x.u, t.Shape));
                         int gb = GbFor(t.Shape, texts, taken);
                         int thk = ThkFor(root.u, texts, taken);
@@ -385,13 +501,9 @@ namespace BricsCadRc.Core
                     }
                     if (accepted.Count == 0) continue;
 
-                    // obrys bez języczków — ta sama polilinia (handle — powiązania prętów i stref)
-                    var clean = CantileverRules.RemoveTabs(pts, accepted.Select(a => a.t));
-                    pl.UpgradeOpen();
-                    int old = pl.NumberOfVertices;
-                    for (int i = 0; i < clean.Count; i++) pl.AddVertexAt(old + i, new Point2d(clean[i].X, clean[i].Y), 0, 0, 0);
-                    for (int i = 0; i < old; i++) pl.RemoveVertexAt(0);
-                    pl.Closed = true;
+                    // uwaga Bartka 2026-10-22: obrys na rysunku BEZ zmian (języczek jak w GA) — języczki w rekordzie RC_CANT_TAB,
+                    // obliczenia (GeometryHelper.GetPolylineVertices) biorą obrys bez nich
+                    AddTabRecord(tr, db, pl, accepted.Select(a => CantileverRules.TabRec.Of(a.t.Shape)));
                     foreach (var (t, d, rootId) in accepted)
                     {
                         AddRect(tr, db, t.Shape, pl, d);
@@ -403,6 +515,44 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
             return rep;
+        }
+
+        /// <summary>
+        /// Wsporniki z pierwszej wersji (rekord bez [8] / [9] — prostokąt tylko poza płytą): prostokąt przedłużony w głąb płyty
+        /// o strefę przy palu (rekord [6]) albo CantileverRules.NoRootExtension — nakłada się na płytę jak strefa belki (uwaga Bartka 2026-10-21).
+        /// </summary>
+        public static int UpgradeOldStubs(Database db, List<string> messages)
+        {
+            int n = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || !IsStub(pl)) continue;
+                    var d = Read(pl);
+                    if (d == null || d.Ext > 0 || pl.NumberOfVertices != 4 || d.Dir.Length != 2) continue;
+                    var v = Pts(pl);
+                    bool ax = d.Dir[1] == 'X'; int sg = d.Dir[0] == '-' ? -1 : 1;
+                    double Along((double X, double Y) q) => ax ? q.X : q.Y;
+                    double end = sg > 0 ? v.Max(Along) : v.Min(Along), rootC = sg > 0 ? v.Min(Along) : v.Max(Along);
+                    double ext = d.RootLen > 1.0 ? d.RootLen : CantileverRules.NoRootExtension;
+                    pl.UpgradeOpen();
+                    for (int i = 0; i < 4; i++)
+                    {
+                        if (Math.Abs(Along(v[i]) - rootC) > CantileverRules.Tol) continue;
+                        var q = ax ? (v[i].X - sg * ext, v[i].Y) : (v[i].X, v[i].Y - sg * ext);
+                        pl.SetPointAt(i, new Point2d(q.Item1, q.Item2));
+                    }
+                    d.Reach = Math.Abs(end - rootC);
+                    d.Ext = ext;
+                    Write(tr, db, pl, d);
+                    n++;
+                }
+                tr.Commit();
+            }
+            if (n > 0) messages?.Add($"[RC CANT] wsporniki z poprzedniej wersji: {n} — strefa przedłużona w głąb płyty (nakłada się na płytę).");
+            return n;
         }
 
         // ── opisy z rysunku (RC_CANTILEVER) ─────────────────────────────────

@@ -69,13 +69,16 @@ namespace BricsCadRc.Core
             // wersja 3 (Z1–Z6): jeden styl zakończeń prętów w programie (stała planera); przeliczenie (RecomputeSection) idzie tą samą drogą
             inp.EndStyle = SectionPlanner.DefaultEndStyle;
 
-            List<Point2d> verts;
+            List<Point2d> verts, effVerts;
             string outerHandle;
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
                 if (!(tr.GetObject(outerId, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl)) return null;
                 // POPRAWKI 25: obrys prawie osiowy (≤ 4 mm) — kopia wyprostowana, spójna z krawędziami nibu; idealny — bez zmian
-                verts = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));
+                // wsporniki (2026-10-22): przekrój tnie obrys JAK NA RYSUNKU (z języczkami wsporników) — beton wspornika w przekroju;
+                // obrys do obliczeń (bez języczków) — geometria wspornika (nasada, uskok)
+                verts = GeometryHelper.SquaredOrSame(GeometryHelper.GetRawPolylineVertices(pl));
+                effVerts = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));
                 outerHandle = pl.Handle.ToString();
             }
             inp.Outline = verts.Select(v => (v.X, v.Y)).ToList();
@@ -120,6 +123,8 @@ namespace BricsCadRc.Core
                 // znaczniki przekroju na detalach (2026-10-14): ramki detali (FRAME) i skala z tytułu („SCALE 1:25”)
                 var frames = new List<(string zone, int nr, List<Point2d> verts)>();
                 var detailScale = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                // wsporniki (RC_CANT): handle, wierzchołki strefy, rekord
+                var cantRecs = new List<(string handle, List<Point2d> verts, CantileverEngine.Data data)>();
                 foreach (ObjectId oid in ms)
                 {
                     if (oid.IsErased) continue;
@@ -141,6 +146,13 @@ namespace BricsCadRc.Core
                                 anchors.Add((dd.Value.zone, dd.Value.nr, GeometryHelper.GetPolylineVertices(pl)));
                             else if (dd.Value.role == BeamStore.RoleFrame && !string.IsNullOrEmpty(dd.Value.zone))
                                 frames.Add((dd.Value.zone, dd.Value.nr, GeometryHelper.GetPolylineVertices(pl)));
+                            continue;
+                        }
+                        if (CantileverEngine.IsStub(pl))
+                        {
+                            var cv = GeometryHelper.GetRawPolylineVertices(pl);
+                            cantRecs.Add((XLink.Norm(pl.Handle.ToString()), cv, CantileverEngine.Read(pl)));
+                            beamZones.Add(cv);   // „600THK” / opis GB w strefie wspornika — nie grubość płyty
                             continue;
                         }
                         outlines.Add(pl);
@@ -172,7 +184,7 @@ namespace BricsCadRc.Core
                 var min0 = MinPoint(verts);
                 foreach (var pl in outlines)
                 {
-                    var v = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));   // jak FindBottomView
+                    var v = GeometryHelper.SquaredOrSame(GeometryHelper.GetRawPolylineVertices(pl));   // jak FindBottomView (obrys z rysunku)
                     if (v.Count != verts.Count) continue;
                     var delta = MinPoint(v) - min0;             // rzut = wskazany + delta
                     if (delta.Length < 1.0 || !Congruent(v, verts, delta)) continue;
@@ -187,6 +199,40 @@ namespace BricsCadRc.Core
                 foreach (var (zh, anr, av) in anchors)
                 {
                     var z = zoneRecs.FirstOrDefault(r => XLink.Same(r.handle, zh));
+                    // wspornik (2026-10-22): detal 1:25 wspornika — ANCHOR = strefa RC_CANT, okno = strefa ⊕ 600 (ramka = offset strefy)
+                    var cz = cantRecs.FirstOrDefault(r => XLink.Same(r.handle, zh));
+                    if (z.verts == null && cz.verts != null)
+                    {
+                        var czv = views.FirstOrDefault(v => GeometryHelper.IsPointInsidePolygon(v.poly, CentroidOf(cz.verts)));
+                        if (czv.poly == null) continue;
+                        var ct = cz.verts.Select(v => (v.X, v.Y)).ToList();
+                        var at2 = av.Select(v => (v.X, v.Y)).ToList();
+                        var s2 = BeamDetailRules.ShiftOf(at2, ct);
+                        if (!BeamDetailRules.Congruent(at2, ct, s2))
+                        {
+                            ctx.Info.Add($"Detal wspornika {anr} nie pasuje do strefy {XLink.Norm(zh)} — ponów Cantilever; pręty tego detalu pominięte.");
+                            continue;
+                        }
+                        var w2 = BeamDetailRules.Bbox(ct).Offset(s2.X, s2.Y).Inflate(BeamDetailRules.Margin);
+                        detailOf[XLink.Norm(zh)] = (new Vector2d(s2.X, s2.Y), w2);
+                        try
+                        {
+                            var off = czv.delta + new Vector2d(s2.X, s2.Y);
+                            var fr = frames.FirstOrDefault(f => XLink.Same(f.zone, zh) && f.nr == anr);
+                            var poly = fr.verts != null && fr.verts.Count >= 3 ? fr.verts
+                                     : new List<Point2d> { new Point2d(w2.X0, w2.Y0), new Point2d(w2.X1, w2.Y0), new Point2d(w2.X1, w2.Y1), new Point2d(w2.X0, w2.Y1) };
+                            var clip = ClipToPolygon(ctx.P1 + off, ctx.P2 + off, poly);
+                            if (clip.HasValue && !ctx.DetailMarks.Any(m => m.Key == "D" + anr))
+                            {
+                                double sc = detailScale.TryGetValue(XLink.Norm(zh), out var ds) ? ds : DetailScale;
+                                var ea = BeamDetailRules.DetailMarkEnd((clip.Value.a.X, clip.Value.a.Y), ((ctx.P1 + off).X, (ctx.P1 + off).Y));
+                                var eb = BeamDetailRules.DetailMarkEnd((clip.Value.b.X, clip.Value.b.Y), ((ctx.P2 + off).X, (ctx.P2 + off).Y));
+                                ctx.DetailMarks.Add((new Point2d(ea.X, ea.Y), new Point2d(eb.X, eb.Y), sc / 50.0, "D" + anr));
+                            }
+                        }
+                        catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.CantDetailMark", ex); }
+                        continue;
+                    }
                     if (z.verts == null) continue;
                     var zview = views.FirstOrDefault(v => GeometryHelper.IsPointInsidePolygon(v.poly, z.inside));
                     if (zview.poly == null) continue;   // strefa innej płyty
@@ -283,7 +329,7 @@ namespace BricsCadRc.Core
                             var last = inp.Dists[inp.Dists.Count - 1];
                             last.SkewStart = bar.SkewStart; last.SkewEnd = bar.SkewEnd;
                             // E4b: pręty boczne — w rzucie po jednym na bok, opis / BBS: CountDisplay = 2 × liczba na bok
-                            if (bar.LayerCode == BeamGeometry.CodeSide && bar.Count > 0)
+                            if ((bar.LayerCode == BeamGeometry.CodeSide || bar.LayerCode == BeamGeometry.CodeSideU) && bar.Count > 0)
                                 last.Layers = Math.Max(1, bar.EffectiveCount / bar.Count);
                             // strzemiona 4-cięte (decyzja użytkownika 2026-10-11): CountDisplay = 2 × Count → Layers 2 (dwa strzemiona w widoku);
                             // 2-cięte (bez CountDisplay) — Layers 1, jak dotąd
@@ -346,6 +392,68 @@ namespace BricsCadRc.Core
                     if (ctx.SslSource == null && SectionPlanner.ParseSsl(t) is string ssl)
                     { inp.Ssl = ssl; ctx.SslSource = Flat(t); ctx.DescSsl = ssl; }
                 }
+
+                // Wsporniki (prośba Bartka 2026-10-22: przekrój rysuje wszystko na płycie): pas wspornika (wierzch na TOC — SSL − TOC
+                // poniżej płyty, spód na TOC − h) i pas strefy przy palu (wierzch płyty, spód na grubości „xxxTHK”) na linii cięcia;
+                // pręty — rozkłady detalu wspornika (jak belki)
+                int nCant = 0;
+                var placedC = new List<List<Point2d>>();
+                foreach (var (delta, _, poly) in views)
+                    foreach (var cr in cantRecs)
+                    {
+                        if (cr.data == null || !GeometryHelper.IsPointInsidePolygon(poly, CentroidOf(cr.verts))) continue;
+                        var zv = cr.verts.Select(v => new Point2d(v.X - delta.X, v.Y - delta.Y)).ToList();
+                        if (placedC.Any(o => o.Count == zv.Count && zv.All(v => o.Any(w => w.GetDistanceTo(v) < 1.0)))) continue;
+                        placedC.Add(zv);
+                        try
+                        {
+                            var g = CantGeometry(db, outerId, effVerts, zv, cr.data);
+                            if (g.Error != null) { ctx.Info.Add($"Wspornik {cr.handle}: {g.Error}"); continue; }
+                            double drop = 0;
+                            if (cr.data.Toc > 0 && double.TryParse((inp.Ssl ?? "").Trim().Replace(',', '.'), NumberStyles.Float,
+                                                                    CultureInfo.InvariantCulture, out double ssl))
+                            {
+                                drop = Math.Round((ssl - cr.data.Toc) * 1000.0);
+                                if (drop < 0 || drop >= g.H) drop = 0;
+                            }
+                            List<(double X, double Y)> Rect(double s0r, double s1r)
+                            {
+                                double p0 = Math.Min(g.W(s0r), g.W(s1r)), p1 = Math.Max(g.W(s0r), g.W(s1r));
+                                return g.AlongX
+                                    ? new List<(double X, double Y)> { (p0, g.C0), (p1, g.C0), (p1, g.C1), (p0, g.C1) }
+                                    : new List<(double X, double Y)> { (g.C0, p0), (g.C1, p0), (g.C1, p1), (g.C0, p1) };
+                            }
+                            var (dC, _) = CantileverRules.LinkFor(g.H);
+                            foreach (var (a, b) in SectionPlanner.CutIntervals(Rect(0, g.Reach), inp.CutAlongX, inp.CutCoord))
+                            {
+                                inp.Beams.Add(new SectionPlanner.BeamBand
+                                {
+                                    Handle = cr.handle, S0 = a, S1 = b, Height = drop + g.H, TopDrop = drop, Cantilever = true, TocText = cr.data.Toc > 0 ? cr.data.Toc.ToString("0.000", CultureInfo.InvariantCulture) : null,
+                                    NibWidth = 0, NibHeight = 0, StirrupDia = dC,
+                                    StirrupA = BeamGeometry.StirrupHeightCovers(g.H, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom),
+                                    Params = $"CANT {g.Width:0}x{g.H:0} TOC-{drop:0}"
+                                });
+                                nCant++;
+                            }
+                            if (g.RootLen > 0 && g.RootH > 0)
+                            {
+                                var (dR, _) = CantileverRules.LinkFor(g.RootH);
+                                foreach (var (a, b) in SectionPlanner.CutIntervals(Rect(-g.RootLen, 0), inp.CutAlongX, inp.CutCoord))
+                                {
+                                    inp.Beams.Add(new SectionPlanner.BeamBand
+                                    {
+                                        Handle = cr.handle, S0 = a, S1 = b, Height = g.RootH, TopDrop = 0, Cantilever = true, PileCap = true,
+                                        NibWidth = 0, NibHeight = 0, StirrupDia = dR,
+                                        StirrupA = BeamGeometry.StirrupHeightCovers(g.RootH, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom),
+                                        Params = $"PILECAP {g.Width:0}x{g.RootLen:0} {g.RootH:0}THK"
+                                    });
+                                    nCant++;
+                                }
+                            }
+                        }
+                        catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.Cantilever", ex); }
+                    }
+                if (nCant > 0) ctx.Info.Add($"Wsporniki / strefy przy palu na linii cięcia: {nCant}.");
 
                 ctx.Info.Add($"Rzuty płyty: {views.Count}, rozkłady: {nDist}, nib: {(nib != null ? nib.Edges.Count + " krawędzi" : "brak")}, " +
                              $"otwory: {inp.Holes.Count}, pale: {inp.Piles.Count}" +

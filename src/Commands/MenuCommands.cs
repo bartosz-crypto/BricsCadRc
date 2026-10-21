@@ -15,7 +15,8 @@ namespace BricsCadRc.Commands
         /// <summary>
         /// RC_GENERATE — Mesh (cała siatka) / B1 / B2 / T1 / T2 / UB1 / UB2 / UBNib (UB 03 w nibie) / B3 (B3 ADD w narożnikach wklęsłych) /
         /// Add (dozbrojenie dołem B1 / B2 ADD z zaimportowanych map) /
-        /// Beam (pręty belek / pogrubień — tylko na żądanie, Mesh ich nie tworzy; RC_GENERATE_BEAM).
+        /// Beam (pręty belek / pogrubień — tylko na żądanie, Mesh ich nie tworzy; RC_GENERATE_BEAM) /
+        /// Cantilever (pręty wsporników w detalu 1:25 — RC_GENERATE_CANTILEVER, 2026-10-21).
         /// Ostatni wybór jest domyślny (Enter).
         /// </summary>
         [CommandMethod("RC_GENERATE", CommandFlags.Modal)]
@@ -24,11 +25,11 @@ namespace BricsCadRc.Commands
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
-            var opts = new PromptKeywordOptions($"\nCo wygenerować [Mesh/B1/B2/T1/T2/UB1/UB2/UBNib/B3/Add/Beam] <{_lastGenerate}>: ")
+            var opts = new PromptKeywordOptions($"\nCo wygenerować [Mesh/B1/B2/T1/T2/UB1/UB2/UBNib/B3/Add/Beam/Cantilever] <{_lastGenerate}>: ")
             {
                 AllowNone = true
             };
-            foreach (var k in new[] { "Mesh", "B1", "B2", "T1", "T2", "UB1", "UB2", "UBNib", "B3", "Add", "Beam" })
+            foreach (var k in new[] { "Mesh", "B1", "B2", "T1", "T2", "UB1", "UB2", "UBNib", "B3", "Add", "Beam", "Cantilever" })
                 opts.Keywords.Add(k);
             opts.Keywords.Default = _lastGenerate;
 
@@ -52,6 +53,7 @@ namespace BricsCadRc.Commands
                 case "B3":    rebar.GenerateB3(); break;
                 case "Add":   GenerateAdd(); break;
                 case "Beam":  new BeamCommands().GenerateBeam(); break;
+                case "Cantilever": CantileverCommands.GenerateCantilever(); break;
             }
         }
 

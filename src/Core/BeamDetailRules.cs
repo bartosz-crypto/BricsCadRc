@@ -278,6 +278,15 @@ namespace BricsCadRc.Core
             return res;
         }
 
+        /// <summary>Odległość punktu od odcinka a–b.</summary>
+        public static double DistToSegment((double X, double Y) a, (double X, double Y) b, (double X, double Y) p)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy;
+            double t = l2 < 1e-12 ? 0 : Math.Max(0, Math.Min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / l2));
+            double ex = a.X + t * dx - p.X, ey = a.Y + t * dy - p.Y;
+            return Math.Sqrt(ex * ex + ey * ey);
+        }
+
         /// <summary>Odległość punktu od brzegu zamkniętego wielokąta.</summary>
         public static double DistToBoundary(IList<(double X, double Y)> poly, (double X, double Y) p)
         {

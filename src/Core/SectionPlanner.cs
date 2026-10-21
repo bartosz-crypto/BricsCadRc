@@ -115,6 +115,17 @@ namespace BricsCadRc.Core
             public double StirrupA;
             /// <summary>Parametry rekordu RC_BEAM (tekst do odcisku, bez wpływu na rysunek).</summary>
             public string Params = "";
+            /// <summary>
+            /// Wspornik / strefa przy palu (RC_CANT, prośba Bartka 2026-10-22 — przekrój ma rysować wszystko na płycie): wierzch pasu
+            /// TopDrop poniżej wierzchu płyty (SSL − TOC; strefa przy palu — 0), spód na −Height. Strzemiona o mniejszym A (drugi kierunek,
+            /// wewnątrz pierwszych) w środku pasu; U-bary pionowe (BU) rysowane (kropki dół / góra, w widoku U). Domyślnie false — belki bez zmian.
+            /// </summary>
+            public double TopDrop;
+            public bool Cantilever;
+            /// <summary>Poziom wierzchu wspornika do znacznika (np. „8.525”); null — bez znacznika TOC.</summary>
+            public string TocText;
+            /// <summary>Pas strefy przy palu (pile cap) wspornika — false: pas samego wspornika.</summary>
+            public bool PileCap;
         }
 
         public sealed class NibEdge
@@ -625,6 +636,9 @@ namespace BricsCadRc.Core
             ResolveDotCollisions(res);
             // belka (E4b): T IN NIB nie może nachodzić na pręt belki (BN w narożu spinki UB 03) — odsunięcie w poziomie do styku lic
             if (bands.Count > 0) ResolveTinBeamCollisions(res);
+            // wspornik (uwaga Bartka 2026-10-22 „UB blisko linka — powinien się licować z ramieniem linka”): tył UB płyty przy pionowym
+            // ramieniu strzemienia pasu wspornika / strefy przy palu (w widoku) — dosunięty do styku lic; bez wsporników — nic
+            if (bands.Any(b => b.Src.Cantilever)) FlushUbToCantileverLinks(res, bands);
 
             // 4. Pale
             if (inp.DrawPiles)
@@ -708,7 +722,11 @@ namespace BricsCadRc.Core
                     res.Dims.Add(new Dim { U1 = last.U1, V1 = 0, U2 = last.U1, V2 = -T, LineU = last.U1 + offR, LineV = -T / 2, Vertical = true });
                 }
                 else
-                    res.Dims.Add(new Dim { U1 = bandL.U1, V1 = 0, U2 = bandL.U1, V2 = -T, LineU = bandL.U1 + DimOffset, LineV = -T / 2, Vertical = true });
+                {
+                    // wspornik na całym odcinku (przekrój w poprzek wspornika, C-C) — bez grubości płyty (płyty w przekroju nie ma)
+                    if (!(bandL.Src.Cantilever && last.U1 - bandL.U1 <= 1.0))
+                        res.Dims.Add(new Dim { U1 = bandL.U1, V1 = 0, U2 = bandL.U1, V2 = -T, LineU = bandL.U1 + DimOffset, LineV = -T / 2, Vertical = true });
+                }
             }
 
             // 6. Poziom SSL
@@ -716,6 +734,12 @@ namespace BricsCadRc.Core
             {
                 res.SslMark = (first.U0 - off - 260.0, 0);
                 res.SslText = inp.Ssl.Trim();
+            }
+            // wspornik przy lewym końcu z wierzchem niżej niż płyta (wzór PLOT 28 C-C: „8.525”) — poziom TOC na wierzchu wspornika
+            if (bandL != null && bandL.Src.Cantilever && bandL.Src.TopDrop > 1.0 && !string.IsNullOrWhiteSpace(bandL.Src.TocText))
+            {
+                res.SslMark = (first.U0 - off - 260.0, -bandL.Src.TopDrop);
+                res.SslText = bandL.Src.TocText.Trim();
             }
 
             // 6a. Z1–Z6 (wersja 3): zakład — odsunięcie w poprzek, symbole zakończeń prętów w widoku; styl None — dawny rysunek
@@ -733,6 +757,7 @@ namespace BricsCadRc.Core
         /// </summary>
         private static void AddBeamDims(Result res, Segment sg, BandU b)
         {
+            if (b.Src.Cantilever) { AddCantileverDims(res, sg, b); return; }
             double far = DimOffset + 200;
             if (b.Nib0 > 0)
                 res.Dims.Add(new Dim { U1 = b.U0, V1 = 0, U2 = sg.U0, V2 = -b.H, LineU = sg.U0 - far, LineV = -b.H / 2, Vertical = true });
@@ -744,6 +769,88 @@ namespace BricsCadRc.Core
                 res.Dims.Add(new Dim { U1 = sg.U1, V1 = 0, U2 = sg.U1, V2 = -b.H, LineU = sg.U1 + DimOffset, LineV = -b.H / 2, Vertical = true });
             else
                 res.Dims.Add(new Dim { U1 = b.U1, V1 = 0, U2 = b.U1, V2 = -b.H, LineU = b.U1 + DimOffset, LineV = -b.H / 2, Vertical = true });
+            res.Dims.Add(new Dim { U1 = b.U0, V1 = -b.H, U2 = b.U1, V2 = -b.H, LineU = (b.U0 + b.U1) / 2, LineV = -b.H - BeamDimBelow, Vertical = false });
+        }
+
+        /// <summary>Największa szczelina między tyłem UB a ramieniem strzemienia wspornika dosuwana do styku [mm].</summary>
+        public const double UbLinkFlushGap = 30.0;
+
+        /// <summary>
+        /// Tył UB (pionowy odcinek pręta w widoku, rodzaj UB / NibUB) w pasie wspornika obok pionowego ramienia strzemienia w widoku
+        /// (szczelina 0 … <see cref="UbLinkFlushGap"/>) — cały UB przesunięty w poziomie tak, żeby lica się stykały (oś–oś = (Ø UB + Ø strzemienia) / 2).
+        /// </summary>
+        private static void FlushUbToCantileverLinks(Result res, List<BandU> bands)
+        {
+            List<(double U, double V0, double V1)> Verticals(BarLine b)
+            {
+                var r = new List<(double, double, double)>();
+                for (int i = 0; i + 1 < b.Path.Count; i++)
+                {
+                    var p = b.Path[i]; var q = b.Path[i + 1];
+                    if (Math.Abs(p.U - q.U) < 0.5 && Math.Abs(p.V - q.V) > 20.0) r.Add((p.U, Math.Min(p.V, q.V), Math.Max(p.V, q.V)));
+                }
+                return r;
+            }
+            var links = res.Bars.Where(b => b.Kind == DistKind.Beam && b.Code != BeamGeometry.CodeUBar && b.Path.Count >= 4).ToList();
+            foreach (var ub in res.Bars.Where(b => b.Kind == DistKind.UB || b.Kind == DistKind.NibUB))
+            {
+                double best = double.MaxValue, shift = 0;
+                foreach (var (u, v0, v1) in Verticals(ub))
+                {
+                    if (!bands.Any(b => b.Src.Cantilever && u >= b.U0 - UbLinkFlushGap - 50 && u <= b.U1 + UbLinkFlushGap + 50)) continue;
+                    foreach (var lk in links)
+                        foreach (var (lu, l0, l1) in Verticals(lk))
+                        {
+                            if (Math.Min(v1, l1) - Math.Max(v0, l0) < 10.0) continue;          // ramiona na tej samej wysokości
+                            double touch = (ub.Diameter + lk.Diameter) / 2.0;
+                            double dist = Math.Abs(u - lu), gap = dist - touch;
+                            if (gap <= 0.5 || gap > UbLinkFlushGap || gap >= best) continue;
+                            best = gap; shift = (lu > u ? 1 : -1) * gap;
+                        }
+                }
+                if (Math.Abs(shift) < 0.5) continue;
+                ub.Path = ub.Path.Select(p => (p.U + shift, p.V)).ToList();
+                if (ub.Outline != null) ub.Outline = ub.Outline.Select(p => (p.U + shift, p.V)).ToList();
+                if (ub.LabelPath != null) ub.LabelPath = ub.LabelPath.Select(p => (p.U + shift, p.V)).ToList();
+            }
+        }
+
+        /// <summary>Pas do poziomów prętów wspornika: dla strefy przy palu — pas samego wspornika tego samego wspornika (gdy jest na odcinku).</summary>
+        private static BandU CantLevelBand(List<BandU> bands, BandU b)
+        {
+            if (b == null || !b.Src.Cantilever || !b.Src.PileCap) return b;
+            return bands.FirstOrDefault(x => x.Src.Cantilever && !x.Src.PileCap && x.Src.Handle == b.Src.Handle) ?? b;
+        }
+
+        /// <summary>
+        /// Strzemię wewnątrz strzemienia zewnętrznego pasu wspornika (drugi kierunek, A − 2·Ø w dół do 5 — uwaga Bartka 2026-10-22):
+        /// odsunięcie od dołu i od góry = (A pasu − A własne) / 2; poza wspornikiem / bez wymiaru — 0.
+        /// </summary>
+        private static double NestInset(BandU b, Dist d)
+        {
+            if (!b.Src.Cantilever || d.SourceDims == null || d.SourceDims.Length == 0 || d.SourceDims[0] <= 0) return 0;
+            double own = d.SourceDims[0];
+            return own < b.LinkA - 0.5 ? (b.LinkA - own) / 2.0 : 0;
+        }
+
+        /// <summary>
+        /// Wymiary pasu wspornika / strefy przy palu (wzór PLOT 28 D-D / C-C): długość (szerokość) pod spodem, wysokość od wierzchu pasu
+        /// do spodu przy końcu odcinka (albo przy prawym licu pasu) i obniżenie wierzchu względem płyty (SSL − TOC, np. 75).
+        /// </summary>
+        private static void AddCantileverDims(Result res, Segment sg, BandU b)
+        {
+            double top = -b.Src.TopDrop;
+            bool atL = b.U0 - sg.U0 <= 1.0, atR = sg.U1 - b.U1 <= 1.0;
+            // wysokość (i obniżenie wierzchu) tylko przy końcu odcinka (koniec wspornika) — w środku odcinka (strefa przy palu między
+            // wspornikiem a płytą) linia wymiarowa wchodziłaby w beton sąsiedniego pasu; długość — zawsze pod spodem
+            if (atL || atR)
+            {
+                double u = atL ? sg.U0 : sg.U1;
+                double lineU = atL ? sg.U0 - DimOffset : sg.U1 + DimOffset;
+                res.Dims.Add(new Dim { U1 = u, V1 = top, U2 = u, V2 = -b.H, LineU = lineU, LineV = (top - b.H) / 2, Vertical = true });
+                if (b.Src.TopDrop > 1.0)
+                    res.Dims.Add(new Dim { U1 = u, V1 = 0, U2 = u, V2 = top, LineU = lineU, LineV = top / 2, Vertical = true });
+            }
             res.Dims.Add(new Dim { U1 = b.U0, V1 = -b.H, U2 = b.U1, V2 = -b.H, LineU = (b.U0 + b.U1) / 2, LineV = -b.H - BeamDimBelow, Vertical = false });
         }
 
@@ -799,7 +906,7 @@ namespace BricsCadRc.Core
                 if (m < sg.U0 + sg.Nib0 || m > sg.U1 - sg.Nib1) top = vNibTop;
                 foreach (var b in bs)
                 {
-                    if (m >= b.U0 && m <= b.U1) { bot = Math.Min(bot, -b.H); top = 0; }
+                    if (m >= b.U0 && m <= b.U1) { bot = Math.Min(bot, -b.H); top = b.Src.TopDrop > 0 ? -b.Src.TopDrop : 0; }   // bez wspornika dokładnie 0 (nie −0 — złote testy)
                     else if (b.Nib0 > 0 && m >= b.U0 - b.Nib0 && m < b.U0) { bot = -b.H; top = -b.H + b.NibH; }
                     else if (b.Nib1 > 0 && m > b.U1 && m <= b.U1 + b.Nib1) { bot = -b.H; top = -b.H + b.NibH; }
                 }
@@ -896,6 +1003,9 @@ namespace BricsCadRc.Core
                 if (hit == null) continue;
                 foreach (var b in bands.Where(x => x.Src == hit.Src))
                 {
+                    // wspornik: strzemię zewnętrzne pasu = największe A (drugi kierunek ma A − 2·Ø — wewnątrz)
+                    if (b.Src.Cantilever && d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0 && d.SourceDims[0] < b.LinkA - 0.5)
+                        continue;
                     b.LinkDia = d.Diameter > 0 ? d.Diameter : b.LinkDia;
                     if (d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0) b.LinkA = d.SourceDims[0];
                 }
@@ -929,6 +1039,7 @@ namespace BricsCadRc.Core
                 {
                     case BeamGeometry.CodeTop: return new List<double> { b.VLinkTop - b.LinkDia - half };
                     case BeamGeometry.CodeSide:
+                    case BeamGeometry.CodeSideU:
                     {
                         double vb = b.VLinkBot + b.LinkDia + b.MainDiaB / 2.0, vt = b.VLinkTop - b.LinkDia - b.MainDiaT / 2.0;
                         int n = Math.Max(1, d.Layers);
@@ -947,23 +1058,34 @@ namespace BricsCadRc.Core
                             return new List<double> { IsNibTop(d) ? b.UbTop + b.UbDia / 2.0 + half : b.UbBot + b.UbDia / 2.0 + half };
                         return new List<double> { IsNibTop(d) ? -b.H + b.NibH - inp.CoverNib - BeamNibUbDia - half
                                                               : -b.H + b.Src.CoverBottom + BeamNibUbDia + half };
-                    // K3: pręty podłużne dół = góra jedną pozycją (BM „2x4 … B+T”) — kropki na obu poziomach
-                    case BeamGeometry.CodeBoth: return new List<double> { b.VLinkBot + b.LinkDia + half, b.VLinkTop - b.LinkDia - half };
+                    // K3: pręty podłużne dół = góra jedną pozycją (BM „2x4 … B+T”) — kropki na obu poziomach; U-bar wspornika — ramiona tak samo
+                    case BeamGeometry.CodeBoth:
+                    case BeamGeometry.CodeUBar:
+                    {
+                        // U-bar wspornika (uwaga Bartka 2026-10-22): własny wymiar B (zewnętrzny) — ramię dołem na strzemieniu, górą o B − Ø wyżej
+                        double vb = b.VLinkBot + b.LinkDia + half;
+                        double bU = d.SourceDims != null && d.SourceDims.Length > 1 && d.SourceDims[1] > d.Diameter ? d.SourceDims[1] : 0;
+                        return new List<double> { vb, bU > 0 ? vb + bU - d.Diameter : b.VLinkTop - b.LinkDia - half };
+                    }
                     default: return new List<double> { b.VLinkBot + b.LinkDia + half };
                 }
             }
             // K3: BM — poziom górny (nad połową strzemienia) to warstwa górna
-            bool IsBothTop(BandU b, Dist d, double v) => d.LayerCode == BeamGeometry.CodeBoth && v > (b.VLinkBot + b.VLinkTop) / 2.0;
+            bool IsBothTop(BandU b, Dist d, double v) => (d.LayerCode == BeamGeometry.CodeBoth || d.LayerCode == BeamGeometry.CodeUBar)
+                                                         && v > (b.VLinkBot + b.VLinkTop) / 2.0;
             // pas belki z nibem (pręty BN leżą w nibie, poza trzonem)
             BandU BandAtNib(double u) => bands.FirstOrDefault(b => u >= b.U0 - b.Nib0 - 1.0 && u <= b.U1 + b.Nib1 + 1.0);
 
             foreach (var d in inp.Dists.Where(x => x.Kind == DistKind.Beam))
             {
                 // K3: pionowe U-bary belki (BU) — w przekroju dopiero w kroku K6 (kropki dół / góra przesunięte o Ø, w cięciu wzdłuż A–B–A)
-                if (d.LayerCode == BeamGeometry.CodeUBar) continue;
+                // wspornik (2026-10-22): U-bary pionowe rysowane — kropki dół / góra (jak BM), w widoku kształt U (tył przy zagięciu)
+                if (d.LayerCode == BeamGeometry.CodeUBar && !bands.Any(x => x.Src.Cantilever)) continue;
                 // K4: UB SIDE (BC, poziomy U przy końcu belki) — w przekroju pominięty (bez kropek w złych miejscach; przekrój
                 // U-barów cofnięty 2026-10-11 razem z K6 — do decyzji użytkownika)
-                if (d.LayerCode == BeamGeometry.CodeSideU) continue;
+                // wspornik (uwaga Bartka 2026-10-22 „brakuje kropek side”): UB SIDE wspornika rysowany — w poprzek: kropki ramion na poziomach
+                // prętów bocznych; wzdłuż osi: kropki tyłu poziomego U (tył przecina płaszczyznę cięcia)
+                if (d.LayerCode == BeamGeometry.CodeSideU && !bands.Any(x => x.Src.Cantilever)) continue;
                 bool link = IsLink(d);
                 bool nib = d.LayerCode == BeamGeometry.CodeNib;
                 bool top = d.LayerCode == BeamGeometry.CodeTop || (nib && IsNibTop(d));
@@ -1001,27 +1123,49 @@ namespace BricsCadRc.Core
                             double u = U(s);
                             var b = nib ? BandAtNib(u) : BandAt(u);
                             if (b == null) continue;
-                            if (link)
+                            if (link && b.Src.Cantilever)
+                            {
+                                // wspornik (uwaga Bartka 2026-10-22 „zgodnie z prawdą”): płaszczyzna cięcia przecina strzemię przez dolne
+                                // i górne ramię — dwie kropki (jak D-D biura, „13”); wysokość z PRAWDZIWEGO pręta (A pręta wzorcowego, Ø rozkładu)
+                                double hd = d.Diameter / 2.0;
+                                double inset = NestInset(b, d);
+                                double ownA = d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0 ? d.SourceDims[0] : b.LinkA;
+                                double vLo = b.VLinkBot + inset + hd, vHi = b.VLinkBot + inset + ownA - hd;
+                                foreach (var (v, isTop) in new[] { (vLo, false), (vHi, true) })
+                                {
+                                    if (!inConcrete(u, v)) continue;
+                                    if (res.Dots.Any(o => o.Beam && o.PosNr == d.PosNr && Math.Abs(o.U - u) < 1.0 && Math.Abs(o.V - v) < 1.0)) continue;
+                                    res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = isTop, Beam = true,
+                                                           NomSpacing = NominalSpacing(d) });
+                                    MarkUsed(res, d);
+                                }
+                            }
+                            else if (link)
                             {
                                 // strzemię przecięte wzdłuż belki: pionowe ramię w widoku (oś od dolnego do górnego ramienia)
                                 double hl = b.LinkDia / 2.0;
-                                var path = new List<(double U, double V)> { (u, b.VLinkBot + hl), (u, b.VLinkTop - hl) };
+                                double inset = NestInset(b, d);
+                                var path = new List<(double U, double V)> { (u, b.VLinkBot + inset + hl), (u, b.VLinkTop - inset - hl) };
                                 res.Bars.Add(new BarLine { Path = path, Outline = OutlineOf(path, b.LinkDia), Diameter = d.Diameter,
                                                            PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
                                 MarkUsed(res, d);
                             }
                             else
                             {
-                                var lv = Levels(b, d);
+                                // UB SIDE wspornika — poziomy prętów bocznych z pasa samego wspornika (ten sam pręt także w strefie przy palu)
+                                var lv = Levels(d.LayerCode == BeamGeometry.CodeSideU ? CantLevelBand(bands, b) : b, d);
                                 for (int li = 0; li < lv.Count; li++)
                                 {
                                     double v = lv[li];
                                     if (nibPair && li > 0 && i != outerIdx) continue;     // 2T+1B: dołem tylko pod prętem przy krawędzi
                                     if (!inConcrete(u, v)) continue;
+                                    // wspornik: U-bary z obu końców w zakładzie (ta sama pozycja, ta sama kolumna) — jedna kropka
+                                    if (b.Src.Cantilever && res.Dots.Any(o => o.Beam && o.PosNr == d.PosNr && Math.Abs(o.U - u) < 1.0 && Math.Abs(o.V - v) < 1.0))
+                                        continue;
                                     res.Dots.Add(new Dot { U = u, V = v, Diameter = d.Diameter, PosNr = d.PosNr,
                                                            Top = top || IsBothTop(b, d, v) || (nibPair && li == 0),
                                                            Beam = true, Bent = bent, NomSpacing = NominalSpacing(d),
-                                                           Side = d.LayerCode == BeamGeometry.CodeSide });
+                                                           Side = d.LayerCode == BeamGeometry.CodeSide || d.LayerCode == BeamGeometry.CodeSideU });
                                     MarkUsed(res, d);      // tylko gdy kropka powstała (poza betonem — rozkład nieużyty)
                                 }
                             }
@@ -1030,6 +1174,28 @@ namespace BricsCadRc.Core
                 }
                 else
                 {
+                    if (d.LayerCode == BeamGeometry.CodeSideU)
+                    {
+                        // UB SIDE wspornika w cięciu wzdłuż osi: tył poziomego U (między ramionami Across0 … Across0 + PairOffset) przecina
+                        // płaszczyznę cięcia — kropki tyłu na poziomach prętów bocznych (prawdziwe Ø, liczba poziomów z rozkładu)
+                        double qa = d.AlongX ? d.Y0 : d.X0, qb = qa + d.PairOffset;
+                        if (Math.Abs(d.PairOffset) < 1.0 || c < Math.Min(qa, qb) - 1.0 || c > Math.Max(qa, qb) + 1.0) continue;
+                        double aS = d.AlongX ? d.X0 : d.Y0, bS = aS + d.LengthA;
+                        var bandS = CantLevelBand(bands, BandOver(U(Math.Max(aS, s0)), U(Math.Min(bS, s1))));
+                        if (bandS == null || !bandS.Src.Cantilever) continue;
+                        bool bendA = string.Equals(d.SymbolSide, "Left", StringComparison.OrdinalIgnoreCase);
+                        double backS = bendA ? aS + d.Diameter / 2.0 : bS - d.Diameter / 2.0;
+                        if (backS < s0 - 0.5 || backS > s1 + 0.5) continue;
+                        double uS = U(backS);
+                        foreach (double v in Levels(bandS, d))
+                        {
+                            if (!inConcrete(uS, v)) continue;
+                            res.Dots.Add(new Dot { U = uS, V = v, Diameter = d.Diameter, PosNr = d.PosNr, Top = false, Beam = true, Bent = true,
+                                                   Side = true, NomSpacing = NominalSpacing(d) });
+                            MarkUsed(res, d);
+                        }
+                        continue;
+                    }
                     // pręty równoległe do cięcia: pręt najbliższy linii cięcia (w granicach ½ rozstawu, min. 100)
                     double q0 = d.AlongX ? d.Y0 : d.X0;
                     int ib = -1; double best = double.MaxValue;
@@ -1040,13 +1206,51 @@ namespace BricsCadRc.Core
                     if (bEnd < s0 - 1.0 || a > s1 + 1.0) continue;
                     var band = BandOver(U(Math.Max(a, s0)), U(Math.Min(bEnd, s1)));
                     if (band == null) continue;
+                    if (d.LayerCode == BeamGeometry.CodeUBar)
+                    {
+                        if (!band.Src.Cantilever) continue;
+                        // U-bar wspornika w widoku (uwaga Bartka 2026-10-22 „naszym stylem, jak belki”): kopia pręta wzorcowego (kształt 21
+                        // z gięciami) obrócona — ramiona poziomo, tył przy zagięciu (SymbolSide), ramię dołem na strzemieniu, wysokość = własne B;
+                        // drugi U-bar tej samej pozycji (zakład z pierwszym) — wewnątrz pierwszego (o Ø), jak na rysunkach biura
+                        bool bendAtA = string.Equals(d.SymbolSide, "Left", StringComparison.OrdinalIgnoreCase);
+                        double hd = d.Diameter / 2.0;
+                        int dirS = bendAtA ? +1 : -1;                              // od tyłu do wolnych końców (w s)
+                        double backAxis = (bendAtA ? a : bEnd) + dirS * hd;
+                        double vb = band.VLinkBot + band.LinkDia + hd;
+                        // uwaga Bartka 2026-10-22: oba U-bary to TE SAME pręty z detalu — prawdziwe wymiary pręta wzorcowego, bez zmniejszania
+                        // (w zakładzie ramiona na tych samych poziomach, jak „dwa gięte — bez odsunięcia”, Z2)
+                        List<(double s, double v)> pathU;
+                        if (d.ShapeLocal != null && d.ShapeLocal.Count >= 3)
+                        {
+                            double xMin = d.ShapeLocal.Min(p => p.X), yMin = d.ShapeLocal.Min(p => p.Y);
+                            pathU = d.ShapeLocal.Select(p => (s: backAxis + dirS * (p.Y - yMin), v: vb + (p.X - xMin))).ToList();
+                        }
+                        else
+                        {
+                            double bU = d.SourceDims != null && d.SourceDims.Length > 1 && d.SourceDims[1] > d.Diameter ? d.SourceDims[1] : band.LinkA - 2 * band.LinkDia;
+                            double vt = vb + bU - d.Diameter, free = backAxis + dirS * (d.LengthA - hd);
+                            pathU = new List<(double s, double v)> { (free, vb), (backAxis, vb), (backAxis, vt), (free, vt) };
+                        }
+                        foreach (var piece in ClipPath(pathU, s0, s1))
+                        {
+                            var up = piece.Select(p => (U(p.s), p.v)).ToList();
+                            if (up.Count < 2) continue;
+                            // Z1 (jak pozostałe przekroje, uwaga Bartka 2026-10-22): wolne końce ramion — rzeczywiste końce pręta (symbol zakończenia)
+                            var ubl = new BarLine { Path = up, Outline = OutlineOf(up, d.Diameter), Diameter = d.Diameter, PosNr = d.PosNr,
+                                                    Top = false, Kind = DistKind.Beam, Code = BeamGeometry.CodeUBar };
+                            res.Bars.Add(RealEnds(ubl, (U(pathU[0].s), pathU[0].v), (U(pathU[pathU.Count - 1].s), pathU[pathU.Count - 1].v)));
+                            MarkUsed(res, d);
+                        }
+                        continue;
+                    }
                     if (link)
                     {
                         // strzemię w widoku (cięcie prostopadłe do belki): kształt pręta wzorcowego, haki u góry; oś zewnętrznego
                         // lica strzemienia na otulinie od lica belki i od spodu
                         double hl = band.LinkDia / 2.0;
                         double uLo = Math.Min(U(a), U(bEnd)) + hl, uHi = Math.Max(U(a), U(bEnd)) - hl;
-                        double vBot = band.VLinkBot + hl, vTop = band.VLinkTop - hl;
+                        double inset = NestInset(band, d);
+                        double vBot = band.VLinkBot + inset + hl, vTop = band.VLinkTop - inset - hl;
                         List<(double U, double V)> axis;
                         if (d.ShapeLocal != null && d.ShapeLocal.Count >= 2)
                         {
@@ -1788,10 +1992,15 @@ namespace BricsCadRc.Core
                         // siatka równoległa do belki nie wchodzi w belkę (E2): poziom bez żadnej kropki z rozkładu w trzonie belki
                         // nie dostaje kropek w pasie belki (trzon + nib belki); poza pasem kotwa przy belce = rzeczywisty pierwszy pręt
                         // rozkładu (nie siatka od kotwy nibu płyty)
-                        var cut = segBands.Where(b => !orig.Any(d => d.U > b.U0 + 0.5 && d.U < b.U1 - 0.5)).ToList();
+                        // wspornik (2026-10-22): pas samego wspornika zawsze zakazany dla siatki płyty (pręty siatki dochodzące do krawędzi
+                        // przez nasadę nie rozbijają wspólnego schematu góry i dołu — siatka górna i dolna w jednej linii)
+                        var cut = segBands.Where(b => (b.Src.Cantilever && !b.Src.PileCap) || !orig.Any(d => d.U > b.U0 + 0.5 && d.U < b.U1 - 0.5)).ToList();
                         if (cut.Count > 0)
                         {
                             var freshB = MeshLevelBesideBeams(res, sg, orig, cut, anchorL, anchorR, nibL, nibR, sp, top, inConcrete, shared);
+                            // pręty siatki leżące w nasadzie wspornika (do krawędzi płyty) — prawdziwe położenia, bez schematu
+                            foreach (var dk in orig.Where(x => cut.Any(b => b.Src.Cantilever && !b.Src.PileCap && x.U > b.U0 - 0.5 && x.U < b.U1 + 0.5)))
+                                if (!freshB.Any(f => Math.Abs(f.U - dk.U) < 1.0)) freshB.Add(dk);
                             if (freshB.Count == 0) continue;
                             foreach (var d in orig) res.Dots.Remove(d);
                             res.Dots.AddRange(freshB);

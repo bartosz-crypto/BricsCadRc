@@ -992,9 +992,9 @@ namespace BricsCadRc.Core
         /// <summary>
         /// K3 (praktyka biura C12 / Holbrook — docs/PLAN_BELKI_PRAKTYKA_2026-10-10.md; domyślne do potwierdzenia): pionowe U-bary
         /// kształt 21 na każdym końcu z zamknięciem UBar / LBar / Tee, po jednym na kolumnę prętów (columns), w osiach kolumn:
-        ///   • (decyzja użytkownika 2026-10-13) B = A strzemienia własnej warstwy − 2·Ø strzemienia w górę do 5 (H12 → −25):
+        ///   • (decyzja użytkownika 2026-10-13) B = A strzemienia własnej warstwy − 2·Ø strzemienia W DÓŁ do 5 (Floor5; 341 → 340):
         ///     odcinek wzdłuż Y (1. warstwa, A = stirrupA: 450 → 365 → 340), wzdłuż X (2. warstwa, A − 15: 350 → 325);
-        ///     noga X narożnika L i belka dochodząca złącza T — wewnątrz U-barów 1. warstwy: B(Y) − 2·Ø U-bara w górę do 5
+        ///     noga X narożnika L i belka dochodząca złącza T — wewnątrz U-barów 1. warstwy: B(Y) − 2·Ø U-bara (odejmowane 2·Ø w górę do 5, wynik w dół do 5)
         ///     (drop; 0 = auto, H16 → 35: 340 → 305);
         ///   • tył U na otulinie czołowej od lica końca (narożnik L — lica zewnętrznego narożnika, złącze T — dalszego lica belki ciągłej);
         ///   • ramię A = C: koniec — Ceil25(max(zakład + armExtra, tył → pręt prosty + zakład)) (zakład 650 + 90 → 750; C12 740);

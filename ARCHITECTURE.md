@@ -442,6 +442,11 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 
 ## 4. AutoRebar — zasady (wymagania użytkownika)
 Ogólne:
+- **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
+  element, który musi się zmieścić w innym (strzemię drugiego kierunku w strzemieniu, U-bar w strzemieniu, noga w nodze…), ma
+  wymiar = miejsce w środku (np. A − 2·Ø) zaokrąglony **w dół** do 5 mm — lepiej mniej wysokości niż kolizja (290, H12 → 266 → 265;
+  215 → 191 → 190). Odejmowane naddatki (np. 2·Ø U-bara przy zagnieżdżeniu) — w górę. Wymiary, które muszą OBJĄĆ pręty
+  (szerokość strzemienia 4-leg `FourLegWidth`) — w górę.
 - **B3 ADD (decyzja użytkownika D1, 2026-10-09; f854684):** w każdym narożniku wklęsłym płyty i w 4 narożnikach otworu
   (detal) 2 H10 co 100, L = 1250, opis „2 H10-nn-100 B3 ADD” — szczegóły w sekcji 4h. Zmiana wyniku względem wzorca
   aba0ed1 przyjęta (expected-diffs 14).
@@ -970,7 +975,7 @@ później. Po UB 03 w detalu (`GenerateUBLayerCore`) — ponownie `ResolveRepres
 nie na sobie). Rekordy stref zapisane wcześniej trzymają swoje otuliny / naddatek — nowe wartości po ponownym Prepare GA albo w oknie RC_BEAM.
 **Decyzje Bartka 2026-10-13 (wysokości — warstwy):** strzemiona odcinków wzdłuż Y — 1. warstwa, A = H − 40 − 45 (450: 365); wzdłuż X —
 2. warstwa, A − 15 (350; odsunięte od górnej siatki o pręt 12 + 3 zapasu) — `BeamGeometry.LinkHeightFor` / `SecondLayerLinkDrop`, osobne
-pozycje strzemion X / Y. Pionowe U-bary (`PlanVerticalUBars`): B = A strzemienia własnej warstwy − 2·Ø strzemienia w górę do 5 (`Ceil5`;
+pozycje strzemion X / Y. Pionowe U-bary (`PlanVerticalUBars`): B = A strzemienia własnej warstwy − 2·Ø strzemienia **w dół** do 5 (`Floor5` — tak liczy kod;
 koniec X 325, koniec / narożnik Y 340); noga X narożnika L i belka dochodząca złącza T — wewnątrz U-barów 1. warstwy: 340 − 2·Ø U-bara
 w górę do 5 (H16 → 305; [30] `UBarDrop` 0 = auto, dawniej 35 na nodze Y). Zakład U-bara nogi X liczony od końca prętów prostych przed
 kwadratem narożnika (bez zmian). Strefa z opisów THK (`ZonesFromThk`): sąsiednia krawędź z linią strefy tylko przy narożniku (krótka noga L)
@@ -1428,7 +1433,13 @@ Przykłady: PLOT 28 / 29 / 60 / 308 / 313-314 / 13-14 / 67-75 / 101-102, BLOCK C
 - `CantileverEngine` (warstwa **RC-CANTILEVER** — magenta jak RC-BEAM, rekord **RC_CANT**: [1] wersja 1 [2] szerokość [3] h z GB (0 = brak) [4] TOC [m] [5] grubość
   strefy przy palu (0 = brak) [6] długość strefy [7] kierunek wysięgu „±X / ±Y”; bez handle — CloneRemap niepotrzebny; znacznik RC_GA z obrysu):
   wspornik potwierdzony = opis „GB-…” ≤ 2500 od prostokąta (przypisany najbliższemu) albo strefa przy palu; inne języczki — komunikat
-  (Prepare GA) / pytanie Tak/Nie (RC_CANTILEVER). Obrys: ta sama polilinia (handle), wierzchołki na nowo bez języczka; prostokąt wspornika
+  (Prepare GA) / pytanie Tak/Nie (RC_CANTILEVER). Obrys: ~~wierzchołki na nowo bez języczka~~ — **od 2026-10-22 obrys na rysunku BEZ
+  zmian** (uwaga Bartka: „Prepare GA zmienia faktyczny obrys płyty!” — linia na nasadzie, której w GA nie ma): języczek zostaje,
+  XData `RC_CANT_TAB` na obrysie = lista „kierunek;szerokość;wysięg” (bez współrzędnych — MOVE / COPY bez skutków);
+  **`GeometryHelper.GetPolylineVertices` / `PolylineBbox` zwracają obrys do obliczeń bez tych języczków** (`CantileverRules.EffectiveOutline`)
+  — siatka, UB, nib, belki, przekrój liczą krawędź prosto przez nasadę jak dotąd; wierzchołki z rysunku: `GetRawPolylineVertices`.
+  `RestoreOutlineTabs` (Prepare GA po JoinLoops — wspornik z kawałka U; RC_CANTILEVER; RC_GENERATE → Cantilever) wstawia języczek
+  z powrotem w obrys przecięty (rysunki z poprzedniej wersji). Prostokąt wspornika
   na RC-CANTILEVER; strefa przy palu → RC-CANTILEVER (rodzaj linii bez zmian).
 - **RC_PREPARE_GA:** przed domknięciem nibu i JoinLoops — `ProcessOpenPieces`: wspornik jako osobny kawałek U obrysu (PLOT 13-14, 67-75;
   końce na końcach innych kawałków albo na obrysie, bok końcowy poza obrysem, linia ciągła — przerywane U to strefy / ramki detali) → w obrysie
@@ -1440,10 +1451,66 @@ Przykłady: PLOT 28 / 29 / 60 / 308 / 313-314 / 13-14 / 67-75 / 101-102, BLOCK C
 - NibDetector i FindHoles pomijają RC-CANTILEVER.
 - Szablon `rc-template.dxf.gz` (2026-10-21): 24 kreskowania detali PH bez obiektów obwiedni — asocjatywność 0 (było „Hatch associativity
   removed” ×24 przy Prepare GA); 11 kreskowań logo w A1-BL — bez flagi „derived” ścieżki i bez XData GradientColor / ACAD (błędy rysowania logo).
-**Etap 2 (do zrobienia, zasady Bartka 2026-10-21):** U-bary H16 w liczbie kolumn wg szerokości (600 → 4, 450 → 3, 800 → 5…); ramię U-bara
-> 1300 → U-bary + pręty proste; ze strefą przy palu — U-bar na końcu wspornika i U-bar na końcu strefy (zakład); bez strefy (h = płyta) —
-U-bary tylko we wsporniku + pręty proste ze wspornika w płytę min. 1000 za krawędź; strzemiona 4-leg wg Speedeck_Anchorage (h 225 → @100,
-300 → @150, ≥ 375 → @200); detal 1:25 jak belka (identyczne — „DETAIL 'n' nNo.”).
+- **Strefa wspornika nakłada się na płytę (uwaga Bartka 2026-10-21 „jak BEAM”):** prostokąt RC_CANT od końca wspornika do końca strefy przy palu
+  (bez strefy — `NoRootExtension` = 1000, zasięg prętów prostych); rekord [8] wysięg poza krawędź, [9] długość w płycie. RC_CANTILEVER
+  przedłuża wsporniki z pierwszej wersji (`UpgradeOldStubs`).
+**Etap 2 (zrobiony, staging): RC_GENERATE → Cantilever / RC_GENERATE_CANTILEVER** (`AutoRebarEngine.Cantilever.cs`, czysty plan
+`CantileverRules.PlanBars`, testy): pręty w detalu 1:25 ścieżką belek (PrepareBeamDetail / FinishBeamDetail — ramka, „DETAIL 'n'” na rzucie
+dolnym, detal z obrysem z języczkiem `InsertTab`; znacznik RC_AUTOREBAR_BEAM = handle wspornika, ponowne generowanie usuwa tylko jego
+pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kierunek [7], nasada = przecięcie osi strefy z obrysem zewnętrznym.
+- Kolumny prętów w poprzek: rozstaw ≤ 175 (opis „-150”): 450 → 3, 600 → 4, 800 → 5; pierwsza oś 45 + Ø strzemienia + 8.
+- Strzemiona (decyzja Bartka): 4-leg (2 zachodzące, `PlanLinkLegs` Legs4, B 370 przy 600), h ≤ 225 → H10 @100, ≤ 300 → H12 @150, wyżej → H12 @200;
+  A = h − 40 − 45 (300 → 215, 375 → 290, 225 → 140); osobno wysięg (h z GB) i strefa przy palu (grubość „xxxTHK”, brak opisu → h + 75).
+- U-bary H16 kształt 21 (B = A strzemienia − 2·Ø strzemienia **w dół** do 5, jak belki — 215 → 190, jak rysunek biura): ze strefą — na końcu wspornika i końcu strefy (tył 45 od lica),
+  ramię = Ceil25((rozpiętość + zakład 650) / 2) (PLOT 28: 1050); ramię > 1300 → U-bary A = 750 + pręty proste H16 między nimi (zakład 650).
+  Bez strefy (wspornik wysokości płyty): U-bar tylko we wsporniku (ramię do nasady, maks. 1300) + pręty proste **H12** górą i dołem
+  do 1000 za krawędź (decyzja Bartka), zakład z ramieniem 650; jedna pozycja „2xn … B+T”.
+- **Poprawki po teście PLOT 28 (uwagi Bartka 2026-10-21):**
+  - **Uskok:** wspornik liczony od linii uskoku nibu, gdy przecina oś strefy ≤ 300 w głąb od krawędzi (`CantileverRules.StepCut`; PLOT 28:
+    strefa przy palu 600, wspornik 923 — jak rysunek biura); strefa przy palu = [6] − uskok. W detalu linia uskoku w poprzek wspornika
+    (gdy linia nibu jej tam nie rysuje).
+  - **Kształt strzemion (zasada ogólna):** elementy W PŁYCIE (pile cap / strefa przy palu, belki i pogrubienia w płycie) — zawsze **51**;
+    POZA PŁYTĄ (wsporniki, belki poza płytą) — zawsze **63**. Strefa przy palu — strzemiona w **obu kierunkach** (wzór PLOT 28: 12 i 14);
+    drugi kierunek (osobna pozycja) WCHODZI W PIERWSZY: A − 2·Ø strzemienia **w dół** do 5 — wewnętrzne musi się zmieścić (375: 290 − 24 = 266 → **265**; 750: 665 → 640)
+    (uwaga Bartka 2026-10-22; ~~275~~, ~~270~~ — kolizja). Wariant „jedna pozycja” (oba kierunki tej samej wysokości
+    obniżone o Ø — jeden przy spodzie, drugi przy wierzchu, zachodzą na siebie) — nie wybrany.
+  - **Ramka detalu:** sam offset strefy (`FramePolygon(strefa, null)`, ⊕600) — bez przycinania do obrysu z języczkiem (dziwny kształt).
+  - **Opisy w detalu:** odnośniki „GB-…mm deep / TOC=…” i „xxxTHK” z grotem w strefie — kopia w detalu (grot + Shift, tekst w połowie
+    odległości, wysokość 62,5, grot ×0,5) — `CopyCantileverLabels`.
+  - **UB 03:** na odcinku krawędzi, przez który przechodzi wspornik (szerokość strefy RC-CANTILEVER), bez UB 03; UB 01/02 bez zmian
+    (`CantileverSpansOnEdge` w `GenerateUBLayerCore`, nibUB). Bez wsporników — bez zmian.
+- **Zasady belek dla strzemion i prętów bocznych (uwaga Bartka 2026-10-22, test4: GB 600×525, pile cap 600THK):** cięcie strzemion
+  Auto jak belki (`PlanLinkLegs` LegsAuto, krawędziowa): H ≤ 375 — dwa zachodzące (B 370), wyżej 2-cięte na pełną szerokość (600 → B 510;
+  ~~zawsze 4-leg~~ — „05, 06 za wąskie”). Pręty boczne jak belki (tryb B3, z wysokości GB: ≤ 375 brak, 450–525: 1 na bok, 600–675: 2 …):
+  U-bary „UB SIDE” H12 kształt 21 poziomo na końcu wspornika i końcu strefy przy palu, B = B strzemienia − 2·Ø w dół do 5 (485),
+  ramię Ceil25((rozpiętość + zakład 500) / 2); > 1300 → UB SIDE 525 + pręty proste „SIDE” między nimi; bez strefy — UB SIDE tylko
+  we wsporniku.
+- **Kształt strzemion — zasada ogólna także w belkach (2026-10-22):** strefa belki w płycie → 51, poza płytą → 63 (kod z okna RC_BEAM
+  [14] nie decyduje — komunikat, gdy inny). Opis UB SIDE wspornika — standardowa linia odniesienia (stała odległość za oknem detalu,
+  jak pozostałe opisy; belki — bez zmian: krótka prostopadła, decyzja 2026-10-14).
+- **RC_SECTION przez wspornik (etap 3, 2026-10-22):** PrepareSection tnie obrys JAK NA RYSUNKU (`GetRawPolylineVertices`, z języczkami);
+  strefy RC_CANT rzutów → `BeamBand` z `Cantilever = true`: wspornik (s 0…wysięg od uskoku, `CantGeometry` — wspólna z generowaniem)
+  Height = obniżenie + h, `TopDrop` = (SSL − TOC)·1000 (PLOT 28: 75; brak TOC/SSL — 0), strefa przy palu Height = „xxxTHK”, TopDrop 0.
+  Planer: profil pasu z wierzchem −TopDrop; wymiary pasu wspornika (wysokość od wierzchu pasu, obniżenie, długość pod spodem);
+  U-bary BU wspornika — kropki dół / góra (jak BM, bez dubli z zakładu U-barów), w widoku kształt U (tył przy zagięciu z SymbolSide);
+  strzemię o mniejszym A (drugi kierunek) w środku strzemienia zewnętrznego pasu (`NestInset`). Pręty detalu wspornika mapowane
+  z ANCHOR-a strefy RC_CANT (okno = strefa ⊕ 600). Belki bez wsporników — wynik bit w bit (złote testy). Poprawka 2026-10-22 (uwaga Bartka „kwadratowe pręty,
+  złe wymiary — ma być jak belki”): U-bar w widoku = kopia pręta wzorcowego 21 (gięcia), wysokość = WŁASNE B (ramię dołem na
+  strzemieniu — U-bar od strony pile capa nie bierze wysokości pasu strefy), drugi U-bar tej pozycji w środku pierwszego (o Ø, B − 2·Ø);
+  wysokość / obniżenie tylko przy końcu odcinka (bez linii wymiarowej w betonie wspornika); C-C — bez grubości płyty, znacznik TOC.
+  Poprawka 2 (uwaga Bartka 2026-10-22 „zgodnie z prawdą, prawdziwe wymiary prętów”): strzemiona wspornika / strefy przecięte
+  wzdłuż osi — KROPKI dołem i górą (płaszczyzna cięcia przez ramiona; wysokość z A pręta wzorcowego), nie pionowe ramię; U-bary
+  obu końców — ten sam pręt, bez zmniejszania (~~drugi o 2·Ø niższy~~ — wymysł). Generowanie: tył U-bara / UB SIDE przy końcu
+  strefy przy palu w środku strzemion drugiego kierunku (otulina + Ø strzemienia; PLOT 28: −678).
+  Poprawka 3 (2026-10-22): UB SIDE wspornika w przekroju (w poprzek — kropki obu ramion, wzdłuż — kropki tyłu; poziomy z pasa
+  samego wspornika, liczba z rozkładu), wolne końce U-barów = rzeczywiste końce (symbole Z1), tył UB płyty przy ramieniu strzemienia
+  wspornika dosunięty do styku (`FlushUbToCantileverLinks`, szczelina ≤ 30), siatka płyty: pas samego wspornika zawsze zakazany
+  (wspólny schemat góry i dołu — w jednej linii), pręty siatki w nasadzie wspornika — prawdziwe położenia (`BeamBand.PileCap`). Do zrobienia: znacznik TOC
+  przy wsporniku, UB SIDE w przekroju.
+- Do zrobienia: wspólny detal identycznych wsporników („DETAIL 'n' nNo.”), przekroje przez wspornik (RC_SECTION — prośba Bartka 2026-10-22:
+  przekrój ma rysować wsporniki i wszystko na płycie; wzór PLOT 28: D-D wzdłuż wspornika — wspornik 923 × 300 z wierzchem TOC 75 niżej
+  niż płyta, strefa przy palu 600 × 375, płyta 225 + nib; C-C w poprzek — 600 × 300, 4 kolumny U-barów, strzemiona 4-leg), wspornik
+  w narożniku (Plot 13 CNH).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

@@ -477,6 +477,10 @@ namespace BricsCadRc.Core
                     var cr = CantileverEngine.ProcessClosedOutlines(db, closed, openPl.Where(id => !id.IsErased).ToList(), cantTexts, cantWhere,
                                                                       usedTexts: cantUsed);
                     cantUsed.UnionWith(cr.UsedTexts);
+                    // wspornik z osobnego kawałka U (JoinLoops skleił krawędź prosto) — języczek z powrotem na obrysie, jak w GA
+                    var restoreMsgs = new List<string>();
+                    CantileverEngine.RestoreOutlineTabs(db, closed, restoreMsgs);
+                    if (view == "B") warnings.AddRange(restoreMsgs);
                     foreach (var mid in cr.Moved) { openPl.Remove(mid); nibPieces.Remove(mid); }
                     if (view == "B") { warnings.AddRange(cr.Messages); if (result != null) result.Cantilevers += cr.Made; }
                 }

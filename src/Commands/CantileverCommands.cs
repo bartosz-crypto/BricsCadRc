@@ -47,6 +47,9 @@ namespace BricsCadRc.Commands
                 else return;
                 if (outlines.Count == 0) { ed.WriteMessage($"\n{T} Brak zamkniętych obrysów {CantileverEngine.SlabLayer}.\n"); return; }
 
+                var upg = new List<string>();
+                using (doc.LockDocument()) CantileverEngine.UpgradeOldStubs(db, upg);
+                foreach (var m in upg) ed.WriteMessage($"\n{m}");
                 var texts = CantileverEngine.ModelTexts(db);
                 var pieces = CantileverEngine.OpenSlabPieces(db);
                 bool Ask(string q)
@@ -57,11 +60,17 @@ namespace BricsCadRc.Commands
                     return kr.Status == PromptStatus.OK && kr.StringResult == "Tak";
                 }
                 CantileverEngine.Report rep;
+                var restored = new List<string>();
                 using (doc.LockDocument())
+                {
                     rep = CantileverEngine.ProcessClosedOutlines(db, outlines, pieces, texts, "rysunek", Ask);
+                    // obrys na rysunku jak w GA (języczek) — także rysunki przygotowane poprzednią wersją (obrys przecięty)
+                    CantileverEngine.RestoreOutlineTabs(db, outlines, restored);
+                }
                 foreach (var m in rep.Info) ed.WriteMessage($"\n{m}");
                 foreach (var m in rep.Messages) ed.WriteMessage($"\n{m}");
-                if (rep.Made == 0) { ed.WriteMessage($"\n{T} Nie znaleziono wsporników do wyłączenia (obrysy bez języczków albo już wyłączone).\n"); return; }
+                foreach (var m in restored) ed.WriteMessage($"\n{m}");
+                if (rep.Made == 0) { ed.WriteMessage($"\n{T} Nie znaleziono nowych wsporników (obrysy bez języczków albo już wyłączone).\n"); return; }
                 foreach (var m in BeamZonesInCantilevers(db)) ed.WriteMessage($"\n{T} uwaga: {m}");
                 ed.WriteMessage($"\n{T} Wsporniki: {rep.Made} — wyłączone z obrysu siatki. Wygeneruj ponownie siatkę płyty (RC_GENERATE → Mesh); " +
                                 "zbrojenie wspornika — kolejny etap.\n");
@@ -70,6 +79,39 @@ namespace BricsCadRc.Commands
             {
                 Log.Error("RC_CANTILEVER", ex);
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
+
+        /// <summary>
+        /// RC_GENERATE_CANTILEVER (RC_GENERATE → Cantilever; decyzje Bartka 2026-10-21, etap 2): pręty wsporników wskazanej płyty
+        /// (rzut dolny) w detalu 1:25 — U-bary H16, strzemiona 4-leg, pręty proste (AutoRebarEngine.GenerateCantilevers).
+        /// </summary>
+        [CommandMethod("RC_GENERATE_CANTILEVER", CommandFlags.Modal)]
+        public static void GenerateCantilever()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            try
+            {
+                var peo = new PromptEntityOptions("\nWskaż obrys płyty na rzucie DOLNYM (pręty wsporników): ");
+                peo.SetRejectMessage("\nTo nie jest polilinia.");
+                peo.AddAllowedClass(typeof(Polyline), true);
+                var r = ed.GetEntity(peo);
+                if (r.Status != PromptStatus.OK) return;
+                var outer = NibDetector.OuterOf(doc.Database, r.ObjectId);
+                if (AutoRebarEngine.IsTopView(doc.Database, outer))
+                {
+                    ed.WriteMessage($"\n{T} Wskazany obrys to rzut GÓRNY — wskaż obrys rzutu DOLNEGO. Przerwano.\n");
+                    return;
+                }
+                AutoRebarEngine.GenerateCantilevers(doc, r.ObjectId);
+                ed.WriteMessage("\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_GENERATE_CANTILEVER", ex);
+                ed.WriteMessage($"\n*** ERROR *** {T} {ex.Message}\n");
             }
         }
 
