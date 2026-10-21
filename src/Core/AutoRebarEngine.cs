@@ -3819,6 +3819,7 @@ namespace BricsCadRc.Core
                     if (!GeometryHelper.IsEffectivelyClosed(pl)) continue;
                     if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)) continue;   // strefa belki (RC-BEAM / RC-BEAM-MANUAL) nie jest otworem
                     if (string.Equals(pl.Layer, BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)) continue;   // ramka detalu belki (2026-10-12)
+                    if (CantileverEngine.IsLayer(pl.Layer)) continue;   // wspornik / strefa przy palu (RC-CANTILEVER, 2026-10-21)
                     var verts = GeometryHelper.GetPolylineVertices(pl);
                     if (!verts.All(v => GeometryHelper.IsPointInsidePolygon(slabVertices, v))) continue;
                     candidates.Add(new HoleBox { MinX = verts.Min(v => v.X), MinY = verts.Min(v => v.Y),

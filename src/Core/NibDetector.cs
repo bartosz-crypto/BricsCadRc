@@ -81,7 +81,8 @@ namespace BricsCadRc.Core
                     // ani ramka detalu belki (RC-BEAM-DETAIL — ramka okna detalu na rzucie, ANCHOR detalu; decyzja 2026-10-12)
                     if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)
                         || string.Equals(pl.Layer, BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(pl.Layer, GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase)) continue;
+                        || string.Equals(pl.Layer, GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase)
+                        || CantileverEngine.IsLayer(pl.Layer)) continue;   // wspornik (RC-CANTILEVER, 2026-10-21)
                     var q = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
                     if (q.Count < 3) continue;
                     var qb = Box(q);

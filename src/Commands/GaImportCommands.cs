@@ -104,6 +104,7 @@ namespace BricsCadRc.Commands
                     (r.Joined > 0 ? $", połączone kawałki obrysu/uskoku: {r.Joined}" : "") +
                     (r.NibClosed > 0 ? $", nib domknięty: {r.NibClosed}" : "") +
                     (r.Beams > 0 ? $", strefy belek: {r.Beams} (H = {string.Join("/", r.BeamHeights.Select(h => h > 0 ? h.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?"))}; pręty belki: RC_BEAM / RC_GENERATE → Beam)" : "") +
+                    (r.Cantilevers > 0 ? $", wsporniki (wyłączone z obrysu siatki): {r.Cantilevers}" : "") +
                     ". Ponowne wywołanie zastąpi płytę.");
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");

@@ -57,6 +57,7 @@
     <Compile Include="..\src\Core\TopLapSearch.cs" />
     <Compile Include="..\src\Core\PhDetailRules.cs" />
     <Compile Include="..\src\Core\LayoutRules.cs" />
+    <Compile Include="..\src\Core\CantileverRules.cs" />
   </ItemGroup>
 
 </Project>

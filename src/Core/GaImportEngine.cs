@@ -157,6 +157,8 @@ namespace BricsCadRc.Core
             public List<int> BeamHeights = new List<int>();
             /// <summary>Decyzja 2026-10-11 (punkt D): nowe strefy z polilinii ręcznych (RC-BEAM-MANUAL) — oba rzuty razem.</summary>
             public int ManualBeams;
+            /// <summary>Wsporniki wyłączone z obrysu siatki (CantileverEngine, rzut dolny).</summary>
+            public int Cantilevers;
             /// <summary>Obrysy płyty wstawione na rzutach (dolny / górny; Null — brak).</summary>
             public ObjectId OutlineBottom = ObjectId.Null, OutlineTop = ObjectId.Null;
         }
@@ -402,6 +404,24 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
 
+            // Wsporniki (decyzja Bartka 2026-10-21, etap 1): kawałek obrysu w kształcie U (GB poza krawędzią) → prostokąt RC-CANTILEVER,
+            // w obrysie prosty odcinek nasady — PRZED domknięciem nibu i JoinLoops (krawędź płyty prosto przez nasadę)
+            string cantWhere = $"{plot.Label} ({(view == "B" ? "rzut dolny" : "rzut górny")})";
+            var cantTexts = thkCands.Select(t => new CantileverEngine.Txt { Text = t.Text, X = t.X, Y = t.Y }).ToList();
+            var cantUsed = new HashSet<int>();
+            if (!outline.IsNull)
+                try
+                {
+                    var cr = CantileverEngine.ProcessOpenPieces(db, outline, openPl, nibPieces, cantTexts, cantWhere);
+                    cantUsed.UnionWith(cr.UsedTexts);
+                    if (view == "B") { warnings.AddRange(cr.Messages); if (result != null) result.Cantilevers += cr.Made; }
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.CantileverPieces", ex);
+                    warnings.Add($"[RC CANT] Błąd wykrywania wsporników — {ex.Message} ({cantWhere})");
+                }
+
             // Nib: NAJPIERW automat domykania otwartej linii uskoku krawędzią obrysu (NibAutoClose; tylko gdy płyta nie ma
             // zamkniętego nibu), DOPIERO POTEM JoinLoops na pozostałych kawałkach — inaczej JoinLoops skleja linię uskoku
             // z linią strefy 760 mm w zamknięty pas, którego NibDetector nie uznaje (PLOT 319; POPRAWKI_WZORCA 23).
@@ -447,6 +467,27 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
             }
+
+            // Wsporniki: języczki zamkniętych obrysów tego rzutu (obrys z GA i pętle z JoinLoops) — usunięte z obrysu, prostokąt RC-CANTILEVER
+            if (!outline.IsNull)
+                try
+                {
+                    var closed = ViewClosedSlab(db, plot.Label, view);
+                    if (!closed.Contains(outline)) closed.Insert(0, outline);
+                    var cr = CantileverEngine.ProcessClosedOutlines(db, closed, openPl.Where(id => !id.IsErased).ToList(), cantTexts, cantWhere,
+                                                                      usedTexts: cantUsed);
+                    cantUsed.UnionWith(cr.UsedTexts);
+                    foreach (var mid in cr.Moved) { openPl.Remove(mid); nibPieces.Remove(mid); }
+                    if (view == "B") { warnings.AddRange(cr.Messages); if (result != null) result.Cantilevers += cr.Made; }
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.CantileverTabs", ex);
+                    warnings.Add($"[RC CANT] Błąd wykrywania wsporników — {ex.Message} ({cantWhere})");
+                }
+            // opisy wspornika („GB-…”, „375THK” strefy przy palu) — nie dla K8 (belki z opisów)
+            if (cantUsed.Count > 0)
+                thkCands = thkCands.Where((t, i) => !cantUsed.Contains(i)).ToList();
 
             // 2026-10-16 (zgłoszenie kolegi: nib z GA nierozpoznany, płyta z prostą krawędzią): kawałki SD-PILED-RAFT, które zostały
             // otwarte i leżą tuż ZA obrysem (zewnętrzna krawędź nibu) — ostrzeżenie zamiast milczenia
@@ -566,7 +607,7 @@ namespace BricsCadRc.Core
         /// K8: środek tekstu MText z obwiedni rzeczywistego tekstu (ActualWidth / ActualHeight — nie szerokości ramki, która bywa duża),
         /// punktu zaczepienia (Attachment) i obrotu.
         /// </summary>
-        private static Point3d MTextCenter(MText mt)
+        internal static Point3d MTextCenter(MText mt)
         {
             try
             {
@@ -586,7 +627,7 @@ namespace BricsCadRc.Core
             => lines != null && lines.Any(l => BeamGeometry.ParseThk(l) != null || Regex.IsMatch(l, @"\bGB\s*-", RegexOptions.IgnoreCase));
 
         /// <summary>K8: linie tekstu odnośnika (MLeader z treścią MText); pusta lista gdy brak.</summary>
-        private static List<string> MLeaderLines(MLeader ml)
+        internal static List<string> MLeaderLines(MLeader ml)
         {
             try
             {
@@ -597,7 +638,7 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>K8: grot pierwszego odnośnika (pierwszy wierzchołek pierwszej linii); null gdy brak.</summary>
-        private static Point3d? MLeaderTip(MLeader ml)
+        internal static Point3d? MLeaderTip(MLeader ml)
         {
             try
             {
@@ -932,6 +973,24 @@ namespace BricsCadRc.Core
                 if (!anyInside && anyOutNear) n++;
             }
             return n;
+        }
+
+        /// <summary>Zamknięte polilinie SD-PILED-RAFT ze znacznikiem RC_GA [plot, view] (obrys i pętle z JoinLoops).</summary>
+        private static List<ObjectId> ViewClosedSlab(Database db, string plot, string view)
+        {
+            var res = new List<ObjectId>();
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)) continue;
+                if (!(pl.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase) || !GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                using var rb = pl.GetXDataForApplication(XApp);
+                var v = rb?.AsArray();
+                if (v != null && v.Length > 2 && (v[1].Value as string) == plot && (v[2].Value as string) == view) res.Add(id);
+            }
+            tr.Commit();
+            return res;
         }
 
         private static int JoinLoops(Transaction tr, ObjectId msId, List<ObjectId> open, string plot, string view,

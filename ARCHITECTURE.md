@@ -1416,6 +1416,35 @@ notatki RC_LAYOUT (XData RC_LAYOUT NOTE / XREF) usuwane. Rzutni nie zmienia.
 - **Pojedyncze UB 03 (2026-10-20):** opis „H10-03 UB” (1 pręt, bez rozstawu) — numer pozycji przez `UbPosNr` (pierwszy człon opisu). Wcześniej tylko dla UB 03 w detalu: pojedyncze UB 03 rzutu (uskok po stronie płyty, 2026-10-13) nie były usuwane przy ponownym Mesh / UB (dublowały się) i ADD brało je za krawędź UB 01/02.
 - **Znaczniki przekroju na detalu belki (decyzja Bartka 2026-10-20):** w tym samym miejscu co na rzucie — koniec linii cięcia przesunięty do detalu, także poza ramką detalu (`BeamDetailRules.DetailMarkEnd`: koniec ≤ 1500 za ramką — jak na rzucie; dalej — 300 za ramką). Wcześniej znaczniki na ramce (w środku czerwonej obwódki).
 
+## 4k. Wsporniki płyty (GB poza krawędzią) — decyzja Bartka 2026-10-21
+**Etap 1 (zrobiony, staging): wykrywanie i wyłączenie z obrysu siatki.** Wspornik = krótka belka „GB-{s}x{h}mm deep TOC=…” wystająca poza
+krawędź płyty (szer. zwykle 600, bywa 450–800; wysięg 788–1525; h 225 / 300 / 450), czasem ze strefą pogrubienia w płycie przy palu
+(„375THK” / „300THK” / „450THK” / „525THK”, przerywany U w płycie po drugiej stronie nasady; nie zawsze — wspornik może mieć wysokość płyty).
+Przykłady: PLOT 28 / 29 / 60 / 308 / 313-314 / 13-14 / 67-75 / 101-102, BLOCK C (24 w rzędzie), BLOCK D (1115 × 1800), Plot 13 CNH (GB 600 × 450).
+- Czyste `CantileverRules` (testy `CantileverRulesTests`): `FindTabs` — prostokątne języczki zamkniętego obrysu (dwa narożniki wypukłe,
+  sąsiednie wklęsłe, ramiona równe; szer. 300–1500, wysięg 300–3000 — zakresy poszerzone na prośbę Bartka), `RemoveTabs` (krawędź prosto
+  przez nasadę, nasady współliniowe usunięte), `TryU` (kawałek U obrysu / strefy), `IsRootOf` (strefa przy palu: te same końce, kierunek
+  przeciwny), `ParseGb` / `ParseToc` (nie „NIB TOC”). Występy okien 2128 × 788 i wcięcia 645 × 100 — poza zakresem.
+- `CantileverEngine` (warstwa **RC-CANTILEVER** — magenta jak RC-BEAM, rekord **RC_CANT**: [1] wersja 1 [2] szerokość [3] h z GB (0 = brak) [4] TOC [m] [5] grubość
+  strefy przy palu (0 = brak) [6] długość strefy [7] kierunek wysięgu „±X / ±Y”; bez handle — CloneRemap niepotrzebny; znacznik RC_GA z obrysu):
+  wspornik potwierdzony = opis „GB-…” ≤ 2500 od prostokąta (przypisany najbliższemu) albo strefa przy palu; inne języczki — komunikat
+  (Prepare GA) / pytanie Tak/Nie (RC_CANTILEVER). Obrys: ta sama polilinia (handle), wierzchołki na nowo bez języczka; prostokąt wspornika
+  na RC-CANTILEVER; strefa przy palu → RC-CANTILEVER (rodzaj linii bez zmian).
+- **RC_PREPARE_GA:** przed domknięciem nibu i JoinLoops — `ProcessOpenPieces`: wspornik jako osobny kawałek U obrysu (PLOT 13-14, 67-75;
+  końce na końcach innych kawałków albo na obrysie, bok końcowy poza obrysem, linia ciągła — przerywane U to strefy / ramki detali) → w obrysie
+  prosty odcinek nasady (2-wierzchołkowa polilinia), U → prostokąt RC-CANTILEVER; po JoinLoops — `ProcessClosedOutlines` na zamkniętych
+  SD-PILED-RAFT rzutu (obrys z GA i pętle). Opisy „GB-…” i „xxxTHK” strefy przy palu wyjmowane z kandydatów K8 (bez strefy belki RC-BEAM
+  w nasadzie). Komunikaty tylko dla rzutu dolnego; w podsumowaniu „wsporniki (wyłączone z obrysu siatki): n”.
+- **RC_CANTILEVER / RC_WSPORNIK:** istniejący rysunek — wskazane obrysy (Enter — wszystkie zamknięte SD-PILED-RAFT), opisy z całego modelu,
+  strefy przy palu z otwartych SD-PILED-RAFT; ostrzeżenie o strefach RC-BEAM leżących na wsporniku / w strefie przy palu (z K8). Potem Mesh od nowa.
+- NibDetector i FindHoles pomijają RC-CANTILEVER.
+- Szablon `rc-template.dxf.gz` (2026-10-21): 24 kreskowania detali PH bez obiektów obwiedni — asocjatywność 0 (było „Hatch associativity
+  removed” ×24 przy Prepare GA); 11 kreskowań logo w A1-BL — bez flagi „derived” ścieżki i bez XData GradientColor / ACAD (błędy rysowania logo).
+**Etap 2 (do zrobienia, zasady Bartka 2026-10-21):** U-bary H16 w liczbie kolumn wg szerokości (600 → 4, 450 → 3, 800 → 5…); ramię U-bara
+> 1300 → U-bary + pręty proste; ze strefą przy palu — U-bar na końcu wspornika i U-bar na końcu strefy (zakład); bez strefy (h = płyta) —
+U-bary tylko we wsporniku + pręty proste ze wspornika w płytę min. 1000 za krawędź; strzemiona 4-leg wg Speedeck_Anchorage (h 225 → @100,
+300 → @150, ≥ 375 → @200); detal 1:25 jak belka (identyczne — „DETAIL 'n' nNo.”).
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
    plan recenzuje ChatGPT: `scripts/recenzja-gpt.ps1 -Plan <plik>`.
