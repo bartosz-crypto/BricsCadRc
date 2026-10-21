@@ -258,7 +258,8 @@ namespace BricsCadRc.Tests
             // along-S1 — pal: głowica 30 (było 35), 226 pod spodem (było 230), opisy nie przecinają linii pala (boki, oś) — sprawdzone na zrzutach
             ["nib"]      = "1ce474bc46cbd49b2db8443094b87a3e02e31430024a7e8602f9ee1ac6caaa11",
             ["hole"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
-            ["piles"]    = "849730a0fbbd4c1bfcadb2fe7965c68eca27e19d21756de563e2c163a0bbe4c8",
+            // 2026-10-22 (uwaga Bartka „nasze pale mają 300”): pal przecięty poza osią — pełna średnica, nie cięciwa (drugi pal 566 → 600)
+            ["piles"]    = "4b16fe5ed013879013ab00842283c38be96e2f93d29061b87548a537b2e82d5f",
             ["vertical"] = "b7d453c9093a86c4321faf50aeeec03595182eb84263d1da37ed2c37b8fb85d2",
             ["fitshape"] = "6dfb28cfe9e7068c845c0e3044b357f7457cf890f53f24fbfd38ff5657dd9452",
             // plan belek E5 + E4b (2026-10-10): przekrój przez belkę — zapisany po przejrzeniu zrzutu (profil, kropki, strzemię, boczne, nib, wymiary);

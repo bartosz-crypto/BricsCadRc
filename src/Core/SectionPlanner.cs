@@ -257,6 +257,8 @@ namespace BricsCadRc.Core
             public (double B1, double T1) LevelDiameters;
             /// <summary>Belki (E5) narysowane w przekroju (pas przecina odcinek betonu), kolejność wejścia — składniki BEAM odcisku.</summary>
             public List<BeamBand> UsedBeams = new List<BeamBand>();
+            /// <summary>Przekrój przez wspornik / strefę przy palu (pasy RC_CANT) — układ opisów wg wzoru Bartka 2026-10-22.</summary>
+            internal bool HasCantilever;
         }
 
         /// <summary>E4b: Ø spinki UB 03 w nibie belki (pręty BN w jej narożach).</summary>
@@ -367,6 +369,7 @@ namespace BricsCadRc.Core
                     if (!res.UsedBeams.Any(x => ReferenceEquals(x, bm))) res.UsedBeams.Add(bm);
                 }
             }
+            res.HasCantilever = bands.Any(b => b.Src.Cantilever);
             foreach (var sg in res.Segments)
             {
                 var bs = bands.Where(x => x.Seg == sg).ToList();
@@ -652,7 +655,8 @@ namespace BricsCadRc.Core
                     double u = U(along);
                     double bot = BotAt(u);                       // belka (E5): pal pod spodem belki; bez belki = −T
                     if (!InConcrete(u, bot + 1.0)) continue;
-                    res.Piles.Add(new Pile { U = u, Width = 2 * hw, Top = bot + PileEmbed, Bottom = bot - PileDepth, Base = bot });
+                    // uwaga Bartka 2026-10-22: pal zawsze pełną średnicą (nasze pale 300) — nie cięciwą przy cięciu poza osią pala
+                    res.Piles.Add(new Pile { U = u, Width = 2 * r, Top = bot + PileEmbed, Bottom = bot - PileDepth, Base = bot });
                     res.UsedPiles.Add((px, py, r));
                 }
 
@@ -680,6 +684,14 @@ namespace BricsCadRc.Core
                             if (u <= Math.Min(sg.U0, sg.U1) || u >= Math.Max(sg.U0, sg.U1)) continue;
                             best = Math.Abs(ua - uE); uPile = u;
                         }
+                    // wspornik (uwaga Bartka 2026-10-22 „pal poza przekrojem — jak w rzeczywistości albo na środku”): pal w rzucie
+                    // w zakresie odcinka — w swoim położeniu (rzut osi na linię cięcia); poza odcinkiem — na środku odcinka
+                    if (res.HasCantilever)
+                    {
+                        var sgP = res.Segments.FirstOrDefault(sg => ua >= sg.U0 - 0.5 && ua <= sg.U1 + 0.5)
+                                  ?? res.Segments.OrderBy(sg => Math.Min(Math.Abs(ua - sg.U0), Math.Abs(ua - sg.U1))).First();
+                        uPile = ua >= sgP.U0 - 0.5 && ua <= sgP.U1 + 0.5 ? ua : (sgP.U0 + sgP.U1) / 2.0;
+                    }
                     if (!double.IsNaN(uPile))
                     {
                         double bot = BotAt(uPile);
@@ -772,6 +784,9 @@ namespace BricsCadRc.Core
             res.Dims.Add(new Dim { U1 = b.U0, V1 = -b.H, U2 = b.U1, V2 = -b.H, LineU = (b.U0 + b.U1) / 2, LineV = -b.H - BeamDimBelow, Vertical = false });
         }
 
+        /// <summary>Kropka dołem z betonem pod nią głębiej niż tyle — opis tuż pod kropką (przekrój przez wspornik) [mm].</summary>
+        public const double InnerLabelMinDepth = 150.0;
+
         /// <summary>Największa szczelina między tyłem UB a ramieniem strzemienia wspornika dosuwana do styku [mm].</summary>
         public const double UbLinkFlushGap = 30.0;
 
@@ -841,6 +856,9 @@ namespace BricsCadRc.Core
         {
             double top = -b.Src.TopDrop;
             bool atL = b.U0 - sg.U0 <= 1.0, atR = sg.U1 - b.U1 <= 1.0;
+            // przekrój w poprzek samego wspornika (B-B / C-C): płyty w przekroju nie ma — bez wymiaru obniżenia względem płyty (poziom TOC
+            // przy wierzchu wspornika)
+            bool onlyCant = atL && atR;
             // wysokość (i obniżenie wierzchu) tylko przy końcu odcinka (koniec wspornika) — w środku odcinka (strefa przy palu między
             // wspornikiem a płytą) linia wymiarowa wchodziłaby w beton sąsiedniego pasu; długość — zawsze pod spodem
             if (atL || atR)
@@ -848,7 +866,7 @@ namespace BricsCadRc.Core
                 double u = atL ? sg.U0 : sg.U1;
                 double lineU = atL ? sg.U0 - DimOffset : sg.U1 + DimOffset;
                 res.Dims.Add(new Dim { U1 = u, V1 = top, U2 = u, V2 = -b.H, LineU = lineU, LineV = (top - b.H) / 2, Vertical = true });
-                if (b.Src.TopDrop > 1.0)
+                if (b.Src.TopDrop > 1.0 && !onlyCant)
                     res.Dims.Add(new Dim { U1 = u, V1 = 0, U2 = u, V2 = top, LineU = lineU, LineV = top / 2, Vertical = true });
             }
             res.Dims.Add(new Dim { U1 = b.U0, V1 = -b.H, U2 = b.U1, V2 = -b.H, LineU = (b.U0 + b.U1) / 2, LineV = -b.H - BeamDimBelow, Vertical = false });
@@ -1001,6 +1019,20 @@ namespace BricsCadRc.Core
                     ? Enumerable.Range(0, n).Select(i => BandAt(U(q0 + i * Sp(d, n)))).FirstOrDefault(b => b != null)
                     : BandOver(U(a), U(a + d.LengthA));
                 if (hit == null) continue;
+                // wspornik (uwaga Bartka 2026-10-22, B-B): strzemię pasu tylko z rozkładu, który linia cięcia naprawdę przecina / przy którym
+                // leży (strzemię strefy przy palu nie ustala strzemienia wspornika w przekroju przez wspornik)
+                if (hit.Src.Cantilever)
+                {
+                    if (d.AlongX != inp.CutAlongX)
+                    {
+                        if (c < a - 1.0 || c > a + d.LengthA + 1.0) continue;
+                    }
+                    else
+                    {
+                        double bestL = Enumerable.Range(0, n).Min(i => Math.Abs(q0 + i * Sp(d, n) - c));
+                        if (bestL > Math.Max(n > 1 ? Sp(d, n) / 2.0 : d.Spacing / 2.0, 100.0) + 0.5) continue;
+                    }
+                }
                 foreach (var b in bands.Where(x => x.Src == hit.Src))
                 {
                     // wspornik: strzemię zewnętrzne pasu = największe A (drugi kierunek ma A − 2·Ø — wewnątrz)
@@ -1564,8 +1596,30 @@ namespace BricsCadRc.Core
             bool FreeOfLabels(double u0, double v0, double u1, double v1)
                 => !occupied.Skip(fixedCount).Any(o => u0 < o.u1 + 10 && u1 > o.u0 - 10 && v0 < o.v1 + 5 && v1 > o.v0 - 5);
 
+            // wspornik (wzór Bartka 2026-10-22, screen 2): kropki dołem W ŚRODKU betonu (siatka dolna płyty przechodząca przez strefę przy
+            // palu — pod nią jeszcze beton) — numer tuż pod kropką, w betonie; zwalnia rząd pod spodem dla strzemion wspornika
+            var innerDone = new HashSet<Dot>();
+            if (res.HasCantilever)
+                foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !d.Top && !d.Side && !d.Beam
+                                                       && d.V - LocalBottom(res, d.U, T) > InnerLabelMinDepth).OrderBy(d => d.U))
+                {
+                    double w = TextWidth(dot.PosNr);
+                    double vb = dot.V - dot.Diameter / 2.0 - LabelGap - TextHeight;
+                    foreach (double du in new[] { 0.0, -30, 30, -60, 60 })
+                    {
+                        double u = dot.U + du;
+                        if (!FreeOfLabels(u - w / 2, vb, u + w / 2, vb + TextHeight)) continue;
+                        if (res.Bars.Any(b => CrossesVertical(b, u - w / 2, u + w / 2, vb, vb + TextHeight))) continue;
+                        if (res.Dots.Any(o => o != dot && Math.Abs(o.U - u) < w / 2 + o.Diameter && o.V < vb + TextHeight + o.Diameter && o.V > vb - o.Diameter)) continue;
+                        occupied.Add((u - w / 2, vb, u + w / 2, vb + TextHeight));
+                        res.Labels.Add(new Label { Text = dot.PosNr, U = u, V = vb, Height = TextHeight });
+                        innerDone.Add(dot);
+                        break;
+                    }
+                }
+
             // kropki: numer nad (góra) / pod (dół) kropką, kolejne rzędy przy kolizji
-            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !LowBeamTop(d) && !d.Side).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
+            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !innerDone.Contains(d) && !LowBeamTop(d) && !d.Side).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
             {
                 double w = TextWidth(dot.PosNr);
                 bool placed = false;

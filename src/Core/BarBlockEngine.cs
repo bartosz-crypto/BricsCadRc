@@ -597,7 +597,8 @@ namespace BricsCadRc.Core
             double   x1, double y1,
             BarData  bar,
             bool     horizontal,
-            int      posNr)
+            int      posNr,
+            double   maxSpacing = 0)
         {
             var empty = new BarBlockResult();
             // Zerowy zakres w kierunku rozkładu = 1 pręt (AutoRebar: wąski pas, "1 bar centered").
@@ -621,6 +622,14 @@ namespace BricsCadRc.Core
                 // Tiny additive epsilon ensures integer conversion behaves correctly
                 // without affecting genuine fractional ratios.
                 bar.Count = Math.Max(1, (int)(rawSpan / bar.Spacing + 1e-9) + 1);
+            // zasada Bartka 2026-10-22: rozstaw rzeczywisty siatki / UB NIGDY większy niż maxSpacing (205) — najwyżej mniejszy
+            // (np. 3 pręty co 297,5 na 595 → 4 co 198,3); opis bez zmian (rozstaw nominalny)
+            if (maxSpacing > 0 && bar.Count >= 2 && bar.Spacing > maxSpacing + 0.01 && rawSpan > 0)
+            {
+                int n = Math.Max(1, (int)Math.Ceiling(rawSpan / maxSpacing - 1e-9));
+                bar.Count = n + 1;
+                bar.Spacing = rawSpan / n;
+            }
 
             // ANY (2026-10-14): A to wymiar kształtu pręta wzorcowego — zakres x0..x1 tylko wyznacza punkt wstawienia
             if (!IsAny(bar)) bar.LengthA = barLength;

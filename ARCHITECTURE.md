@@ -442,6 +442,17 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 
 ## 4. AutoRebar — zasady (wymagania użytkownika)
 Ogólne:
+- **Rozstaw rzeczywisty siatki i UB płyty — NAJWYŻEJ 205 mm (zasada Bartka 2026-10-22: „NIGDY więcej, jak już to mniej”):**
+  `BarBlockEngine.GenerateFromBounds(maxSpacing)` z siatki (GenerateLayer) i UB (GenerateUBDistribution) — rozstaw > 205 → więcej
+  prętów na tym samym zakresie (test5: 3 co 297,5 na 595 → 4 co 198,3); opis nominalny bez zmian. Bez limitu: pręty belek /
+  wsporników (kody belki), B3 ADD, UB ADD. Zmiana wyniku względem wzorca tylko tam, gdzie rozstaw był > 205 (błąd).
+  Krawędź zewnętrzna (AdjustedExternal): ostatni pręt > 70 od krawędzi, a zagęszczenie o 1 pręt daje < 192 — dawniej odrzucenie
+  (luka przy krawędzi, test5: 3 B2 przy 4 UB 02 na krawędzi 675), od 2026-10-22 zagęszczenie do 150 (`MinDenserSpacing`, ostrzeżenie)
+  — siatka, UB 02 i UB 03 tej krawędzi mają tę samą liczbę prętów. Zmiana względem wzorca (S-REG — oczekiwana różnica).
+- **Opisy UB z boku płyty tylko przy krawędzi ciągłej (2026-10-22, test5):** odnośnik wzdłuż linii rozkładu do boku obwiedni — gdy
+  krawędź biegnie dalej aż do boku po stronie odnośnika; krawędź przerwana (wspornik, wnęka, zatoka) albo inny UB na tej linii po drodze
+  — opis prostopadle do linii rozkładu (wzdłuż prętów, za płytę) przy swoim rozkładzie (`SideLeaderAlongEdge`; zastępuje regułę
+  „kilka UB 03 na jednej linii”).
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
   element, który musi się zmieścić w innym (strzemię drugiego kierunku w strzemieniu, U-bar w strzemieniu, noga w nodze…), ma
   wymiar = miejsce w środku (np. A − 2·Ø) zaokrąglony **w dół** do 5 mm — lepiej mniej wysokości niż kolizja (290, H12 → 266 → 265;
@@ -1505,7 +1516,16 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   Poprawka 3 (2026-10-22): UB SIDE wspornika w przekroju (w poprzek — kropki obu ramion, wzdłuż — kropki tyłu; poziomy z pasa
   samego wspornika, liczba z rozkładu), wolne końce U-barów = rzeczywiste końce (symbole Z1), tył UB płyty przy ramieniu strzemienia
   wspornika dosunięty do styku (`FlushUbToCantileverLinks`, szczelina ≤ 30), siatka płyty: pas samego wspornika zawsze zakazany
-  (wspólny schemat góry i dołu — w jednej linii), pręty siatki w nasadzie wspornika — prawdziwe położenia (`BeamBand.PileCap`). Do zrobienia: znacznik TOC
+  (wspólny schemat góry i dołu — w jednej linii), pręty siatki w nasadzie wspornika — prawdziwe położenia (`BeamBand.PileCap`).
+  Opisy (wzór Bartka 2026-10-22): kropki dołem w środku betonu (siatka dolna płyty w strefie przy palu) — numer tuż pod kropką, w betonie
+  (`InnerLabelMinDepth` 150; tylko przekrój z wspornikiem). Rzut: kilka UB 03 na jednej linii (krawędź przerwana wspornikiem) — opis
+  prostopadle do linii rozkładu (wzdłuż prętów, za płytę), nie w jednym rzędzie z boku płyty.
+  Poprawka B-B (2026-10-22): strzemię pasu wspornika (A, Ø) tylko z rozkładu, który linia cięcia przecina / przy którym leży (dawniej
+  strzemię strefy przy palu „podnosiło” strzemię wspornika — U-bary wychodziły poza nie); przekrój samego wspornika — bez wymiaru
+  obniżenia 75, znacznik TOC na wierzchu wspornika (rysunek bierze V znacznika); pal w pobliżu cięcia — w swoim położeniu (rzut osi)
+  albo na środku odcinka, nie „500 od krawędzi”.
+- **Pal w przekroju zawsze pełną średnicą (2026-10-22, wszystkie przekroje):** cięcie poza osią pala — szerokość = średnica (pale 300),
+  nie cięciwa (dawniej np. 196); złoty test „piles” zaktualizowany (drugi pal 566 → 600). Do zrobienia: znacznik TOC
   przy wsporniku, UB SIDE w przekroju.
 - Do zrobienia: wspólny detal identycznych wsporników („DETAIL 'n' nNo.”), przekroje przez wspornik (RC_SECTION — prośba Bartka 2026-10-22:
   przekrój ma rysować wsporniki i wszystko na płycie; wzór PLOT 28: D-D wzdłuż wspornika — wspornik 923 × 300 z wierzchem TOC 75 niżej

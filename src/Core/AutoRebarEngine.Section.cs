@@ -785,18 +785,18 @@ namespace BricsCadRc.Core
                 // Poziom SSL
                 if (r.SslMark.HasValue && !string.IsNullOrEmpty(r.SslText))
                 {
-                    double tu = r.SslMark.Value.U;
-                    var mark = Pl(new List<(double, double)> { (tu, 146), (tu, 0), (tu - 48, 47), (tu + 228, 47) }, SectionTextLayer, false);
+                    double tu = r.SslMark.Value.U, sv = r.SslMark.Value.V;   // sv ≠ 0 — poziom TOC wspornika (wierzch wspornika)
+                    var mark = Pl(new List<(double, double)> { (tu, sv + 146), (tu, sv), (tu - 48, sv + 47), (tu + 228, sv + 47) }, SectionTextLayer, false);
                     mark.ColorIndex = 2;
                     Tag("SSL", "SSL.MARK");
                     Add(mark);
                     Tag("SSL", "SSL.LINE");
-                    Add(Ln(tu - 56, 0, r.UMin - 15, 0, SectionTextLayer, color: 2));
+                    Add(Ln(tu - 56, sv, r.UMin - 15, sv, SectionTextLayer, color: 2));
                     Tag("SSL", "SSL.TEXT");
                     var sslTxt = new MText
                     {
                         Contents = r.SslText, TextHeight = SectionPlanner.TextHeight, Layer = SectionTextLayer, TextStyleId = textStyle,
-                        Location = W(tu + 26, 117), Attachment = AttachmentPoint.TopLeft, ColorIndex = 2
+                        Location = W(tu + 26, sv + 117), Attachment = AttachmentPoint.TopLeft, ColorIndex = 2
                     };
                     Add(sslTxt);
                 }

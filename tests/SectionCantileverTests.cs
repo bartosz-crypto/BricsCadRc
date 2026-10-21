@@ -154,5 +154,29 @@ namespace BricsCadRc.Tests
             // każda kropka góry ma kropkę dołu w tym samym miejscu (poza nasadą wspornika)
             Assert.That(top.All(t => bot.Any(b => System.Math.Abs(b - t) < 1.0)), Is.True);
         }
+
+        [Test]
+        public void BB_LinkFromCutOnly_UBarsInsideLink()
+        {
+            // B-B w poprzek wspornika (y = −400): strzemię wspornika A 215 przy cięciu, strzemię strefy przy palu A 290 daleko (y 200…650)
+            // — nie ustala wysokości strzemienia w przekroju (uwaga Bartka 2026-10-22: link „dziwnie ustalony”, U-bary poza nim)
+            var inp = DDCase();
+            inp.CutAlongX = true; inp.CutCoord = -400; inp.S0 = 3000; inp.S1 = 5600;
+            inp.Beams.Clear();
+            inp.Beams.Add(new SectionPlanner.BeamBand { Handle = "187", S0 = 4000, S1 = 4600, Height = 375, TopDrop = 75, Cantilever = true,
+                                                     NibWidth = 0, NibHeight = 0, StirrupDia = 12, StirrupA = 215, TocText = "8.525" });
+            var l215 = BarGeometryBuilder.GetLocalPoints("63", new double[] { 215, 510, 0, 0, 0 }, 12);
+            var l290 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 290, 510, 0, 0, 0 }, 12);
+            inp.Dists.Add(SectionPlannerGoldenTests.B("12", "BL", true, 4045, -700, 510, 600, 4, 200, 12, "63", l215, new double[] { 215, 510, 0, 0, 0 }));
+            inp.Dists.Add(SectionPlannerGoldenTests.B("05", "BL", true, 4045, 200, 510, 450, 4, 150, 12, "51", l290, new double[] { 290, 510, 0, 0, 0 }));
+            var r = SectionPlanner.Plan(inp);
+            var link = r.Bars.Single(b => b.PosNr == "12");
+            double lBot = link.Path.Min(p => p.V), lTop = link.Path.Max(p => p.V);
+            Assert.That(lBot, Is.EqualTo(-375 + 45 + 6).Within(1.0), "strzemię na otulinie dolnej");
+            var dots = r.Dots.Where(d => d.PosNr == "07").ToList();
+            Assert.That(dots.All(d => d.V > lBot && d.V < lTop), Is.True, "U-bary w środku strzemienia");
+            Assert.That(r.Dims.Any(d => d.Vertical && d.V1 == 0 && d.V2 == -75), Is.False, "bez wymiaru 75 (płyty w przekroju nie ma)");
+            Assert.That(r.SslMark.Value.V, Is.EqualTo(-75));
+        }
     }
 }

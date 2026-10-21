@@ -165,11 +165,45 @@ namespace BricsCadRc.Core
         /// <summary>Maximum allowed distance from last bar to slab edge (inclusive of cover).</summary>
         public const double MaxLastBarDistanceFromEdge = 70.0;
 
+        /// <summary>
+        /// Opis UB z boku płyty (odnośnik wzdłuż linii rozkładu do boku obwiedni, jak dotąd) ma sens tylko, gdy krawędź tego UB biegnie dalej
+        /// aż do boku obwiedni po stronie odnośnika (uwagi Bartka 2026-10-22, test5): krawędź przerwana — wspornik, wnęka, wystający
+        /// fragment płyty (zatoka) albo inny rozkład UB na tej samej linii po drodze — false: opis prostopadle do linii rozkładu (wzdłuż
+        /// prętów, za płytę), przy swoim rozkładzie. Strona odnośnika jak <see cref="ComputeAnnotLeaderForVerticalBars"/> (bliższy bok).
+        /// </summary>
+        private static bool SideLeaderAlongEdge(List<Point2d> verts, bool vertical, double edgeCoord, double lo, double hi, string symbolSide,
+                                                double slabMinAlong, double slabMaxAlong, List<(double Lo, double Hi)> others)
+        {
+            if (verts == null || verts.Count < 3) return true;
+            bool toHigh = (slabMaxAlong - hi) <= (lo - slabMinAlong);
+            double inward = symbolSide == "Left" ? 1.0 : -1.0;
+            double start = toHigh ? hi : lo, stop = toHigh ? slabMaxAlong : slabMinAlong, dir = toHigh ? 1.0 : -1.0;
+            if (others != null && others.Any(o => toHigh ? o.Lo >= hi - 1.0 : o.Hi <= lo + 1.0)) return false;
+            Point2d P(double s, double off) => vertical ? new Point2d(edgeCoord + inward * off, s) : new Point2d(s, edgeCoord + inward * off);
+            for (double s = start + dir * 25.0; dir * (stop - s) > 25.0; s += dir * 50.0)
+                if (!GeometryHelper.IsPointInsidePolygon(verts, P(s, 5.0)) || GeometryHelper.IsPointInsidePolygon(verts, P(s, -5.0))) return false;
+            return true;
+        }
+
+        /// <summary>Największy rzeczywisty rozstaw prętów siatki i UB (zasada Bartka 2026-10-22: „MAX 205, NIGDY więcej — jak już to mniej”).</summary>
+        public const double MaxBarSpacing = 205.0;
+
+        /// <summary>Limit rozstawu dla rozkładu: siatka i UB płyty — <see cref="MaxBarSpacing"/>; pręty belek / wsporników, B3 ADD, UB ADD — bez limitu.</summary>
+        private static double MaxSpacingFor(BarData bar)
+        {
+            if (bar == null || BeamGeometry.IsBeamCode(bar.LayerCode) || bar.LayerCode == "B3") return 0;
+            if ((bar.Mark ?? "").IndexOf("ADD", StringComparison.OrdinalIgnoreCase) >= 0) return 0;
+            return MaxBarSpacing;
+        }
+
         /// <summary>Hard lower bound for adjusted spacing (below this -> reject adjustment).</summary>
         public const double MinAdjustedSpacing = 192.0;
 
         /// <summary>Soft lower bound for adjusted spacing (below 194, above 192 -> accept with warning).</summary>
         public const double SoftMinAdjustedSpacing = 194.0;
+
+        /// <summary>Najmniejszy rozstaw po zagęszczeniu przy krawędzi zewnętrznej (2026-10-22: wcześniej poniżej 192 — odrzucenie i luka przy krawędzi).</summary>
+        public const double MinDenserSpacing = 150.0;
 
         // ----------------------------------------------------------------
         // Public entry point
@@ -1339,6 +1373,14 @@ namespace BricsCadRc.Core
                             // UB 03: linia rozkładu poza płytą, przed krawędzią zewnętrzną
                             annotAlongWorld: nibUB
                                 ? edgeCoord + dEdge + (symbolSide == "Left" ? -NibUBAnnotOutside : NibUBAnnotOutside) * annotScale
+                                : (double?)null,
+                            leaderEndAlong: ubTarget == null && !SideLeaderAlongEdge(slabVertices, isUBB1, edgeCoord, distLow, distHigh, symbolSide,
+                                                   isUBB1 ? slabBbox.MinPoint.Y : slabBbox.MinPoint.X, isUBB1 ? slabBbox.MaxPoint.Y : slabBbox.MaxPoint.X,
+                                                   validSegments.Where(v => Math.Abs(v.edgeCoord - edgeCoord) < 1.0 && (v.segLow != segLow || v.segHigh != segHigh))
+                                                                .Select(v => (v.segLow, v.segHigh)).ToList())
+                                ? (symbolSide == "Left"
+                                    ? (isUBB1 ? slabBbox.MinPoint.X : slabBbox.MinPoint.Y) - LeaderArm
+                                    : (isUBB1 ? slabBbox.MaxPoint.X : slabBbox.MaxPoint.Y) + LeaderArm)
                                 : (double?)null);
                         if (ok) generated++;
                         if (ok && ubTarget != null && !_lastDistId.IsNull)
@@ -2609,7 +2651,7 @@ namespace BricsCadRc.Core
 
             // Step 3: generate distribution block (sets distBar.BarsSpan via reference)
             var barResult = BarBlockEngine.GenerateFromBounds(
-                db, x0, y0, x1, y1, distBar, horizontal, posNr);
+                db, x0, y0, x1, y1, distBar, horizontal, posNr, maxSpacing: MaxSpacingFor(distBar));
             if (!barResult.IsValid) return false;
             _lastDistId = barResult.BlockRefId;
             ApplySingleBarMark(db, barResult.BlockRefId, distBar);
@@ -4375,7 +4417,7 @@ namespace BricsCadRc.Core
 
             // Step 1: generate distribution block (sets distBar.BarsSpan)
             var barResult = BarBlockEngine.GenerateFromBounds(
-                db, x0, y0, x1, y1, distBar, horizontal: isXBars, posNr);
+                db, x0, y0, x1, y1, distBar, horizontal: isXBars, posNr, maxSpacing: MaxSpacingFor(distBar));
             if (!barResult.IsValid) return false;
             _lastDistId = barResult.BlockRefId;
             ApplySingleBarMark(db, barResult.BlockRefId, distBar);
@@ -5632,6 +5674,10 @@ namespace BricsCadRc.Core
                 return (newSpacing, 1);  // silent acceptance
             if (newSpacing >= MinAdjustedSpacing)
                 return (newSpacing, 2);  // accept with warning
+            // zasada Bartka 2026-10-22 („rozstaw max 205 — jak już to mniej”, test5: 3 B2 przy 4 UB 02 na tej samej krawędzi 675):
+            // ostatni pręt dalej niż 70 od krawędzi — gęściej (do 150) zamiast zostawiać lukę przy krawędzi; liczba jak UB / góra
+            if (newSpacing >= MinDenserSpacing)
+                return (newSpacing, 2);
 
             return (nominalSpacing, 3);  // reject - geometric impossibility
         }
