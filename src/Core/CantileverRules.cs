@@ -290,6 +290,26 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Zagnieżdżenie strzemion strefy przy palu w układzie GLOBALNYM (uwaga Bartka 2026-10-22, test7 — wspornik poziomy): strzemiona
+        /// z prętami wzdłuż X — zewnętrzne (pełne A), z prętami wzdłuż Y — wewnętrzne (A − 2·Ø w dół do 5); jak belki (odcinek wzdłuż X —
+        /// strzemiona druga warstwa). PlanBars liczy „w poprzek osi = zewnętrzne”, co pasuje do wspornika w osi Y; wspornik w osi X —
+        /// wysokości obu kierunków zamienione.
+        /// </summary>
+        public static void NestRootLinksGlobal(Plan p, bool axisAlongX)
+        {
+            if (p == null || !axisAlongX) return;
+            var across = p.Links.FirstOrDefault(l => !l.AlongAxis && l.Shape == LinkShapeInSlab && l.S1 <= 0.5);
+            var along = p.Links.FirstOrDefault(l => l.AlongAxis && l.Shape == LinkShapeInSlab);
+            if (across == null || along == null) return;
+            // w poprzek osi X = pręty wzdłuż Y → wewnętrzne; wzdłuż osi X = pręty wzdłuż X → zewnętrzne
+            double outerA = Math.Max(across.A, along.A);
+            along.A = outerA;
+            across.A = SecondDirLinkA(outerA, across.Dia);
+            p.Messages.Add($"strefa przy palu (wspornik w osi X): strzemiona z prętami wzdłuż X zewnętrzne (A {along.A:F0}), wzdłuż Y wewnętrzne " +
+                           $"(A {across.A:F0}).");
+        }
+
+        /// <summary>
         /// Wysokość A strzemion drugiego kierunku — WEWNĄTRZ pierwszych (osobna pozycja; jak U-bary w strzemionach belek):
         /// A − 2·Ø strzemienia, W DÓŁ do 5 mm — wewnętrzne nie może być wyższe niż miejsce w środku (290, H12 → 266 → 265; 665 → 641 → 640).
         /// Uwaga Bartka 2026-10-22.

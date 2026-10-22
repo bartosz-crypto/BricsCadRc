@@ -141,6 +141,7 @@ namespace BricsCadRc.Core
             bool stepped = g.Stepped;
 
             var plan = CantileverRules.PlanBars(reach, width, h, rootLen, rootH);
+            CantileverRules.NestRootLinksGlobal(plan, alongX);   // pręty X zewnętrzne, Y wewnętrzne (test7, wspornik poziomy)
             foreach (var m in plan.Messages) msg($"{name}: {m}");
             double W(double s) => root + sign * s;                         // s (lokalne) → współrzędna wzdłuż osi
             Point2d P(double along, double across) => alongX ? new Point2d(along, across) : new Point2d(across, along);

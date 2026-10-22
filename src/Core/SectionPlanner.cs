@@ -286,6 +286,8 @@ namespace BricsCadRc.Core
             public double Nib0, Nib1;
             /// <summary>Strzemię w pasie: średnica, wysokość zewnętrzna A (z rozkładu BL w pasie albo ze wzoru).</summary>
             public double LinkDia, LinkA;
+            /// <summary>Wspornik: A strzemion pasu wg kierunku prętów (true — pręty wzdłuż X) — U-bar leży na strzemionach w poprzek siebie.</summary>
+            public Dictionary<bool, double> LinkAByDir = new Dictionary<bool, double>();
             /// <summary>Średnice prętów dołu / góry w pasie (E4b: poziomy prętów bocznych; z rozkładów BB / BT, domyślnie 16).</summary>
             public double MainDiaB = 16, MainDiaT = 16;
             /// <summary>Spinka UB 03 w pasie / nibie belki (poprawka recenzji E4b): osie dolnego i górnego ramienia na wysokości belki
@@ -830,6 +832,16 @@ namespace BricsCadRc.Core
             }
         }
 
+        /// <summary>
+        /// U-bar wspornika leży na dolnym ramieniu strzemion W POPRZEK siebie (pręty strzemienia prostopadłe do U-bara); gdy te strzemiona
+        /// są wewnętrzne (A − 2·Ø — strefa przy palu, wspornik w osi X, zasada 2026-10-22) — wyżej o odsunięcie strzemienia wewnętrznego.
+        /// </summary>
+        private static double UBarSeatInset(BandU b, Dist d)
+        {
+            if (!b.Src.Cantilever || !b.LinkAByDir.TryGetValue(!d.AlongX, out double a) || a <= 0) return 0;
+            return a < b.LinkA - 0.5 ? (b.LinkA - a) / 2.0 : 0;
+        }
+
         /// <summary>Pas do poziomów prętów wspornika: dla strefy przy palu — pas samego wspornika tego samego wspornika (gdy jest na odcinku).</summary>
         private static BandU CantLevelBand(List<BandU> bands, BandU b)
         {
@@ -1036,6 +1048,8 @@ namespace BricsCadRc.Core
                 foreach (var b in bands.Where(x => x.Src == hit.Src))
                 {
                     // wspornik: strzemię zewnętrzne pasu = największe A (drugi kierunek ma A − 2·Ø — wewnątrz)
+                    if (b.Src.Cantilever && d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0)
+                        b.LinkAByDir[d.AlongX] = Math.Max(b.LinkAByDir.TryGetValue(d.AlongX, out double prevA) ? prevA : 0, d.SourceDims[0]);
                     if (b.Src.Cantilever && d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0 && d.SourceDims[0] < b.LinkA - 0.5)
                         continue;
                     b.LinkDia = d.Diameter > 0 ? d.Diameter : b.LinkDia;
@@ -1095,7 +1109,7 @@ namespace BricsCadRc.Core
                     case BeamGeometry.CodeUBar:
                     {
                         // U-bar wspornika (uwaga Bartka 2026-10-22): własny wymiar B (zewnętrzny) — ramię dołem na strzemieniu, górą o B − Ø wyżej
-                        double vb = b.VLinkBot + b.LinkDia + half;
+                        double vb = b.VLinkBot + UBarSeatInset(b, d) + b.LinkDia + half;
                         double bU = d.SourceDims != null && d.SourceDims.Length > 1 && d.SourceDims[1] > d.Diameter ? d.SourceDims[1] : 0;
                         return new List<double> { vb, bU > 0 ? vb + bU - d.Diameter : b.VLinkTop - b.LinkDia - half };
                     }
@@ -1248,7 +1262,7 @@ namespace BricsCadRc.Core
                         double hd = d.Diameter / 2.0;
                         int dirS = bendAtA ? +1 : -1;                              // od tyłu do wolnych końców (w s)
                         double backAxis = (bendAtA ? a : bEnd) + dirS * hd;
-                        double vb = band.VLinkBot + band.LinkDia + hd;
+                        double vb = band.VLinkBot + UBarSeatInset(band, d) + band.LinkDia + hd;
                         // uwaga Bartka 2026-10-22: oba U-bary to TE SAME pręty z detalu — prawdziwe wymiary pręta wzorcowego, bez zmniejszania
                         // (w zakładzie ramiona na tych samych poziomach, jak „dwa gięte — bez odsunięcia”, Z2)
                         List<(double s, double v)> pathU;
