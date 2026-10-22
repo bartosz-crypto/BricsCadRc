@@ -102,6 +102,14 @@ namespace BricsCadRc.App
             }
             catch (System.Exception ex) { Log.Error("PluginApp.ApplyPendingRotations", ex); }
 
+            // MIRROR w miejscu (usunięcie źródła = Tak): rozkład i opis jak kopia po MIRROR (2026-10-22)
+            try
+            {
+                using (doc.LockDocument())
+                    BarBlockTransformOverrule.ApplyPendingMirrors(doc.Database);
+            }
+            catch (System.Exception ex) { Log.Error("PluginApp.ApplyPendingMirrors", ex); }
+
             try { PendingLabelUpdates.FlushAll(doc.Database); }
             catch (System.Exception ex) { Log.Error("PluginApp.OnCommandEnded", ex); }
         }

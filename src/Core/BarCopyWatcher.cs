@@ -617,40 +617,14 @@ namespace BricsCadRc.Core
                     var blk = trNorm.GetObject(blockId, OpenMode.ForWrite) as BlockReference;
                     var ann = trNorm.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
 
-                    bool blkNeedsNorm = blk != null && (blk.ScaleFactors.X < 0 || blk.ScaleFactors.Y < 0
-                        || System.Math.Abs(System.Math.Abs(blk.Rotation) - System.Math.PI) < 1e-3);
-                    if (blkNeedsNorm)
-                    {
-                        // 2026-10-13: odbicie (lokalne osie bloku po MIRROR) — po normalizacji do +1 dane rozkładu muszą to odbicie
-                        // przejąć (gripy krawędzi, symbol końca, kolejność prętów); wcześniej gripy zostawały po starej stronie
-                        var ex = Vector3d.XAxis.TransformBy(blk.BlockTransform);
-                        var ey = Vector3d.YAxis.TransformBy(blk.BlockTransform);
-                        bool flipX = ex.X < -0.5, flipY = ey.Y < -0.5;
-                        var bd = BarBlockEngine.ReadXData(blk);
-                        bool alongX = bd?.Direction == "X";
-                        Point3d vMin;
-                        try   { vMin = blk.GeometricExtents.MinPoint; }
-                        catch { vMin = blk.Position; }
-                        if (bd != null && Math.Abs(bd.SkewStart) < 1e-6 && Math.Abs(bd.SkewEnd) < 1e-6)
-                        {
-                            // naroże prostokąta prętów (bez symboli końców — kółko / hak poszerza obwiednię o promień)
-                            double la = bd.LengthA, ls = bd.BarsSpan;
-                            var loc = alongX
-                                ? new[] { new Point3d(0, 0, 0), new Point3d(la, 0, 0), new Point3d(0, ls, 0), new Point3d(la, ls, 0) }
-                                : new[] { new Point3d(0, 0, 0), new Point3d(ls, 0, 0), new Point3d(0, la, 0), new Point3d(ls, la, 0) };
-                            var w = loc.Select(q => q.TransformBy(blk.BlockTransform)).ToList();
-                            vMin = new Point3d(w.Min(q => q.X), w.Min(q => q.Y), blk.Position.Z);
-                        }
-                        blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
-                        blk.Rotation     = 0.0;
-                        blk.Position     = vMin;
-                        if (bd != null)
-                            BarBlockEngine.ApplyMirror(blk, flipAlong: alongX ? flipX : flipY, flipAcross: alongX ? flipY : flipX);
-                    }
+                    if (blk != null && NeedsNormalization(blk)) NormalizeMirroredBlock(blk);
 
-                    bool annNeedsNorm = ann != null && (ann.ScaleFactors.X < 0 || ann.ScaleFactors.Y < 0
-                        || System.Math.Abs(System.Math.Abs(ann.Rotation) - System.Math.PI) < 1e-3);
-                    if (annNeedsNorm)
+                    if (ann != null && blk != null && IsMirrored(ann))
+                    {
+                        // 2026-10-22 (Bartek): opis kopii po MIRROR — odnośnik odbity na drugą stronę, tekst czytelny (nie lustrzany)
+                        AnnotationEngine.NormalizeMirroredAnnot(ann, blk.Rotation);
+                    }
+                    else if (ann != null && NeedsNormalization(ann))
                     {
                         Point3d aVMin;
                         try   { aVMin = ann.GeometricExtents.MinPoint; }
@@ -678,6 +652,52 @@ namespace BricsCadRc.Core
                 }
             }
             catch (System.Exception ex) { Log.Error("BarCopyWatcher.NormalizeAndRebuildPair", ex); }
+        }
+
+        /// <summary>Blok odbity lustrzanie (wyznacznik transformacji &lt; 0).</summary>
+        internal static bool IsMirrored(BlockReference br)
+        {
+            if (br == null) return false;
+            var cs = br.BlockTransform.CoordinateSystem3d;
+            return cs.Xaxis.CrossProduct(cs.Yaxis).Z < 0;
+        }
+
+        /// <summary>Blok odbity (skala ujemna) albo obrócony o 180° — do normalizacji do skali +1.</summary>
+        internal static bool NeedsNormalization(BlockReference br)
+            => br != null && (br.ScaleFactors.X < 0 || br.ScaleFactors.Y < 0
+                              || System.Math.Abs(System.Math.Abs(br.Rotation) - System.Math.PI) < 1e-3);
+
+        /// <summary>
+        /// Rozkład po MIRROR (kopia albo oryginał odbity w miejscu): skala +1, obrót 0, położenie = naroże prętów,
+        /// odbicie przejęte przez dane rozkładu (<see cref="BarBlockEngine.ApplyMirror"/>). blk — otwarty do zapisu.
+        /// </summary>
+        internal static void NormalizeMirroredBlock(BlockReference blk)
+        {
+            // 2026-10-13: odbicie (lokalne osie bloku po MIRROR) — po normalizacji do +1 dane rozkładu muszą to odbicie
+            // przejąć (gripy krawędzi, symbol końca, kolejność prętów); wcześniej gripy zostawały po starej stronie
+            var ex = Vector3d.XAxis.TransformBy(blk.BlockTransform);
+            var ey = Vector3d.YAxis.TransformBy(blk.BlockTransform);
+            bool flipX = ex.X < -0.5, flipY = ey.Y < -0.5;
+            var bd = BarBlockEngine.ReadXData(blk);
+            bool alongX = bd?.Direction == "X";
+            Point3d vMin;
+            try   { vMin = blk.GeometricExtents.MinPoint; }
+            catch { vMin = blk.Position; }
+            if (bd != null && Math.Abs(bd.SkewStart) < 1e-6 && Math.Abs(bd.SkewEnd) < 1e-6)
+            {
+                // naroże prostokąta prętów (bez symboli końców — kółko / hak poszerza obwiednię o promień)
+                double la = bd.LengthA, ls = bd.BarsSpan;
+                var loc = alongX
+                    ? new[] { new Point3d(0, 0, 0), new Point3d(la, 0, 0), new Point3d(0, ls, 0), new Point3d(la, ls, 0) }
+                    : new[] { new Point3d(0, 0, 0), new Point3d(ls, 0, 0), new Point3d(0, la, 0), new Point3d(ls, la, 0) };
+                var w = loc.Select(q => q.TransformBy(blk.BlockTransform)).ToList();
+                vMin = new Point3d(w.Min(q => q.X), w.Min(q => q.Y), blk.Position.Z);
+            }
+            blk.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+            blk.Rotation     = 0.0;
+            blk.Position     = vMin;
+            if (bd != null)
+                BarBlockEngine.ApplyMirror(blk, flipAlong: alongX ? flipX : flipY, flipAcross: alongX ? flipY : flipX);
         }
 
         private static void EnsureUniqueBtr(Transaction tr, Database db, BlockReference br)

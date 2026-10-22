@@ -1690,6 +1690,54 @@ namespace BricsCadRc.Core
         /// Full rebuild: usuwa wszystkie entities z BTR annot i odbudowuje
         /// dist line + leader z pts[0] zaktualizowanym do nowej pozycji dist line.
         /// </summary>
+        /// <summary>
+        /// Opis po MIRROR (decyzja Bartka 2026-10-22): blok opisu odbity lustrzanie → skala +1, obrót <paramref name="newRotation"/>
+        /// (jak rozkład po normalizacji), punkty odnośnika = ODBITE położenia w rysunku (linia rozkładu na odbitych prętach, odnośnik
+        /// po drugiej stronie), tekst przebudowany czytelnie (RebuildDistLineInBtr / BuildMLeaderInBtr). ann — otwarty do zapisu.
+        /// Bez punktów odnośnika — dawna normalizacja (naroże obwiedni).
+        /// </summary>
+        internal static void NormalizeMirroredAnnot(BlockReference ann, double newRotation)
+        {
+            var bar = ReadAnnotXData(ann);
+            var pts = bar != null ? DecodeLeaderPoints(bar.LeaderPoints) : null;
+            var m = ann.BlockTransform;
+            if (bar == null || pts == null || pts.Count < 2)
+            {
+                Point3d vMin;
+                try   { vMin = ann.GeometricExtents.MinPoint; }
+                catch { vMin = ann.Position; }
+                ann.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+                ann.Rotation     = 0.0;
+                ann.Position     = vMin;
+                return;
+            }
+
+            // Odbicie w osiach rysunku (względem dawnego obrotu opisu): czy oś X / Y zmieniła zwrot
+            double oldRot = bar.Angle;
+            var ex = Vector3d.XAxis.RotateBy(-oldRot, Vector3d.ZAxis).TransformBy(m);
+            var ey = Vector3d.YAxis.RotateBy(-oldRot, Vector3d.ZAxis).TransformBy(m);
+            bool flipX = ex.X < -0.5, flipY = ey.Y < -0.5;
+
+            var world = pts.Select(p => p.TransformBy(m)).ToList();
+            var target = CalcDistLineCenter(bar);
+            var anchorW = world[0];
+            var pos = anchorW - new Vector3d(target.X, target.Y, 0).RotateBy(newRotation, Vector3d.ZAxis);
+
+            ann.ScaleFactors = new Scale3d(1.0, 1.0, 1.0);
+            ann.Rotation     = newRotation;
+            ann.Position     = new Point3d(pos.X, pos.Y, ann.Position.Z);
+
+            var inv = ann.BlockTransform.Inverse();
+            var local = world.Select(p => { var q = p.TransformBy(inv); return new Point3d(q.X, q.Y, 0); }).ToList();
+            bar.LeaderPoints = EncodeLeaderPoints(local);
+            bar.Angle = newRotation;
+            bool flipAlongDist = bar.Direction == "X" ? flipY : flipX;
+            if (flipX) bar.LeaderRight = !bar.LeaderRight;
+            if (flipY) bar.LeaderUp = !bar.LeaderUp;
+            if (flipAlongDist && !double.IsNaN(bar.ArmMidY)) bar.ArmMidY = bar.BarsSpan - bar.ArmMidY;
+            WriteAnnotXData(ann, bar);
+        }
+
         public static void RebuildDistLineInBtr(BlockReference annotBr, BarData barData, Database db,
             Point3d? blockPos = null)
         {

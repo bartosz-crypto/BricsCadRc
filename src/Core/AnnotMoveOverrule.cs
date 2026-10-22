@@ -833,6 +833,13 @@ namespace BricsCadRc.Core
             // Rebuild zbędny — block+annot przesunięte o ten sam wektor → localOffset niezmieniony.
             if (BarCopyWatcher.IsCopyPending(annotBr.ObjectId)) return;
 
+            // MIRROR w miejscu (usunięcie obiektów źródłowych = Tak): opis normalizowany po komendzie (ApplyPendingMirrors)
+            if (BarBlockTransformOverrule.IsMirror(transform))
+            {
+                BarBlockTransformOverrule.QueueAnnotMirror(annotBr.ObjectId);
+                return;
+            }
+
             var annotData = AnnotationEngine.ReadAnnotXData(annotBr);
             if (annotData == null || string.IsNullOrEmpty(annotData.SourceBlockHandle)) return;
 
@@ -908,6 +915,15 @@ namespace BricsCadRc.Core
 
             var db = br.Database;
             if (db == null) return;
+
+            // MIRROR w miejscu (decyzja Bartka 2026-10-22): rozkład i opis normalizowane po komendzie (ApplyPendingMirrors) —
+            // pręty jak kopia po MIRROR, opis odbity (odnośnik na drugą stronę), tekst czytelny
+            if (IsMirror(transform))
+            {
+                if (!br.ObjectId.IsNull)
+                    _pendingMirror[br.ObjectId] = _pendingMirror.TryGetValue(br.ObjectId, out var pm) ? transform * pm : transform;
+                return;
+            }
 
             string annotHandle = ReadAnnotHandle(br);
             if (string.IsNullOrEmpty(annotHandle)) return;
@@ -989,7 +1005,126 @@ namespace BricsCadRc.Core
             return x.Length > 1e-9 && Math.Abs(Math.Atan2(x.Y, x.X)) > 1e-9;
         }
 
-        internal static void DiscardPendingRotations() => _pendingRot.Clear();
+        internal static void DiscardPendingRotations()
+        {
+            _pendingRot.Clear();
+            _pendingMirror.Clear();
+            _pendingAnnotMirror.Clear();
+        }
+
+        // ── MIRROR w miejscu → normalizacja rozkładu i opisu ─────────────────
+        private static readonly Dictionary<ObjectId, Matrix3d> _pendingMirror = new Dictionary<ObjectId, Matrix3d>();
+        private static readonly HashSet<ObjectId> _pendingAnnotMirror = new HashSet<ObjectId>();
+
+        /// <summary>Transformacja z odbiciem lustrzanym (wyznacznik części liniowej &lt; 0).</summary>
+        internal static bool IsMirror(Matrix3d m)
+        {
+            var x = Vector3d.XAxis.TransformBy(m);
+            var y = Vector3d.YAxis.TransformBy(m);
+            return x.X * y.Y - x.Y * y.X < 0;
+        }
+
+        internal static void QueueAnnotMirror(ObjectId id)
+        {
+            if (!id.IsNull) _pendingAnnotMirror.Add(id);
+        }
+
+        /// <summary>
+        /// Po komendzie z odbiciem w miejscu (MIRROR, usunięcie źródła = Tak): rozkład → skala +1 i odbicie w danych
+        /// (jak kopia po MIRROR, <see cref="BarCopyWatcher.NormalizeMirroredBlock"/>); opis — jeśli nie był zaznaczony, odbity
+        /// tą samą transformacją — potem odnośnik odbity, tekst czytelny (<see cref="AnnotationEngine.NormalizeMirroredAnnot"/>),
+        /// linia rozkładu przebudowana na prętach. Opis odbity sam (bez rozkładu) — tylko normalizacja i przebudowa.
+        /// Kopie (MIRROR, usunięcie źródła = Nie) normalizuje BarCopyWatcher — tu pomijane (już nieodbite).
+        /// </summary>
+        internal static void ApplyPendingMirrors(Database db)
+        {
+            if (db == null || (_pendingMirror.Count == 0 && _pendingAnnotMirror.Count == 0)) return;
+            var blocks = new Dictionary<ObjectId, Matrix3d>(_pendingMirror);
+            var annots = new HashSet<ObjectId>(_pendingAnnotMirror);
+            _pendingMirror.Clear();
+            _pendingAnnotMirror.Clear();
+
+            var rebuild = new List<(ObjectId annot, ObjectId block)>();
+            foreach (var kv in blocks)
+            {
+                if (kv.Key.IsNull || kv.Key.IsErased || kv.Key.Database != db) continue;
+                try
+                {
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var br = tr.GetObject(kv.Key, OpenMode.ForWrite) as BlockReference;
+                        if (br == null || !BarCopyWatcher.IsMirrored(br)) { tr.Commit(); continue; }
+                        BarCopyWatcher.NormalizeMirroredBlock(br);
+                        var bd = BarBlockEngine.ReadXData(br);
+                        if (bd != null && !string.IsNullOrEmpty(bd.AnnotHandle)
+                            && long.TryParse(bd.AnnotHandle, NumberStyles.HexNumber, null, out long hv)
+                            && db.TryGetObjectId(new Handle(hv), out ObjectId annotId)
+                            && !annotId.IsNull && !annotId.IsErased
+                            && tr.GetObject(annotId, OpenMode.ForWrite) is BlockReference annot)
+                        {
+                            var ad = AnnotationEngine.ReadAnnotXData(annot);
+                            if (ad != null && XLink.Same(ad.SourceBlockHandle, br.Handle.Value.ToString("X8")))
+                            {
+                                if (!annots.Contains(annotId) && !BarCopyWatcher.IsMirrored(annot))
+                                {
+                                    // opis nie był zaznaczony — odbij go razem z prętami
+                                    AnnotOverruleState.SuppressAnnotTransform = true;
+                                    try { annot.TransformBy(kv.Value); }
+                                    finally { AnnotOverruleState.SuppressAnnotTransform = false; }
+                                }
+                                if (BarCopyWatcher.IsMirrored(annot))
+                                    AnnotationEngine.NormalizeMirroredAnnot(annot, br.Rotation);
+                                annots.Remove(annotId);
+                                rebuild.Add((annotId, br.ObjectId));
+                            }
+                        }
+                        tr.Commit();
+                    }
+                }
+                catch (System.Exception ex) { Log.Error($"BarBlockTransformOverrule.ApplyPendingMirrors {kv.Key}", ex); }
+            }
+
+            // Opisy odbite bez swojego rozkładu
+            foreach (var aid in annots)
+            {
+                if (aid.IsNull || aid.IsErased || aid.Database != db) continue;
+                try
+                {
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var annot = tr.GetObject(aid, OpenMode.ForWrite) as BlockReference;
+                        if (annot != null && BarCopyWatcher.IsMirrored(annot))
+                        {
+                            AnnotationEngine.NormalizeMirroredAnnot(annot, 0.0);
+                            var ad = AnnotationEngine.ReadAnnotXData(annot);
+                            if (ad != null && !string.IsNullOrEmpty(ad.SourceBlockHandle)
+                                && long.TryParse(ad.SourceBlockHandle, NumberStyles.HexNumber, null, out long hb)
+                                && db.TryGetObjectId(new Handle(hb), out ObjectId bid) && !bid.IsNull && !bid.IsErased)
+                                rebuild.Add((aid, bid));
+                        }
+                        tr.Commit();
+                    }
+                }
+                catch (System.Exception ex) { Log.Error($"BarBlockTransformOverrule.ApplyPendingMirrors.Annot {aid}", ex); }
+            }
+
+            foreach (var (annotId, blockId) in rebuild)
+            {
+                try
+                {
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var blk = tr.GetObject(blockId, OpenMode.ForRead) as BlockReference;
+                        var ann = tr.GetObject(annotId, OpenMode.ForWrite) as BlockReference;
+                        var bd = blk != null ? BarBlockEngine.ReadXData(blk) : null;
+                        if (bd != null && ann != null)
+                            AnnotationEngine.RebuildDistLineInBtr(ann, bd, db, blk.Position);
+                        tr.Commit();
+                    }
+                }
+                catch (System.Exception ex) { Log.Error($"BarBlockTransformOverrule.ApplyPendingMirrors.Rebuild {annotId}", ex); }
+            }
+        }
 
         private static double AngleDiff(double a, double b)
         {

@@ -363,6 +363,11 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   bloków pomijane. Zapis: pręt — `BarEntity.Write`, rozkład — `BarBlockEngine.WriteXData`, opis / etykieta / RC_BAR_LINK —
   punktowa podmiana pola `XLink.Write`. Pary przepięte po komendach kopiowania — `BarCopyWatcher.NormalizeAndRebuildPair`
   (odbicie → skala +1, przebudowa linii rozkładu, jak wzorzec).
+- **MIRROR rozkładu z opisem (decyzja Bartka 2026-10-22):** opis odbija się razem z prętami — linia rozkładu na odbitych prętach,
+  odnośnik po drugiej stronie (lustrzanie), tekst ZAWSZE czytelny (nie lustrzany; `AnnotationEngine.NormalizeMirroredAnnot`).
+  Kopia (usunięcie źródła = Nie) — `BarCopyWatcher.NormalizeAndRebuildPair`; odbicie w miejscu (usunięcie źródła = Tak) —
+  `BarBlockTransformOverrule` / `AnnotTransformOverrule` kolejkują odbite obiekty, po komendzie `ApplyPendingMirrors`
+  (rozkład jak kopia: skala +1 + `ApplyMirror`; opis niezaznaczony odbijany razem z prętami). Pionowo i poziomo tak samo.
 - `BarCopyWatcher` — po komendzie (CommandEnded/Cancelled najwyższego poziomu; komenda widoku / przezroczysta /
   zagnieżdżona — nic, paczki czekają na komendę nadrzędną; zagnieżdżona komenda kopiowania przenosi kwalifikację „kopiowanie”
   na komendę nadrzędną): 1) UNDO/REDO → `CloneMap.Forget`; 2) `CloneMap.Take`;
