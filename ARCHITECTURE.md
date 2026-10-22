@@ -442,6 +442,10 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
 
 ## 4. AutoRebar — zasady (wymagania użytkownika)
 Ogólne:
+- **Add z map (2026-10-22, test6):** mapy bez XData RC_MAP (wklejone bez RC_IMPORT_MAP) — rozpoznanie po ramkach PH-FRAME i warstwach
+  (`ReadUntaggedMaps`; brak PH-xx-SLAB w ramce → obrys innej mapy przesunięty o różnicę ramek). Dopasowanie mapy do płyty
+  (`MatchMap`): obrys płyty Z RYSUNKU (z wspornikami), obwiednia ±100, przesunięcie z rogu obwiedni z największym udziałem wierzchołków
+  mapy na obrysie płyty (≥ 50%; test6: wsporniki na mapie o 25 dłuższe — dopasowanie po górnej krawędzi). Obwiednie równe — jak dawniej.
 - **Rozstaw rzeczywisty siatki i UB płyty — NAJWYŻEJ 205 mm (zasada Bartka 2026-10-22: „NIGDY więcej, jak już to mniej”):**
   `BarBlockEngine.GenerateFromBounds(maxSpacing)` z siatki (GenerateLayer) i UB (GenerateUBDistribution) — rozstaw > 205 → więcej
   prętów na tym samym zakresie (test5: 3 co 297,5 na 595 → 4 co 198,3); opis nominalny bez zmian. Bez limitu: pręty belek /
