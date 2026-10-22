@@ -214,5 +214,20 @@ namespace BricsCadRc.Tests
             Assert.That(r.Count, Is.EqualTo(8));
             Assert.That(CantileverRules.FindTabs(r).Count, Is.EqualTo(1));
         }
+
+        [Test]
+        public void NestRootLinksGlobal_XAxisCantilever_XBarsOuter()
+        {
+            // test7: wspornik poziomy (+X), strefa 375 — pręty wzdłuż X (drugi kierunek, wzdłuż osi) zewnętrzne 290, wzdłuż Y wewnętrzne 265
+            var p = CantileverRules.PlanBars(1243, 600, 300, 600, 375);
+            CantileverRules.NestRootLinksGlobal(p, axisAlongX: true);
+            Assert.That(p.Links[2].AlongAxis, Is.True);
+            Assert.That(p.Links[2].A, Is.EqualTo(290.0));
+            Assert.That(p.Links[1].A, Is.EqualTo(265.0));
+            // wspornik w osi Y — bez zmian (w poprzek = pręty X — zewnętrzne)
+            var q = CantileverRules.PlanBars(923, 600, 300, 600, 375);
+            CantileverRules.NestRootLinksGlobal(q, axisAlongX: false);
+            Assert.That((q.Links[1].A, q.Links[2].A), Is.EqualTo((290.0, 265.0)));
+        }
     }
 }

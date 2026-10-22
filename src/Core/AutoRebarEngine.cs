@@ -166,24 +166,23 @@ namespace BricsCadRc.Core
         public const double MaxLastBarDistanceFromEdge = 70.0;
 
         /// <summary>
-        /// Opis UB z boku płyty (odnośnik wzdłuż linii rozkładu do boku obwiedni, jak dotąd) ma sens tylko, gdy krawędź tego UB biegnie dalej
-        /// aż do boku obwiedni po stronie odnośnika (uwagi Bartka 2026-10-22, test5): krawędź przerwana — wspornik, wnęka, wystający
-        /// fragment płyty (zatoka) albo inny rozkład UB na tej samej linii po drodze — false: opis prostopadle do linii rozkładu (wzdłuż
-        /// prętów, za płytę), przy swoim rozkładzie. Strona odnośnika jak <see cref="ComputeAnnotLeaderForVerticalBars"/> (bliższy bok).
+        /// Opis UB z boku płyty (odnośnik wzdłuż linii rozkładu do boku obwiedni — jak dotąd) albo prostopadle do linii rozkładu (wzdłuż
+        /// prętów, za płytę, przy swoim rozkładzie). Wzór Bartka 2026-10-22 (test8 → test9-poprawiony): z boku zawsze, CHYBA ŻE opis byłby
+        /// daleko od pręta i nieczytelny — po drodze do boku leży inny UB tej samej krawędzi (krawędź przerwana wspornikiem / zatoką) albo
+        /// od końca rozkładu do boku obwiedni jest dalej niż <see cref="SideLabelMaxGap"/>. Strona — jak <see cref="ComputeAnnotLeaderForVerticalBars"/>
+        /// (bliższy bok). (Wcześniejsza reguła „krawędź ciągła do boku” — za często prostopadle, wycofana.)
         /// </summary>
         private static bool SideLeaderAlongEdge(List<Point2d> verts, bool vertical, double edgeCoord, double lo, double hi, string symbolSide,
                                                 double slabMinAlong, double slabMaxAlong, List<(double Lo, double Hi)> others)
         {
-            if (verts == null || verts.Count < 3) return true;
             bool toHigh = (slabMaxAlong - hi) <= (lo - slabMinAlong);
-            double inward = symbolSide == "Left" ? 1.0 : -1.0;
-            double start = toHigh ? hi : lo, stop = toHigh ? slabMaxAlong : slabMinAlong, dir = toHigh ? 1.0 : -1.0;
             if (others != null && others.Any(o => toHigh ? o.Lo >= hi - 1.0 : o.Hi <= lo + 1.0)) return false;
-            Point2d P(double s, double off) => vertical ? new Point2d(edgeCoord + inward * off, s) : new Point2d(s, edgeCoord + inward * off);
-            for (double s = start + dir * 25.0; dir * (stop - s) > 25.0; s += dir * 50.0)
-                if (!GeometryHelper.IsPointInsidePolygon(verts, P(s, 5.0)) || GeometryHelper.IsPointInsidePolygon(verts, P(s, -5.0))) return false;
-            return true;
+            double gap = toHigh ? slabMaxAlong - hi : lo - slabMinAlong;
+            return gap <= SideLabelMaxGap;
         }
+
+        /// <summary>Opis UB z boku płyty najwyżej tyle od końca rozkładu do boku obwiedni [mm] — dalej opis prostopadle (czytelność).</summary>
+        public const double SideLabelMaxGap = 2500.0;
 
         /// <summary>Największy rzeczywisty rozstaw prętów siatki i UB (zasada Bartka 2026-10-22: „MAX 205, NIGDY więcej — jak już to mniej”).</summary>
         public const double MaxBarSpacing = 205.0;
@@ -2898,6 +2897,16 @@ namespace BricsCadRc.Core
                 plan.Strips.Add(s);
                 var rs = ToRule(s);
                 var ow = NibStepRules.OwnerOf(plan.Edges, rs);
+                // decyzja 2026-10-22 (test8): góra przy nibie = RZECZYWISTE pręty dołu leżące w obszarze góry (pas na linii uskoku
+                // ± otulina) — pręty dołu w nibie odpadają, ten sam rozstaw co dół; liczba góry = dół − 1 na każdy koniec z nibem,
+                // UB 01/02 = pręty góry dochodzące do uskoku (= UB 03 przy tej samej długości odcinka). Pas przy belce (E2) — bez zmian.
+                bool atCut = e2 != null && e2.Cuts.Count > 0 && StripTouchesCut(e2.Cuts, s, barsAlongX);
+                if (bottom != null && !atCut && (ow != null || StripTouchesNib(nib, s, barsAlongX)))
+                {
+                    var fromBottom = BottomPositionsIn(bottom, s.ScanLow + cover - 0.5, s.ScanHigh - cover + 0.5,
+                                                       s.PerpLow, s.PerpHigh, out _);
+                    if (fromBottom.Count > 0) { plan.StripPositions[s] = fromBottom; continue; }
+                }
                 if (ow == null) continue;
                 plan.StripPositions[s] = NibStepRules.StripPositions(ow, rs, cover);
             }
@@ -4474,19 +4483,25 @@ namespace BricsCadRc.Core
                         ubCandidates.Add(AnnotationEngine.EncodeLeaderPoints(pts));
                     }
             }
-            else if (annotAlongWorld.HasValue)
+            List<double> ubTries = null;
+            if (!leaderEndAlong.HasValue && annotAlongWorld.HasValue)
             {
                 // UB 03: linia rozkładu poza płytą — przesuwanie w bok tylko dalej na zewnątrz (do 1250 mm)
                 double a = annotAlongWorld.Value;
                 double outDir = symbolSide == "Left" ? -1.0 : 1.0;
                 ubAlongMin = Math.Min(a, a + outDir * 1250.0);
                 ubAlongMax = Math.Max(a, a + outDir * 1250.0);
+                // najpierw blisko krawędzi: domyślnie 250 od krawędzi, potem 200 / 300 / 150 / 350 … (min. 150 od krawędzi)
+                double sc = _annotScaleOverride > 0 ? _annotScaleOverride : 1.0;
+                ubTries = new[] { 0.0, -50, 50, -100, 100, 150, 200, 250, 350, 450, 600, 750 }
+                    .Select(k => a + outDir * k * sc).ToList();
             }
             distBar.LeaderPoints = PlaceLabel(
                 ubCandidates, ref annotInsertPt,
                 $"{distBar.CountText} {distBar.Mark}", distBar.AnnotScale,
                 ubAlongMin, ubAlongMax, isXBars,
-                kinkHalfSpan: leaderEndAlong.HasValue ? Math.Max(0, distBar.BarsSpan) / 2.0 : 0);
+                kinkHalfSpan: leaderEndAlong.HasValue ? Math.Max(0, distBar.BarsSpan) / 2.0 : 0,
+                alongTries: ubTries);
             if (leaderEndAlong.HasValue)
             {
                 var fin = AnnotationEngine.DecodeLeaderPoints(distBar.LeaderPoints);
@@ -4718,7 +4733,8 @@ namespace BricsCadRc.Core
         /// z załamaniem: odcinek za załamaniem (tylko dalej od linii rozkładu).
         /// </summary>
         private static string PlaceLabel(List<string> candidates, ref Point3d annotInsertPt, string text,
-            double annotScale, double alongMin, double alongMax, bool barsAlongX, double kinkHalfSpan = 0)
+            double annotScale, double alongMin, double alongMax, bool barsAlongX, double kinkHalfSpan = 0,
+            IList<double> alongTries = null)
         {
             candidates = candidates.Where(c => AnnotationEngine.DecodeLeaderPoints(c).Count >= 2).ToList();
             if (candidates.Count == 0) return "";
@@ -4778,6 +4794,20 @@ namespace BricsCadRc.Core
             }
 
             double step = cross + LabelGap;
+            // UB 03 (decyzja 2026-10-22, test9): linia rozkładu blisko krawędzi — najpierw drobne przesunięcia (co 50 mm) wokół
+            // położenia domyślnego, dopiero potem skoki o wysokość opisu (wcześniej od razu 595 / 940 / 1285 mm od krawędzi)
+            if (alongTries != null && alongTries.Count > 0)
+                foreach (var cand in candidates)
+                {
+                    var pts = AnnotationEngine.DecodeLeaderPoints(cand);
+                    if (pts.Count != 2 || (pts[1] - pts[0]).Length < 1e-6) continue;
+                    foreach (double a in alongTries)
+                    {
+                        var ins2 = barsAlongX ? new Point3d(a, annotInsertPt.Y, annotInsertPt.Z)
+                                              : new Point3d(annotInsertPt.X, a, annotInsertPt.Z);
+                        if (Free(ins2, pts)) return Accept(ins2, pts, ref annotInsertPt);
+                    }
+                }
             foreach (var cand in candidates)
             {
                 var pts = AnnotationEngine.DecodeLeaderPoints(cand);

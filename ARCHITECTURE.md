@@ -453,10 +453,11 @@ Ogólne:
   Krawędź zewnętrzna (AdjustedExternal): ostatni pręt > 70 od krawędzi, a zagęszczenie o 1 pręt daje < 192 — dawniej odrzucenie
   (luka przy krawędzi, test5: 3 B2 przy 4 UB 02 na krawędzi 675), od 2026-10-22 zagęszczenie do 150 (`MinDenserSpacing`, ostrzeżenie)
   — siatka, UB 02 i UB 03 tej krawędzi mają tę samą liczbę prętów. Zmiana względem wzorca (S-REG — oczekiwana różnica).
-- **Opisy UB z boku płyty tylko przy krawędzi ciągłej (2026-10-22, test5):** odnośnik wzdłuż linii rozkładu do boku obwiedni — gdy
-  krawędź biegnie dalej aż do boku po stronie odnośnika; krawędź przerwana (wspornik, wnęka, zatoka) albo inny UB na tej linii po drodze
-  — opis prostopadle do linii rozkładu (wzdłuż prętów, za płytę) przy swoim rozkładzie (`SideLeaderAlongEdge`; zastępuje regułę
-  „kilka UB 03 na jednej linii”).
+- **Opisy UB z boku płyty (2026-10-22, wzorzec Bartka test9-poprawiony):** domyślnie odnośnik wzdłuż linii rozkładu do bliższego boku
+  obwiedni (także przy wnękach / uskokach obrysu). Opis prostopadle do linii rozkładu (wzdłuż prętów, za płytę) przy swoim rozkładzie tylko,
+  gdy po drodze do boku leży inny UB na tej samej linii krawędzi (np. UB 03 między wspornikiem a zatoką) albo bok jest dalej niż 2500 mm
+  (`SideLeaderAlongEdge`, `SideLabelMaxGap`). Linia rozkładu UB 03 blisko krawędzi: domyślnie 250 mm za krawędzią, przy kolizji najpierw
+  drobne przesunięcia co 50 mm (200 / 300 / 150 / 350 …), dopiero potem dalej (`PlaceLabel(alongTries)`; wcześniej skoki 595 / 940 / 1285).
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
   element, który musi się zmieścić w innym (strzemię drugiego kierunku w strzemieniu, U-bar w strzemieniu, noga w nodze…), ma
   wymiar = miejsce w środku (np. A − 2·Ø) zaokrąglony **w dół** do 5 mm — lepiej mniej wysokości niż kolizja (290, H12 → 266 → 265;
@@ -561,9 +562,12 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
   i InnerCoord — `NibDetector` nie scala odcinków; wynik jak wzorzec). **Odsadzka linii uskoku** (zmiana szerokości nibu wzdłuż tej
   samej krawędzi zewnętrznej): jak wzorzec, chyba że wzorzec daje rozstaw < 100 mm — wtedy koniec przy odsadzce wolny
   (`NibStepRules.ClassifyEnd` / `RuleCountOnEdges`; pytanie do użytkownika — POPRAWKI 29).
-- **T1/T2 = UB 01/02 — każdy pręt górny ma swój UB** (`PlanNibStepBars`, wspólny dla góry i UB): pas góry bierze
-  położenia z krawędzi uskoku na końcu prętów, której zakres najlepiej pasuje do pasa (reguła ± 1 powyżej);
-  UB na krawędzi = pręty góry wszystkich pasów dochodzących do niej (długa krawędź przez kilka pasów = suma pasów).
+- **T1/T2 = UB 01/02 — każdy pręt górny ma swój UB** (`PlanNibStepBars`, wspólny dla góry i UB): pas góry przy nibie bierze
+  **położenia RZECZYWISTYCH prętów dołu** leżących w pasie góry (linia uskoku ± otulina; decyzja Bartka 2026-10-22, test8: „musi być
+  tyle samo”, „2 mniej T1 niż B1”) — pręty dołu w nibie odpadają, rozstaw jak dołem; góra = dół − 1 na każdy koniec z nibem, UB 01/02 =
+  UB 03 przy tej samej długości odcinka (reguła ± 1 wychodzi sama). Bez rzutu dolnego — położenia z krawędzi uskoku na końcu prętów
+  (reguła ± 1 powyżej, równo na uskoku). Pas przy belce (E2) — bez zmian. UB na krawędzi = pręty góry wszystkich pasów dochodzących do
+  niej (długa krawędź przez kilka pasów = suma pasów).
 - **UB 01/02 na uskoku**, **UB 03 przy krawędzi zewnętrznej** (liczba jak dół):
   H10, shape 13, 610-70-610, @200 — `RC_GENERUJ_UB_NIB` (przycisk) i w `RC_GENERUJ_SIATKA`.
 - **T IN NIB** (z T1/T2): przy każdej krawędzi z nibem 2 pręty H12 co 150 wzdłuż krawędzi — pierwszy w nibie
@@ -1486,7 +1490,9 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
     (gdy linia nibu jej tam nie rysuje).
   - **Kształt strzemion (zasada ogólna):** elementy W PŁYCIE (pile cap / strefa przy palu, belki i pogrubienia w płycie) — zawsze **51**;
     POZA PŁYTĄ (wsporniki, belki poza płytą) — zawsze **63**. Strefa przy palu — strzemiona w **obu kierunkach** (wzór PLOT 28: 12 i 14);
-    drugi kierunek (osobna pozycja) WCHODZI W PIERWSZY: A − 2·Ø strzemienia **w dół** do 5 — wewnętrzne musi się zmieścić (375: 290 − 24 = 266 → **265**; 750: 665 → 640)
+    **zagnieżdżenie globalne (test7, 2026-10-22):** strzemiona z prętami wzdłuż X — zewnętrzne, wzdłuż Y — wewnętrzne (jak belki); wspornik
+    w osi Y — „w poprzek osi” zewnętrzne, w osi X — zamienione (`NestRootLinksGlobal`); przekrój: U-bar leży na strzemionach w poprzek siebie
+    (`UBarSeatInset`).     drugi kierunek (osobna pozycja) WCHODZI W PIERWSZY: A − 2·Ø strzemienia **w dół** do 5 — wewnętrzne musi się zmieścić (375: 290 − 24 = 266 → **265**; 750: 665 → 640)
     (uwaga Bartka 2026-10-22; ~~275~~, ~~270~~ — kolizja). Wariant „jedna pozycja” (oba kierunki tej samej wysokości
     obniżone o Ø — jeden przy spodzie, drugi przy wierzchu, zachodzą na siebie) — nie wybrany.
   - **Ramka detalu:** sam offset strefy (`FramePolygon(strefa, null)`, ⊕600) — bez przycinania do obrysu z języczkiem (dziwny kształt).
