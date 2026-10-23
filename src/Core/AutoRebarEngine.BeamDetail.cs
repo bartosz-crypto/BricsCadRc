@@ -52,6 +52,9 @@ namespace BricsCadRc.Core
             public Extents3d TemplateZone;
             /// <summary>Ramka detalu w układzie rzutu (wielokąt — offset strefy L / U, decyzja 2026-10-13; albo prostokąt okna).</summary>
             public List<(double X, double Y)> FramePlan;
+            /// <summary>Uwaga Bartka 2026-10-23: podpis elementu (identyczne belki / wsporniki — jeden detal) i strefa detalu głównego,
+            /// gdy ten detal jest kopią rozkładów nad nim (null — detal główny).</summary>
+            public string Signature, CopyOf;
         }
 
         /// <summary>Strefa szablonów prętów belki w trybie detalu (null — strefa rebar_bottom rzutu, jak przed decyzją 2026-10-12).</summary>
@@ -455,7 +458,7 @@ namespace BricsCadRc.Core
         private static BeamDrawTarget PrepareBeamDetail(Document doc, BeamView bottom, BeamView top, string zbHandle, List<Point2d> zbPoly,
                                                         Action<string> msg, List<Point2d> textPoly = null, bool offsetFrame = false,
                                                         List<((double X, double Y) A, (double X, double Y) B)> extraLines = null,
-                                                        bool allPilesInFrame = false)
+                                                        bool allPilesInFrame = false, string signature = null)
         {
             var db = doc.Database;
             string name = $"belka {zbHandle}";
@@ -472,6 +475,7 @@ namespace BricsCadRc.Core
                 // 1. Istniejący detal strefy: numer i miejsce z ANCHOR-a (bez cache — MOVE detalu zostaje)
                 int nr = 0;
                 (double X, double Y)? shift = null;
+                string oldMaster = "";
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
                     var old = BeamStore.FindDetail(tr, db, zbHandle);
@@ -481,10 +485,27 @@ namespace BricsCadRc.Core
                         var av = GeometryHelper.GetPolylineVertices(apl).Select(v => (v.X, v.Y)).ToList();
                         shift = BeamDetailRules.ShiftOf(av, zoneT);
                         if (n > 0) nr = n;
+                        oldMaster = BeamStore.ReadDetailGroup(apl).master;
                         break;
                     }
                     if (nr <= 0) nr = old.Select(o => o.nr).FirstOrDefault(n => n > 0);
                     tr.Commit();
+                }
+
+                // 1a. Uwaga Bartka 2026-10-23: identyczny element (ten sam podpis) ma już detal główny — ten element podpisany tym samym
+                //     detalem, jego rozkłady jako kopia nad detalem głównym (w ramce z przekątnymi); własny detal główny — bez zmian
+                string copyOf = null;
+                if (!string.IsNullOrEmpty(signature) && (shift == null || !string.IsNullOrEmpty(oldMaster)))
+                {
+                    var m = FindDetailMaster(db, signature, zbHandle);
+                    if (m != null)
+                    {
+                        copyOf = m.Value.zone; nr = m.Value.nr;
+                        bool sameSlot = shift != null && XLink.Same(oldMaster, copyOf);
+                        if (!sameSlot) shift = CopySlotShift(db, m.Value, zbHandle);
+                        msg($"{name}: identyczny element jak w DETAIL '{nr}' (strefa {copyOf}) — ten sam detal, rozkłady jako kopia nad detalem.");
+                    }
+                    else if (!string.IsNullOrEmpty(oldMaster)) shift = null;   // detal główny zniknął — własny detal w nowym miejscu
                 }
                 BeamStore.EraseDetail(db, new[] { zbHandle });
                 if (nr <= 0) nr = NextDetailNumber(db);
@@ -535,7 +556,8 @@ namespace BricsCadRc.Core
                     Box = new Extents3d(new Point3d(w.X0, w.Y0, 0), new Point3d(w.X1, w.Y1, 0)),
                     Verts = bottom.Verts.Select(v => v + sv).ToList(),
                     TemplateZone = new Extents3d(new Point3d(tz0, w.Y1 - 1.0e7, 0), new Point3d(tz0 + TemplateZoneWidth, w.Y1, 0)),
-                    FramePlan = frameT
+                    FramePlan = frameT,
+                    Signature = signature, CopyOf = copyOf
                 };
 
                 // 3. Obiekty detalu (warstwa RC-BEAM-DETAIL) — dane czytane przed transakcją zapisu
@@ -574,6 +596,7 @@ namespace BricsCadRc.Core
                     for (int i = 0; i < zbPoly.Count; i++) anchor.AddVertexAt(i, zbPoly[i] + sv, 0, 0, 0);
                     anchor.Closed = true;
                     tg.Anchor = Add(anchor, BeamStore.RoleAnchor);
+                    if (!string.IsNullOrEmpty(signature)) BeamStore.TagDetailAnchor(tr, db, anchor, zbHandle, nr, signature, copyOf ?? "");
                     // kolor jak obrys płyty na rzucie (zielony — uwaga Bartka 2026-10-12), linia przerywana
                     if (outlStyle != null) anchor.Color = outlStyle.Value.color; else anchor.ColorIndex = BeamDetailHiddenColor;
                     if (!dashed.IsNull) { anchor.LinetypeId = dashed; anchor.LinetypeScale = BeamDetailLtScale; }
@@ -644,6 +667,146 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Detal główny identycznego elementu (uwaga Bartka 2026-10-23): ANCHOR innej, istniejącej strefy z tym samym podpisem [5] i bez [6]
+        /// (sam jest główny). Null — brak.
+        /// </summary>
+        private static (string zone, int nr, Vector2d shift, Extents3d frame)? FindDetailMaster(Database db, string signature, string ownZone)
+        {
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline apl)) continue;
+                    var d = BeamStore.ReadDetail(apl);
+                    if (d == null || d.Value.role != BeamStore.RoleAnchor || string.IsNullOrEmpty(d.Value.zone) || XLink.Same(d.Value.zone, ownZone)) continue;
+                    var g = BeamStore.ReadDetailGroup(apl);
+                    if (g.signature != signature || !string.IsNullOrEmpty(g.master)) continue;
+                    if (!XLink.TryParse(d.Value.zone, out long h) || !db.TryGetObjectId(new Handle(h), out var zid) || zid.IsErased) continue;
+                    if (!(tr.GetObject(zid, OpenMode.ForRead) is Polyline zpl)) continue;
+                    var zv = EffectiveZoneOf(tr, db, zpl).Select(v => (v.X, v.Y)).ToList();
+                    var av = GeometryHelper.GetPolylineVertices(apl).Select(v => (v.X, v.Y)).ToList();
+                    var sh = BeamDetailRules.ShiftOf(av, zv);
+                    // ramka detalu głównego (FRAME) — wysokość miejsca na kopię
+                    Extents3d fr = apl.GeometricExtents;
+                    foreach (var (fid, _, role) in BeamStore.FindDetail(tr, db, d.Value.zone))
+                        if (role == BeamStore.RoleFrame && tr.GetObject(fid, OpenMode.ForRead) is Entity fe) { fr = fe.GeometricExtents; break; }
+                    tr.Commit();
+                    return (d.Value.zone, d.Value.nr, new Vector2d(sh.X, sh.Y), fr);
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.FindDetailMaster", ex); }
+            return null;
+        }
+
+        /// <summary>
+        /// Miejsce kopii rozkładów nad detalem głównym: przesunięcie detalu głównego + k · (wysokość ramki + 2 ramiona opisów + 1500) w górę,
+        /// najmniejsze k ≥ 1 niezajęte przez inne kopie tego detalu.
+        /// </summary>
+        private static (double X, double Y) CopySlotShift(Database db, (string zone, int nr, Vector2d shift, Extents3d frame) m, string ownZone)
+        {
+            double pitch = (m.frame.MaxPoint.Y - m.frame.MinPoint.Y) + 2 * BeamDetailLeaderArm * BeamDetailAnnotScale + 1500.0;
+            var used = new HashSet<int>();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline apl)) continue;
+                    var d = BeamStore.ReadDetail(apl);
+                    if (d == null || d.Value.role != BeamStore.RoleAnchor || XLink.Same(d.Value.zone, ownZone)) continue;
+                    if (!XLink.Same(BeamStore.ReadDetailGroup(apl).master, m.zone)) continue;
+                    double y = apl.GeometricExtents.MinPoint.Y;
+                    double y0 = m.frame.MinPoint.Y;   // ramka ≈ ANCHOR − margines; k z różnicy dolnych krawędzi
+                    used.Add((int)Math.Round((y - y0) / pitch));
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.CopySlotShift", ex); }
+            int k = 1;
+            while (used.Contains(k)) k++;
+            return (m.shift.X, m.shift.Y + k * pitch);
+        }
+
+        /// <summary>
+        /// Ramka z przekątnymi wokół kopii rozkładów identycznych elementów nad detalem głównym (wzór Bartka 2026-10-23): obwiednia obiektów
+        /// detali i rozkładów stref z [6] = <paramref name="masterZone"/> + 300; stara ramka (COPYBOX) usuwana. Zwraca liczbę kopii.
+        /// </summary>
+        private static int RefreshCopyBox(Database db, string masterZone, int nr)
+        {
+            int copies = 0;
+            try
+            {
+                var old = new List<ObjectId>();
+                double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    var copyZones = new List<string>();
+                    foreach (ObjectId id in ms)
+                    {
+                        if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Entity e)) continue;
+                        var d = BeamStore.ReadDetail(e);
+                        if (d == null) continue;
+                        if (d.Value.role == BeamStore.RoleCopyBox && XLink.Same(d.Value.zone, masterZone)) old.Add(id);
+                        if (d.Value.role == BeamStore.RoleAnchor && XLink.Same(BeamStore.ReadDetailGroup(e).master, masterZone)) copyZones.Add(d.Value.zone);
+                    }
+                    copies = copyZones.Count;
+                    void Grow(Entity e)
+                    {
+                        try
+                        {
+                            var x = e.GeometricExtents;
+                            x0 = Math.Min(x0, x.MinPoint.X); y0 = Math.Min(y0, x.MinPoint.Y); x1 = Math.Max(x1, x.MaxPoint.X); y1 = Math.Max(y1, x.MaxPoint.Y);
+                        }
+                        catch (System.Exception) { }
+                    }
+                    foreach (var z in copyZones)
+                    {
+                        foreach (var (id, _, role) in BeamStore.FindDetail(tr, db, z))
+                            if (role != BeamStore.RolePlanRef && tr.GetObject(id, OpenMode.ForRead) is Entity e) Grow(e);
+                        foreach (var (dist, annot) in BeamStore.FindGenerated(tr, db, z, null))
+                            foreach (var oid in new[] { dist, annot })
+                                if (!oid.IsNull && !oid.IsErased && tr.GetObject(oid, OpenMode.ForRead) is Entity e) Grow(e);
+                    }
+                    tr.Commit();
+                }
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    foreach (var id in old) if (!id.IsErased) tr.GetObject(id, OpenMode.ForWrite).Erase();
+                    if (copies > 0 && x1 > x0 && y1 > y0)
+                    {
+                        x0 -= 300; y0 -= 300; x1 += 300; y1 += 300;
+                        var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                        var ents = new List<Entity>();
+                        var box = new Polyline();
+                        box.AddVertexAt(0, new Point2d(x0, y0), 0, 0, 0); box.AddVertexAt(1, new Point2d(x1, y0), 0, 0, 0);
+                        box.AddVertexAt(2, new Point2d(x1, y1), 0, 0, 0); box.AddVertexAt(3, new Point2d(x0, y1), 0, 0, 0);
+                        box.Closed = true;
+                        ents.Add(box);
+                        ents.Add(new Line(new Point3d(x0, y0, 0), new Point3d(x1, y1, 0)));
+                        ents.Add(new Line(new Point3d(x0, y1, 0), new Point3d(x1, y0, 0)));
+                        foreach (var e in ents)
+                        {
+                            e.SetDatabaseDefaults(db);
+                            e.Layer = BeamStore.DetailLayer;
+                            e.ColorIndex = 7;
+                            ms.AppendEntity(e);
+                            tr.AddNewlyCreatedDBObject(e, true);
+                            BeamStore.TagDetail(tr, db, e, masterZone, nr, BeamStore.RoleCopyBox);
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.RefreshCopyBox", ex); }
+            return copies;
+        }
+
+        /// <summary>
         /// Po prętach detalu: kolizje prętów reprezentatywnych w obrysie ANCHOR-a (pręty belki są pomijane — dla porządku jak detal otworu),
         /// tytuł „DETAIL 'n'” / „SCALE 1:25” pod najniższym opisem detalu, na rzutach (dolnym i górnym — <paramref name="topDelta"/> =
         /// przesunięcie rzutu górnego) ramka okna detalu i odnośnik „DETAIL 'n'” do ramki — jak detal otworu (decyzja 2026-10-12).
@@ -683,6 +846,8 @@ namespace BricsCadRc.Core
 
                 SingleBarEngine.EnsureTextStyle(db, TitleTextStyle);
                 double cx = (tg.Box.MinPoint.X + tg.Box.MaxPoint.X) / 2.0;
+                // kopia rozkładów identycznego elementu (2026-10-23) — bez tytułu (tytuł ma detal główny)
+                if (tg.CopyOf == null)
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
@@ -748,6 +913,11 @@ namespace BricsCadRc.Core
                     if (!lid.IsNull || !fid.IsNull) refs++;
                 }
                 msg($"{name}: DETAIL '{tg.Number}' — rozkładów w detalu {tg.Dists.Count}, odnośniki na rzutach: {refs}.");
+                if (!string.IsNullOrEmpty(tg.Signature))
+                {
+                    int nc = RefreshCopyBox(db, tg.CopyOf ?? tg.ZoneHandle, tg.Number);
+                    if (nc > 0) msg($"{name}: DETAIL '{tg.Number}' — identycznych elementów: {nc + 1} (kopie rozkładów nad detalem: {nc}).");
+                }
             }
             catch (System.Exception ex)
             {

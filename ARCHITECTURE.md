@@ -1600,6 +1600,15 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   z rzutu (`CopyCantileverLabels`, bez łączenia identycznych), opisy strzemion części (`GbLinkLeader`): narożniki — prosto na zewnątrz
   końca okna, część GB — wzdłuż rozkładu do środka części i w poprzek poza okno (nie na jednej linii). Strzemiona części
   w płycie co 150 dokładnie, reszta po równo (wzór: „4 H12-12-150 LINKS”), poza płytą — rozstaw z rekordu (200).
+- **Uwagi Bartka 2026-10-23 (cd.):** podział strzemion GB na części — po LINII USKOKU płyt (`ViewSlabLoops`: linie uskoku, obrys
+  tylko bez uskoku; wzór: naroże 600 → „4 H12-12-150”, GB z nibami 6920 → „35 H12-15-200”); w części narożnej także strzemiona
+  w drugim kierunku (pręty wzdłuż osi, B = część − 2 · 50, w poprzek co 150 dokładnie — wzór „4 H12-14-150 LINKS”).
+- **Identyczne belki / wsporniki jednym detalem (uwaga Bartka 2026-10-23):** podpis elementu (`BeamSignature`: parametry RC_BEAM bez [6],
+  strefa względem naroża — zaokrąglenie 10, odcinki z zamknięciami, części strzemion GB; wspornik: kierunek, wysięg, szerokość, h, strefa
+  przy palu, uskok) w ANCHOR-ze (RC_BEAM_DETAIL [5], [6] = strefa detalu głównego). Pierwszy element = detal główny (tytuł, szablony),
+  kolejny o tym samym podpisie — na rzucie ramka i „DETAIL ’n’” detalu głównego, jego rozkłady (cały detal bez tytułu) nad detalem
+  głównym w miejscu k · (ramka + 2 ramiona opisów + 1500), wokół kopii ramka z przekątnymi (rola COPYBOX, odświeżana po każdym
+  generowaniu). BBS liczy kopie (zwykłe rozkłady). Tylko przesunięcie — obrót / odbicie = inny detal.
 - Do zrobienia (kolejne etapy): przekrój przez GB poza płytą (TOC), belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

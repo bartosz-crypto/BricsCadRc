@@ -172,8 +172,12 @@ namespace BricsCadRc.Core
                 ? new List<((double X, double Y) A, (double X, double Y) B)> { (Tup(P(root, c0)), Tup(P(root, c1))) }
                 : null;
             // uwaga Bartka 2026-10-21: ramka jak przy belce — po prostu offset strefy (bez przycinania do obrysu z języczkiem)
+            // uwaga Bartka 2026-10-23: identyczne wsporniki (kierunek, wymiary, strefa przy palu, uskok) — jeden detal, kopie rozkładów nad nim
+            string F(double x) => (Math.Round(x / 10.0) * 10.0).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+            string sig = $"C|{(alongX ? "X" : "Y")}{sign}|{F(reach)}|{F(width)}|{F(h)}|{F(rootLen)}|{F(rootH)}|{(stepped ? 1 : 0)}|{F(g.StepIn)}|{F(g.InSlab)}|" +
+                         $"{data.Height}|{data.RootThk}|{data.RootLen}";
             var tg = PrepareBeamDetail(doc, dv, null, handle, zone, m => msg(m.Replace("belka", "wspornik")), offsetFrame: true,
-                                       extraLines: stepLines);
+                                       extraLines: stepLines, signature: sig);
             if (tg == null) return;
             CopyCantileverLabels(db, tg, zone, m => msg($"{name}: {m}"));
             SetBeamDetailOverrides(tg);

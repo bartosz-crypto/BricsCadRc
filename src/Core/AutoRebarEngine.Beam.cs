@@ -258,6 +258,45 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Podpis belki do wspólnego detalu identycznych belek (uwaga Bartka 2026-10-23): parametry RC_BEAM (bez [6]), strefa względem
+        /// lewego dolnego naroża (zaokrąglenie 10 mm — GA: 599 / 600), odcinki (rodzaje końców, zamknięcia, lico przy krawędzi) i części
+        /// strzemion GB (w płycie / poza płytą). Ten sam podpis = te same pręty — przesunięcie bez obrotu i odbicia.
+        /// </summary>
+        private static string BeamSignature(BeamParams p, List<Point2d> zone, List<BeamGeometry.Segment> segs, List<List<(double X, double Y)>> slabLoops)
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder("B|");
+                using (var rb = BeamStore.Build(p, ""))
+                {
+                    var v = rb.AsArray();
+                    for (int i = 1; i < v.Length; i++)
+                        if (i != BeamStore.SlabIdx) sb.Append(Convert.ToString(v[i].Value, CultureInfo.InvariantCulture)).Append(';');
+                }
+                double mx = zone.Min(q => q.X), my = zone.Min(q => q.Y);
+                string R(double x) => (Math.Round(x / 10.0) * 10.0).ToString("0", CultureInfo.InvariantCulture);
+                var pts = zone.Select(q => (X: Math.Round((q.X - mx) / 10.0) * 10.0, Y: Math.Round((q.Y - my) / 10.0) * 10.0)).ToList();
+                if (pts.Count > 1 && pts[0] == pts[pts.Count - 1]) pts.RemoveAt(pts.Count - 1);
+                if (RectilinearPolygons.SignedArea(pts) < 0) pts.Reverse();
+                int k0 = Enumerable.Range(0, pts.Count).OrderBy(i => pts[i].X).ThenBy(i => pts[i].Y).First();
+                sb.Append("|Z");
+                for (int i = 0; i < pts.Count; i++) { var q = pts[(k0 + i) % pts.Count]; sb.Append(R(q.X)).Append(',').Append(R(q.Y)).Append(' '); }
+                foreach (var g in segs)
+                {
+                    double o = g.AlongX ? mx : my, c = g.AlongX ? my : mx;
+                    sb.Append("|S").Append(g.AlongX ? 'X' : 'Y').Append(R(g.FaceLo - o)).Append(',').Append(R(g.FaceHi - o)).Append(',')
+                      .Append(R(g.AcrossLo - c)).Append(',').Append(R(g.AcrossHi - c)).Append(',').Append(g.LoKind).Append(',').Append(g.HiKind)
+                      .Append(',').Append(g.LoClose).Append(',').Append(g.HiClose).Append(',').Append(g.OuterSide);
+                    if (slabLoops != null)
+                        foreach (var part in LinkParts(g, slabLoops, ""))
+                            sb.Append("|P").Append(R(part.Lo - o)).Append(',').Append(R(part.Hi - o)).Append(part.Shape);
+                }
+                return sb.ToString();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.BeamSignature", ex); return null; }
+        }
+
+        /// <summary>
         /// GB poza płytą (uwaga Bartka 2026-10-23 — opisy strzemion części na jednej linii nachodziły): linia odniesienia opisu strzemion
         /// części odcinka — część skrajna przy Lo: prosto na zewnątrz końca okna (w stronę Lo), przy Hi — w stronę Hi; część środkowa (GB):
         /// wzdłuż linii rozkładu do środka części (albo 1/4, 3/4), potem w poprzek belki poza okno (góra, potem dół).
@@ -307,8 +346,9 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
-        /// GB poza płytą: obrysy zewnętrzne płyt rzutu (zamknięte SD-PILED-RAFT z tym samym znacznikiem RC_GA [płyta, rzut] — szereg płyt;
-        /// linie uskoku w środku pominięte). Bez znacznika — tylko obrys rzutu.
+        /// GB poza płytą: pełna grubość płyt rzutu (zamknięte SD-PILED-RAFT z tym samym znacznikiem RC_GA [płyta, rzut] — szereg płyt):
+        /// linia uskoku płyty (uwaga Bartka 2026-10-23, wzór PLOT 304–307: strefa narożna 600 od linii uskoku — „4 H12-12-150 LINKS”,
+        /// GB z nibami 6920 — „35 H12-15-200 LINKS”), obrys zewnętrzny tylko gdy płyta nie ma linii uskoku. Bez znacznika — obrys rzutu.
         /// </summary>
         private static List<List<(double X, double Y)>> ViewSlabLoops(Database db, BeamView view)
         {
@@ -333,15 +373,16 @@ namespace BricsCadRc.Core
                 }
                 tr.Commit();
                 var boxes = cand.Select(GeometryHelper.VerticesBbox).ToList();
+                bool In(int i, int j)   // obwiednia i w obwiedni j (j większa)
+                    => i != j && boxes[j].MinPoint.X <= boxes[i].MinPoint.X + 1 && boxes[j].MaxPoint.X >= boxes[i].MaxPoint.X - 1
+                       && boxes[j].MinPoint.Y <= boxes[i].MinPoint.Y + 1 && boxes[j].MaxPoint.Y >= boxes[i].MaxPoint.Y - 1
+                       && (boxes[j].MaxPoint.X - boxes[j].MinPoint.X) * (boxes[j].MaxPoint.Y - boxes[j].MinPoint.Y)
+                          > (boxes[i].MaxPoint.X - boxes[i].MinPoint.X) * (boxes[i].MaxPoint.Y - boxes[i].MinPoint.Y) + 1.0;
                 for (int i = 0; i < cand.Count; i++)
                 {
-                    var bi = boxes[i];
-                    bool inner = Enumerable.Range(0, cand.Count).Any(j => j != i
-                        && boxes[j].MinPoint.X <= bi.MinPoint.X + 1 && boxes[j].MaxPoint.X >= bi.MaxPoint.X - 1
-                        && boxes[j].MinPoint.Y <= bi.MinPoint.Y + 1 && boxes[j].MaxPoint.Y >= bi.MaxPoint.Y - 1
-                        && (boxes[j].MaxPoint.X - boxes[j].MinPoint.X) * (boxes[j].MaxPoint.Y - boxes[j].MinPoint.Y)
-                           > (bi.MaxPoint.X - bi.MinPoint.X) * (bi.MaxPoint.Y - bi.MinPoint.Y) + 1.0);
-                    if (!inner) res.Add(cand[i].Select(q => (q.X, q.Y)).ToList());
+                    bool inner = Enumerable.Range(0, cand.Count).Any(j => In(i, j));
+                    bool hasInner = Enumerable.Range(0, cand.Count).Any(k => In(k, i));
+                    if (inner || !hasInner) res.Add(cand[i].Select(q => (q.X, q.Y)).ToList());
                 }
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.ViewSlabLoops", ex); }
@@ -471,7 +512,10 @@ namespace BricsCadRc.Core
             if (p.DetailView)
             {
                 // GB poza płytą (test13): ramka = offset całej strefy (jak wspornik), nie przycięta do obrysu płyty [6]
-                tg = PrepareBeamDetail(doc, bottom, top, zbHandle, effPoly, msg, zbPoly, offsetFrame: p.TopDrop > 0, allPilesInFrame: p.TopDrop > 0);
+                // uwaga Bartka 2026-10-23: identyczne belki (wymiary, parametry, zamknięcia końców) — jeden detal, kopie rozkładów nad nim
+                string sig = BeamSignature(p, effPoly, segs, p.TopDrop > 0 ? ViewSlabLoops(db, bottom) : null);
+                tg = PrepareBeamDetail(doc, bottom, top, zbHandle, effPoly, msg, zbPoly, offsetFrame: p.TopDrop > 0, allPilesInFrame: p.TopDrop > 0,
+                                       signature: sig);
                 if (tg == null) return;
                 // GB (uwaga Bartka 2026-10-23): opisy „GB-…” / „525THK” z rzutu w detalu — jak wspornik
                 if (p.TopDrop > 0) CopyCantileverLabels(db, tg, zbPoly, m => msg($"{name}: {m}"), dedupe: false);
@@ -571,6 +615,34 @@ namespace BricsCadRc.Core
                                              }) : null, tg: tg))
                             res.Stirrups++;
                         if (fromUb) msg($"{name}: strzemiona przesunięte o {BeamStirrupUb03Shift:F0} względem UB 03 (rozstaw {step:F0}).");
+                    }
+                    // GB — strefa narożna w płycie (uwaga Bartka 2026-10-23, wzór „4 H12-14-150 LINKS”): strzemiona także w drugim kierunku —
+                    // pręty wzdłuż osi belki na długości części (B = część − 2 · otulina), rozstaw w poprzek co 150 dokładnie (jak strefa przy palu)
+                    if (cornerPart)
+                    {
+                        double bAlong = BeamGeometry.StirrupWidth(part.Hi - part.Lo, p.CoverSide);
+                        var tpl2 = bAlong > 0 ? FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: partShape,
+                                                                         a: Aseg, b: bAlong, code: BeamGeometry.CodeLinks) : (ObjectId.Null, null);
+                        var (f2, st2, n2, _) = BeamGeometry.StirrupLayout(s.AcrossLo, s.AcrossHi, partSp, offFirst);
+                        if (n2 > 1)
+                        {
+                            double av2 = (n2 - 1) * st2;
+                            int m2 = (int)Math.Floor(av2 / partSp + 1e-9) + 1;
+                            f2 += (av2 - (m2 - 1) * partSp) / 2.0; st2 = partSp; n2 = m2;
+                        }
+                        if (!tpl2.Item1.IsNull && n2 > 0)
+                        {
+                            double l2 = f2 + (n2 - 1) * st2;
+                            double k0 = part.Lo + p.CoverSide, k1 = part.Hi - p.CoverSide;
+                            bool barsX2 = s.AlongX;
+                            double X0 = barsX2 ? k0 : f2, X1 = barsX2 ? k1 : l2, Y0 = barsX2 ? f2 : k0, Y1 = barsX2 ? l2 : k1;
+                            if (BeamDistribution(db, bottom, tpl2, X0, Y0, X1, Y1, barsX2, p.StirrupDia, bAlong, partSp,
+                                                 n2 > 1 ? st2 : double.NaN, BeamGeometry.CodeLinks, BeamGeometry.SuffixLinks,
+                                                 noSpacing: false, shape: tpl2.Item2.ShapeCode, repr: 0, zoneHandle: zbHandle, tg: tg))
+                                res.Stirrups++;
+                            msg($"{name}: strefa narożna {part.Lo:F0}..{part.Hi:F0} — strzemiona {partShape} w drugim kierunku: {n2} co {partSp:F0}, " +
+                                $"A = {Aseg:F0}, B = {bAlong:F0}.");
+                        }
                     }
                 }
                 else msg($"{name}: wymiary strzemienia ≤ 0 (H = {Hpart:F0}, szer. = {s.Width:F0}) — strzemiona pominięte.");

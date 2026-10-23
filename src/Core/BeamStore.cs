@@ -349,6 +349,38 @@ namespace BricsCadRc.Core
         public const int DetailZoneIdx = 2;   // RC_BEAM_DETAIL [2] strefa (CloneRemap)
         public const string RoleAnchor = "ANCHOR", RoleLine = "LINE", RolePile = "PILE", RoleText = "TEXT", RoleTitle = "TITLE",
                             RolePlanRef = "PLANREF", RoleFrame = "FRAME";
+        /// <summary>Uwaga Bartka 2026-10-23: identyczne belki / wsporniki jednym detalem — ramka z przekątnymi wokół kopii rozkładów
+        /// nad detalem ([2] = strefa detalu głównego).</summary>
+        public const string RoleCopyBox = "COPYBOX";
+
+        /// <summary>
+        /// ANCHOR z grupą identycznych elementów (uwaga Bartka 2026-10-23): [5] podpis elementu (wymiary, parametry — ten sam podpis = ten sam
+        /// detal), [6] strefa detalu głównego (1005, XLink; "" — ten detal jest główny, inaczej kopia rozkładów nad detalem głównym).
+        /// </summary>
+        public static void TagDetailAnchor(Transaction tr, Database db, Entity e, string zoneHandle, int nr, string signature, string masterHandle)
+        {
+            EnsureApp(tr, db, DetailApp);
+            if (!e.IsWriteEnabled) e.UpgradeOpen();
+            e.XData = new ResultBuffer(
+                new TypedValue((int)DxfCode.ExtendedDataRegAppName, DetailApp),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, DetailFormat),     // [1]
+                XLink.Write(zoneHandle),                                              // [2]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)nr),        // [3]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, RoleAnchor),     // [4]
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, signature ?? ""), // [5]
+                XLink.Write(masterHandle ?? ""));                                     // [6]
+        }
+
+        /// <summary>ANCHOR: [5] podpis i [6] strefa detalu głównego ("" — główny / brak pól).</summary>
+        public static (string signature, string master) ReadDetailGroup(Entity e)
+        {
+            TypedValue[] v;
+            using (var rb = e?.GetXDataForApplication(DetailApp)) v = rb?.AsArray();
+            if (v == null) return ("", "");
+            string sig = v.Length > 5 ? Convert.ToString(v[5].Value, CultureInfo.InvariantCulture) ?? "" : "";
+            string master = v.Length > 6 ? XLink.Read(v[6]) : "";
+            return (sig, master ?? "");
+        }
 
         public static void TagDetail(Transaction tr, Database db, Entity e, string zoneHandle, int nr, string role)
         {
