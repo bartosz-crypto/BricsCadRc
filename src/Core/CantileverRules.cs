@@ -261,6 +261,13 @@ namespace BricsCadRc.Core
         public const double MaxColumnSpacing = 175.0, NominalColumnSpacing = 150.0;
         /// <summary>Dodatek ramienia U-bara ponad zakład przy prętach prostych (jak koniec belki, BeamGeometry).</summary>
         public const double UBarArmExtra = 90.0;
+        /// <summary>Najmniejszy zakład U-barów głównych wspornika (decyzja Bartka 2026-10-23, test10: „min. 700”; 40·Ø H16 = 640 za mało).</summary>
+        public const double UBarMinLap = 700.0;
+        /// <summary>
+        /// Wspornik poziomy (oś X, decyzja Bartka 2026-10-23, test10-poprawiony): w strefie przy palu JEDNA pozycja strzemion w obu kierunkach —
+        /// A = najwyższe możliwe − 15 mm (375: 290 → 275), co 150. Wspornik pionowy (oś Y) — bez zmian (zewnętrzne + wewnętrzne A − 2·Ø).
+        /// </summary>
+        public const double RootSingleLinkDrop = 15.0, RootSingleLinkSpacing = 150.0;
         /// <summary>Strefa wspornika bez strefy przy palu — w płycie na długość zakotwienia prętów prostych (magenta nakłada się na płytę).</summary>
         public const double NoRootExtension = StraightIntoSlab;
         /// <summary>
@@ -297,7 +304,7 @@ namespace BricsCadRc.Core
         /// </summary>
         public static void NestRootLinksGlobal(Plan p, bool axisAlongX)
         {
-            if (p == null || !axisAlongX) return;
+            if (p == null || !axisAlongX || p.SingleRootLink) return;
             var across = p.Links.FirstOrDefault(l => !l.AlongAxis && l.Shape == LinkShapeInSlab && l.S1 <= 0.5);
             var along = p.Links.FirstOrDefault(l => l.AlongAxis && l.Shape == LinkShapeInSlab);
             if (across == null || along == null) return;
@@ -370,6 +377,8 @@ namespace BricsCadRc.Core
             public double SideT0, SideT1;
             public List<UBarRun> SideUBars = new List<UBarRun>();
             public List<StraightRun> SideStraight = new List<StraightRun>();
+            /// <summary>Strefa przy palu — jedna pozycja strzemion w obu kierunkach (wspornik poziomy, <see cref="RootSingleLinkDrop"/>).</summary>
+            public bool SingleRootLink;
         }
 
         /// <summary>
@@ -379,7 +388,8 @@ namespace BricsCadRc.Core
         /// tylko we wsporniku (ramię do nasady, maks. 1300) + pręty proste H12 górą i dołem do 1000 za krawędź (zakład z ramieniem).
         /// Strzemiona 4-leg (2 zachodzące) wg <see cref="LinkFor"/> — osobno wysięg (h) i strefa przy palu (rootH).
         /// </summary>
-        public static Plan PlanBars(double reach, double width, double h, double rootLen, double rootH, double maxLen = 6000)
+        public static Plan PlanBars(double reach, double width, double h, double rootLen, double rootH, double maxLen = 6000,
+                                    bool singleRootLink = false)
         {
             var pl = new Plan();
             double cover = BeamGeometry.DefaultCoverSide;
@@ -390,21 +400,31 @@ namespace BricsCadRc.Core
             int cols = inner <= 0 ? 1 : Math.Max(2, (int)Math.Ceiling(inner / MaxColumnSpacing - 1e-9) + 1);
             var (t0, sp) = BeamGeometry.BarsAcross(0, width, cols, MainDia, dLink, cover);
             pl.Columns = cols; pl.T0 = t0; pl.ColumnSpacing = sp;
-            double lap = BeamGeometry.Ceil25(40.0 * MainDia);
+            // zakład U-barów głównych: 40·Ø, nie mniej niż 700 (decyzja Bartka 2026-10-23)
+            double lap = Math.Max(BeamGeometry.Ceil25(40.0 * MainDia), UBarMinLap);
 
             // strzemiona
             // lo…hi — zakres rozstawu; span — wymiar przekroju w poprzek prętów strzemienia (szerokość / długość strefy), ncol — pręty
             // wewnątrz; along — drugi kierunek (pręty wzdłuż osi na L0…L1)
             void Links(double lo, double hi, double hh, string where, string shape, double span, int ncol, bool along = false,
-                       double l0 = 0, double l1 = 0)
+                       double l0 = 0, double l1 = 0, double spacing = double.NaN, double drop = 0)
             {
                 var (d, s) = LinkFor(hh);
+                if (!double.IsNaN(spacing)) s = spacing;
                 double a = BeamGeometry.StirrupHeightCovers(hh, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom);
+                if (drop > 0) a = Math.Floor((a - drop) / 5.0 + 1e-9) * 5.0;
                 // uwaga Bartka 2026-10-22 („te same zasady co w belkach”): Auto jak belki — H ≤ 375 dwa zachodzące (4-leg, B 370),
                 // wyżej 2-cięte na pełną szerokość (600 → B 510)
                 var legs = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, hh, span, cover, BeamGeometry.DefaultCoverBottom, d,
                                                      new[] { (ncol, MainDia) }, edgeBeam: true);
                 var (first, step, n, _) = BeamGeometry.StirrupLayout(lo, hi, s, BeamGeometry.StirrupFirstOffset(d, BeamGeometry.LinkEndCover));
+                if (!double.IsNaN(spacing) && n > 1)
+                {
+                    // rozstaw dokładnie zadany (co 150), reszta po równo z obu stron (test10-poprawiony: 4 co 150 zamiast 4 co 169)
+                    double av = (n - 1) * step;
+                    int m = (int)Math.Floor(av / spacing + 1e-9) + 1;
+                    first += (av - (m - 1) * spacing) / 2.0; step = spacing; n = m;
+                }
                 if (a <= 0 || n <= 0) { pl.Messages.Add($"{where}: strzemiona pominięte (h = {hh:F0})."); return; }
                 pl.Links.Add(new LinkRun { S0 = lo, S1 = hi, First = first, Step = step, Count = n, Dia = d, A = a, Spacing = s,
                                            Legs = legs.Legs, B = legs.Legs == 4 ? legs.B4 : legs.BOuter, Note = $"{where}: {legs.Note}",
@@ -415,14 +435,21 @@ namespace BricsCadRc.Core
             if (root)
             {
                 // strefa przy palu (pile cap, w płycie): strzemiona 51 w obu kierunkach (decyzja Bartka 2026-10-21, wzór PLOT 28 — 12 i 14)
-                Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols);
+                // wspornik poziomy (decyzja Bartka 2026-10-23): jedna pozycja w obu kierunkach, A − 15, co 150
+                double rs = singleRootLink ? RootSingleLinkSpacing : double.NaN, rd = singleRootLink ? RootSingleLinkDrop : 0;
+                pl.SingleRootLink = singleRootLink;
+                Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols, spacing: rs, drop: rd);
                 double inner2 = rootLen - 2 * off;
                 int cols2 = inner2 <= 0 ? 1 : Math.Max(2, (int)Math.Ceiling(inner2 / MaxColumnSpacing - 1e-9) + 1);
-                Links(0, width, rootH, "strefa przy palu (drugi kierunek)", LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0);
+                Links(0, width, rootH, "strefa przy palu (drugi kierunek)", LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0,
+                      spacing: rs, drop: rd);
                 // uwaga Bartka 2026-10-22: oba kierunki tej samej wysokości kolidują — drugi kierunek niższy o Ø strzemienia, w dół do 5
-                // — drugi kierunek wchodzi w pierwszy: A − 2·Ø w dół do 5 (375: 290 − 24 = 266 → 265)
+                // — drugi kierunek wchodzi w pierwszy: A − 2·Ø w dół do 5 (375: 290 − 24 = 266 → 265); jedna pozycja — bez zagnieżdżenia
                 var second = pl.Links.LastOrDefault();
-                if (second != null && second.AlongAxis) second.A = SecondDirLinkA(second.A, second.Dia);
+                if (!singleRootLink && second != null && second.AlongAxis) second.A = SecondDirLinkA(second.A, second.Dia);
+                if (singleRootLink)
+                    pl.Messages.Add($"strefa przy palu (wspornik poziomy): jedna pozycja strzemion w obu kierunkach — A najwyższe − {RootSingleLinkDrop:F0} " +
+                                    $"({pl.Links.Last().A:F0}), co {RootSingleLinkSpacing:F0}.");
             }
 
             // U-bary: B = A strzemienia − 2·Ø strzemienia W DÓŁ do 5 (jak pionowe U-bary belki, Floor5; zasada ogólna 2026-10-22: element
@@ -439,13 +466,14 @@ namespace BricsCadRc.Core
                 double arm = BeamGeometry.Ceil25((span + lap) / 2.0);
                 if (arm <= MaxUBarArm + 0.5)
                 {
+                    arm = BeamGeometry.UBarArmForModule(arm, bU, MainDia);   // długość całkowita w module 50 (2026-10-23)
                     pl.UBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = arm, B = bU, Dia = MainDia });
                     pl.UBars.Add(new UBarRun { Back = backIn, ArmDir = +1, A = arm, B = bU, Dia = MainDia });
                     pl.Messages.Add($"U-bary H{MainDia} A = {arm:F0} na obu końcach (zakład {2 * arm - span:F0} ≥ {lap:F0}).");
                 }
                 else
                 {
-                    double a2 = BeamGeometry.Ceil25(lap + UBarArmExtra);
+                    double a2 = BeamGeometry.UBarArmForModule(BeamGeometry.Ceil25(lap + UBarArmExtra), bU, MainDia);
                     pl.UBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = a2, B = bU, Dia = MainDia });
                     pl.UBars.Add(new UBarRun { Back = backIn, ArmDir = +1, A = a2, B = bU, Dia = MainDia });
                     double s0 = backIn + a2 - lap, s1 = backOut - a2 + lap;
@@ -460,7 +488,8 @@ namespace BricsCadRc.Core
             }
             else
             {
-                double arm = Math.Min(BeamGeometry.Ceil25(backOut), MaxUBarArm);
+                double armMax = Math.Min(BeamGeometry.Ceil25(backOut), MaxUBarArm);
+                double arm = BeamGeometry.UBarArmForModule(armMax, bU, MainDia, maxArm: armMax);
                 pl.UBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = arm, B = bU, Dia = MainDia });
                 // pręty proste H12 górą i dołem: od 1000 za krawędź (w płycie) do zakładu z ramieniem U-bara (zakład wg większej średnicy)
                 double end = backOut - arm + lap;
@@ -479,22 +508,24 @@ namespace BricsCadRc.Core
                 double bS = Math.Floor((BeamGeometry.StirrupWidth(width, cover) - 2 * dLink) / 5.0 + 1e-9) * 5.0;
                 pl.SideLevels = levels; pl.SideDia = dS;
                 pl.SideT0 = cover + dLink + dS / 2.0; pl.SideT1 = width - pl.SideT0;
+                // uwaga Bartka 2026-10-23 (przekrój A-A — kolizja): tył UB SIDE W ŚRODKU tyłu U-barów głównych (o Ø U-bara)
+                double sOut = backOut - MainDia;
                 if (root)
                 {
-                    double backIn = -rootLen + cover + LinkFor(rootH).Dia;   // UB SIDE — też w środku strzemion strefy
-                    double span = backOut - backIn;
+                    double backIn = -rootLen + cover + LinkFor(rootH).Dia + MainDia;   // UB SIDE — w środku strzemion strefy i U-bara
+                    double span = sOut - backIn;
                     double arm = BeamGeometry.Ceil25((span + lapS) / 2.0);
                     if (arm <= MaxUBarArm + 0.5)
                     {
-                        pl.SideUBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = arm, B = bS, Dia = dS });
+                        pl.SideUBars.Add(new UBarRun { Back = sOut, ArmDir = -1, A = arm, B = bS, Dia = dS });
                         pl.SideUBars.Add(new UBarRun { Back = backIn, ArmDir = +1, A = arm, B = bS, Dia = dS });
                     }
                     else
                     {
                         double a2 = BeamGeometry.Ceil25(lapS + dS);   // jak koniec belki (UB SIDE 525)
-                        pl.SideUBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = a2, B = bS, Dia = dS });
+                        pl.SideUBars.Add(new UBarRun { Back = sOut, ArmDir = -1, A = a2, B = bS, Dia = dS });
                         pl.SideUBars.Add(new UBarRun { Back = backIn, ArmDir = +1, A = a2, B = bS, Dia = dS });
-                        double s0 = backIn + a2 - lapS, s1 = backOut - a2 + lapS;
+                        double s0 = backIn + a2 - lapS, s1 = sOut - a2 + lapS;
                         foreach (var (o, len) in BeamGeometry.PlanBars(s1 - s0, maxLen, lapS))
                             pl.SideStraight.Add(new StraightRun { S0 = s0 + o, S1 = s0 + o + len, Dia = dS });
                     }
@@ -502,8 +533,8 @@ namespace BricsCadRc.Core
                 else
                 {
                     // bez strefy przy palu — UB SIDE tylko we wsporniku (ramię do nasady, maks. 1300); w płytę bez prętów bocznych
-                    double arm = Math.Min(BeamGeometry.Ceil25(backOut), MaxUBarArm);
-                    pl.SideUBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = arm, B = bS, Dia = dS });
+                    double arm = Math.Min(BeamGeometry.Ceil25(sOut), MaxUBarArm);
+                    pl.SideUBars.Add(new UBarRun { Back = sOut, ArmDir = -1, A = arm, B = bS, Dia = dS });
                 }
                 pl.Messages.Add($"pręty boczne H{dS}: {levels} na bok (h {h:F0}, jak belki) — UB SIDE " +
                                 string.Join(" + ", pl.SideUBars.Select(u => $"A {u.A:F0} B {u.B:F0}")) +

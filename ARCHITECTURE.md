@@ -463,6 +463,9 @@ Ogólne:
   gdy po drodze do boku leży inny UB na tej samej linii krawędzi (np. UB 03 między wspornikiem a zatoką) albo bok jest dalej niż 2500 mm
   (`SideLeaderAlongEdge`, `SideLabelMaxGap`). Linia rozkładu UB 03 blisko krawędzi: domyślnie 250 mm za krawędzią, przy kolizji najpierw
   drobne przesunięcia co 50 mm (200 / 300 / 150 / 350 …), dopiero potem dalej (`PlaceLabel(alongTries)`; wcześniej skoki 595 / 940 / 1285).
+- **U-bary (kształt 21) — długość całkowita w module 50 mm (decyzja Bartka 2026-10-23, wsporniki i belki):** ramiona A = C w górę co 5 mm
+  (zakład tylko rośnie; 1275 / 175 → 1285: 2675 → 2700), B bez zmian; ramię ograniczone geometrią — w dół (`BeamGeometry.UBarArmForModule`,
+  `PlanVerticalUBars`, `CantileverRules.PlanBars`). UB SIDE i UB płyty — bez zmian. Zmiana wyniku belek względem wzorca (S-REG — oczekiwana).
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
   element, który musi się zmieścić w innym (strzemię drugiego kierunku w strzemieniu, U-bar w strzemieniu, noga w nodze…), ma
   wymiar = miejsce w środku (np. A − 2·Ø) zaokrąglony **w dół** do 5 mm — lepiej mniej wysokości niż kolizja (290, H12 → 266 → 265;
@@ -1500,6 +1503,17 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
     (`UBarSeatInset`).     drugi kierunek (osobna pozycja) WCHODZI W PIERWSZY: A − 2·Ø strzemienia **w dół** do 5 — wewnętrzne musi się zmieścić (375: 290 − 24 = 266 → **265**; 750: 665 → 640)
     (uwaga Bartka 2026-10-22; ~~275~~, ~~270~~ — kolizja). Wariant „jedna pozycja” (oba kierunki tej samej wysokości
     obniżone o Ø — jeden przy spodzie, drugi przy wierzchu, zachodzą na siebie) — nie wybrany.
+  - **Wspornik POZIOMY (oś X) — jedna pozycja strzemion w strefie przy palu (decyzja Bartka 2026-10-23, test10-poprawiony):** oba kierunki
+    ta sama pozycja, A = najwyższe możliwe − **15** (375: 290 → **275**), rozstaw dokładnie **150** (reszta po równo z obu stron: 4 co 150
+    zamiast 4 co 169). Przekrój: strzemiona z prętami wzdłuż X przy wierzchu (podniesione o 15), wzdłuż Y przy spodzie — krzyżują się
+    (`SectionPlanner.SingleLinkLift` / `SingleRootLinkDrop`). Wspornik pionowy (oś Y) — jak wyżej (zewnętrzne + wewnętrzne A − 2·Ø)
+    (`CantileverRules.PlanBars(singleRootLink)`; pytanie Bartka 2026-10-23 — „tylko wspornik poziomy”).
+  - **U-bary główne wspornika: zakład ≥ 700** (`UBarMinLap`, 2026-10-23; 40·Ø = 640 za mało); UB SIDE — jak dotąd (40·Ø).
+  - **Przekrój wspornika / strefy przy palu:** opis strzemienia w widoku NAD nim, strzałka do górnego ramienia (test10-poprawiony D-D / C-C).
+  - **Przekrój wspornika (uwagi Bartka 2026-10-23):** najpierw pręty główne przekroju (kropki prętów wspornika / strefy przy palu) w rzędzie
+    opisów najbliżej betonu, siatka i nib w tym miejscu — dalsze rzędy; tył U-bara w widoku licuje się z pionowym ramieniem strzemienia
+    (lico zewnętrzne = lico zewnętrzne, `FlushCantUBarsToLinks`, ≤ 30 mm). **UB SIDE — tył w środku tyłu U-barów głównych** (o Ø U-bara,
+    plan `PlanBars`; wcześniej kolizja kropki z U-barem w A-A).
   - **Ramka detalu:** sam offset strefy (`FramePolygon(strefa, null)`, ⊕600) — bez przycinania do obrysu z języczkiem (dziwny kształt).
   - **Opisy w detalu:** odnośniki „GB-…mm deep / TOC=…” i „xxxTHK” z grotem w strefie — kopia w detalu (grot + Shift, tekst w połowie
     odległości, wysokość 62,5, grot ×0,5) — `CopyCantileverLabels`.

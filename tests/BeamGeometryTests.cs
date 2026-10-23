@@ -586,7 +586,8 @@ namespace BricsCadRc.Tests
                 Assert.That(u.Kind, Is.EqualTo("E"));
                 // liczba U-barów = liczba kolumn prętów głównych (korekta użytkownika 2026-10-11 „tyle samo co prętów głównych”)
                 Assert.That(u.Count, Is.EqualTo(4), "4 U-bary w kolumnach prętów");
-                Assert.That((u.A, u.B, u.C), Is.EqualTo((750.0, 265.0, 750.0)), "A = Ceil25(650 + 90), B = 290 − 24 → 265 (Holbrook 770-265-770)");
+                // 2026-10-23: długość całkowita w module 50 — 750 / 265 → 765 (2700)
+                Assert.That((u.A, u.B, u.C), Is.EqualTo((765.0, 265.0, 765.0)), "A = Ceil25(650 + 90) → moduł 50, B = 290 − 24 → 265 (Holbrook 770-265-770)");
                 Assert.That(u.Dropped, Is.False);
                 Assert.That(u.Overlap, Is.GreaterThanOrEqualTo(650 - 1e-6));
                 Assert.That(u.Across0, Is.EqualTo(s.AcrossLo + 65).Within(1e-6), "kolumny prętów: 45 + strzemię H12 + 8");
@@ -595,7 +596,7 @@ namespace BricsCadRc.Tests
             var lo = us.Single(u => u.AtLo);
             Assert.That(lo.Back, Is.EqualTo(s.FaceLo + 45).Within(1e-6), "tył U na otulinie czołowej 45");
             Assert.That(lo.LineStart, Is.EqualTo(lo.Back).Within(1e-6));
-            Assert.That(lo.LineLength, Is.EqualTo(750));
+            Assert.That(lo.LineLength, Is.EqualTo(765));
             Assert.That(lo.BendAtStart, Is.True);
             var hi = us.Single(u => !u.AtLo);
             Assert.That(hi.Back, Is.EqualTo(s.FaceHi - 45).Within(1e-6));
@@ -645,10 +646,11 @@ namespace BricsCadRc.Tests
             foreach (var u in us)
             {
                 Assert.That(u.C, Is.EqualTo(u.A));
-                Assert.That(u.A % 25.0, Is.EqualTo(0).Within(1e-9));
+                Assert.That(BarLengthRules.TotalLengthFor("21", new[] { u.A, u.B, u.C }, u.Dia) % 50.0, Is.EqualTo(0).Within(1e-9),
+                            "długość całkowita co 50 (2026-10-23)");
                 Assert.That(u.Count, Is.EqualTo(4));
             }
-            Assert.That(us.Where(u => u.Kind == "E").Select(u => u.A).Distinct(), Is.EqualTo(new[] { 750.0 }));
+            Assert.That(us.Where(u => u.Kind == "E").Select(u => u.A).Distinct(), Is.EqualTo(new[] { 760.0 }), "750 / 175 → 760 (1650, moduł 50)");
         }
 
         [Test]

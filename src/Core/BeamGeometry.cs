@@ -908,6 +908,41 @@ namespace BricsCadRc.Core
         /// <summary>Wymiar w górę do 25 mm (zakład ≥ zadany).</summary>
         public static double Ceil25(double v) => Math.Ceiling(v / 25.0 - 1e-6) * 25.0;
 
+        /// <summary>Moduł długości całkowitej U-barów (kształt 21) — decyzja Bartka 2026-10-23: „total length co 50 mm”.</summary>
+        public const double UBarTotalModule = 50.0;
+
+        /// <summary>
+        /// Ramię A = C U-bara (kształt 21, B bez zmian) dobrane tak, żeby długość całkowita BS 8666 była w module 50 mm (decyzja Bartka
+        /// 2026-10-23, wsporniki i belki): ramię W GÓRĘ co 5 mm (zakład tylko rośnie, 1275 / 175 → 1290: 2675 → 2700); gdy w górę
+        /// nie wolno (<paramref name="maxArm"/> — ramię ograniczone geometrią) — w dół co 5 mm, najwyżej o 50. Bez rozwiązania — bez zmian.
+        /// </summary>
+        public static double UBarArmForModule(double arm, double b, int dia, double maxArm = double.PositiveInfinity)
+        {
+            if (!(arm > 0) || !(b > 0) || dia <= 0) return arm;
+            bool Ok(double a)
+            {
+                try
+                {
+                    double len = BarLengthRules.TotalLengthFor("21", new[] { a, b, a }, dia);
+                    return Math.Abs(len / UBarTotalModule - Math.Round(len / UBarTotalModule)) < 1e-6;
+                }
+                catch (Exception ex) { Log.Error("BeamGeometry.UBarArmForModule", ex); return false; }
+            }
+            for (int k = 0; k <= 20; k++)
+            {
+                double a = arm + 5.0 * k;
+                if (a > maxArm + 1e-6) break;
+                if (Ok(a)) return a;
+            }
+            for (int k = 1; k <= 10; k++)
+            {
+                double a = arm - 5.0 * k;
+                if (a <= 0) break;
+                if (Ok(a)) return a;
+            }
+            return arm;
+        }
+
         private static double Floor25(double v) => Math.Floor(v / 25.0 + 1e-6) * 25.0;
 
         private static double Floor5(double v) => Math.Floor(v / 5.0 + 1e-6) * 5.0;
@@ -1046,6 +1081,8 @@ namespace BricsCadRc.Core
                     }
                     bool dropped = (kind == "L" && s.AlongX) || kind == "T";
                     double B = dropped ? Floor5(b0 - nest) : s.AlongX ? bX : b0;
+                    // długość całkowita w module 50 (decyzja Bartka 2026-10-23) — ramię w górę, nie dalej niż zakres prętów prostych
+                    A = UBarArmForModule(A, B, uDia, maxArm: Math.Max(A, max));
                     var rows = RowsAcross(s, columns, dMain, dLink, cover);
                     double end = back + sE * A;
                     reach[(s, atLo)] = end;

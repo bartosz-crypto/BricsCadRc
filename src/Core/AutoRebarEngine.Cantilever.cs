@@ -140,8 +140,10 @@ namespace BricsCadRc.Core
             double reach = g.Reach, width = g.Width, h = g.H, rootLen = g.RootLen, rootH = g.RootH;
             bool stepped = g.Stepped;
 
-            var plan = CantileverRules.PlanBars(reach, width, h, rootLen, rootH);
-            CantileverRules.NestRootLinksGlobal(plan, alongX);   // pręty X zewnętrzne, Y wewnętrzne (test7, wspornik poziomy)
+            // wspornik poziomy (oś X): strefa przy palu — jedna pozycja strzemion w obu kierunkach, A − 15, co 150 (decyzja Bartka 2026-10-23);
+            // pionowy — zagnieżdżone jak dotąd
+            var plan = CantileverRules.PlanBars(reach, width, h, rootLen, rootH, singleRootLink: alongX);
+            CantileverRules.NestRootLinksGlobal(plan, alongX);   // bez zmian przy jednej pozycji (SingleRootLink)
             foreach (var m in plan.Messages) msg($"{name}: {m}");
             double W(double s) => root + sign * s;                         // s (lokalne) → współrzędna wzdłuż osi
             Point2d P(double along, double across) => alongX ? new Point2d(along, across) : new Point2d(across, along);

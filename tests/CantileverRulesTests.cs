@@ -91,7 +91,7 @@ namespace BricsCadRc.Tests
             var lr = p.Links[1];
             Assert.That((lr.Dia, lr.Spacing, lr.A), Is.EqualTo((12, 200.0, 290.0)));
             Assert.That(p.UBars.Count, Is.EqualTo(2));
-            Assert.That(p.UBars.All(u => u.A == 1050 && u.Dia == 16), Is.True);
+            Assert.That(p.UBars.All(u => u.A == 1075 && u.Dia == 16), Is.True, "zakład ≥ 700 (2026-10-23), długość 2300 — moduł 50");
             Assert.That(p.UBars[0].Back, Is.EqualTo(743).Within(1e-9));
             Assert.That(p.UBars[1].Back, Is.EqualTo(-678).Within(1e-9), "tył w środku strzemion strefy: −735 + 45 + 12");
             Assert.That(p.Straight, Is.Empty);
@@ -112,7 +112,7 @@ namespace BricsCadRc.Tests
             Assert.That(p.Links[1].A, Is.EqualTo(290.0));
             Assert.That(l2.S0, Is.EqualTo(0)); Assert.That(l2.S1, Is.EqualTo(600));
             Assert.That(l2.First, Is.GreaterThan(0)); Assert.That(l2.First + (l2.Count - 1) * l2.Step, Is.LessThan(600));
-            Assert.That(p.UBars.All(u => u.A == 1050), Is.True);
+            Assert.That(p.UBars.All(u => u.A == 1075), Is.True);
             Assert.That(p.UBars.All(u => u.B == 190), Is.True, "U-bar w strzemieniu: 215 − 24 = 191 → 190 (w dół, jak rysunek biura)");
             Assert.That(CantileverRules.PlanBars(840, 450, 225, 0, 0).Links.Single().Shape, Is.EqualTo("63"));
         }
@@ -127,7 +127,9 @@ namespace BricsCadRc.Tests
             Assert.That((p.Links[2].Legs, p.Links[2].B, p.Links[2].A), Is.EqualTo((2, 510.0, 490.0)), "drugi kierunek: 515 − 24 → 490");
             Assert.That(p.SideLevels, Is.EqualTo(1));
             Assert.That(p.SideUBars.Count, Is.EqualTo(2));
-            Assert.That(p.SideUBars.All(u => u.B == 485 && u.Dia == 12 && u.A == 850), Is.True);
+            Assert.That(p.SideUBars.All(u => u.B == 485 && u.Dia == 12 && u.A == 825), Is.True, "tył UB SIDE w środku tyłu U-bara (o Ø16, 2026-10-23)");
+            Assert.That(p.SideUBars[0].Back, Is.EqualTo(p.UBars[0].Back - 16).Within(1e-9));
+            Assert.That(p.SideUBars[1].Back, Is.EqualTo(p.UBars[1].Back + 16).Within(1e-9));
             Assert.That(p.SideStraight, Is.Empty);
             Assert.That(CantileverRules.PlanBars(923, 600, 300, 600, 375).SideLevels, Is.EqualTo(0), "h 300 — bez prętów bocznych");
         }
@@ -181,13 +183,13 @@ namespace BricsCadRc.Tests
             var p = CantileverRules.PlanBars(1525, 600, 225, 735, 300);
             Assert.That(p.Links[0].Dia, Is.EqualTo(10));
             Assert.That(p.Links[0].Spacing, Is.EqualTo(100));
-            Assert.That(p.UBars.All(u => u.A == 750), Is.True);
+            Assert.That(p.UBars.All(u => u.A == 810), Is.True, "Ceil25(700 + 90) = 800 → 810 (długość 1700 — moduł 50)");
             Assert.That(p.Straight.Count, Is.EqualTo(1));
             var st = p.Straight[0];
             Assert.That(st.Dia, Is.EqualTo(16));
-            // zakład z oboma U-barami ≥ 650
-            Assert.That(p.UBars[1].LineEnd - st.S0, Is.GreaterThanOrEqualTo(650 - 1e-6));
-            Assert.That(st.S1 - p.UBars[0].LineStart, Is.GreaterThanOrEqualTo(650 - 1e-6));
+            // zakład z oboma U-barami ≥ 700 (2026-10-23)
+            Assert.That(p.UBars[1].LineEnd - st.S0, Is.GreaterThanOrEqualTo(700 - 1e-6));
+            Assert.That(st.S1 - p.UBars[0].LineStart, Is.GreaterThanOrEqualTo(700 - 1e-6));
         }
 
         [Test]
@@ -229,5 +231,39 @@ namespace BricsCadRc.Tests
             CantileverRules.NestRootLinksGlobal(q, axisAlongX: false);
             Assert.That((q.Links[1].A, q.Links[2].A), Is.EqualTo((290.0, 265.0)));
         }
-    }
+    
+        [Test]
+        public void Test10_HorizontalCantilever_SingleRootLink_Lap700_Module50()
+        {
+            // test10-poprawiony (decyzja Bartka 2026-10-23): wspornik poziomy — strefa przy palu 375THK: jedna pozycja w obu kierunkach,
+            // A = 290 − 15 = 275, co 150 (4 co 150 na 508, reszta po równo); U-bary zakład ≥ 700, długość całkowita co 50
+            var p = CantileverRules.PlanBars(1243, 600, 300, 600, 375, singleRootLink: true);
+            var root = p.Links.Where(l => l.Shape == "51").ToList();
+            Assert.That(root.Count, Is.EqualTo(2));
+            Assert.That(root.Select(l => (l.A, l.B, l.Spacing, l.Step, l.Count)).Distinct().Single(), Is.EqualTo((275.0, 370.0, 150.0, 150.0, 4)));
+            Assert.That(p.SingleRootLink, Is.True);
+            CantileverRules.NestRootLinksGlobal(p, axisAlongX: true);
+            Assert.That(root.All(l => l.A == 275), Is.True, "bez zagnieżdżenia przy jednej pozycji");
+            foreach (var u in p.UBars)
+                Assert.That(BarLengthRules.TotalLengthFor("21", new[] { u.A, u.B, u.A }, u.Dia) % 50.0, Is.EqualTo(0).Within(1e-9));
+            Assert.That(2 * p.UBars[0].A - (p.UBars[0].Back - p.UBars[1].Back), Is.GreaterThanOrEqualTo(700 - 1e-6), "zakład U-barów ≥ 700");
+            Assert.That(p.UBars.All(u => u.B == 190), Is.True, "B U-bara bez −15 (decyzja 2026-10-23)");
+            // wspornik pionowy — jak dotąd (zewnętrzne 290 + wewnętrzne 265)
+            var q = CantileverRules.PlanBars(1243, 600, 300, 600, 375);
+            Assert.That(q.Links.Where(l => l.Shape == "51").Select(l => l.A), Is.EqualTo(new[] { 290.0, 265.0 }));
+        }
+
+        [Test]
+        public void UBarArmForModule_TotalLengthEvery50()
+        {
+            // 1275 / 175 / 1275 H16 → 2675; ramiona w górę: 1285 → 2700 (screen Bartka 2026-10-23)
+            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { 1275.0, 175, 1275 }, 16), Is.EqualTo(2675));
+            Assert.That(BeamGeometry.UBarArmForModule(1275, 175, 16), Is.EqualTo(1285), "1285 → 2681 → 2700");
+            Assert.That(BeamGeometry.UBarArmForModule(1275, 190, 16), Is.EqualTo(1275), "2700 — już w module");
+            // ramię ograniczone — w dół
+            double a = BeamGeometry.UBarArmForModule(1275, 175, 16, maxArm: 1275);
+            Assert.That(a, Is.LessThan(1275));
+            Assert.That(BarLengthRules.TotalLengthFor("21", new[] { a, 175, a }, 16) % 50.0, Is.EqualTo(0).Within(1e-9));
+        }
+}
 }

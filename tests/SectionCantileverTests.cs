@@ -103,6 +103,54 @@ namespace BricsCadRc.Tests
             Assert.That(iTop, Is.LessThan(oTop), "wewnętrzne niżej od góry");
         }
 
+        [Test]
+        public void SingleRootLink_BothDirections275_XLinksAtTop_LabelAbove()
+        {
+            // test10-poprawiony (decyzja Bartka 2026-10-23, wspornik poziomy): jedna pozycja w obu kierunkach, A = 290 − 15 = 275 —
+            // strzemiona z prętami wzdłuż X przy wierzchu (wyżej o 15), wzdłuż Y przy spodzie; opis strzemienia w widoku nad nim
+            var inp = DDCase();
+            inp.Dists.Clear();
+            inp.Beams[1].PileCap = true;
+            var l275 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 275, 370, 0, 0, 0 }, 12);
+            inp.Dists.Add(SectionPlannerGoldenTests.B("18", "BL", true, 4045, 200, 370, 450, 4, 150, 12, "51", l275, new double[] { 275, 370, 0, 0, 0 }));
+            inp.Dists.Add(SectionPlannerGoldenTests.B("18", "BL", false, 4100, 180, 370, 450, 4, 150, 12, "51", l275, new double[] { 275, 370, 0, 0, 0 }));
+            var r = SectionPlanner.Plan(inp);
+            var dots = r.Dots.Where(d => d.PosNr == "18").ToList();     // pręty wzdłuż X — przecięte (cięcie wzdłuż Y)
+            var view = r.Bars.Where(b => b.PosNr == "18").ToList();     // pręty wzdłuż Y — w widoku
+            Assert.That(dots.Count, Is.GreaterThan(0));
+            Assert.That(view.Count, Is.GreaterThan(0));
+            double viewBot = view.Min(b => b.Path.Min(p => p.V));
+            Assert.That(dots.Min(d => d.V) - viewBot, Is.EqualTo(15).Within(1.0), "wzdłuż X — podniesione o 15 względem wzdłuż Y");
+            Assert.That(dots.Max(d => d.V) - dots.Min(d => d.V), Is.EqualTo(275 - 12).Within(1e-6));
+            var lbl = r.Labels.Where(l => l.Text == "18" && l.HasLeader).ToList();
+            Assert.That(lbl.Any(l => l.LeaderV > view.Max(b => b.Path.Max(p => p.V)) - 1e-6 && l.V > 0), Is.True, "opis strzemienia nad nim");
+        }
+
+        [Test]
+        public void CantUBarBack_FlushWithLinkLeg()
+        {
+            // uwaga Bartka 2026-10-23 (A-A): tył U-bara od strony płyty (678, tył w środku strzemion — o Ø12 od lica strzemienia 690)
+            // i pionowe ramię strzemienia w widoku licują się (lico zewnętrzne tyłu = lico zewnętrzne strzemienia)
+            var inp = DDCase();
+            inp.Dists.Clear();
+            var l275 = BarGeometryBuilder.GetLocalPoints("51", new double[] { 265, 370, 0, 0, 0 }, 12);
+            inp.Dists.Add(SectionPlannerGoldenTests.B("14", "BL", false, 4100, 320, 370, 400, 4, 133, 12, "51", l275, new double[] { 265, 370, 0, 0, 0 }));
+            var ub = SectionPlannerGoldenTests.B("07", "BU", false, 4063, 678 - 1050, 1050, 474, 4, 474.0 / 3, 16, "21", null, new double[] { 1050, 190, 1050, 0, 0 });
+            ub.SymbolSide = "Right";
+            inp.Dists.Add(ub);
+            var r = SectionPlanner.Plan(inp);
+            var u = r.Bars.Single(b => b.PosNr == "07");
+            var lk = r.Bars.Where(b => b.PosNr == "14").ToList();
+            Assert.That(lk.Count, Is.GreaterThan(0));
+            // tył U-bara: najdłuższy pionowy odcinek
+            var segs = u.Path.Zip(u.Path.Skip(1), (a, b) => (a, b)).Where(t => System.Math.Abs(t.a.U - t.b.U) < 0.5).ToList();
+            double backU = segs.OrderByDescending(t => System.Math.Abs(t.a.V - t.b.V)).First().a.U;
+            double sOut = backU >= u.Path.Average(p => p.U) ? 1 : -1;
+            double ubFace = backU + sOut * 8;
+            double linkFace = lk.SelectMany(b => b.Path).Select(p => p.U + sOut * 6).OrderBy(f => System.Math.Abs(f - ubFace)).First();
+            Assert.That(ubFace, Is.EqualTo(linkFace).Within(0.5), "lico tyłu U-bara = lico strzemienia");
+        }
+
         private static SectionPlanner.Dist SideU()
         {
             var d = SectionPlannerGoldenTests.B("08", "BC", false, 4063, -743, 850, 0, 1, 150, 12, "21", null, new double[] { 850, 485, 850, 0, 0 });

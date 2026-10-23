@@ -211,6 +211,8 @@ namespace BricsCadRc.Core
             internal bool NoLabel;
             /// <summary>Kod warstwy rozkładu (B1 / B2 / T1 / T2 …) — kierunek pręta w widoku (T IN NIB, 2026-10-16).</summary>
             internal string Code;
+            /// <summary>Opis nad prętem, choć pręt dolny (strzemię w widoku wspornika / strefy przy palu — test10-poprawiony, 2026-10-23).</summary>
+            internal bool LabelTop;
         }
 
         public sealed class Pile
@@ -644,6 +646,7 @@ namespace BricsCadRc.Core
             // wspornik (uwaga Bartka 2026-10-22 „UB blisko linka — powinien się licować z ramieniem linka”): tył UB płyty przy pionowym
             // ramieniu strzemienia pasu wspornika / strefy przy palu (w widoku) — dosunięty do styku lic; bez wsporników — nic
             if (bands.Any(b => b.Src.Cantilever)) FlushUbToCantileverLinks(res, bands);
+            if (bands.Any(b => b.Src.Cantilever)) FlushCantUBarsToLinks(res);
 
             // 4. Pale
             if (inp.DrawPiles)
@@ -796,6 +799,46 @@ namespace BricsCadRc.Core
         /// Tył UB (pionowy odcinek pręta w widoku, rodzaj UB / NibUB) w pasie wspornika obok pionowego ramienia strzemienia w widoku
         /// (szczelina 0 … <see cref="UbLinkFlushGap"/>) — cały UB przesunięty w poziomie tak, żeby lica się stykały (oś–oś = (Ø UB + Ø strzemienia) / 2).
         /// </summary>
+        /// <summary>
+        /// U-bar wspornika w widoku (kształt 21) i strzemię w widoku licują się (uwaga Bartka 2026-10-23, test10-poprawiony A-A / C-C):
+        /// tył U-bara (pionowe ramię) przy pionowym ramieniu strzemienia (≤ 30 mm) — U-bar przesunięty tak, żeby lico zewnętrzne tyłu
+        /// = lico zewnętrzne ramienia strzemienia (wcześniej 12 mm obok — dwie linie).
+        /// </summary>
+        private static void FlushCantUBarsToLinks(Result res)
+        {
+            var links = res.Bars.Where(b => b.Code == BeamGeometry.CodeLinks && b.Path.Count >= 4).ToList();
+            foreach (var ub in res.Bars.Where(b => b.Code == BeamGeometry.CodeUBar && b.Path.Count >= 3))
+            {
+                // tył: najdłuższy pionowy odcinek; strona zewnętrzna — od ramion na zewnątrz
+                (double U, double V0, double V1)? back = null;
+                for (int i = 0; i + 1 < ub.Path.Count; i++)
+                {
+                    var p = ub.Path[i]; var q = ub.Path[i + 1];
+                    if (Math.Abs(p.U - q.U) > 0.5 || Math.Abs(p.V - q.V) < 20.0) continue;
+                    if (back == null || Math.Abs(p.V - q.V) > back.Value.V1 - back.Value.V0)
+                        back = (p.U, Math.Min(p.V, q.V), Math.Max(p.V, q.V));
+                }
+                if (back == null) continue;
+                double meanU = ub.Path.Average(p => p.U);
+                int sOut = back.Value.U >= meanU ? 1 : -1;
+                double best = double.MaxValue, shift = 0;
+                foreach (var lk in links)
+                    for (int i = 0; i + 1 < lk.Path.Count; i++)
+                    {
+                        var p = lk.Path[i]; var q = lk.Path[i + 1];
+                        if (Math.Abs(p.U - q.U) > 0.5 || Math.Abs(p.V - q.V) < 20.0) continue;
+                        if (Math.Min(back.Value.V1, Math.Max(p.V, q.V)) - Math.Max(back.Value.V0, Math.Min(p.V, q.V)) < 10.0) continue;
+                        double sh = (p.U + sOut * lk.Diameter / 2.0) - (back.Value.U + sOut * ub.Diameter / 2.0);
+                        if (Math.Abs(sh) > UbLinkFlushGap || Math.Abs(sh) >= Math.Abs(best)) continue;
+                        best = sh; shift = sh;
+                    }
+                if (Math.Abs(shift) < 0.5) continue;
+                ub.Path = ub.Path.Select(p => (p.U + shift, p.V)).ToList();
+                if (ub.Outline != null) ub.Outline = ub.Outline.Select(p => (p.U + shift, p.V)).ToList();
+                if (ub.LabelPath != null) ub.LabelPath = ub.LabelPath.Select(p => (p.U + shift, p.V)).ToList();
+            }
+        }
+
         private static void FlushUbToCantileverLinks(Result res, List<BandU> bands)
         {
             List<(double U, double V0, double V1)> Verticals(BarLine b)
@@ -838,6 +881,9 @@ namespace BricsCadRc.Core
         /// </summary>
         private static double UBarSeatInset(BandU b, Dist d)
         {
+            // jedna pozycja strzemion strefy przy palu: strzemiona z prętami wzdłuż X podniesione — U-bar wzdłuż Y leży na nich
+            double one = SingleRootLinkDrop(b);
+            if (one > 0) return d.AlongX ? 0 : one;
             if (!b.Src.Cantilever || !b.LinkAByDir.TryGetValue(!d.AlongX, out double a) || a <= 0) return 0;
             return a < b.LinkA - 0.5 ? (b.LinkA - a) / 2.0 : 0;
         }
@@ -853,9 +899,31 @@ namespace BricsCadRc.Core
         /// Strzemię wewnątrz strzemienia zewnętrznego pasu wspornika (drugi kierunek, A − 2·Ø w dół do 5 — uwaga Bartka 2026-10-22):
         /// odsunięcie od dołu i od góry = (A pasu − A własne) / 2; poza wspornikiem / bez wymiaru — 0.
         /// </summary>
+        /// <summary>
+        /// Strefa przy palu wspornika poziomego — jedna pozycja strzemion w obu kierunkach (A = najwyższe − 15, decyzja Bartka 2026-10-23):
+        /// strzemiona z prętami wzdłuż X — przy wierzchu (podniesione o 15), wzdłuż Y — przy spodzie; krzyżują się bez kolizji
+        /// (test10-poprawiony C-C). Inaczej 0.
+        /// </summary>
+        private static double SingleLinkLift(BandU b, Dist d)
+            => d.AlongX ? SingleRootLinkDrop(b) : 0;
+
+        /// <summary>
+        /// Obniżenie jednej pozycji strzemion strefy przy palu (oba kierunki to samo A, niższe od A pasa — najwyższego możliwego — o 1…15 mm);
+        /// 0 — zwykły układ (zewnętrzne + wewnętrzne A − 2·Ø).
+        /// </summary>
+        private static double SingleRootLinkDrop(BandU b)
+        {
+            if (!b.Src.Cantilever || !b.Src.PileCap) return 0;
+            if (!b.LinkAByDir.TryGetValue(true, out double ax) || !b.LinkAByDir.TryGetValue(false, out double ay)) return 0;
+            if (Math.Abs(ax - ay) > 0.5) return 0;
+            double drop = b.LinkA - ax;
+            return drop > 0.5 && drop <= CantileverRules.RootSingleLinkDrop + 0.5 ? drop : 0;
+        }
+
         private static double NestInset(BandU b, Dist d)
         {
             if (!b.Src.Cantilever || d.SourceDims == null || d.SourceDims.Length == 0 || d.SourceDims[0] <= 0) return 0;
+            if (SingleRootLinkDrop(b) > 0) return 0;   // jedna pozycja: przy spodzie / przy wierzchu (SingleLinkLift), bez środkowania
             double own = d.SourceDims[0];
             return own < b.LinkA - 0.5 ? (b.LinkA - own) / 2.0 : 0;
         }
@@ -1176,7 +1244,8 @@ namespace BricsCadRc.Core
                                 double hd = d.Diameter / 2.0;
                                 double inset = NestInset(b, d);
                                 double ownA = d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0 ? d.SourceDims[0] : b.LinkA;
-                                double vLo = b.VLinkBot + inset + hd, vHi = b.VLinkBot + inset + ownA - hd;
+                                double lift = SingleLinkLift(b, d);
+                                double vLo = b.VLinkBot + inset + lift + hd, vHi = b.VLinkBot + inset + lift + ownA - hd;
                                 foreach (var (v, isTop) in new[] { (vLo, false), (vHi, true) })
                                 {
                                     if (!inConcrete(u, v)) continue;
@@ -1296,7 +1365,8 @@ namespace BricsCadRc.Core
                         double hl = band.LinkDia / 2.0;
                         double uLo = Math.Min(U(a), U(bEnd)) + hl, uHi = Math.Max(U(a), U(bEnd)) - hl;
                         double inset = NestInset(band, d);
-                        double vBot = band.VLinkBot + inset + hl, vTop = band.VLinkTop - inset - hl;
+                        double lift = SingleLinkLift(band, d);
+                        double vBot = band.VLinkBot + inset + lift + hl, vTop = band.VLinkTop - inset + lift - hl;
                         List<(double U, double V)> axis;
                         if (d.ShapeLocal != null && d.ShapeLocal.Count >= 2)
                         {
@@ -1305,8 +1375,10 @@ namespace BricsCadRc.Core
                         }
                         else
                             axis = new List<(double U, double V)> { (uLo, vBot), (uHi, vBot), (uHi, vTop), (uLo, vTop), (uLo, vBot) };
+                        // wspornik / strefa przy palu (test10-poprawiony, 2026-10-23): opis strzemienia w widoku NAD nim, strzałka do górnego ramienia
+                        bool lblTop = band.Src.Cantilever;
                         res.Bars.Add(new BarLine { Path = axis, Outline = OutlineOf(axis, band.LinkDia), Diameter = d.Diameter,
-                                                   PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
+                                                   PosNr = d.PosNr, Top = false, Kind = DistKind.Beam, Code = BeamGeometry.CodeLinks, LabelTop = lblTop });
                         // strzemiona 4-cięte (Layers 2, decyzja użytkownika 2026-10-11): drugie identyczne strzemię przy drugim licu (zachodzące);
                         // 2026-10-14: drugie lico z pasa belki (rozkład w rzucie ma szerokość B4 — nie całej belki) i własny opis ze strzałką
                         if (d.Layers == 2 && axis.Count >= 2)
@@ -1319,7 +1391,8 @@ namespace BricsCadRc.Core
                             {
                                 var axis2 = axis.Select(p => (U: p.U + sh, p.V)).ToList();
                                 res.Bars.Add(new BarLine { Path = axis2, Outline = OutlineOf(axis2, band.LinkDia), Diameter = d.Diameter,
-                                                           PosNr = d.PosNr, Top = false, Kind = DistKind.Beam });
+                                                           PosNr = d.PosNr, Top = false, Kind = DistKind.Beam, Code = BeamGeometry.CodeLinks,
+                                                           LabelTop = lblTop });
                             }
                         }
                         MarkUsed(res, d);
@@ -1633,7 +1706,10 @@ namespace BricsCadRc.Core
                 }
 
             // kropki: numer nad (góra) / pod (dół) kropką, kolejne rzędy przy kolizji
-            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !innerDone.Contains(d) && !LowBeamTop(d) && !d.Side).OrderBy(d => d.Top ? 0 : 1).ThenBy(d => d.U))
+            // wspornik (uwaga Bartka 2026-10-23, test10-poprawiony A-A): najpierw pręty główne przekroju (pręty wspornika / strefy przy palu)
+            // — rząd najbliżej betonu; pręty siatki i nibu w tym miejscu — dalsze rzędy
+            foreach (var dot in res.Dots.Where(d => !tinDone.Contains(d) && !innerDone.Contains(d) && !LowBeamTop(d) && !d.Side)
+                                        .OrderBy(d => d.Top ? 0 : 1).ThenBy(d => res.HasCantilever && d.Beam ? 0 : 1).ThenBy(d => d.U))
             {
                 double w = TextWidth(dot.PosNr);
                 bool placed = false;
@@ -1729,7 +1805,8 @@ namespace BricsCadRc.Core
                     if (Math.Abs(lp[i].V - lp[i + 1].V) < 0.5 && Math.Abs(lp[i].U - lp[i + 1].U) > 60)
                         horiz.Add((Math.Min(lp[i].U, lp[i + 1].U), Math.Max(lp[i].U, lp[i + 1].U), lp[i].V));
                 if (horiz.Count == 0) continue;
-                var seg = bar.Top ? horiz.OrderByDescending(h => h.v).First() : horiz.OrderBy(h => h.v).First();
+                bool up = bar.Top || bar.LabelTop;
+                var seg = up ? horiz.OrderByDescending(h => h.v).First() : horiz.OrderBy(h => h.v).First();
                 double w = TextWidth(bar.PosNr);
                 bool done = false;
                 // belka (E5 / E4b): pod belką gęsto od opisów kropek — trzecie przejście bez warunku „strzałka nie tnie opisów”
@@ -1741,21 +1818,21 @@ namespace BricsCadRc.Core
                     {
                         double u = seg.u0 + f * (seg.u1 - seg.u0);
                         // spód betonu pod opisem (belka E5: pod spodem belki); bez belki = −T
-                        double vb = bar.Top ? LabelGap + row * LabelRowStep : LocalBottom(res, u, T) - LabelGap - TextHeight - row * LabelRowStep;
+                        double vb = up ? LabelGap + row * LabelRowStep : LocalBottom(res, u, T) - LabelGap - TextHeight - row * LabelRowStep;
                         if (!Free(u - w / 2, vb, u + w / 2, vb + TextHeight)) continue;
                         // wersja 3: grot na rysowanej części pręta (nie na skróconym końcu pod kreską zakończenia)
                         if (bar.LabelPath != null && !OnHorizontal(bar, u, seg.v, 1.0)) continue;
                         // grot tylko tam, gdzie pręt jest jednoznaczny (żaden inny pręt w widoku nie leży obok)
                         if (pass == 0 && res.Bars.Any(o => o != bar && OnHorizontal(o, u, seg.v, 25.0))) continue;
                         // pas pod/nad tekstem do pręta nie może ciąć innych opisów
-                        double lv0 = bar.Top ? seg.v : vb + TextHeight, lv1 = bar.Top ? vb : seg.v;
+                        double lv0 = up ? seg.v : vb + TextHeight, lv1 = up ? vb : seg.v;
                         if (pass < 2 && occupied.Skip(fixedCount)
                                     .Any(o => u > o.u0 - 5 && u < o.u1 + 5 && lv0 < o.v1 && lv1 > o.v0)) continue;
                         occupied.Add((u - w / 2, vb, u + w / 2, vb + TextHeight));
                         res.Labels.Add(new Label
                         {
                             Text = bar.PosNr, U = u, V = vb, Height = TextHeight, HasLeader = true,
-                            LeaderU = u, LeaderV = seg.v + (bar.Top ? bar.Diameter / 2.0 : -bar.Diameter / 2.0)
+                            LeaderU = u, LeaderV = seg.v + (up ? bar.Diameter / 2.0 : -bar.Diameter / 2.0)
                         });
                         done = true;
                         break;
