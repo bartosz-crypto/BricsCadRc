@@ -124,6 +124,36 @@ namespace BricsCadRc.Tests
             Assert.That(r.Messages, Is.Empty, string.Join(" | ", r.Messages));
         }
 
+        // wzór PLOT 304–307: belka wewnętrzna — narożniki na całą szerokość, GB 6920 (35 co 200); krawędziowa z nibem — naroże 600 × 465,
+        // strzemiona GB przez całą belkę (41 co 200)
+        [Test]
+        public void PlanGbLinks_InternalAndEdge()
+        {
+            var inner = TerraceRules.PlanGbLinks(14496, 22616, 21038, 21638, new List<TerraceRules.GbCorner>
+            {
+                new TerraceRules.GbCorner { A0 = 9076, A1 = 15096, C0 = 19003, C1 = 27722 },
+                new TerraceRules.GbCorner { A0 = 22016, A1 = 33886, C0 = 19003, C1 = 27723 },
+            });
+            Assert.That(inner.Corners.Count, Is.EqualTo(2));
+            Assert.That(inner.Corners.All(c => c.FullWidth), Is.True);
+            Assert.That(inner.Outside.Count, Is.EqualTo(1));
+            Assert.That(inner.Outside[0].Lo, Is.EqualTo(15096));
+            Assert.That(inner.Outside[0].Hi, Is.EqualTo(22016));
+            Assert.That(TerraceRules.ExactLayout(14496, 15096, 150, 46).Count, Is.EqualTo(4));
+            Assert.That(TerraceRules.ExactLayout(15096, 22016, 200, 46).Count, Is.EqualTo(35));
+            Assert.That(TerraceRules.ExactLayout(14496, 22616, 200, 46).Count, Is.EqualTo(41));
+
+            var edge = TerraceRules.PlanGbLinks(14496, 22616, 27258, 27857, new List<TerraceRules.GbCorner>
+            {
+                new TerraceRules.GbCorner { A0 = 9076, A1 = 15096, C0 = 19003, C1 = 27722 },
+                new TerraceRules.GbCorner { A0 = 22016, A1 = 33886, C0 = 19003, C1 = 27723 },
+            });
+            Assert.That(edge.Corners.All(c => !c.FullWidth), Is.True);
+            Assert.That(edge.Outside.Count, Is.EqualTo(1));
+            Assert.That(edge.Outside[0].Hi - edge.Outside[0].Lo, Is.EqualTo(8120));
+            Assert.That(TerraceRules.ExactLayout(27258, 27722, 150, 46).Count, Is.EqualTo(3));
+        }
+
         [Test]
         public void Analyze_NoCornerLines_ThkFallback()
         {

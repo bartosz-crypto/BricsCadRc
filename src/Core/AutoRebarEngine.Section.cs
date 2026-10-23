@@ -55,6 +55,19 @@ namespace BricsCadRc.Core
             public List<(Point2d P1, Point2d P2, double Scale, string Key)> DetailMarks = new List<(Point2d, Point2d, double, string)>();
         }
 
+        /// <summary>Linie uskoku płyt rzutu <paramref name="viewHandle"/> (ViewSlabLoops) przesunięte do rzutu wskazanego (− delta).</summary>
+        private static List<List<(double X, double Y)>> GbStepLoops(Database db, string viewHandle, Vector2d delta)
+        {
+            try
+            {
+                if (!XLink.TryParse(viewHandle, out long h) || !db.TryGetObjectId(new Handle(h), out var id) || id.IsErased) return new List<List<(double X, double Y)>>();
+                var view = ReadBeamView(db, id);
+                if (view == null) return new List<List<(double X, double Y)>>();
+                return ViewSlabLoops(db, view).Select(l => l.Select(q => (q.X - delta.X, q.Y - delta.Y)).ToList()).ToList();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.GbStepLoops", ex); return new List<List<(double X, double Y)>>(); }
+        }
+
         /// <summary>
         /// Zbiera dane przekroju dla wskazanego obrysu i linii cięcia p1–p2 (pozioma albo pionowa).
         /// lookPt — punkt po stronie, w którą patrzymy. Null gdy obrys nie jest zamkniętą polilinią.
@@ -195,6 +208,34 @@ namespace BricsCadRc.Core
                     views.Add((delta, pl.Handle.ToString(), v));
                 }
 
+                // GB poza płytą (prośba Bartka 2026-10-23 — przekroje wg wsporników / belek): strefy z [39] > 0 dotykające rzutu (wierzchołek strefy
+                // w obrysie — narożnik w płycie, także [6] innej płyty) — beton przekroju = obrys ∪ strefy GB, pręty GB (detal / rzut) z punktu
+                // w strefie, pasy: GB jak wspornik (wierzch SSL − [39], znacznik TOC), narożnik w płycie jak strefa przy palu
+                var gbOf = new Dictionary<string, List<List<Point2d>>>(StringComparer.OrdinalIgnoreCase);
+                var gbRecs = new List<(string handle, List<Point2d> zv, BeamParams p, Vector2d delta, string view)>();
+                foreach (var (gDelta, gView, gPoly) in views)
+                    foreach (var z in zoneRecs)
+                    {
+                        if (z.p.TopDrop <= 0 || !z.verts.Any(q => GeometryHelper.IsPointInsidePolygon(gPoly, q))) continue;
+                        if (!gbOf.TryGetValue(gView, out var gl)) gbOf[gView] = gl = new List<List<Point2d>>();
+                        gl.Add(z.verts);
+                        gbRecs.Add((z.handle, z.verts.Select(q => new Point2d(q.X - gDelta.X, q.Y - gDelta.Y)).ToList(), z.p, gDelta, gView));
+                    }
+                bool InGb(string vh, Point2d pt) => gbOf.TryGetValue(vh, out var gl2) && gl2.Any(zz => GeometryHelper.IsPointInsidePolygon(zz, pt));
+                if (gbRecs.Count > 0)
+                {
+                    var rects = gbRecs.Select(g => new RectilinearPolygons.Rect(g.zv.Min(q => q.X), g.zv.Min(q => q.Y), g.zv.Max(q => q.X), g.zv.Max(q => q.Y))).ToList();
+                    double cx0 = Math.Min(inp.Outline.Min(q => q.X), rects.Min(r => r.X0)) - 10, cy0 = Math.Min(inp.Outline.Min(q => q.Y), rects.Min(r => r.Y0)) - 10;
+                    double cx1 = Math.Max(inp.Outline.Max(q => q.X), rects.Max(r => r.X1)) + 10, cy1 = Math.Max(inp.Outline.Max(q => q.Y), rects.Max(r => r.Y1)) + 10;
+                    var clipBox = new List<(double X, double Y)> { (cx0, cy0), (cx1, cy0), (cx1, cy1), (cx0, cy1) };
+                    var loops = RectilinearPolygons.AddClipped(inp.Outline, rects, clipBox);
+                    if (loops.Count > 0) inp.Outline = loops[0];
+                    foreach (var g in gbRecs.Where(g => g.delta.Length < 1.0))
+                        foreach (var (c, r) in FindPiles(db, g.zv))
+                            if (!inp.Piles.Any(q => Math.Abs(q.Item1 - c.X) < 1.0 && Math.Abs(q.Item2 - c.Y) < 1.0)) inp.Piles.Add((c.X, c.Y, r));
+                    ctx.Info.Add($"Belki GB poza płytą przy rzucie: {gbRecs.Count} (beton przekroju z obrysem stref GB).");
+                }
+
                 // K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 — rozkład ze znacznikiem strefy ANCHOR-a i środkiem w oknie
                 // detalu liczony w położeniu rzutu (pos − Shift); dalej jak rozkład na rzucie (− przesunięcie rzutu strefy). ctx.Views bez
                 // zmian — wejście planera jak z prętami na rzucie. ANCHOR nieprzystający do strefy (strefa zmieniona po detalu) — pominięty.
@@ -237,7 +278,9 @@ namespace BricsCadRc.Core
                         continue;
                     }
                     if (z.verts == null) continue;
-                    var zview = views.FirstOrDefault(v => GeometryHelper.IsPointInsidePolygon(v.poly, z.inside));
+                    // GB (2026-10-23): środek strefy poza płytą — rzut, w którego obrysie leży narożnik strefy
+                    var zview = views.FirstOrDefault(v => GeometryHelper.IsPointInsidePolygon(v.poly, z.inside)
+                                                          || (z.p.TopDrop > 0 && z.verts.Any(q => GeometryHelper.IsPointInsidePolygon(v.poly, q))));
                     if (zview.poly == null) continue;   // strefa innej płyty
                     // ANCHOR = strefa efektywna (rekord [38] „bez nibu” — przesunięta do krawędzi rzutu strefy)
                     var zt = EffectiveZoneVerts(z.verts, z.p, zview.poly).Select(v => (v.X, v.Y)).ToList();
@@ -291,7 +334,7 @@ namespace BricsCadRc.Core
                     foreach (var (delta, handle, poly) in views)
                     {
                         bool inside;
-                        if (tag == null) inside = GeometryHelper.IsPointInsidePolygon(poly, pos);
+                        if (tag == null) inside = GeometryHelper.IsPointInsidePolygon(poly, pos) || InGb(handle, pos);
                         else if (tagOfView) inside = SameHandle(tag, handle);
                         else
                         {
@@ -359,6 +402,7 @@ namespace BricsCadRc.Core
                 foreach (var (delta, _, poly) in views)
                     foreach (var z in zoneRecs)
                     {
+                        if (z.p.TopDrop > 0) continue;   // GB poza płytą — pasy niżej (jak wspornik)
                         if (!GeometryHelper.IsPointInsidePolygon(poly, z.inside)) continue;
                         var zv = z.verts.Select(v => new Point2d(v.X - delta.X, v.Y - delta.Y)).ToList();
                         if (placed.Any(o => o.Count == zv.Count && zv.All(v => o.Any(w => w.GetDistanceTo(v) < 1.0)))) continue;
@@ -399,6 +443,57 @@ namespace BricsCadRc.Core
                 // Wsporniki (prośba Bartka 2026-10-22: przekrój rysuje wszystko na płycie): pas wspornika (wierzch na TOC — SSL − TOC
                 // poniżej płyty, spód na TOC − h) i pas strefy przy palu (wierzch płyty, spód na grubości „xxxTHK”) na linii cięcia;
                 // pręty — rozkłady detalu wspornika (jak belki)
+                // GB poza płytą (2026-10-23): narożnik w płycie (strefa ∩ linie uskoku) — pas jak strefa przy palu (wierzch płyty, spód −H),
+                // reszta strefy — pas jak wspornik (wierzch SSL − [39], spód −H, znacznik TOC); otulina i A strzemion z rekordu (50 równo)
+                int nGb = 0;
+                var placedG = new List<List<Point2d>>();
+                foreach (var g in gbRecs)
+                {
+                    if (placedG.Any(o => o.Count == g.zv.Count && g.zv.All(v => o.Any(w => w.GetDistanceTo(v) < 1.0)))) continue;
+                    placedG.Add(g.zv);
+                    try
+                    {
+                        var gp = g.p;
+                        var zt = g.zv.Select(v => (v.X, v.Y)).ToList();
+                        var loopsV = GbStepLoops(db, g.view, g.delta);
+                        var corners = new List<RectilinearPolygons.Rect>();
+                        foreach (var sg in BeamGeometry.Analyze(zt, null).Segments.Where(x => !x.Manual))
+                            foreach (var c in TerraceRules.PlanGbLinks(sg.LinkLo, sg.LinkHi, sg.AcrossLo, sg.AcrossHi, GbSlabParts(sg, loopsV)).Corners)
+                                corners.Add(sg.AlongX ? new RectilinearPolygons.Rect(c.A0, c.C0, c.A1, c.C1) : new RectilinearPolygons.Rect(c.C0, c.A0, c.C1, c.A1));
+                        string toc = null;
+                        if (double.TryParse((inp.Ssl ?? "").Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double sslG))
+                            toc = (sslG - gp.TopDrop / 1000.0).ToString("0.000", CultureInfo.InvariantCulture);
+                        var (dS, _) = (gp.StirrupDia, 0);
+                        foreach (var r in corners)
+                            foreach (var (a, b) in SectionPlanner.CutIntervals(new List<(double X, double Y)> { (r.X0, r.Y0), (r.X1, r.Y0), (r.X1, r.Y1), (r.X0, r.Y1) },
+                                                                                inp.CutAlongX, inp.CutCoord))
+                            {
+                                inp.Beams.Add(new SectionPlanner.BeamBand
+                                {
+                                    Handle = g.handle, S0 = a, S1 = b, Height = gp.Height, TopDrop = 0, Cantilever = true, PileCap = true,
+                                    NibWidth = 0, NibHeight = 0, Cover = gp.CoverSide, CoverBottom = gp.CoverBottom, StirrupDia = dS,
+                                    StirrupA = BeamGeometry.StirrupHeightCovers(gp.Height, gp.CoverTop, gp.CoverBottom),
+                                    Params = $"GBCORNER {r.X1 - r.X0:0}x{r.Y1 - r.Y0:0} {gp.Height:0}THK"
+                                });
+                                nGb++;
+                            }
+                        foreach (var loop in RectilinearPolygons.Subtract(zt, corners).Where(l => RectilinearPolygons.SignedArea(l) > 0))
+                            foreach (var (a, b) in SectionPlanner.CutIntervals(loop, inp.CutAlongX, inp.CutCoord))
+                            {
+                                inp.Beams.Add(new SectionPlanner.BeamBand
+                                {
+                                    Handle = g.handle, S0 = a, S1 = b, Height = gp.Height, TopDrop = gp.TopDrop, Cantilever = true, TocText = toc,
+                                    NibWidth = 0, NibHeight = 0, Cover = gp.CoverSide, CoverBottom = gp.CoverBottom, StirrupDia = dS,
+                                    StirrupA = BeamGeometry.StirrupHeightCovers(gp.Height - gp.TopDrop, gp.CoverTop, gp.CoverBottom),
+                                    Params = $"GB {gp.Width:0}x{gp.Height - gp.TopDrop:0} TOC-{gp.TopDrop:0}"
+                                });
+                                nGb++;
+                            }
+                    }
+                    catch (System.Exception ex) { Log.Error("AutoRebar.PrepareSection.Gb", ex); }
+                }
+                if (nGb > 0) ctx.Info.Add($"Belki GB (pasy GB / narożniki w płycie) na linii cięcia: {nGb}.");
+
                 int nCant = 0;
                 var placedC = new List<List<Point2d>>();
                 foreach (var (delta, _, poly) in views)

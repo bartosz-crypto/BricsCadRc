@@ -1609,7 +1609,17 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   kolejny o tym samym podpisie — na rzucie ramka i „DETAIL ’n’” detalu głównego, jego rozkłady (cały detal bez tytułu) nad detalem
   głównym w miejscu k · (ramka + 2 ramiona opisów + 1500), wokół kopii ramka z przekątnymi (rola COPYBOX, odświeżana po każdym
   generowaniu). BBS liczy kopie (zwykłe rozkłady). Tylko przesunięcie — obrót / odbicie = inny detal.
-- Do zrobienia (kolejne etapy): przekrój przez GB poza płytą (TOC), belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
+- **Uwagi Bartka 2026-10-23 (cd. 2):** belka wewnętrzna vs krawędziowa z nibem — inne zbrojenie (wzór): `TerraceRules.PlanGbLinks` —
+  narożnik = strefa ∩ linia uskoku; na całą szerokość (wewnętrzna) — strzemiona GB (63) przerwane (35 co 200 na 6920), węższy (krawędziowa:
+  nib przy krawędzi płyty w narożu, 600 × 465) — strzemiona GB przez całą belkę (41 co 200); w narożniku 51 w obu kierunkach co 150
+  (wewnętrzna 4 + 4 jedną pozycją, krawędziowa 4 (B 365) + 3 (B 500)); GB co 200 DOKŁADNIE (`ExactLayout`). Podpis wspólnego
+  detalu z narożnikami (wewnętrzna ≠ krawędziowa). Ramka detalu (otwór, belka, wspornik): offset 450 (dawniej 600 / otwór 500), za
+  krawędzią płyty 150 (dawniej 300) — `BeamDetailRules.Margin / OutsideEdge`, `HoleDetailFrameOffset = Margin`.
+- **Przekrój GB (RC_SECTION, 2026-10-23):** strefy [39] > 0 dotykające rzutu (narożnik w obrysie) — beton = obrys ∪ strefy GB
+  (`RectilinearPolygons.AddClipped`), pręty GB z punktu w strefie (także z detalu — rzut strefy z narożnika), pale w strefach; pasy:
+  narożnik w płycie — jak strefa przy palu (Cantilever + PileCap, wierzch 0, spód −H), reszta — jak wspornik (wierzch −[39], spód −H,
+  znacznik TOC = SSL − [39]); otulina / A strzemion z rekordu. Testy `SectionGroundBeamTests` (D-D w poprzek, C-C wzdłuż).
+- Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 
 ## 5. Proces pracy

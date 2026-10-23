@@ -3263,7 +3263,7 @@ namespace BricsCadRc.Core
         /// <summary>Odległość pierwszego pręta dodatkowego od krawędzi otworu i rozstaw (2 pręty).</summary>
         public const double HoleTrimmerOffset    = 75.0, HoleTrimmerSpacing = 100.0;
         /// <summary>Obramówka detalu na planie: odsunięcie od otworu [mm].</summary>
-        public const double HoleDetailFrameOffset = 500.0;
+        public const double HoleDetailFrameOffset = BeamDetailRules.Margin;   // uwaga Bartka 2026-10-23: ta sama ramka co detal belki / wspornika (450; dawniej 500)
         /// <summary>Skala detalu (1:25) i ramię opisu za ramką detalu [mm].</summary>
         public const int    DetailScale = 25;
         public const double DetailLeaderArm = 150.0;

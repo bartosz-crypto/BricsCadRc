@@ -13,7 +13,7 @@ namespace BricsCadRc.Core
     public static class BeamDetailRules
     {
         /// <summary>Okno: margines za bokiem strefy (końce wzdłuż i lico wewnętrzne) [mm].</summary>
-        public const double Margin = 600.0;
+        public const double Margin = 450.0;   // uwaga Bartka 2026-10-23: ramka detalu o 150 bliżej (dawniej 600) — wszędzie tak samo
 
         /// <summary>Znacznik przekroju na detalu (decyzja Bartka 2026-10-20): w tym samym miejscu co na rzucie (koniec linii cięcia
         /// przesunięty do detalu) — także POZA ramką detalu, jeśli koniec jest najwyżej o tyle za ramką.</summary>
@@ -33,7 +33,7 @@ namespace BricsCadRc.Core
             return (clip.X + dx / d * MarkOut, clip.Y + dy / d * MarkOut);
         }
         /// <summary>Okno: wysunięcie poza krawędź płyty przy strefie [mm].</summary>
-        public const double OutsideEdge = 300.0;
+        public const double OutsideEdge = 150.0;   // uwaga Bartka 2026-10-23: o 150 mniej (dawniej 300)
         /// <summary>Krawędź płyty uznana za „przy boku strefy”, gdy leży na zewnątrz boku najdalej o tyle [mm] (nib ≤ 255).</summary>
         public const double EdgeSearch = 600.0;
         /// <summary>Rezerwa na opisy wokół okna przy wyborze miejsca detalu [mm] (opisy 2,5 mm w 1:25 + linie odniesienia).</summary>

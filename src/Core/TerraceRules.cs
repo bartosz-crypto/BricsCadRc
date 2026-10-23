@@ -320,6 +320,69 @@ namespace BricsCadRc.Core
             return parts;
         }
 
+        /// <summary>Część strefy GB w pełnej grubości płyty (strefa ∩ linia uskoku): wzdłuż osi A0..A1, w poprzek C0..C1.</summary>
+        public sealed class GbCorner
+        {
+            public double A0, A1, C0, C1;
+            /// <summary>Na całą szerokość belki (belka wewnętrzna) — strzemiona GB (63) przerwane; inaczej (belka krawędziowa z nibem,
+            /// część płyty węższa niż belka) strzemiona GB przechodzą przez narożnik.</summary>
+            public bool FullWidth;
+        }
+
+        public sealed class GbLinks
+        {
+            /// <summary>Zakresy strzemion GB (63, A z H − obniżenie) wzdłuż osi.</summary>
+            public List<(double Lo, double Hi)> Outside = new List<(double Lo, double Hi)>();
+            /// <summary>Strefy narożne w płycie — strzemiona 51 w obu kierunkach co 150.</summary>
+            public List<GbCorner> Corners = new List<GbCorner>();
+        }
+
+        /// <summary>
+        /// Strzemiona belki GB (uwagi Bartka 2026-10-23, wzór PLOT 304–307): narożnik w płycie (część strefy w linii uskoku) — strzemiona 51
+        /// w obu kierunkach (wzór: belka wewnętrzna „4 + 4 H12-12-150”, krawędziowa z nibem „3 H12-12-150” + „4 H12-14-150”); strzemiona GB
+        /// (63) na zakresie [lo, hi] bez narożników na całą szerokość (wewnętrzna: „35 H12-15-200” na 6920), przez narożnik węższy niż belka
+        /// (krawędziowa: „41 H12-15-200” na całej belce). Części krótsze niż 50 pomijane.
+        /// </summary>
+        public static GbLinks PlanGbLinks(double lo, double hi, double cLo, double cHi, IList<GbCorner> slabParts)
+        {
+            var res = new GbLinks();
+            foreach (var c in slabParts ?? new List<GbCorner>())
+            {
+                double a0 = Math.Max(lo, c.A0), a1 = Math.Min(hi, c.A1), c0 = Math.Max(cLo, c.C0), c1 = Math.Min(cHi, c.C1);
+                if (a1 - a0 < 50.0 || c1 - c0 < 50.0) continue;
+                res.Corners.Add(new GbCorner { A0 = a0, A1 = a1, C0 = c0, C1 = c1, FullWidth = c0 <= cLo + SnapTol && c1 >= cHi - SnapTol });
+            }
+            res.Corners = res.Corners.OrderBy(c => c.A0).ToList();
+            var cut = res.Corners.Where(c => c.FullWidth).Select(c => (c.A0, c.A1)).ToList();
+            var parts = new List<(double Lo, double Hi)> { (lo, hi) };
+            foreach (var (a0, a1) in cut)
+            {
+                var next = new List<(double Lo, double Hi)>();
+                foreach (var (p0, p1) in parts)
+                {
+                    if (a1 <= p0 || a0 >= p1) { next.Add((p0, p1)); continue; }
+                    if (a0 - p0 >= 50.0) next.Add((p0, a0));
+                    if (p1 - a1 >= 50.0) next.Add((a1, p1));
+                }
+                parts = next;
+            }
+            res.Outside = parts;
+            return res;
+        }
+
+        /// <summary>
+        /// Strzemiona co <paramref name="spacing"/> DOKŁADNIE na [lo, hi] (pierwsze <paramref name="first"/> od końców, reszta po równo z obu
+        /// stron — jak strefa przy palu wspornika): położenia skrajnych i liczba.
+        /// </summary>
+        public static (double First, double Step, int Count) ExactLayout(double lo, double hi, double spacing, double first)
+        {
+            double av = (hi - lo) - 2 * first;
+            if (av < -1e-6) return ((lo + hi) / 2, spacing, 1);
+            int n = (int)Math.Floor(av / spacing + 1e-9) + 1;
+            double f = lo + first + (av - (n - 1) * spacing) / 2.0;
+            return (f, spacing, n);
+        }
+
         // ── wewnętrzne ──────────────────────────────────────────────────
 
         /// <summary>Koniec strefy belki przy końcu pasa: linia strefy narożnej z GA, opis „…THK” (nib + 600) albo koniec pasa.</summary>

@@ -287,9 +287,11 @@ namespace BricsCadRc.Core
                     sb.Append("|S").Append(g.AlongX ? 'X' : 'Y').Append(R(g.FaceLo - o)).Append(',').Append(R(g.FaceHi - o)).Append(',')
                       .Append(R(g.AcrossLo - c)).Append(',').Append(R(g.AcrossHi - c)).Append(',').Append(g.LoKind).Append(',').Append(g.HiKind)
                       .Append(',').Append(g.LoClose).Append(',').Append(g.HiClose).Append(',').Append(g.OuterSide);
+                    // GB: narożniki w płycie (wewnętrzna / krawędziowa z nibem — uwaga Bartka 2026-10-23: inne zbrojenie)
                     if (slabLoops != null)
-                        foreach (var part in LinkParts(g, slabLoops, ""))
-                            sb.Append("|P").Append(R(part.Lo - o)).Append(',').Append(R(part.Hi - o)).Append(part.Shape);
+                        foreach (var cr in GbSlabParts(g, slabLoops))
+                            sb.Append("|P").Append(R(cr.A0 - o)).Append(',').Append(R(cr.A1 - o)).Append(',')
+                              .Append(R(cr.C0 - c)).Append(',').Append(R(cr.C1 - c));
                 }
                 return sb.ToString();
             }
@@ -305,6 +307,15 @@ namespace BricsCadRc.Core
                                                                         List<(double Lo, double Hi, string Shape)> parts, BeamDrawTarget tg, BeamView view)
         {
             bool first = Math.Abs(lo - parts[0].Lo) < 1.0, last = Math.Abs(hi - parts[parts.Count - 1].Hi) < 1.0;
+            return GbLinkLeader(s, lo, hi, first && !last ? -1 : last && !first ? 1 : 0, tg, view);
+        }
+
+        /// <summary>Linia odniesienia strzemion GB: side −1 — prosto na zewnątrz okna w stronę Lo, +1 — w stronę Hi, 0 — do środka zakresu
+        /// i w poprzek belki poza okno (góra, potem dół; 1/2, 1/4, 3/4).</summary>
+        private static Func<Point3d, List<List<Point3d>>> GbLinkLeader(BeamGeometry.Segment s, double lo, double hi, int side, BeamDrawTarget tg,
+                                                                        BeamView view)
+        {
+            bool first = side < 0, last = side > 0;
             var box = tg != null ? tg.Box : view.Box;
             double scale = tg != null ? tg.AnnotScale : 1.0;
             double arm = (tg != null ? BeamDetailLeaderArm : LeaderArmExtension) * scale;
@@ -328,6 +339,92 @@ namespace BricsCadRc.Core
                     }
                 return res;
             };
+        }
+
+        /// <summary>
+        /// Części strefy GB w pełnej grubości płyty (strefa ∩ linie uskoku płyt rzutu): zakresy wzdłuż osi na trzech liniach (lico, oś,
+        /// lico) i zakres w poprzek w środku każdego — wejście <see cref="TerraceRules.PlanGbLinks"/>.
+        /// </summary>
+        private static List<TerraceRules.GbCorner> GbSlabParts(BeamGeometry.Segment s, List<List<(double X, double Y)>> loops)
+        {
+            var res = new List<TerraceRules.GbCorner>();
+            if (loops == null) return res;
+            foreach (var loop in loops)
+            {
+                var one = new List<List<(double X, double Y)>> { loop };
+                var ivs = new List<(double Lo, double Hi)>();
+                foreach (double c in new[] { s.AcrossLo + 1.0, s.Axis, s.AcrossHi - 1.0 })
+                    ivs.AddRange(RectilinearPolygons.IntervalsOnLine(one, s.AlongX, c));
+                ivs = ivs.OrderBy(x => x.Lo).ToList();
+                var merged = new List<(double Lo, double Hi)>();
+                foreach (var iv in ivs)
+                {
+                    if (merged.Count > 0 && iv.Lo <= merged[merged.Count - 1].Hi + 1.0)
+                        merged[merged.Count - 1] = (merged[merged.Count - 1].Lo, Math.Max(merged[merged.Count - 1].Hi, iv.Hi));
+                    else merged.Add(iv);
+                }
+                foreach (var (a0, a1) in merged)
+                {
+                    double b0 = Math.Max(a0, s.LinkLo), b1 = Math.Min(a1, s.LinkHi);
+                    if (b1 - b0 < 50.0) continue;
+                    var cross = RectilinearPolygons.IntervalsOnLine(one, !s.AlongX, (b0 + b1) / 2.0)
+                        .Where(x => Math.Min(x.Hi, s.AcrossHi) - Math.Max(x.Lo, s.AcrossLo) > 50.0).ToList();
+                    foreach (var x in cross)
+                        res.Add(new TerraceRules.GbCorner { A0 = b0, A1 = b1, C0 = Math.Max(x.Lo, s.AcrossLo), C1 = Math.Min(x.Hi, s.AcrossHi) });
+                }
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Strzemiona odcinka belki GB (uwagi Bartka 2026-10-23, wzór PLOT 304–307 — TerraceRules.PlanGbLinks): GB — 63, A z H − obniżenie,
+        /// co 200 dokładnie (wzór: 35 na 6920, 41 na 8120); narożnik w płycie — 51, A z H, w obu kierunkach co 150 dokładnie (B z wymiarów
+        /// narożnika w linii uskoku). Otulina 50 równo, bez − 15 drugiej warstwy.
+        /// </summary>
+        private static void GbSegmentLinks(Database db, Document doc, BeamView bottom, BeamDrawTarget tg, BeamGeometry.Segment s, BeamParams p,
+                                           List<List<(double X, double Y)>> slabLoops, double H, double Hgb, double A51, double Agb, double offFirst,
+                                           List<(int n, int d)> legLayers, string zbHandle, string name, Action<string> msg, BeamRunResult res)
+        {
+            var plan = TerraceRules.PlanGbLinks(s.LinkLo, s.LinkHi, s.AcrossLo, s.AcrossHi, GbSlabParts(s, slabLoops));
+            double cv = p.CoverSide;
+            // across = true: pręty w poprzek osi, rozstaw wzdłuż [lo, hi], pręt na [c0, c1]; false: pręty wzdłuż osi na [lo, hi], rozstaw w poprzek
+            void Run(string shape, double A, double hh, double lo, double hi, double c0, double c1, double sp, bool across, int side, string what)
+            {
+                double span = across ? c1 - c0 : hi - lo;
+                var legs = BeamGeometry.PlanLinkLegs(p.StirrupLegs, hh, span, cv, p.CoverBottom, p.StirrupDia, legLayers, edgeBeam: s.OuterSide != 0);
+                bool four = legs.Legs == 4 && across;
+                double B = BeamGeometry.StirrupWidth(span, cv);
+                if (A <= 0 || B <= 0) { msg($"{name}: {what} — wymiary strzemienia ≤ 0, pominięte."); return; }
+                var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: shape, a: A, b: four ? legs.B4 : B,
+                                                   code: BeamGeometry.CodeLinks);
+                if (tpl.id.IsNull) return;
+                var (first, step, n) = across ? TerraceRules.ExactLayout(lo, hi, sp, offFirst) : TerraceRules.ExactLayout(c0, c1, sp, offFirst);
+                if (n <= 0) return;
+                double last = first + (n - 1) * step;
+                double k0 = across ? c0 + cv : lo + cv, k1Full = across ? c1 - cv : hi - cv;
+                double k1 = four ? k0 + legs.B4 : k1Full;
+                bool barsX = across ? !s.AlongX : s.AlongX;
+                // barsX: pręty wzdłuż X — x na pręcie (k), y na rozstawie; inaczej odwrotnie
+                double x0 = barsX ? k0 : first, x1 = barsX ? k1 : last;
+                double y0 = barsX ? first : k0, y1 = barsX ? last : k1;
+                if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, four ? legs.B4 : B, sp, n > 1 ? step : double.NaN,
+                                     BeamGeometry.CodeLinks, BeamGeometry.SuffixLinks, noSpacing: false, shape: tpl.bar.ShapeCode, repr: 0,
+                                     zoneHandle: zbHandle, leaderFor: across ? GbLinkLeader(s, lo, hi, side, tg, bottom) : null,
+                                     customize: four ? (Action<BarData>)(bar => { bar.CountDisplay = 2 * n; bar.PairShift = Math.Max(0, (k1Full - k0) - legs.B4); }) : null,
+                                     tg: tg))
+                    res.Stirrups++;
+                msg($"{name}: {what} — {n} H{p.StirrupDia} {shape} co {sp:F0}, A = {A:F0}, B = {(four ? legs.B4 : B):F0}.");
+            }
+            foreach (var (lo, hi) in plan.Outside)
+                Run(CantileverRules.LinkShapeOutside, Agb, Hgb, lo, hi, s.AcrossLo, s.AcrossHi, p.StirrupSpacing, true, 0,
+                    $"strzemiona GB {lo:F0}..{hi:F0}");
+            foreach (var c in plan.Corners)
+            {
+                int side = Math.Abs(c.A0 - s.LinkLo) < 1.0 ? -1 : Math.Abs(c.A1 - s.LinkHi) < 1.0 ? 1 : 0;
+                string w = $"narożnik w płycie {c.A0:F0}..{c.A1:F0}{(c.FullWidth ? "" : " (belka krawędziowa — strzemiona GB przez narożnik)")}";
+                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, true, side, w);
+                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, false, side, w + ", drugi kierunek");
+            }
         }
 
         /// <summary>
@@ -559,6 +656,8 @@ namespace BricsCadRc.Core
                     $"51 w płycie / 63 poza płytą), zamiast {p.StirrupShape} z rekordu.");
             foreach (var s in segs)
             {
+            // GB poza płytą (uwagi Bartka 2026-10-23 — wzór PLOT 304–307): strzemiona wg narożników w płycie (belka wewnętrzna / krawędziowa)
+            if (drop > 0) { GbSegmentLinks(db, doc, bottom, tg, s, p, slabLoops, H, Hgb, A51, Agb, offFirst, legLayers, zbHandle, name, msg, res); continue; }
             var partsOfSeg = LinkParts(s, slabLoops, linkShape);
             foreach (var part in partsOfSeg)
             {
