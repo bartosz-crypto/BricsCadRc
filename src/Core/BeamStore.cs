@@ -31,6 +31,7 @@ namespace BricsCadRc.Core
     ///     2 = 2-cięte, 4 = 4-cięte (dwa identyczne zachodzące strzemiona jedną pozycją).
     ///     [38] nib przy belce (Int16; decyzja użytkownika 2026-10-11 „opcja dodania lub nie dodawania nibu”): 0 = wg geometrii (brak pola),
     ///     1 = belka bez nibu (lico zewnętrzne = krawędź płyty — BeamGeometry.ZoneWithoutNib; bez UB 03 / T IN NIB / prętów w nibie przy belce).
+    ///     [39] GB poza płytą (Real; decyzja 2026-10-23): obniżenie góry belki względem SSL (SSL − TOC), 0 = brak (brak pola).
     ///     Od v2: [15] = Ceil25(krotność · Ø dołem) (tylko dla starej wtyczki), [17] nieużywane (zapis bez zmian).
     ///     Rekord v1 ([1] &lt; 2) — migracja w pamięci (BeamParams.MigrateV1: nowe domyślne + komunikat), zapis przy OK w RC_BEAM
     ///     albo przy generowaniu.
@@ -99,7 +100,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal, p.UBarArmExtra),              // [35] naddatek ramienia U-bara
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.DetailView ? 1 : 0)),   // [36] K9: 1 = detal 1:25, 0 = rzut
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)BeamParams.NormalizeLegs(p.StirrupLegs)),   // [37] 0 Auto / 2 / 4
-                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.NoNib ? 1 : 0)));  // [38] nib: 0 wg geometrii / 1 bez nibu
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(p.NoNib ? 1 : 0)),   // [38] nib: 0 wg geometrii / 1 bez nibu
+                new TypedValue((int)DxfCode.ExtendedDataReal, p.TopDrop));                  // [39] GB: obniżenie góry belki (SSL − TOC)
 
         /// <summary>Zapis rekordu strefy (RegApp rejestrowany); encja otwarta do zapisu w transakcji tr.</summary>
         public static void Write(Transaction tr, Database db, Entity zone, BeamParams p, string slabHandle)
@@ -161,6 +163,7 @@ namespace BricsCadRc.Core
             p.DetailView = I(36, 1) != 0;              // K9: brak pola (rekord sprzed K9) = detal
             p.StirrupLegs = BeamParams.NormalizeLegs(I(37, BeamParams.LegsAuto));   // brak pola = Auto (decyzja 2026-10-11)
             p.NoNib = I(38, 0) == 1;                   // brak pola = wg geometrii (decyzja 2026-10-11 „opcja nibu”); inna wartość = wg geometrii
+            p.TopDrop = Math.Max(0, D(39, 0));         // brak pola = 0 (belka z górą na SSL)
             p.Lap = p.LapFor(p.BottomDia);
             return p;
         }
@@ -454,6 +457,17 @@ namespace BricsCadRc.Core
             }
             return res;
         }
+
+        /// <summary>Belka GB poza płytą (RC_BEAM [39] &gt; 0 — decyzja 2026-10-23).</summary>
+        public static bool IsGroundBeam(Entity e) => IsZone(e) && (Read(e)?.TopDrop ?? 0) > 0;
+
+        /// <summary>
+        /// Strefy płyty dla siatki (B1/B2/T1/T2, UB 01/02/03 przy belce — E2): jak <see cref="ZonesOfSlab"/>, bez belek GB poza płytą
+        /// (uwaga Bartka 2026-10-23, test13: strefa narożna GB w płycie jak pogrubienie przy wsporniku — siatka i UB 01/02 bez zmian,
+        /// UB 03 przerwane tylko tam, gdzie GB przechodzi przez krawędź — <c>GroundBeamSpansOnEdge</c>).
+        /// </summary>
+        public static List<ObjectId> MeshZonesOfSlab(Transaction tr, Database db, ObjectId slabId, List<Point2d> slabPoly)
+            => ZonesOfSlab(tr, db, slabId, slabPoly).Where(z => !(tr.GetObject(z, OpenMode.ForRead) is Entity e && IsGroundBeam(e))).ToList();
 
         internal static Point2d Centroid(Polyline pl)
         {

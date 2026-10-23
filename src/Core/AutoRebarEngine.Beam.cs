@@ -85,6 +85,7 @@ namespace BricsCadRc.Core
                 if (!(tr.GetObject(slabOuterId, OpenMode.ForRead) is Polyline me)) return (ObjectId.Null, new Vector2d());
                 var mv = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(me));
                 var (myPlot, myView) = GaTagOf(me);
+                string myMember = GaImportEngine.MemberTag(me);   // szereg płyt (2026-10-23): płyty 304 i 307 przystające — partner tej samej płyty
                 var mMin = MinPoint(mv);
                 var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
                 ObjectId best = ObjectId.Null; Vector2d bestD = new Vector2d(); int bestRank = int.MaxValue; double bestLen = double.MaxValue;
@@ -99,6 +100,7 @@ namespace BricsCadRc.Core
                     if (delta.Length < 1.0 || !Congruent(v, mv, delta)) continue;
                     var (plot, view) = GaTagOf(pl);
                     int rank = myPlot != null && plot == myPlot && view != null && view != myView ? 0 : 1;
+                    if (rank == 0 && myMember != null && GaImportEngine.MemberTag(pl) != myMember) rank = 1;
                     if (rank < bestRank || (rank == bestRank && delta.Length < bestLen))
                     { best = id; bestD = delta; bestRank = rank; bestLen = delta.Length; }
                 }
@@ -255,6 +257,97 @@ namespace BricsCadRc.Core
             return res;
         }
 
+        /// <summary>
+        /// GB poza płytą (uwaga Bartka 2026-10-23 — opisy strzemion części na jednej linii nachodziły): linia odniesienia opisu strzemion
+        /// części odcinka — część skrajna przy Lo: prosto na zewnątrz końca okna (w stronę Lo), przy Hi — w stronę Hi; część środkowa (GB):
+        /// wzdłuż linii rozkładu do środka części (albo 1/4, 3/4), potem w poprzek belki poza okno (góra, potem dół).
+        /// </summary>
+        private static Func<Point3d, List<List<Point3d>>> GbLinkLeader(BeamGeometry.Segment s, double lo, double hi,
+                                                                        List<(double Lo, double Hi, string Shape)> parts, BeamDrawTarget tg, BeamView view)
+        {
+            bool first = Math.Abs(lo - parts[0].Lo) < 1.0, last = Math.Abs(hi - parts[parts.Count - 1].Hi) < 1.0;
+            var box = tg != null ? tg.Box : view.Box;
+            double scale = tg != null ? tg.AnnotScale : 1.0;
+            double arm = (tg != null ? BeamDetailLeaderArm : LeaderArmExtension) * scale;
+            double sh = tg == null ? 0 : s.AlongX ? tg.Shift.X : tg.Shift.Y;   // przesunięcie wzdłuż osi belki (detal)
+            bool ax = s.AlongX;
+            double aMin = ax ? box.MinPoint.X : box.MinPoint.Y, aMax = ax ? box.MaxPoint.X : box.MaxPoint.Y;
+            double cMin = ax ? box.MinPoint.Y : box.MinPoint.X, cMax = ax ? box.MaxPoint.Y : box.MaxPoint.X;
+            return ins =>
+            {
+                double along = ax ? ins.X : ins.Y, across = ax ? ins.Y : ins.X;
+                Point3d P(double a, double c) => ax ? new Point3d(a, c, 0) : new Point3d(c, a, 0);
+                var res = new List<List<Point3d>>();
+                if (first && !last) res.Add(new List<Point3d> { ins, P(aMin - arm, across) });
+                else if (last && !first) res.Add(new List<Point3d> { ins, P(aMax + arm, across) });
+                else
+                    foreach (double f in new[] { 0.5, 0.25, 0.75 })
+                    {
+                        double a = lo + sh + (hi - lo) * f;
+                        res.Add(new List<Point3d> { ins, P(a, across), P(a, cMax + arm) });
+                        res.Add(new List<Point3d> { ins, P(a, across), P(a, cMin - arm) });
+                    }
+                return res;
+            };
+        }
+
+        /// <summary>
+        /// GB poza płytą (2026-10-23): zakres strzemion odcinka podzielony na części w płycie (51) i poza płytą (63) wzdłuż osi odcinka
+        /// (TerraceRules.SplitParts). Bez obrysów (belka bez [39]) — jedna część z kształtem z zasady 51 / 63 dla całej strefy (jak dotąd).
+        /// </summary>
+        private static List<(double Lo, double Hi, string Shape)> LinkParts(BeamGeometry.Segment s, List<List<(double X, double Y)>> slabLoops,
+                                                                            string wholeShape)
+        {
+            if (slabLoops == null || slabLoops.Count == 0) return new List<(double, double, string)> { (s.LinkLo, s.LinkHi, wholeShape) };
+            var inside = new List<(double Lo, double Hi)>();
+            foreach (var loop in slabLoops)
+                inside.AddRange(RectilinearPolygons.IntervalsOnLine(new List<List<(double X, double Y)>> { loop }, s.AlongX, s.Axis));
+            return TerraceRules.SplitParts(s.LinkLo, s.LinkHi, inside.OrderBy(x => x.Lo).ToList())
+                               .Select(x => (x.Lo, x.Hi, x.InSlab ? CantileverRules.LinkShapeInSlab : CantileverRules.LinkShapeOutside)).ToList();
+        }
+
+        /// <summary>
+        /// GB poza płytą: obrysy zewnętrzne płyt rzutu (zamknięte SD-PILED-RAFT z tym samym znacznikiem RC_GA [płyta, rzut] — szereg płyt;
+        /// linie uskoku w środku pominięte). Bez znacznika — tylko obrys rzutu.
+        /// </summary>
+        private static List<List<(double X, double Y)>> ViewSlabLoops(Database db, BeamView view)
+        {
+            var res = new List<List<(double X, double Y)>>();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(view.OuterId, OpenMode.ForRead) is Polyline me)) return res;
+                var (plot, v) = GaTagOf(me);
+                var cand = new List<List<Point2d>> { view.Verts };
+                if (plot != null)
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    foreach (ObjectId id in ms)
+                    {
+                        if (id.IsErased || id == view.OuterId || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl)) continue;
+                        if (!string.Equals(pl.Layer, me.Layer, StringComparison.OrdinalIgnoreCase) || !GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                        var (pp, pv) = GaTagOf(pl);
+                        if (pp != plot || pv != v) continue;
+                        cand.Add(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
+                    }
+                }
+                tr.Commit();
+                var boxes = cand.Select(GeometryHelper.VerticesBbox).ToList();
+                for (int i = 0; i < cand.Count; i++)
+                {
+                    var bi = boxes[i];
+                    bool inner = Enumerable.Range(0, cand.Count).Any(j => j != i
+                        && boxes[j].MinPoint.X <= bi.MinPoint.X + 1 && boxes[j].MaxPoint.X >= bi.MaxPoint.X - 1
+                        && boxes[j].MinPoint.Y <= bi.MinPoint.Y + 1 && boxes[j].MaxPoint.Y >= bi.MaxPoint.Y - 1
+                        && (boxes[j].MaxPoint.X - boxes[j].MinPoint.X) * (boxes[j].MaxPoint.Y - boxes[j].MinPoint.Y)
+                           > (bi.MaxPoint.X - bi.MinPoint.X) * (bi.MaxPoint.Y - bi.MinPoint.Y) + 1.0);
+                    if (!inner) res.Add(cand[i].Select(q => (q.X, q.Y)).ToList());
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.ViewSlabLoops", ex); }
+            return res;
+        }
+
         private static List<Point2d> ZoneVerts(Transaction tr, ObjectId id)
             => tr.GetObject(id, OpenMode.ForRead) is Polyline pl ? GeometryHelper.GetPolylineVertices(pl) : new List<Point2d>();
 
@@ -377,8 +470,11 @@ namespace BricsCadRc.Core
             BeamDrawTarget tg = null;
             if (p.DetailView)
             {
-                tg = PrepareBeamDetail(doc, bottom, top, zbHandle, effPoly, msg, zbPoly);
+                // GB poza płytą (test13): ramka = offset całej strefy (jak wspornik), nie przycięta do obrysu płyty [6]
+                tg = PrepareBeamDetail(doc, bottom, top, zbHandle, effPoly, msg, zbPoly, offsetFrame: p.TopDrop > 0, allPilesInFrame: p.TopDrop > 0);
                 if (tg == null) return;
+                // GB (uwaga Bartka 2026-10-23): opisy „GB-…” / „525THK” z rzutu w detalu — jak wspornik
+                if (p.TopDrop > 0) CopyCantileverLabels(db, tg, zbPoly, m => msg($"{name}: {m}"), dedupe: false);
                 SetBeamDetailOverrides(tg);
             }
 
@@ -405,27 +501,53 @@ namespace BricsCadRc.Core
             // zasada Bartka 2026-10-21/22: strzemiona elementów W PŁYCIE zawsze 51, POZA PŁYTĄ zawsze 63 (kod z okna RC_BEAM nie decyduje)
             string linkShape = GeometryHelper.IsPointInsidePolygon(bottom.Verts, CentroidOf(effPoly))
                 ? CantileverRules.LinkShapeInSlab : CantileverRules.LinkShapeOutside;
-            if (!string.IsNullOrEmpty(p.StirrupShape) && p.StirrupShape != linkShape)
+            // GB poza płytą (decyzja Bartka 2026-10-23, etap 1; RC_BEAM [39]): góra belki TopDrop pod SSL — części strefy poza obrysami płyt
+            // tego rzutu: 63 z A z H − TopDrop, części w płycie (narożne strefy 525THK): 51 z A z H; U-bary i pręty boczne z H − TopDrop
+            double drop = p.TopDrop > 0 && p.TopDrop < H - 150 ? p.TopDrop : 0;
+            double Hgb = H - drop;
+            double Agb = drop > 0 ? BeamGeometry.StirrupHeightCovers(Hgb, p.CoverTop, p.CoverBottom) : A51;
+            var slabLoops = drop > 0 ? ViewSlabLoops(db, bottom) : null;
+            if (drop > 0)
+                msg($"{name}: belka GB — góra {drop:F0} pod SSL (H {H:F0}, GB {Hgb:F0}): strzemiona 63 A = {Agb:F0} poza płytą, 51 A = {A51:F0} " +
+                    $"w płycie ({slabLoops.Count} obrys{(slabLoops.Count == 1 ? "" : "y")} płyt rzutu); pręty B+T prosto na poziomie GB, U-bary z H {Hgb:F0}.");
+            if (drop == 0 && !string.IsNullOrEmpty(p.StirrupShape) && p.StirrupShape != linkShape)
                 msg($"{name}: strzemiona {linkShape} (belka {(linkShape == CantileverRules.LinkShapeInSlab ? "w płycie" : "poza płytą")} — zasada " +
                     $"51 w płycie / 63 poza płytą), zamiast {p.StirrupShape} z rekordu.");
             foreach (var s in segs)
             {
+            var partsOfSeg = LinkParts(s, slabLoops, linkShape);
+            foreach (var part in partsOfSeg)
+            {
                 double B51 = BeamGeometry.StirrupWidth(s.Width, p.CoverSide);
+                string partShape = part.Shape;
+                double Hpart = drop > 0 && partShape == CantileverRules.LinkShapeOutside ? Hgb : H;
+                double Apart = drop > 0 && partShape == CantileverRules.LinkShapeOutside ? Agb : A51;
                 // 2026-10-13: wzdłuż X — druga warstwa (A − 15), wzdłuż Y — pierwsza (A)
-                double Aseg = BeamGeometry.LinkHeightFor(A51, s.AlongX);
+                // GB (uwaga Bartka 2026-10-23: otulina RÓWNO 50) — bez obniżenia drugiej warstwy (− 15 wzdłuż X)
+                double Aseg = drop > 0 ? Apart : BeamGeometry.LinkHeightFor(Apart, s.AlongX);
                 // ── strzemiona (rzut dolny; zakres strzemion — w narożniku L dłuższy odcinek przez kwadrat narożnika) ──
                 if (Aseg > 0 && B51 > 0)
                 {
-                    var legs = BeamGeometry.PlanLinkLegs(p.StirrupLegs, H, s.Width, p.CoverSide, p.CoverBottom, p.StirrupDia, legLayers,
+                    var legs = BeamGeometry.PlanLinkLegs(p.StirrupLegs, Hpart, s.Width, p.CoverSide, p.CoverBottom, p.StirrupDia, legLayers,
                                                          edgeBeam: s.OuterSide != 0);
                     if (legNotes.Add(legs.Note)) msg($"{name}: {legs.Note}");
                     bool four = legs.Legs == 4;
-                    var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: linkShape,
+                    var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: p.StirrupDia, shape: partShape,
                                                        a: Aseg, b: four ? legs.B4 : B51, code: BeamGeometry.CodeLinks);
                     // K2: pierwsze strzemię w osi otulina + Ø/2 od lica (także przy U-barach); Q7 [33]: niezależnie od UB 03 (domyślne)
                     var ubAlong = p.StirrupsAtUb03 ? Ub03Along(ub03, s) : null;
-                    var (first, step, n, fromUb) = BeamGeometry.StirrupLayout(s.LinkLo, s.LinkHi, p.StirrupSpacing, offFirst,
-                                                                              ubAlong, BeamStirrupUb03Shift, offFirst);
+                    // GB (test13, wzór PLOT 304–307: „4 H12-12-150 LINKS” w strefie narożnej): części w płycie — co 150 dokładnie, reszta po równo
+                    // (jak strefa przy palu wspornika); poza płytą — rozstaw z rekordu
+                    bool cornerPart = drop > 0 && partShape == CantileverRules.LinkShapeInSlab;
+                    double partSp = cornerPart ? CantileverRules.RootSingleLinkSpacing : p.StirrupSpacing;
+                    var (first, step, n, fromUb) = BeamGeometry.StirrupLayout(part.Lo, part.Hi, partSp, offFirst,
+                                                                              cornerPart ? null : ubAlong, BeamStirrupUb03Shift, offFirst);
+                    if (cornerPart && n > 1)
+                    {
+                        double av = (n - 1) * step;
+                        int m = (int)Math.Floor(av / partSp + 1e-9) + 1;
+                        first += (av - (m - 1) * partSp) / 2.0; step = partSp; n = m;
+                    }
                     if (!tpl.id.IsNull && n > 0)
                     {
                         double last = first + (n - 1) * step;
@@ -437,9 +559,10 @@ namespace BricsCadRc.Core
                         bool barsX = !s.AlongX;
                         double x0 = barsX ? c0 : first, x1 = barsX ? c1 : last;
                         double y0 = barsX ? first : c0, y1 = barsX ? last : c1;
-                        if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, four ? legs.B4 : B51, p.StirrupSpacing,
+                        if (BeamDistribution(db, bottom, tpl, x0, y0, x1, y1, barsX, p.StirrupDia, four ? legs.B4 : B51, partSp,
                                              n > 1 ? step : double.NaN, BeamGeometry.CodeLinks, BeamGeometry.SuffixLinks,
                                              noSpacing: false, shape: tpl.bar.ShapeCode, repr: 0, zoneHandle: zbHandle,
+                                             leaderFor: partsOfSeg.Count > 1 ? GbLinkLeader(s, part.Lo, part.Hi, partsOfSeg, tg, bottom) : null,
                                              customize: four ? (Action<BarData>)(bar =>
                                              {
                                                  bar.CountDisplay = 2 * n;
@@ -450,7 +573,8 @@ namespace BricsCadRc.Core
                         if (fromUb) msg($"{name}: strzemiona przesunięte o {BeamStirrupUb03Shift:F0} względem UB 03 (rozstaw {step:F0}).");
                     }
                 }
-                else msg($"{name}: wymiary strzemienia ≤ 0 (H = {H:F0}, szer. = {s.Width:F0}) — strzemiona pominięte.");
+                else msg($"{name}: wymiary strzemienia ≤ 0 (H = {Hpart:F0}, szer. = {s.Width:F0}) — strzemiona pominięte.");
+            }
             }
             msg($"{name}: strzemiona H{p.StirrupDia} 51 A = {A51:F0} wzdłuż Y (H − {p.CoverTop:F0} − {p.CoverBottom:F0}), " +
                 $"{BeamGeometry.LinkHeightFor(A51, true):F0} wzdłuż X (− {BeamGeometry.SecondLayerLinkDrop:F0}, druga warstwa), pierwsze {offFirst:F0} od lica " +
@@ -509,9 +633,9 @@ namespace BricsCadRc.Core
             if (!both && p.BottomCount != p.TopCount)
                 msg($"{name}: różna liczba prętów dołem / górą — U-bary w {columns} kolumnach (mniejsza liczba) — sprawdź.");
             var umsgs = new List<string>();
-            var uruns = BeamGeometry.PlanVerticalUBars(an, planMain, columns, dMain, p.UBarDia, A51, p.StirrupDia, p.LapFor(dMain),
+            var uruns = BeamGeometry.PlanVerticalUBars(an, planMain, columns, dMain, p.UBarDia, Agb, p.StirrupDia, p.LapFor(dMain),
                                                        p.UBarArmExtra, p.UBarDrop, p.MaxLength, p.CoverSide, endOff,
-                                                       p.CornerStraightIntoSquare, umsgs);
+                                                       p.CornerStraightIntoSquare, umsgs, noSecondLayerDrop: drop > 0);
             foreach (var m in umsgs) msg($"{name}: {m}");
             foreach (var r in uruns)
                 if (BeamVerticalUBar(db, doc.Editor, bottom, r, p.AcrossNominal, zbHandle, tg)) res.BentDists++;
@@ -521,18 +645,19 @@ namespace BricsCadRc.Core
             // ── K4 (praktyka biura C12; tryb K2 [25] / [26], domyślne do potwierdzenia — pytanie 9): pręty boczne BS H12 na obu bokach
             //    przy ramionach strzemienia, opis „2x{n} H12-nn SIDE” (boki × liczba na bok), proste do U-barów „UB SIDE” (BC, kształt 21
             //    poziomo, 1 na poziom na koniec / narożnik / złącze T, opis „{n}x1 H12-nn UB SIDE”) — rzut dolny, seria dolna ──
-            bool sideOn = p.SideBarsActive(H);
+            // GB (TopDrop): z wysokości H − TopDrop (pręty B+T na poziomie GB)
+            bool sideOn = p.SideBarsActive(Hgb);
             // decyzja użytkownika 2026-10-14 (tryb B3): liczba na bok z wysokości belki — ≤ 375 brak, 450–525: 1, 600–675: 2, 750–825: 3 …
             int nSide = !sideOn ? 0
-                      : p.SideMode == 3 ? BeamGeometry.SideLevelsForHeight(H)
-                      : BeamGeometry.SideBarCount(A51, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing);
-            double sideSp = BeamGeometry.SideLevelSpacing(A51, p.StirrupDia, p.BottomDia, p.TopDia, nSide);
+                      : p.SideMode == 3 ? BeamGeometry.SideLevelsForHeight(Hgb)
+                      : BeamGeometry.SideBarCount(Agb, p.StirrupDia, p.BottomDia, p.TopDia, p.SideSpacing);
+            double sideSp = BeamGeometry.SideLevelSpacing(Agb, p.StirrupDia, p.BottomDia, p.TopDia, nSide);
             if (p.SideDia > 0)
                 msg(sideOn
                     ? $"{name}: pręty boczne H{p.SideDia}: {nSide} na bok (tryb B{p.SideMode}" +
-                      (p.SideMode == 3 ? $", H {H:F0}: ≤ 375 brak, co 150 od 450 — +1" : $", rozstaw pionowy ≤ {p.SideSpacing:F0}") +
+                      (p.SideMode == 3 ? $", H {Hgb:F0}: ≤ 375 brak, co 150 od 450 — +1" : $", rozstaw pionowy ≤ {p.SideSpacing:F0}") +
                       $"; rozstaw pionowy ≈ {sideSp:F0}, w opisie UB SIDE {BeamGeometry.UbSideLabelSpacing:F0})."
-                    : $"{name}: pręty boczne — brak (tryb B{p.SideMode}{(p.SideMode == 3 ? $", H {H:F0} < 450" : "")}).");
+                    : $"{name}: pręty boczne — brak (tryb B{p.SideMode}{(p.SideMode == 3 ? $", H {Hgb:F0} < 450" : "")}).");
             if (nSide > 0)
             {
                 double lapS = p.LapFor(p.SideDia);
@@ -1470,7 +1595,7 @@ namespace BricsCadRc.Core
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
                     // rekord [38] „bez nibu” — strefa do krawędzi płyty (prostopadłe do 40 od krawędzi, krawędź bez UB 01/02); domyślnie bez zmian
-                    foreach (var z in BeamStore.ZonesOfSlab(tr, db, slabOuterId, outerVerts))
+                    foreach (var z in BeamStore.MeshZonesOfSlab(tr, db, slabOuterId, outerVerts))
                     {
                         var zv0 = ZoneVerts(tr, z);
                         var ze = EffectiveZoneVerts(zv0, BeamStore.Read((Entity)tr.GetObject(z, OpenMode.ForRead)), outerVerts);
@@ -1551,7 +1676,7 @@ namespace BricsCadRc.Core
                 var rects = new List<RectilinearPolygons.Rect>();
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
-                    foreach (var z in BeamStore.ZonesOfSlab(tr, db, nib.OuterId, nib.Outer))
+                    foreach (var z in BeamStore.MeshZonesOfSlab(tr, db, nib.OuterId, nib.Outer))
                     {
                         if (!(tr.GetObject(z, OpenMode.ForRead) is Polyline pl) || !(BeamStore.Read(pl) is BeamParams p) || !p.NoNib) continue;
                         var an = BeamGeometry.Analyze(GeometryHelper.GetPolylineVertices(pl).Select(v => (v.X, v.Y)).ToList(), outl);

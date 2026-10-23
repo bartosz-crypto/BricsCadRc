@@ -371,7 +371,7 @@ namespace BricsCadRc.Core
         /// i „xxxTHK” z grotem w strefie wspornika (z częścią w płycie) — kopia w detalu: grot przesunięty o Shift, tekst w połowie odległości
         /// (skala opisów detalu 0,5), wysokość tekstu i grot ×0,5 (1:25 — 62,5 jak w rysunkach biura). Liczba skopiowanych.
         /// </summary>
-        private static int CopyCantileverLabels(Database db, BeamDrawTarget tg, List<Point2d> zone, Action<string> msg)
+        private static int CopyCantileverLabels(Database db, BeamDrawTarget tg, List<Point2d> zone, Action<string> msg, bool dedupe = true)
         {
             var src = new List<(Point3d tip, Point3d txt, string text)>();
             try
@@ -393,7 +393,8 @@ namespace BricsCadRc.Core
                         try { loc = ml.TextLocation; }
                         catch (System.Exception ex) { Log.Error("AutoRebar.CopyCantileverLabels.Loc", ex); continue; }
                         string text = string.Join("\\P", lines);
-                        if (src.Any(s => s.text == text)) continue;
+                        // GB poza płytą (2026-10-23): „525THK” w obu narożnikach — bez łączenia identycznych opisów
+                        if (dedupe && src.Any(s => s.text == text)) continue;
                         src.Add((tip.Value, loc, text));
                     }
                     tr.Commit();
@@ -462,6 +463,35 @@ namespace BricsCadRc.Core
                 }
             }
             catch (System.Exception ex) { Log.Error("AutoRebar.CantileverSpansOnEdge", ex); }
+            return res;
+        }
+
+        /// <summary>
+        /// UB 03 przy belkach GB poza płytą (uwaga Bartka 2026-10-23, test13 — jak wspornik): zakresy krawędzi (x = edgeCoord dla pionowej),
+        /// które przecina albo pokrywa strefa GB (RC_BEAM [39] &gt; 0, także [6] innej płyty) — strefa sięga krawędzi (± 5) od wnętrza.
+        /// Siatka i UB 01/02 bez zmian (BeamStore.MeshZonesOfSlab).
+        /// </summary>
+        internal static List<(double Lo, double Hi)> GroundBeamSpansOnEdge(Database db, bool vertical, double edgeCoord)
+        {
+            var res = new List<(double Lo, double Hi)>();
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var id in BeamStore.AllZones(tr, db))
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || !BeamStore.IsGroundBeam(pl)) continue;
+                        var v = GeometryHelper.GetPolylineVertices(pl);
+                        if (v.Count < 3) continue;
+                        double x0 = v.Min(p => p.X), x1 = v.Max(p => p.X), y0 = v.Min(p => p.Y), y1 = v.Max(p => p.Y);
+                        double n0 = vertical ? x0 : y0, n1 = vertical ? x1 : y1;     // w poprzek krawędzi
+                        if (n0 > edgeCoord + 5.0 || n1 < edgeCoord - 5.0 || n1 - n0 < 50.0) continue;
+                        res.Add(vertical ? (y0, y1) : (x0, x1));
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.GroundBeamSpansOnEdge", ex); }
             return res;
         }
 

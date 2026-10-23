@@ -58,6 +58,7 @@
     <Compile Include="..\src\Core\PhDetailRules.cs" />
     <Compile Include="..\src\Core\LayoutRules.cs" />
     <Compile Include="..\src\Core\CantileverRules.cs" />
+    <Compile Include="..\src\Core\TerraceRules.cs" />
   </ItemGroup>
 
 </Project>

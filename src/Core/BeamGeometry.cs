@@ -89,6 +89,10 @@ namespace BricsCadRc.Core
         /// płyty → bez nibu; wynik jak dotąd), true — belka BEZ nibu mimo linii uskoku: lico zewnętrzne belki = krawędź płyty
         /// (<see cref="BeamGeometry.ZoneWithoutNib"/>), bez UB 03 / T IN NIB / prętów w nibie przy tej belce.</summary>
         public bool NoNib;
+        /// <summary>[39] Belka gruntowa GB poza płytą (decyzja Bartka 2026-10-23, etap 1 — PLOT 304–307): obniżenie góry belki względem SSL
+        /// (SSL − TOC, np. 75). 0 = brak (brak pola). Część strefy POZA obrysami płyt: strzemiona 63, A z wysokości H − TopDrop; części w płycie
+        /// (narożne strefy 525THK): strzemiona 51, A z H. Pręty B+T prosto na poziomie GB; U-bary i pręty boczne z wysokości H − TopDrop.</summary>
+        public double TopDrop;
 
         public const int LegsAuto = 0, Legs2 = 2, Legs4 = 4;
 
@@ -1039,12 +1043,14 @@ namespace BricsCadRc.Core
         /// </summary>
         public static List<VUBarRun> PlanVerticalUBars(Result an, LayerPlan straight, int columns, int dMain, int uDia, double stirrupA,
                                                        int dLink, double lap, double armExtra, double drop, double maxLen,
-                                                       double cover, double endOffset, bool intoSquare, List<string> msgs)
+                                                       double cover, double endOffset, bool intoSquare, List<string> msgs,
+                                                       bool noSecondLayerDrop = false)
         {
             var res = new List<VUBarRun>();
             if (an == null || columns <= 0 || uDia <= 0) return res;
             double b0 = Floor5(stirrupA - 2 * dLink);                                          // 1. warstwa (wzdłuż Y)
-            double bX = Floor5(LinkHeightFor(stirrupA, true) - 2 * dLink);                    // 2. warstwa (wzdłuż X)
+            // GB poza płytą (2026-10-23): bez obniżenia drugiej warstwy — otulina równo 50
+            double bX = noSecondLayerDrop ? b0 : Floor5(LinkHeightFor(stirrupA, true) - 2 * dLink);   // 2. warstwa (wzdłuż X)
             double nest = drop > 0 ? drop : Ceil5(2.0 * uDia);
             if (b0 <= 0 || bX <= 0)
             {

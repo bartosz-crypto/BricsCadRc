@@ -62,6 +62,7 @@ namespace BricsCadRc.Core
                 slabTag = CurrentSlabTagFor(pl);
                 var ga = pl.GetXDataForApplication(GaImportEngine.XApp)?.AsArray();
                 if (ga != null && ga.Length > 1) slabPlot = ga[1].Value as string;
+                if (ga != null && ga.Length > 3 && ga[3].Value is string gm && gm.Length > 0) slabPlot = gm;   // szereg płyt: etykieta tej płyty
                 tr.Commit();
             }
 

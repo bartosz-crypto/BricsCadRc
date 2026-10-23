@@ -228,7 +228,7 @@ namespace BricsCadRc.Core
             {
                 var outl = outer.Select(v => (v.X, v.Y)).ToList();
                 using var tr = db.TransactionManager.StartOpenCloseTransaction();
-                var zones = BeamStore.ZonesOfSlab(tr, db, slabOuterId, outer);
+                var zones = BeamStore.MeshZonesOfSlab(tr, db, slabOuterId, outer);
                 if (zones.Count > 0)
                 {
                     var anchors = ReadBeamDetailAnchors(tr, db);
@@ -418,7 +418,7 @@ namespace BricsCadRc.Core
                         any03 = true;
                         if (!string.IsNullOrEmpty(BeamStore.ReadTag(br))) inDetail = true; else anyPlan03 = true;
                     }
-                    foreach (var zid in BeamStore.ZonesOfSlab(tr, db, bottom.OuterId, bottom.Verts))
+                    foreach (var zid in BeamStore.MeshZonesOfSlab(tr, db, bottom.OuterId, bottom.Verts))
                     {
                         var zp = tr.GetObject(zid, OpenMode.ForRead) is Polyline zpl ? BeamStore.Read(zpl) : null;
                         if (zp?.DetailView ?? false) detailMode = true;
@@ -454,7 +454,8 @@ namespace BricsCadRc.Core
         /// </summary>
         private static BeamDrawTarget PrepareBeamDetail(Document doc, BeamView bottom, BeamView top, string zbHandle, List<Point2d> zbPoly,
                                                         Action<string> msg, List<Point2d> textPoly = null, bool offsetFrame = false,
-                                                        List<((double X, double Y) A, (double X, double Y) B)> extraLines = null)
+                                                        List<((double X, double Y) A, (double X, double Y) B)> extraLines = null,
+                                                        bool allPilesInFrame = false)
         {
             var db = doc.Database;
             string name = $"belka {zbHandle}";
@@ -550,7 +551,9 @@ namespace BricsCadRc.Core
                 var outlStyle = SourceStyle(db, bottom.OuterId);
                 var nibStyle = nib != null ? SourceStyle(db, nib.InnerId) ?? outlStyle : outlStyle;
                 var others = OtherPlanLines(db, win, frameT, bottom, nib?.InnerId ?? ObjectId.Null, outlT, nib?.Inner, m => msg($"{name}: {m}"));
-                var piles = FindPiles(db, bottom.Verts).Where(pc => BeamDetailRules.InsideOrOn(frameT, (pc.c.X, pc.c.Y))).ToList();
+                // GB poza płytą (2026-10-23): pale w całej ramce (także w pasie i w drugiej płycie), nie tylko w obrysie płyty [6]
+                var piles = FindPiles(db, allPilesInFrame ? frameT.Select(q => new Point2d(q.X, q.Y)).ToList() : bottom.Verts)
+                                .Where(pc => BeamDetailRules.InsideOrOn(frameT, (pc.c.X, pc.c.Y))).ToList();
                 var texts = ThkTextsIn(db, textPoly ?? zbPoly);   // „xxxTHK” w strefie z GA (bez nibu — ANCHOR przesunięty)
 
                 using (var tr = db.TransactionManager.StartTransaction())

@@ -73,6 +73,32 @@ namespace BricsCadRc.Core
             return !char.IsDigit(next) && next != '-';
         }
 
+        /// <summary>
+        /// Decyzja Bartka 2026-10-23 (PLOT 304–307): kilka płyt połączonych belkami GB w jednym obrysie GA — jedna pozycja na liście
+        /// Prepare GA. Ten sam przedrostek (PLOT / PLOTS / GARAGE…) i same numery → „PLOT 304-307” (najmniejszy – największy; jeden
+        /// numer → „PLOT 304”); inaczej etykiety złączone „ + ” w podanej kolejności.
+        /// </summary>
+        public static string MergeLabels(System.Collections.Generic.IList<string> labels)
+        {
+            if (labels == null || labels.Count == 0) return "";
+            if (labels.Count == 1) return (labels[0] ?? "").Trim();
+            string prefix = null;
+            var nums = new System.Collections.Generic.List<int>();
+            foreach (var l in labels)
+            {
+                var m = Regex.Match((l ?? "").Trim(), @"^([A-Za-z]+)\s+(\d+(?:\s*-\s*\d+)*)$");
+                if (!m.Success) return string.Join(" + ", labels);
+                string pre = m.Groups[1].Value.ToUpperInvariant();
+                if (pre.EndsWith("S")) pre = pre.Substring(0, pre.Length - 1);
+                if (prefix == null) prefix = pre;
+                else if (prefix != pre) return string.Join(" + ", labels);
+                foreach (Match n in Regex.Matches(m.Groups[2].Value, @"\d+")) nums.Add(int.Parse(n.Value, System.Globalization.CultureInfo.InvariantCulture));
+            }
+            int lo = int.MaxValue, hi = int.MinValue;
+            foreach (int n in nums) { if (n < lo) lo = n; if (n > hi) hi = n; }
+            return lo == hi ? $"{prefix} {lo}" : $"{prefix} {lo}-{hi}";
+        }
+
         private static string NormLabel(string s) => Regex.Replace((s ?? "").ToUpperInvariant(), @"\s+", " ").Trim();
     }
 }

@@ -124,6 +124,8 @@ Tytuł przekroju ══Xrecord PART=handle…══► części ──[1]──�
   [4] / [5] to wymiary nibu (wpisywane, w odcisku przekroju `NW` / `NH` — zmiana przeterminowałaby przekroje wszystkich belek), a „0” nie odróżnia
   „wg geometrii” od „bez nibu”; dziś [4] nie wpływa na generowanie (szerokość nibu zawsze z geometrii — odległość lica od obrysu), [5] = 0 dałby
   nib o zerowej wysokości w profilu. Pole poza odciskiem przekroju (`BeamParamsText` bez zmian; przekrój zmienia się przez pas belki i nib płyty).
+  **Decyzja Bartka 2026-10-23 (belki GB poza płytą, etap 1):** [39] obniżenie góry belki względem SSL (Real, `BeamParams.TopDrop`; SSL − TOC,
+  np. 75; brak pola = 0 — wynik jak dotąd). Pole poza odciskiem przekroju (przekrój GB — kolejny etap).
 - `RC_BEAM_MANUAL` (polilinia ręczna belki na warstwie `RC-BEAM-MANUAL`, `BeamStore.ManualApp`): [1]FormatVersion (Int16, 1) [2]strefa na rzucie
   polilinii (1005, XLink) [3]strefa na drugim rzucie (1005, XLink; "" gdy brak). Brak rekordu = polilinia nieprzetworzona. CloneRemap: [2] / [3]
   → klony stref, gdy skopiowane razem, inaczej "" (kopia samej polilinii — nowe strefy przy Prepare GA / Beam, nie przejmuje stref oryginału).
@@ -1566,6 +1568,40 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   przekrój ma rysować wsporniki i wszystko na płycie; wzór PLOT 28: D-D wzdłuż wspornika — wspornik 923 × 300 z wierzchem TOC 75 niżej
   niż płyta, strefa przy palu 600 × 375, płyta 225 + nib; C-C w poprzek — 600 × 300, 4 kolumny U-barów, strzemiona 4-leg), wspornik
   w narożniku (Plot 13 CNH).
+
+## 4l. Szereg płyt z belkami GB poza płytą — decyzja Bartka 2026-10-23 (etap 1, wzorzec PLOT 304–307 / test11)
+- **GA:** jeden obrys zewnętrzny SD-PILED-RAFT obejmuje kilka płyt; w nim zamknięte linie uskoku płyt (każda z opisem „PLOT …”), prostokątne
+  pustki między płytami, otwarte linie stref narożnych (735 × 600, opis „525THK”) i pasy betonu między płytami z opisem
+  „GB-600x450mm deep / TOC=23.350”.
+- **Lista Prepare GA (`GaImportEngine.MergeTerraces`):** opisy płyt w jednym obrysie, każdy we WŁASNEJ zamkniętej linii uskoku → jedna pozycja
+  `PlotLabelRules.MergeLabels` („PLOT 304-307”; ten sam przedrostek — min–max numerów, inaczej „ + ”). `GaPlot.Members` — opisy, ramki, linie
+  uskoku płyt (kolejność od lewej). Inne przypadki (kilka opisów bez własnych linii uskoku) — bez zmian.
+- **Model RC „3 płyty + 4 belki GB” (`GaImportEngine.SplitTerrace`, czysta logika `TerraceRules`, testy `TerraceRulesTests`):**
+  obrys płyty = linia uskoku odsunięta na zewnątrz każdą krawędzią do najbliższej równoległej krawędzi obrysu / pustki (50–255 — nib; brak —
+  krawędź bez nibu; krawędzie prawie osiowe — tolerancja 4 mm, test12: x 33885,71 → 33885,76); RC_GA [3] = etykieta tej płyty ([1] = etykieta łączna — arkusze, EraseOld bez zmian). Pas = beton obrysu poza płytami
+  i pustkami (prostokąt 200–1500 szer.; współrzędne sklejane ≤ 5 — GA 27857 / 27858); belka tylko z opisem GB w pasie (bez opisu — komunikat).
+  Strefa belki = pas + strefy narożne w płytach (linia strefy z GA; bez niej opis „…THK” → nib + 600; inaczej do krawędzi płyty) — jedna belka
+  od narożnika do narożnika (test11: 735 + 6650 + 735 = 8120). H = głębokość GB + (SSL − TOC) (bez TOC: THK narożnika − głębokość),
+  [39] = SSL − TOC, [6] = płyta przy początku pasa (strefę generuje RC_GENERATE → Beam tej płyty). Obrys zewnętrzny, pustki i użyte linie stref
+  usunięte; lica pasa — linie SD-PILED-RAFT; opisy GB / „…THK” stref nie idą do K8 ani wsporników. Dalej każda płyta jak zwykła
+  (`ProcessSlab`: wsporniki, nib, JoinLoops, K8 — kawałki / opisy w obwiedni płyty + 300). PH / ramki: obrys najbardziej na prawo.
+- **Rzuty przystające (PLOT 304 i 307 tego samego kształtu):** `FindPartnerView`, `FindBottomView` (siatka górna) i widoki przekroju biorą
+  tylko obrys z tym samym RC_GA [3]; mapy (Add) — dopasowanie po [3].
+- **Generowanie (`GenerateOneBeam`, [39] > 0):** zakres strzemion odcinka dzielony wzdłuż osi obrysami płyt rzutu (`ViewSlabLoops` — zamknięte
+  SD-PILED-RAFT z tym samym znacznikiem, bez linii uskoku; `TerraceRules.SplitParts`): poza płytą strzemiona 63, A z H − [39] (450 → 365),
+  w płycie 51, A z H (525 → 440); pierwsze strzemię od granicy części jak od lica. Pręty B+T prosto (rzut bez zmian — poziom GB tylko
+  w przekroju), U-bary (B) i pręty boczne z H − [39]. Belki bez [39] — bit w bit jak dotąd.
+- **Uwagi Bartka 2026-10-23 (test13, wzór biura PLOT 304–307):** strefa narożna GB w płycie = jak pogrubienie przy wsporniku —
+  siatka B1/B2/T1/T2 i UB 01/02 bez zmian (`BeamStore.MeshZonesOfSlab` pomija strefy z [39] > 0 w E2, UB 03 w detalu, T IN NIB),
+  UB 03 przerwane na szerokości GB na każdej krawędzi, przez którą GB przechodzi albo którą pokrywa (`GroundBeamSpansOnEdge`, także
+  płyta bez [6] tej belki — wcześniej 305-306 miało UB 03 przez belkę). Strefy GB z Prepare GA: detal 1:25 (decyzja Bartka — detal,
+  nie rzut), otulina RÓWNO 50 dookoła (góra / dół / boki, bez zapasu 5 mm i bez obniżenia − 15 drugiej warstwy strzemion i U-barów —
+  `PlanVerticalUBars(noSecondLayerDrop)`); detal GB — ramka z offsetu całej strefy, pale w całej ramce, opisy „GB-…” i „525THK”
+  z rzutu (`CopyCantileverLabels`, bez łączenia identycznych), opisy strzemion części (`GbLinkLeader`): narożniki — prosto na zewnątrz
+  końca okna, część GB — wzdłuż rozkładu do środka części i w poprzek poza okno (nie na jednej linii). Strzemiona części
+  w płycie co 150 dokładnie, reszta po równo (wzór: „4 H12-12-150 LINKS”), poza płytą — rozstaw z rekordu (200).
+- Do zrobienia (kolejne etapy): przekrój przez GB poza płytą (TOC), belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
+  stopa 1070 z prętami lacer.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

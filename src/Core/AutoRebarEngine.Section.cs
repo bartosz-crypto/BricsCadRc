@@ -71,9 +71,11 @@ namespace BricsCadRc.Core
 
             List<Point2d> verts, effVerts;
             string outerHandle;
+            string myMember = null;   // szereg płyt (2026-10-23): RC_GA [3] — rzuty tylko tej samej płyty
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
             {
                 if (!(tr.GetObject(outerId, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl)) return null;
+                myMember = GaImportEngine.MemberTag(pl);
                 // POPRAWKI 25: obrys prawie osiowy (≤ 4 mm) — kopia wyprostowana, spójna z krawędziami nibu; idealny — bez zmian
                 // wsporniki (2026-10-22): przekrój tnie obrys JAK NA RYSUNKU (z języczkami wsporników) — beton wspornika w przekroju;
                 // obrys do obliczeń (bez języczków) — geometria wspornika (nasada, uskok)
@@ -186,6 +188,7 @@ namespace BricsCadRc.Core
                 {
                     var v = GeometryHelper.SquaredOrSame(GeometryHelper.GetRawPolylineVertices(pl));   // jak FindBottomView (obrys z rysunku)
                     if (v.Count != verts.Count) continue;
+                    if (myMember != null && GaImportEngine.MemberTag(pl) is string om && om != myMember) continue;
                     var delta = MinPoint(v) - min0;             // rzut = wskazany + delta
                     if (delta.Length < 1.0 || !Congruent(v, verts, delta)) continue;
                     if (views.Any(x => (x.delta - delta).Length < 1.0)) continue;

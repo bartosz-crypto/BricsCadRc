@@ -338,7 +338,7 @@ namespace BricsCadRc.Core
                     {
                         using (var trZ = db.TransactionManager.StartOpenCloseTransaction())
                         {
-                            bottomZones = BeamStore.ZonesOfSlab(trZ, db, bottomView.OutlineId, bottomView.Verts).Count;
+                            bottomZones = BeamStore.MeshZonesOfSlab(trZ, db, bottomView.OutlineId, bottomView.Verts).Count;
                             trZ.Commit();
                         }
                     }
@@ -888,6 +888,8 @@ namespace BricsCadRc.Core
                 double eLo = isUBB1 ? Math.Min(seg.Start.Y, seg.End.Y) : Math.Min(seg.Start.X, seg.End.X);
                 double eHi = isUBB1 ? Math.Max(seg.Start.Y, seg.End.Y) : Math.Max(seg.Start.X, seg.End.X);
                 var spans = nibUB ? CantileverSpansOnEdge(db, isUBB1, eC) : null;
+                // uwaga Bartka 2026-10-23 (test13): belka GB poza płytą przechodząca przez krawędź — bez UB 03 na jej szerokości
+                if (nibUB) { var gb = GroundBeamSpansOnEdge(db, isUBB1, eC); if (gb.Count > 0) (spans ??= new List<(double Lo, double Hi)>()).AddRange(gb); }
                 if (spans == null || spans.Count == 0) { pieces.Add((seg, eLo, eHi)); continue; }
                 cantCuts += spans.Count;
                 foreach (var (pLo, pHi) in SubtractSpans(eLo, eHi, spans)) pieces.Add((seg, pLo, pHi));
@@ -5104,8 +5106,11 @@ namespace BricsCadRc.Core
             }
 
             var topMin = MinPoint(topVerts);
+            // szereg płyt (2026-10-23): płyty przystające (PLOT 304 / 307) — tylko rzut tej samej płyty (RC_GA [3])
+            string topMember = tr.GetObject(topSlabId, OpenMode.ForRead) is Entity te ? GaImportEngine.MemberTag(te) : null;
             foreach (var pl in outlines)
             {
+                if (topMember != null && GaImportEngine.MemberTag(pl) is string om && om != topMember) continue;
                 // POPRAWKI 25: obrys dolny wyprostowany jak górny (topVerts) — przystawanie liczone na tych samych kopiach
                 var verts = GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl));
                 if (verts.Count != topVerts.Count) continue;
