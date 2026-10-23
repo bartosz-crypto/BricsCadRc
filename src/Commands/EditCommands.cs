@@ -678,7 +678,7 @@ namespace BricsCadRc.Commands
             }
 
             var dlg = new EditLabelDialog(bar.EffectiveCount, bar.Mark, bar.Diameter, bar.Spacing,
-                                          bar.VisibilityMode, showSpacing);
+                                          bar.VisibilityMode, showSpacing, countText: bar.CountText);
             if (Application.ShowModalWindow(dlg) != true) return;
 
             // Obsługa Manual — user klika pręty
@@ -714,6 +714,7 @@ namespace BricsCadRc.Commands
                 if (br == null) { tr.Abort(); return; }
 
                 bar.CountDisplay   = (dlg.ResultCount != bar.Count) ? (int?)dlg.ResultCount : null;
+                bar.CountMult      = dlg.ResultMult;   // „2x5” (2026-10-23)
                 bar.Mark           = dlg.ResultMark;
                 bar.Spacing        = dlg.ResultSpacing;
                 bar.VisibilityMode = unlinkedAnnot ? bar.VisibilityMode : dlg.ResultVisibility;   // opis bez rozkładu — widoczność bez zmian
@@ -742,6 +743,7 @@ namespace BricsCadRc.Commands
                                 {
                                     barBlock.Mark          = bar.Mark;
                                     barBlock.CountDisplay  = bar.CountDisplay;
+                                    barBlock.CountMult     = bar.CountMult;
                                     barBlock.ShowSpacing   = dlg.ResultShowSpacing;
                                     barBlock.IsLabelManual = true;  // p334: manual override sync
                                     BarBlockEngine.WriteXData(brBlock, barBlock);

@@ -1911,7 +1911,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)), // [21] IsLabelManual
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.ElbowExt > 0 ? bar.ElbowExt : -1.0), // [22] ElbowExt (-1 = domyślny)
                 // [23] AnnotScale (2026-10-14: skala opisu z RC_SCALE_ANNOT — bez niej przesunięcie opisu wracało do 1:50)
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale > 0 ? bar.AnnotScale : 1.0)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.AnnotScale > 0 ? bar.AnnotScale : 1.0),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)Math.Max(0, Math.Min(short.MaxValue, bar.CountMult))) // [24] CountMult („2x5”)
             );
         }
 
@@ -1974,6 +1975,11 @@ namespace BricsCadRc.Core
                 catch { bd.AnnotScale = 1.0; }
             }
             else bd.AnnotScale = SourceAnnotScale(entity, bd.SourceBlockHandle);   // starsze opisy — skala z rozkładu
+            if (v.Length >= 25)
+            {
+                try { bd.CountMult = Convert.ToInt32(v[24].Value); }
+                catch { bd.CountMult = 0; }
+            }
 
             return bd;
         }

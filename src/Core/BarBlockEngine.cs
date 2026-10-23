@@ -707,7 +707,8 @@ namespace BricsCadRc.Core
             // belka: pręty boczne BS (E4b — w rzucie po jednym na bok, CountDisplay = liczba w rzucie × liczba na bok) i pręty
             // podłużne B+T (BM, K3 — w rzucie jedna warstwa, CountDisplay = 2 × liczba, opis „2x4”); po zmianie liczby gripem
             // krotność zostaje (pozostałe kody — jak dotąd: reset)
-            int perDrawn = BarLabelRules.KeepsMultiplicity(bar.LayerCode) && bar.CountDisplay.HasValue && bar.Count > 0
+            // wpis ręczny „kxn” (CountMult) — krotność też zostaje
+            int perDrawn = (BarLabelRules.KeepsMultiplicity(bar.LayerCode) || bar.CountMult >= 2) && bar.CountDisplay.HasValue && bar.Count > 0
                 ? Math.Max(1, bar.CountDisplay.Value / bar.Count) : 1;
 
             bar.Count    = newCount;
@@ -715,7 +716,8 @@ namespace BricsCadRc.Core
             if (newSkewStart.HasValue) bar.SkewStart = newSkewStart.Value;
             if (newSkewEnd.HasValue)   bar.SkewEnd   = newSkewEnd.Value;
 
-            bar.CountDisplay = perDrawn > 1 ? newCount * perDrawn : (int?)null;  // reset count override po stretch — EffectiveCount = canonical Count (BS: krotność)
+            bar.CountDisplay = perDrawn > 1 ? newCount * perDrawn : (int?)null;
+            if (perDrawn <= 1) bar.CountMult = 0;  // reset count override po stretch — EffectiveCount = canonical Count (BS: krotność)
 
             BarData.PromoteMarkIfPurePrefix(bar);
 
@@ -917,7 +919,8 @@ namespace BricsCadRc.Core
         /// </summary>
         public static Point3d GripLateral(BlockReference br, BarData bar)
         {
-            double c = bar.Cover;
+            // c — wzdłuż rozkładu (Cover), ce — wzdłuż pręta (otulina końców, RC_DISTRIBUTION 2026-10-23)
+            double c = bar.Cover, ce = bar.EndCover;
             Point3d local;
             if (bar.Direction == "X")
             {
@@ -926,16 +929,16 @@ namespace BricsCadRc.Core
                 // 2026-10-13: odbity (Flipped) — też z SkewStart (grip przy końcu pierwszego pręta, jak GripSpan z SkewEnd);
                 // wcześniej po skosie gripem grip zostawał w starym miejscu
                 local = bar.Flipped
-                    ? new Point3d(bar.SkewStart + bar.LengthA + c, -c, 0)
-                    : new Point3d(bar.SkewStart - c, -c, 0);
+                    ? new Point3d(bar.SkewStart + bar.LengthA + ce, -c, 0)
+                    : new Point3d(bar.SkewStart - ce, -c, 0);
             }
             else
             {
                 // non-flipped: edge at local Y=0   → grip left of first bar (X=-c), just before edge (Y=-c)
                 // flipped:     edge at local Y=LengthA → grip left of first bar (X=-c), just past edge (Y=LengthA+c)
                 local = bar.Flipped
-                    ? new Point3d(-c, bar.SkewStart + bar.LengthA + c, 0)
-                    : new Point3d(-c, bar.SkewStart - c, 0);
+                    ? new Point3d(-c, bar.SkewStart + bar.LengthA + ce, 0)
+                    : new Point3d(-c, bar.SkewStart - ce, 0);
             }
             return local.TransformBy(br.BlockTransform);
         }
@@ -944,22 +947,23 @@ namespace BricsCadRc.Core
         {
             // Dla count=1 BarsSpan=0 — grip ląduje na górnym końcu lineExt (35mm)
             // żeby był wizualnie odseparowany od grip[0] (który jest przy cover poniżej origin).
-            double c = bar.Cover;
+            // drugi koniec rozkładu (wolny, 2026-10-23) — grip o otulinę końców (40), nie o wybraną otulinę pierwszego pręta
+            double c = bar.Cover, ce = bar.EndCover;
             double localEnd = bar.Count >= 2 ? bar.BarsSpan : 35.0;
             Point3d local;
             if (bar.Direction == "X")
             {
                 // align with outline p3 (non-flipped) / p2 (flipped) — include SkewEnd offset
                 local = bar.Flipped
-                    ? new Point3d(bar.SkewEnd + bar.LengthA + c, localEnd + c, 0)
-                    : new Point3d(bar.SkewEnd - c,               localEnd + c, 0);
+                    ? new Point3d(bar.SkewEnd + bar.LengthA + ce, localEnd + ce, 0)
+                    : new Point3d(bar.SkewEnd - ce,               localEnd + ce, 0);
             }
             else
             {
                 // align with outline p3 (non-flipped) / p2 (flipped) — include SkewEnd offset
                 local = bar.Flipped
-                    ? new Point3d(localEnd + c, bar.SkewEnd + bar.LengthA + c, 0)
-                    : new Point3d(localEnd + c, bar.SkewEnd - c,               0);
+                    ? new Point3d(localEnd + ce, bar.SkewEnd + bar.LengthA + ce, 0)
+                    : new Point3d(localEnd + ce, bar.SkewEnd - ce,               0);
             }
             return local.TransformBy(br.BlockTransform);
         }
@@ -1021,7 +1025,9 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.ShowSpacing    ? 1 : 0)), // [29] ShowSpacing
                 new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)(bar.IsLabelManual ? 1 : 0)),  // [30] IsLabelManual
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? ""),                  // [31] CutZones (otwory)
-                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.PairShift)                        // [32] PairShift (strzemiona 4-cięte)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        bar.PairShift),                       // [32] PairShift (strzemiona 4-cięte)
+                new TypedValue((int)DxfCode.ExtendedDataReal,        double.IsNaN(bar.CoverEnd) ? -1.0 : bar.CoverEnd), // [33] CoverEnd (−1 = jak Cover)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)Math.Max(0, Math.Min(short.MaxValue, bar.CountMult))) // [34] CountMult („2x5”)
             );
             if (entity is BlockReference br) RecolorAdd(br, bar);
         }
@@ -1123,6 +1129,16 @@ namespace BricsCadRc.Core
             {
                 try { bd.PairShift = Convert.ToDouble(v[32].Value); }
                 catch { bd.PairShift = 0; }
+            }
+            if (v.Length >= 34)
+            {
+                try { double ce = Convert.ToDouble(v[33].Value); bd.CoverEnd = ce < 0 ? double.NaN : ce; }
+                catch { bd.CoverEnd = double.NaN; }
+            }
+            if (v.Length >= 35)
+            {
+                try { bd.CountMult = Convert.ToInt32(v[34].Value); }
+                catch { bd.CountMult = 0; }
             }
 
             return bd;

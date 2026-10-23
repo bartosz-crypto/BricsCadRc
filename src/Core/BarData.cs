@@ -36,7 +36,13 @@ namespace BricsCadRc.Core
         public int EffectiveCount => CountDisplay ?? Count;
 
         /// <summary>Liczba prętów w tekście opisu (BarLabelRules.CountText): zwykle EffectiveCount, belka BM — „2x4”.</summary>
-        public string CountText => BarLabelRules.CountText(LayerCode, Count, CountDisplay);
+        public string CountText => BarLabelRules.CountText(LayerCode, Count, CountDisplay, CountMult);
+
+        /// <summary>
+        /// Krotność liczby prętów wpisana ręcznie w RC_EDIT_LABEL (decyzja Bartka 2026-10-23: „2x5” → opis „2x5”, BBS liczy 10 —
+        /// CountDisplay = 10, CountMult = 2); 0 / 1 — brak (opis wg <see cref="BarLabelRules.CountText"/>). XData rozkładu [34], opisu [24].
+        /// </summary>
+        public int CountMult { get; set; }
 
         /// <summary>Kod ksztaltu wg BS8666 np. "00", "11", "21"</summary>
         public string ShapeCode { get; set; } = "00";
@@ -220,6 +226,15 @@ namespace BricsCadRc.Core
         /// 0 — brak (XData [32]).
         /// </summary>
         public double PairShift { get; set; }
+
+        /// <summary>
+        /// Otulina końców prętów (wzdłuż pręta, od klikniętej krawędzi) — RC_DISTRIBUTION (decyzja Bartka 2026-10-23): zawsze 40, a
+        /// <see cref="Cover"/> = położenie pierwszego / ostatniego pręta wzdłuż krawędzi (wybierane). NaN — jak <see cref="Cover"/> (XData [33]).
+        /// </summary>
+        public double CoverEnd { get; set; } = double.NaN;
+
+        /// <summary>Otulina końców prętów: <see cref="CoverEnd"/>, a bez niej <see cref="Cover"/> (dawne rozkłady).</summary>
+        public double EndCover => double.IsNaN(CoverEnd) || CoverEnd < 0 ? Cover : CoverEnd;
 
         /// <summary>Wartości parametrów A–E jako tablica, potrzebna przez SingleBarEngine.Build().</summary>
         public double[] ParamValues => new[] { LengthA, LengthB, LengthC, LengthD, LengthE };

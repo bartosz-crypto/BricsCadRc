@@ -293,6 +293,7 @@ namespace BricsCadRc.Core
             double lastBar  = (bar.Count - 1) * bar.Spacing;
             double barsSpan = Math.Max(0, bar.BarsSpan);
             double cover    = Math.Max(0, bar.Cover);
+            double ce       = Math.Max(0, bar.EndCover);   // otulina końców prętów (RC_DISTRIBUTION — zawsze 40, 2026-10-23)
             double lenA     = bar.LengthA;
             double extY     = Math.Max(0, barsSpan - lastBar);
 
@@ -306,21 +307,21 @@ namespace BricsCadRc.Core
                 if (noSkew)
                 {
                     poly = new Polyline(4);
-                    poly.AddVertexAt(0, new Point2d(-cover,          -cover),                  0, 0, 0);
-                    poly.AddVertexAt(1, new Point2d(lenA + cover,    -cover),                  0, 0, 0);
-                    poly.AddVertexAt(2, new Point2d(lenA + cover,    lastBar + cover + extY),  0, 0, 0);
-                    poly.AddVertexAt(3, new Point2d(-cover,          lastBar + cover + extY),  0, 0, 0);
+                    poly.AddVertexAt(0, new Point2d(-ce,          -cover),                  0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(lenA + ce,    -cover),                  0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lenA + ce,    lastBar + ce + extY),  0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(-ce,          lastBar + ce + extY),  0, 0, 0);
                 }
                 else
                 {
                     // Hexagon — slant matches exact bar progression (slope = SkewEnd/BarsSpan, not /(BarsSpan+2c))
                     poly = new Polyline(6);
-                    poly.AddVertexAt(0, new Point2d(sStart - cover,        -cover),                   0, 0, 0);
-                    poly.AddVertexAt(1, new Point2d(sStart + lenA + cover, -cover),                   0, 0, 0);
-                    poly.AddVertexAt(2, new Point2d(sEnd   + lenA + cover, lastBar - cover + extY),   0, 0, 0);
-                    poly.AddVertexAt(3, new Point2d(sEnd   + lenA + cover, lastBar + cover + extY),   0, 0, 0);
-                    poly.AddVertexAt(4, new Point2d(sEnd   - cover,        lastBar + cover + extY),   0, 0, 0);
-                    poly.AddVertexAt(5, new Point2d(sStart - cover,        cover),                    0, 0, 0);
+                    poly.AddVertexAt(0, new Point2d(sStart - ce,        -cover),                   0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(sStart + lenA + ce, -cover),                   0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(sEnd   + lenA + ce, lastBar - ce + extY),   0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(sEnd   + lenA + ce, lastBar + ce + extY),   0, 0, 0);
+                    poly.AddVertexAt(4, new Point2d(sEnd   - ce,        lastBar + ce + extY),   0, 0, 0);
+                    poly.AddVertexAt(5, new Point2d(sStart - ce,        cover),                    0, 0, 0);
                 }
             }
             else
@@ -328,20 +329,20 @@ namespace BricsCadRc.Core
                 if (noSkew)
                 {
                     poly = new Polyline(4);
-                    poly.AddVertexAt(0, new Point2d(-cover,                 -cover),               0, 0, 0);
-                    poly.AddVertexAt(1, new Point2d(-cover,                 lenA + cover),         0, 0, 0);
-                    poly.AddVertexAt(2, new Point2d(lastBar + cover + extY, lenA + cover),         0, 0, 0);
-                    poly.AddVertexAt(3, new Point2d(lastBar + cover + extY, -cover),               0, 0, 0);
+                    poly.AddVertexAt(0, new Point2d(-cover,                 -ce),               0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(-cover,                 lenA + ce),         0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lastBar + ce + extY, lenA + ce),         0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(lastBar + ce + extY, -ce),               0, 0, 0);
                 }
                 else
                 {
                     poly = new Polyline(6);
-                    poly.AddVertexAt(0, new Point2d(-cover,                  sStart - cover),         0, 0, 0);
-                    poly.AddVertexAt(1, new Point2d(-cover,                  sStart + lenA + cover),  0, 0, 0);
-                    poly.AddVertexAt(2, new Point2d(lastBar - cover + extY,  sEnd   + lenA + cover),  0, 0, 0);
-                    poly.AddVertexAt(3, new Point2d(lastBar + cover + extY,  sEnd   + lenA + cover),  0, 0, 0);
-                    poly.AddVertexAt(4, new Point2d(lastBar + cover + extY,  sEnd   - cover),         0, 0, 0);
-                    poly.AddVertexAt(5, new Point2d(cover,                   sStart - cover),         0, 0, 0);
+                    poly.AddVertexAt(0, new Point2d(-cover,                  sStart - ce),         0, 0, 0);
+                    poly.AddVertexAt(1, new Point2d(-cover,                  sStart + lenA + ce),  0, 0, 0);
+                    poly.AddVertexAt(2, new Point2d(lastBar - ce + extY,  sEnd   + lenA + ce),  0, 0, 0);
+                    poly.AddVertexAt(3, new Point2d(lastBar + ce + extY,  sEnd   + lenA + ce),  0, 0, 0);
+                    poly.AddVertexAt(4, new Point2d(lastBar + ce + extY,  sEnd   - ce),         0, 0, 0);
+                    poly.AddVertexAt(5, new Point2d(cover,                   sStart - ce),         0, 0, 0);
                 }
             }
 

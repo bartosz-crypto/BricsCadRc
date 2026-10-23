@@ -61,5 +61,22 @@ namespace BricsCadRc.Tests
             Assert.That(BarLabelRules.KeepsMultiplicity("UB"), Is.False);
             Assert.That(BarLabelRules.KeepsMultiplicity(null!), Is.False);
         }
-    }
+    
+        [Test]
+        public void ManualMultiplicity_2x5()
+        {
+            // decyzja Bartka 2026-10-23: RC_EDIT_LABEL „2x5” → opis „2x5”, BBS liczy 10 (CountDisplay = 10, CountMult = 2)
+            Assert.That(BarLabelRules.ParseCountInput("2x5"), Is.EqualTo(((int, int)?)(10, 2)));
+            Assert.That(BarLabelRules.ParseCountInput(" 2 X 5 "), Is.EqualTo(((int, int)?)(10, 2)));
+            Assert.That(BarLabelRules.ParseCountInput("3*4"), Is.EqualTo(((int, int)?)(12, 3)));
+            Assert.That(BarLabelRules.ParseCountInput("10"), Is.EqualTo(((int, int)?)(10, 0)));
+            Assert.That(BarLabelRules.ParseCountInput("1x7"), Is.EqualTo(((int, int)?)(7, 0)));
+            Assert.That(BarLabelRules.ParseCountInput("2x"), Is.Null);
+            Assert.That(BarLabelRules.ParseCountInput("abc"), Is.Null);
+            Assert.That(BarLabelRules.ParseCountInput("0"), Is.Null);
+            Assert.That(BarLabelRules.CountText("B1", 5, 10, 2), Is.EqualTo("2x5"));
+            Assert.That(BarLabelRules.CountText("B1", 10, null, 2), Is.EqualTo("2x5"), "narysowane 10, wpis 2x5");
+            Assert.That(BarLabelRules.CountText("B1", 5, 10), Is.EqualTo("10"), "bez krotności — jak dotąd");
+        }
+}
 }

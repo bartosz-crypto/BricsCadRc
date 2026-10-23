@@ -10,6 +10,8 @@ namespace BricsCadRc.Dialogs
         private readonly int    _count;
 
         public int                ResultCount       { get; private set; }
+        /// <summary>Krotność wpisu „kxn” (2026-10-23: „2x5” → ResultCount 10, ResultMult 2); 0 — zwykła liczba.</summary>
+        public int                ResultMult        { get; private set; }
         public double             ResultSpacing     { get; private set; }
         public string             ResultMark        { get; private set; } = "";
         public BarVisibilityMode  ResultVisibility  { get; private set; } = BarVisibilityMode.All;
@@ -19,7 +21,7 @@ namespace BricsCadRc.Dialogs
         // diameter i spacing używane do odbudowania baseMark
         public EditLabelDialog(int count, string mark, int diameter, double spacing,
             BarVisibilityMode currentVisibility = BarVisibilityMode.All,
-            bool showSpacing = true)
+            bool showSpacing = true, string countText = null)
         {
             InitializeComponent();
             _diameter = diameter;
@@ -45,7 +47,8 @@ namespace BricsCadRc.Dialogs
             var segments = coreOfMark.Split('-');
             _posNr = segments.Length >= 2 ? segments[1] : "01";
 
-            CountBox.Text = count.ToString();
+            // „2x5” (wpis ręczny / belki) — w polu tak, jak w opisie
+            CountBox.Text = string.IsNullOrWhiteSpace(countText) ? count.ToString() : countText;
 
             // Prefill z coreOfMark (np. "H12-01-200" → 200), fallback na parametr spacing.
             // Używamy segments (z coreOfMark.Split('-')), nie full mark — unika problemu z suffixem
@@ -110,8 +113,11 @@ namespace BricsCadRc.Dialogs
 
         void OK_Click(object sender, RoutedEventArgs e)
         {
-            if (!int.TryParse(CountBox.Text, out int c) || c < 1)
-            { MessageBox.Show("Nieprawidłowa liczba prętów."); return; }
+            var parsed = BarLabelRules.ParseCountInput(CountBox.Text);
+            if (parsed == null)
+            { MessageBox.Show("Nieprawidłowa liczba prętów (np. 10 albo 2x5)."); return; }
+            int c = parsed.Value.Total;
+            ResultMult = parsed.Value.Mult;
             if (!NumberParser.TryParseDouble(SpacingBox.Text, out double sp) || sp <= 0)
             { MessageBox.Show("Nieprawidłowy rozstaw."); return; }
 

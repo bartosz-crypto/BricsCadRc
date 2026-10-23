@@ -323,7 +323,10 @@ namespace BricsCadRc.Commands
             sourceBar.SymbolDirection = symbolDir;
 
             // --- Krok 4: Pozycja pierwszego preta (otulina) ---
-            var covOpts = new PromptDistanceOptions("\nPosition of first bar (mm) <40>: ")
+            // decyzja Bartka 2026-10-23: otulina końców prętów (od klikniętej krawędzi, wzdłuż pręta) — ZAWSZE 40; wybierane jest tylko
+            // położenie PIERWSZEGO pręta wzdłuż krawędzi (przypięty, grip [0]); drugi koniec wolny — 40, dalej gripem
+            const double endCover = 40.0;
+            var covOpts = new PromptDistanceOptions("\nPosition of first bar along edge (mm) <40>: ")
             {
                 DefaultValue  = 40,
                 AllowNone     = true,
@@ -345,19 +348,19 @@ namespace BricsCadRc.Commands
             {
                 double edgeY = (pt1.Y + pt2.Y) / 2.0;
                 x0      = Math.Min(pt1.X, pt2.X) + cover;
-                x1Bound = Math.Max(pt1.X, pt2.X) - cover;
+                x1Bound = Math.Max(pt1.X, pt2.X) - endCover;   // drugi koniec wolny (grip) — 40 (2026-10-23)
                 // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
-                if (isFlipped) { y1Bound = edgeY - cover; y0 = y1Bound - viewLength; }
-                else           { y0 = edgeY + cover;      y1Bound = y0 + viewLength; }
+                if (isFlipped) { y1Bound = edgeY - endCover; y0 = y1Bound - viewLength; }
+                else           { y0 = edgeY + endCover;      y1Bound = y0 + viewLength; }
             }
             else
             {
                 double edgeX = (pt1.X + pt2.X) / 2.0;
                 y0      = Math.Min(pt1.Y, pt2.Y) + cover;
-                y1Bound = Math.Max(pt1.Y, pt2.Y) - cover;
+                y1Bound = Math.Max(pt1.Y, pt2.Y) - endCover;   // drugi koniec wolny (grip) — 40 (2026-10-23)
                 // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
-                if (isFlipped) { x1Bound = edgeX - cover; x0 = x1Bound - viewLength; }
-                else           { x0 = edgeX + cover;      x1Bound = x0 + viewLength; }
+                if (isFlipped) { x1Bound = edgeX - endCover; x0 = x1Bound - viewLength; }
+                else           { x0 = edgeX + endCover;      x1Bound = x0 + viewLength; }
             }
 
             if (x0 >= x1Bound || y0 >= y1Bound)
@@ -421,6 +424,7 @@ namespace BricsCadRc.Commands
             // Krok 7: Generuj blok rozkładu prętów
             sourceBar.Direction = horizontal ? "X" : "Y";
             sourceBar.Cover     = cover;
+            sourceBar.CoverEnd  = endCover;
             sourceBar.Pt1X      = x0;
             sourceBar.Pt1Y      = y0;
             sourceBar.BarsSpan  = rawSpan;

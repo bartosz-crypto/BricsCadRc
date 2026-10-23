@@ -466,6 +466,12 @@ Ogólne:
 - **U-bary (kształt 21) — długość całkowita w module 50 mm (decyzja Bartka 2026-10-23, wsporniki i belki):** ramiona A = C w górę co 5 mm
   (zakład tylko rośnie; 1275 / 175 → 1285: 2675 → 2700), B bez zmian; ramię ograniczone geometrią — w dół (`BeamGeometry.UBarArmForModule`,
   `PlanVerticalUBars`, `CantileverRules.PlanBars`). UB SIDE i UB płyty — bez zmian. Zmiana wyniku belek względem wzorca (S-REG — oczekiwana).
+- **RC_DISTRIBUTION — otuliny (decyzja Bartka 2026-10-23):** końce prętów (wzdłuż pręta, od klikniętej krawędzi) — ZAWSZE 40;
+  prompt „Position of first bar along edge” — tylko położenie PIERWSZEGO pręta (przypięty, grip [0]; `BarData.Cover`); drugi koniec
+  wolny — przy tworzeniu 40, dalej dowolnie gripem (grip [1] i obrys o otulinę końców, nie o Cover);
+  otulina końców w XData [33] `CoverEnd` (gripy i obrys podświetlenia wzdłuż pręta — `EndCover`; stare rozkłady — jak Cover).
+- **RC_EDIT_LABEL — liczba „kxn” (decyzja Bartka 2026-10-23):** wpis „2x5” (też 2X5, 2×5, 2*5) → opis „2x5”, BBS liczy 10
+  (CountDisplay = 10, `CountMult` = 2 — XData rozkładu [34], opisu [24]; `BarLabelRules.ParseCountInput`); krotność zostaje po gripie.
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
   element, który musi się zmieścić w innym (strzemię drugiego kierunku w strzemieniu, U-bar w strzemieniu, noga w nodze…), ma
   wymiar = miejsce w środku (np. A − 2·Ø) zaokrąglony **w dół** do 5 mm — lepiej mniej wysokości niż kolizja (290, H12 → 266 → 265;
