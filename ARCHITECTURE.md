@@ -1619,6 +1619,11 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   (`RectilinearPolygons.AddClipped`), pręty GB z punktu w strefie (także z detalu — rzut strefy z narożnika), pale w strefach; pasy:
   narożnik w płycie — jak strefa przy palu (Cantilever + PileCap, wierzch 0, spód −H), reszta — jak wspornik (wierzch −[39], spód −H,
   znacznik TOC = SSL − [39]); otulina / A strzemion z rekordu. Testy `SectionGroundBeamTests` (D-D w poprzek, C-C wzdłuż).
+- **Kilka płyt naraz (prośba Bartka 2026-10-26, PLOT 357-362 — szereg w osobnych obrysach):** lista Prepare GA z wyborem wielu
+  pozycji (Ctrl / Shift, „Zaznacz wszystkie”) → `GaImportEngine.Group` (etykieta łączna `MergeLabels`, obwiednia obrysów i regionów,
+  `GaPlot.Parts`). Jeden rysunek RC: każda część — własny obrys (RC_GA [3] = etykieta części), opis, SSL / grubość
+  (`BeamGaContext.For`), szereg w części (np. PLOT 357-358) dzielony jak dotąd (`SplitTerrace(tagLabel)`); wsporniki, nib, K8 per płyta
+  (kawałki w obwiedni + 300). Belki GB MIĘDZY osobnymi obrysami (języczki 276 + przerwa, różne SSL) — jeszcze nie (kolejny etap).
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

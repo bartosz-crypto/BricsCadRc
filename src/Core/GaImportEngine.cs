@@ -50,6 +50,10 @@ namespace BricsCadRc.Core
             /// płyt (null — zwykła płyta). Label = etykieta łączna („PLOT 304-307”), LabelId = opis pierwszej płyty.</summary>
             public List<(string Label, ObjectId LabelId, ObjectId BoxId, ObjectId StepId)> Members;
             public bool IsTerrace => Members != null && Members.Count > 1;
+            /// <summary>Prośba Bartka 2026-10-26 (PLOT 357-362): kilka płyt wybranych naraz — jeden rysunek RC z wszystkimi (null — jedna
+            /// płyta). Label = etykieta łączna, Region / Outline = obwiednia; każda część — własny obrys, opis, SSL (RC_GA [3] = etykieta części).</summary>
+            public List<GaPlot> Parts;
+            public bool IsGroup => Parts != null && Parts.Count > 1;
             public override string ToString()
                 => $"{Label}   —   {Outline.MaxPoint.X - Outline.MinPoint.X:F0} × {Outline.MaxPoint.Y - Outline.MinPoint.Y:F0} mm";
         }
@@ -149,6 +153,30 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Prośba Bartka 2026-10-26 (PLOT 357-362 — szereg płyt w osobnych obrysach): kilka płyt z listy naraz → jedna „płyta” grupowa
+        /// (etykieta PlotLabelRules.MergeLabels, obwiednia obrysów i regionów). Jedna płyta — ona sama.
+        /// </summary>
+        public static GaPlot Group(IList<GaPlot> plots)
+        {
+            if (plots == null || plots.Count == 0) return null;
+            if (plots.Count == 1) return plots[0];
+            var ps = plots.OrderBy(p => p.Outline.MinPoint.X).ThenBy(p => p.Outline.MinPoint.Y).ToList();
+            Extents3d U(Func<GaPlot, Extents3d> f)
+            {
+                var e = f(ps[0]);
+                foreach (var p in ps.Skip(1)) e.AddExtents(f(p));
+                return e;
+            }
+            var first = ps[0];
+            return new GaPlot
+            {
+                Label = PlotLabelRules.MergeLabels(ps.Select(p => p.Label).ToList()),
+                LabelId = first.LabelId, LabelBoxId = first.LabelBoxId, OutlineId = first.OutlineId,
+                Outline = U(p => p.Outline), Region = U(p => p.Region), Parts = ps
+            };
+        }
+
+        /// <summary>
         /// Decyzja Bartka 2026-10-23 (PLOT 304–307): kilka opisów płyt w jednym obrysie zewnętrznym, każdy we WŁASNEJ zamkniętej linii
         /// uskoku (płyty połączone belkami GB) — jedna pozycja listy „PLOT 304-307” (PlotLabelRules.MergeLabels). Inne przypadki bez zmian.
         /// </summary>
@@ -223,6 +251,15 @@ namespace BricsCadRc.Core
             /// <summary>K8: grubość płyty z opisu („225mm THK SLAB”) — opisy „xxxTHK” ≤ grubość pomijane.</summary>
             public double? SlabThickness;
             public List<(Point2d p, double toc)> Tocs = new List<(Point2d, double)>();
+            /// <summary>Grupa płyt (2026-10-26): SSL i grubość z opisu każdej płyty (klucz — opis w GA).</summary>
+            public Dictionary<ObjectId, (double? ssl, double? thk)> ByLabel = new Dictionary<ObjectId, (double? ssl, double? thk)>();
+
+            /// <summary>Kontekst części grupy (SSL i grubość z jej opisu, NIB TOC wspólne).</summary>
+            public BeamGaContext For(GaPlot part)
+            {
+                if (part == null || !ByLabel.TryGetValue(part.LabelId, out var v)) return this;
+                return new BeamGaContext { Ssl = v.ssl ?? Ssl, SlabThickness = v.thk ?? SlabThickness, Tocs = Tocs, ByLabel = ByLabel };
+            }
         }
 
         public static Result Import(Document doc, Source src, GaPlot plot, List<string> warnings)
@@ -260,6 +297,16 @@ namespace BricsCadRc.Core
                                 if (SectionPlanner.ParseSsl(l) is string ssl && NumberParser.TryParseDouble(ssl, out double sv)) { beamCtx.Ssl = sv; break; }
                             foreach (var l in TextLines(lm))
                                 if (SectionPlanner.ParseThickness(l) is double st) { beamCtx.SlabThickness = st; break; }
+                        }
+                        // grupa płyt (2026-10-26): SSL i grubość każdej płyty (inny SSL w szeregu, np. PLOT 357-362)
+                        if (plot.IsGroup && plot.Parts.Any(pp => pp.LabelId == id) && e is MText lg)
+                        {
+                            double? sG = null, tG = null;
+                            foreach (var l in TextLines(lg))
+                                if (SectionPlanner.ParseSsl(l) is string ssl2 && NumberParser.TryParseDouble(ssl2, out double sv2)) { sG = sv2; break; }
+                            foreach (var l in TextLines(lg))
+                                if (SectionPlanner.ParseThickness(l) is double st2) { tG = st2; break; }
+                            beamCtx.ByLabel[id] = (sG, tG);
                         }
                     }
 
@@ -393,9 +440,24 @@ namespace BricsCadRc.Core
             var thkTexts = new List<(Point2d ins, Point2d mid, List<string> lines)>();   // teksty SD-Text (wysokość belki „450THK”)
             var thkCands = new List<BeamGeometry.ThkText>();   // K8: opisy belek (MText — środek obwiedni, MLeader — grot)
             // szereg płyt (decyzja 2026-10-23): kopie opisów, ramek i linii uskoku płyt
+            // grupa płyt (2026-10-26): części — każda z obrysem, opisem (i szeregiem); pojedyncza płyta — jedna część
+            var parts = plot.IsGroup ? plot.Parts : new List<GaPlot> { plot };
+            bool multi = plot.IsGroup || plot.IsTerrace;
             var memberKeys = new HashSet<ObjectId>();
-            if (plot.IsTerrace)
-                foreach (var m in plot.Members) { memberKeys.Add(m.LabelId); memberKeys.Add(m.BoxId); memberKeys.Add(m.StepId); }
+            var outlineKeys = new HashSet<ObjectId>(parts.Select(pp => pp.OutlineId));
+            var labelBoxes = new List<(ObjectId label, ObjectId box)>();   // opisy płyt poza głównym (przebudowa po skopiowaniu)
+            foreach (var pp in parts)
+            {
+                memberKeys.Add(pp.OutlineId);
+                if (pp.LabelId != plot.LabelId) { memberKeys.Add(pp.LabelId); memberKeys.Add(pp.LabelBoxId); labelBoxes.Add((pp.LabelId, pp.LabelBoxId)); }
+                if (pp.IsTerrace)
+                    foreach (var m in pp.Members)
+                    {
+                        memberKeys.Add(m.LabelId); memberKeys.Add(m.BoxId); memberKeys.Add(m.StepId);
+                        if (m.LabelId != plot.LabelId && !labelBoxes.Any(x => x.label == m.LabelId)) labelBoxes.Add((m.LabelId, m.BoxId));
+                    }
+            }
+            var otherLabels = new HashSet<ObjectId>(labelBoxes.Select(x => x.label));
             var cloneOf = new Dictionary<ObjectId, ObjectId>();
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -439,14 +501,17 @@ namespace BricsCadRc.Core
                     }
                     if (memberKeys.Contains(pair.Key)) cloneOf[pair.Key] = e.ObjectId;
                     if (pair.Key == plot.LabelId) label = e.ObjectId;
-                    else if (plot.IsTerrace && plot.Members.Any(m => m.LabelId == pair.Key)) { }   // opis innej płyty szeregu — niżej
+                    else if (otherLabels.Contains(pair.Key)) { }   // opis innej płyty szeregu / grupy — niżej
                     else if (e is MText && (e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         textClones.Add(e.ObjectId);
                     else if (pair.Key == plot.LabelBoxId) box = e.ObjectId;
-                    else if (pair.Key == plot.OutlineId)
+                    else if (outlineKeys.Contains(pair.Key))
                     {
-                        outline = e.ObjectId;
-                        if (result != null) { if (view == "B") result.OutlineBottom = outline; else result.OutlineTop = outline; }
+                        if (pair.Key == plot.OutlineId)
+                        {
+                            outline = e.ObjectId;
+                            if (result != null) { if (view == "B") result.OutlineBottom = outline; else result.OutlineTop = outline; }
+                        }
                     }
                     else if ((e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase))
                     {
@@ -458,33 +523,49 @@ namespace BricsCadRc.Core
 
                 // Opis płyty: tylko nr plotu, SSL i grubość; ramka dopasowana do tekstu
                 if (!label.IsNull) label = RebuildLabel(tr, msId, label, box, textClones, plot.Label, view, warnings);
-                if (plot.IsTerrace)
-                    foreach (var m in plot.Members.Skip(1))
-                        if (cloneOf.TryGetValue(m.LabelId, out var lid))
-                            RebuildLabel(tr, msId, lid, cloneOf.TryGetValue(m.BoxId, out var bid) ? bid : ObjectId.Null, textClones, plot.Label, view, warnings);
+                foreach (var (lk, bk) in labelBoxes)
+                    if (cloneOf.TryGetValue(lk, out var lid))
+                        RebuildLabel(tr, msId, lid, cloneOf.TryGetValue(bk, out var bid) ? bid : ObjectId.Null, textClones, plot.Label, view, warnings);
                 tr.Commit();
             }
 
             // Szereg płyt połączonych belkami GB (decyzja Bartka 2026-10-23, etap 1): obrys zewnętrzny → osobne obrysy płyt (linia uskoku
             // + nib), pasy betonu między płytami → strefy belek GB (RC-BEAM, [39] obniżenie góry); dalej każda płyta jak zwykła płyta
-            var slabs = new List<ObjectId> { outline };
-            bool terraceSplit = false;
-            if (plot.IsTerrace && !outline.IsNull)
-                try
-                {
-                    var steps = plot.Members.Select(m => cloneOf.TryGetValue(m.StepId, out var sid) ? sid : ObjectId.Null).ToList();
-                    var split = SplitTerrace(db, outline, steps, plot, view, openPl, nibPieces, thkCands, beamCtx, warnings, result);
-                    if (split != null && split.Count > 0) { slabs = split; terraceSplit = true; }
-                }
-                catch (System.Exception ex)
-                {
-                    Log.Error("GaImport.CloneInto.Terrace", ex);
-                    warnings.Add($"[RC GB] Błąd podziału szeregu płyt — {ex.Message} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
-                }
-            if (terraceSplit && result != null)
+            var slabs = new List<ObjectId>();
+            var slabCtx = new Dictionary<ObjectId, BeamGaContext>();
+            foreach (var pp in parts)
+            {
+                ObjectId ol = pp.OutlineId == plot.OutlineId ? outline : cloneOf.TryGetValue(pp.OutlineId, out var oc) ? oc : ObjectId.Null;
+                var ctxP = beamCtx?.For(pp) ?? beamCtx;
+                bool split = false;
+                if (pp.IsTerrace && !ol.IsNull)
+                    try
+                    {
+                        var steps = pp.Members.Select(m => cloneOf.TryGetValue(m.StepId, out var sid) ? sid : ObjectId.Null).ToList();
+                        var sp = SplitTerrace(db, ol, steps, pp, view, openPl, nibPieces, thkCands, ctxP, warnings, result, tagLabel: plot.Label);
+                        if (sp != null && sp.Count > 0) { foreach (var id in sp) { slabs.Add(id); slabCtx[id] = ctxP; } split = true; }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Log.Error("GaImport.CloneInto.Terrace", ex);
+                        warnings.Add($"[RC GB] Błąd podziału szeregu płyt — {ex.Message} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                    }
+                if (split) continue;
+                if (plot.IsGroup && !ol.IsNull)
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        // RC_GA [3] = etykieta tej płyty (rzuty przystające — FindPartnerView / FindBottomView / przekrój)
+                        if (tr.GetObject(ol, OpenMode.ForWrite) is Entity oe) Tag(oe, plot.Label, view, pp.Label);
+                        tr.Commit();
+                    }
+                slabs.Add(ol);
+                if (!ol.IsNull) slabCtx[ol] = ctxP;
+            }
+            bool terraceSplit = multi;
+            if (terraceSplit && result != null && slabs.Any(id => !id.IsNull))
             {
                 // PH / ramki: obrys najbardziej na prawo; polilinie ręczne belek — wszystkie obrysy
-                var right = slabs.OrderByDescending(id => ExtOf(db, id)?.MaxPoint.X ?? double.MinValue).First();
+                var right = slabs.Where(id => !id.IsNull).OrderByDescending(id => ExtOf(db, id)?.MaxPoint.X ?? double.MinValue).First();
                 if (view == "B") result.OutlineBottom = right; else result.OutlineTop = right;
             }
             if (result != null) result.Outlines.AddRange(slabs.Where(id => !id.IsNull));
@@ -506,7 +587,8 @@ namespace BricsCadRc.Core
                 var tc = thkCands.Where(t => Near(new Extents3d(new Point3d(t.X, t.Y, 0), new Point3d(t.X, t.Y, 0)))).ToList();
                 var zc = zoneClones.Where(id => !id.IsErased && Near(ExtOf(db, id))).ToList();
                 var tt = thkTexts.Where(t => Near(new Extents3d(new Point3d(t.mid.X, t.mid.Y, 0), new Point3d(t.mid.X, t.mid.Y, 0)))).ToList();
-                ProcessSlab(db, slab, op, np, tc, zc, tt, beamCtx, d, plot, view, warnings, ref joined, ref nibClosed, result, restrictTo: slab);
+                ProcessSlab(db, slab, op, np, tc, zc, tt, slabCtx.TryGetValue(slab, out var sc) ? sc : beamCtx, d, plot, view, warnings, ref joined,
+                            ref nibClosed, result, restrictTo: slab);
             }
             return n;
         }
@@ -519,9 +601,10 @@ namespace BricsCadRc.Core
         /// </summary>
         private static List<ObjectId> SplitTerrace(Database db, ObjectId outlineId, List<ObjectId> stepIds, GaPlot plot, string view,
                                                    List<ObjectId> openPl, List<ObjectId> nibPieces, List<BeamGeometry.ThkText> thkCands,
-                                                   BeamGaContext ctx, List<string> warnings, Result result)
+                                                   BeamGaContext ctx, List<string> warnings, Result result, string tagLabel = null)
         {
             bool warn = view == "B";
+            string tl = tagLabel ?? plot.Label;   // grupa płyt (2026-10-26): znacznik RC_GA [1] = etykieta grupy
             if (stepIds.Any(id => id.IsNull)) { if (warn) warnings.Add("[RC GB] Szereg płyt: brak kopii linii uskoku płyty — bez podziału."); return null; }
             List<(double X, double Y)> V(Polyline pl) => GeometryHelper.GetPolylineVertices(pl).Select(q => (q.X, q.Y)).ToList();
             List<(double X, double Y)> outer;
@@ -577,7 +660,7 @@ namespace BricsCadRc.Core
                     pl.Closed = true;
                     made.Add(ms.AppendEntity(pl));
                     tr.AddNewlyCreatedDBObject(pl, true);
-                    Tag(pl, plot.Label, view, plot.Members[i].Label);
+                    Tag(pl, tl, view, plot.Members[i].Label);
                 }
                 // lica pasów poza płytami (krawędź betonu z obrysu GA)
                 foreach (var b in an.Bands)
@@ -587,7 +670,7 @@ namespace BricsCadRc.Core
                         { Layer = src.Layer, Color = src.Color, LinetypeId = src.LinetypeId, LineWeight = src.LineWeight };
                         ms.AppendEntity(ln);
                         tr.AddNewlyCreatedDBObject(ln, true);
-                        Tag(ln, plot.Label, view);
+                        Tag(ln, tl, view);
                     }
                 // strefy belek GB
                 BeamStore.EnsureLayer(tr, db, ThickeningLayer);
@@ -601,7 +684,7 @@ namespace BricsCadRc.Core
                     zp.Closed = true;
                     ms.AppendEntity(zp);
                     tr.AddNewlyCreatedDBObject(zp, true);
-                    Tag(zp, plot.Label, view);
+                    Tag(zp, tl, view);
                     int si = b.SlabLo >= 0 ? b.SlabLo : b.SlabHi;
                     string slabHandle = si >= 0 ? made[si].Handle.ToString() : "";
                     // uwagi Bartka 2026-10-23: GB w detalu 1:25 (domyślne [36]), otulina belki gruntowej RÓWNO 50 ze wszystkich stron
