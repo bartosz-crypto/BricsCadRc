@@ -1670,6 +1670,9 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
 - **Krótki wspornik — strzemiona zamiast U-barów (uwaga Bartka 2026-10-26, poprawka fix98):** wysięg ≤ 600 ze strefą przy palu —
   bez U-barów H16; strzemiona 51 z prętami wzdłuż osi na całej długości (koniec strefy przy palu … koniec wspornika, B = długość − 2·otulina),
   A = A strzemion wysięgu − 2·Ø (jak B U-bara), co 120 dokładnie (`Plan.ShortMainLinks`); strzemiona strefy przy palu — standardowo co 150.
+- **Przekrój bez stref belek / wsporników (uwaga Bartka 2026-10-26, 357-362.dwg):** belka GB i wspornik w przekroju biorą się ze stref
+  RC-BEAM / RC-CANTILEVER (fiolet); detal (RC-BEAM-DETAIL) bez swojej strefy — `PrepareSection` wypisuje UWAGĘ (DETAIL 'n' bez strefy —
+  przywróć Prepare GA, Beam / Cantilever) zamiast cicho rysować samą płytę.
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

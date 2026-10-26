@@ -239,6 +239,13 @@ namespace BricsCadRc.Core
                 // K9 (decyzja użytkownika 2026-10-11): pręty belki w detalu 1:25 — rozkład ze znacznikiem strefy ANCHOR-a i środkiem w oknie
                 // detalu liczony w położeniu rzutu (pos − Shift); dalej jak rozkład na rzucie (− przesunięcie rzutu strefy). ctx.Views bez
                 // zmian — wejście planera jak z prętami na rzucie. ANCHOR nieprzystający do strefy (strefa zmieniona po detalu) — pominięty.
+                // uwaga Bartka 2026-10-26 (357-362.dwg: przekroje przez GB / wspornik tylko z płytą): detal jest, a strefy belki (RC-BEAM)
+                // ani wspornika (RC-CANTILEVER) nie ma na rysunku — przekrój nie ma skąd wziąć belki / wspornika; komunikat zamiast cichej płyty
+                var missing = anchors.Where(a => !zoneRecs.Any(z => XLink.Same(z.handle, a.zone)) && !cantRecs.Any(c => XLink.Same(c.handle, a.zone))).Select(a => a.nr).Distinct().OrderBy(n => n).ToList();
+                if (missing.Count > 0)
+                    ctx.Info.Add($"UWAGA: DETAIL {string.Join(", ", missing.Select(n => "'" + n + "'"))} bez strefy belki / wspornika na rysunku " +
+                                 "(fioletowe strefy RC-BEAM / RC-CANTILEVER usunięte?) — przekrój bez tych belek / wsporników. Przywróć strefy " +
+                                 "(Prepare GA, potem Beam / Cantilever) albo UNDO usunięcia.");
                 var detailOf = new Dictionary<string, (Vector2d shift, BeamDetailRules.Rect win)>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (zh, anr, av) in anchors)
                 {
