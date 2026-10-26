@@ -1652,6 +1652,8 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   `LeaderArm` (w detalu 2400 · 0,5) jak wariant domyślny — dawniej stałe 2000, więc opis po drugiej stronie (np. drugi UB GB /
   wspornika) odlatywał ok. 1,7 × dalej; na rzucie bez zmian (LeaderArm = 2000). UB SIDE belek w detalu — opis standardowy
   (`standardLeader`, jak przy wspornikach), na rzucie bez detalu — jak dotąd tuż przy pręcie.
+- **Tytuł detalu z liczbą elementów (wzór Bartka 2026-10-26):** detal główny z kopiami identycznych elementów — tytuł
+  „DETAIL 'n'” / „{liczba}No.” (podkreślone) / „SCALE 1:25” (`BeamDetailTitle`, aktualizowany w `RefreshCopyBox` przy każdej kopii).
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

@@ -732,6 +732,14 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Tytuł detalu belki / wspornika: „DETAIL 'n'” (podkreślony), przy kilku identycznych elementach „{count}No.” (podkreślony —
+        /// wzór Bartka 2026-10-26), „SCALE 1:25”.
+        /// </summary>
+        private static string BeamDetailTitle(int nr, int count)
+            => "{\\H3.125x;\\L\\C4;DETAIL '" + nr + "'" + (count > 1 ? "\\P" + count + "No." : "")
+               + "\\P\\H0.8x;\\l\\C256;SCALE 1:" + DetailScale + " }";
+
+        /// <summary>
         /// Ramka z przekątnymi wokół kopii rozkładów identycznych elementów nad detalem głównym (wzór Bartka 2026-10-23): obwiednia obiektów
         /// detali i rozkładów stref z [6] = <paramref name="masterZone"/> + 300; stara ramka (COPYBOX) usuwana. Zwraca liczbę kopii.
         /// </summary>
@@ -776,6 +784,10 @@ namespace BricsCadRc.Core
                 }
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
+                    // tytuł detalu głównego: liczba identycznych elementów („8No.”, uwaga Bartka 2026-10-26)
+                    foreach (var (tid, _, role) in BeamStore.FindDetail(tr, db, masterZone))
+                        if (role == BeamStore.RoleTitle && tr.GetObject(tid, OpenMode.ForWrite) is MText tmt)
+                            tmt.Contents = BeamDetailTitle(nr, copies + 1);
                     foreach (var id in old) if (!id.IsErased) tr.GetObject(id, OpenMode.ForWrite).Erase();
                     if (copies > 0 && x1 > x0 && y1 > y0)
                     {
@@ -855,7 +867,7 @@ namespace BricsCadRc.Core
                     mt.SetDatabaseDefaults(db);
                     mt.Layer = BeamStore.DetailLayer;
                     // tytuł jak detal otworu (GenerateHoleDetail): „DETAIL 'n'” 125 (5 mm w 1:25), „SCALE 1:25” 0,8×
-                    mt.Contents = "{\\H3.125x;\\L\\C4;DETAIL '" + tg.Number + "'\\P\\H0.8x;\\l\\C256;SCALE 1:" + DetailScale + " }";
+                    mt.Contents = BeamDetailTitle(tg.Number, 1);
                     mt.TextHeight = DetailScale * 1.6;
                     mt.Location = new Point3d(cx, minY - 200, 0);
                     mt.Attachment = AttachmentPoint.TopCenter;
