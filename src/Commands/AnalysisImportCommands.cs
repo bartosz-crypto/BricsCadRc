@@ -30,12 +30,15 @@ namespace BricsCadRc.Commands
             string plot = null;
             if (maps.Length > 0)
             {
-                plot = MapImportCommands.RunImport(doc, maps);
-                if (plot == null)
+                var labels = MapImportCommands.RunImport(doc, maps);
+                if (labels == null)
                 {
                     ed.WriteMessage($"\n{T} Import map przerwany — pliki analizy nie zostały zapamiętane.\n");
                     return;
                 }
+                // kilka płyt (2026-10-26) — bez zapamiętanej płyty: Punching zapyta o płytę z raportu
+                plot = labels.Count == 1 ? labels[0] : "";
+                if (labels.Count > 1) ed.WriteMessage($"\n{T} Wczytano mapy płyt: {string.Join(", ", labels)}.");
             }
             else
                 plot = lastPlot;   // bez nowych map — płyta z poprzedniego importu map
@@ -44,7 +47,7 @@ namespace BricsCadRc.Commands
             AnalysisStore.Save(db, maps.Length > 0 ? maps : lastMaps, report.Length > 0 ? report : lastReport, plot);
             if (report.Length == 0 && maps.Length > 0)
             {
-                ed.WriteMessage($"\n{T} Wczytano same mapy (płyta {plot}).\n");
+                ed.WriteMessage($"\n{T} Wczytano same mapy" + (string.IsNullOrEmpty(plot) ? ".\n" : $" (płyta {plot}).\n"));
                 return;
             }
             if (report.Length > 0)

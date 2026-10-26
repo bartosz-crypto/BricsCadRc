@@ -33,10 +33,11 @@ namespace BricsCadRc.Commands
         }
 
         /// <summary>
-        /// Import map z pliku: wybór płyty, podgląd ramek, wklejenie. Zwraca etykietę wklejonej płyty
-        /// („PLOT 6-8”) albo null (anulowano / błąd). Używane też przez RC_IMPORT_ANALYSIS.
+        /// Import map z pliku: wybór płyt (kilka naraz — prośba Bartka 2026-10-26, jak Prepare GA), podgląd ramek, wklejenie.
+        /// Zwraca etykiety wklejonych płyt („PLOT 6-8”) albo null (anulowano / błąd). Używane też przez RC_IMPORT_ANALYSIS.
+        /// Kilka płyt — jedno wskazanie (lewy górny róg T1 pierwszej), pozostałe w tym samym układzie co w pliku map.
         /// </summary>
-        internal static string RunImport(Document doc, string path)
+        internal static List<string> RunImport(Document doc, string path)
         {
             var ed = doc.Editor;
             var db = doc.Database;
@@ -52,40 +53,47 @@ namespace BricsCadRc.Commands
                     return null;
                 }
 
-                // 1. Płyta
+                // 1. Płyty (Ctrl / Shift / „Zaznacz wszystkie”)
                 int def = MapImportEngine.GuessPlot(db, src.Plots);
-                int k = 0;
+                var chosen = new List<int> { 0 };
                 if (src.Plots.Count > 1)
                 {
                     var dlg = new PunchingPlotPickerDialog(src.Plots.Select(p => p.ToString()).ToList(), Math.Max(0, def),
-                        "Mapy zbrojenia — wybierz płytę (PLOT / GARAGE)",
-                        def >= 0 ? "Płyty z pliku map. Podświetlona: nazwa płyty jest na rysunku." : "Płyty z pliku map.");
+                        "Mapy zbrojenia — wybierz płyty (PLOT / GARAGE)",
+                        (def >= 0 ? "Płyty z pliku map. Podświetlona: nazwa płyty jest na rysunku." : "Płyty z pliku map.") +
+                        " Kilka płyt: Ctrl / Shift albo „Zaznacz wszystkie”.", multiSelect: true);
                     if (Application.ShowModalWindow(dlg) != true) return null;
-                    k = dlg.SelectedIndex;
+                    List<int> sel = dlg.SelectedIndices;
+                    if (sel == null || sel.Count == 0) return null;
+                    chosen = sel;
                 }
-                var plot = src.Plots[k];
+                var plots = chosen.Select(i => src.Plots[i]).ToList();
+                var labels = plots.Select(p => p.Label).ToList();
 
-                // 2. Punkt wstawienia z podglądem ramek (lewy górny róg T1)
-                var frames = MapImportEngine.MapsToPaste(plot);
-                if (frames.Count == 0)
-                {
-                    ed.WriteMessage($"\n{T} {plot.Label}: brak map T1/T2/B1/B2.\n");
-                    return plot.Label;
-                }
-                var jig = new MapInsertJig(frames, MapImportEngine.ReferencePoint(plot));
+                // 2. Punkt wstawienia z podglądem ramek (lewy górny róg T1 pierwszej płyty; pozostałe jak w pliku map)
+                var withMaps = plots.Where(p => MapImportEngine.MapsToPaste(p).Count > 0).ToList();
+                foreach (var p in plots.Where(p => !withMaps.Contains(p)))
+                    ed.WriteMessage($"\n{T} {p.Label}: brak map T1/T2/B1/B2.");
+                if (withMaps.Count == 0) { ed.WriteMessage("\n"); return labels; }
+                var refPt = MapImportEngine.ReferencePoint(withMaps[0]);
+                var jig = new MapInsertJig(withMaps.SelectMany(MapImportEngine.MapsToPaste), refPt);
                 PromptResult jr;
                 try { jr = ed.Drag(jig); }
                 finally { jig.ClearTransients(); }
                 if (jr.Status != PromptStatus.OK) return null;
+                var shift = jig.InsertPoint - refPt;
 
-                // 3. Wklejenie
-                var counts = MapImportEngine.Import(doc, src, plot, jig.InsertPoint, warnings);
-                ed.WriteMessage($"\n{T} {plot.Label}: wklejono " +
-                    string.Join(", ", counts.Select(c => $"{c.Key} ({c.Value} obiektów)")) +
-                    ". Ponowny import tej płyty zastąpi te mapy.");
+                // 3. Wklejenie — każda płyta osobno (XData RC_MAP [PLOT] — ponowny import płyty zastępuje jej mapy)
+                foreach (var plot in withMaps)
+                {
+                    var counts = MapImportEngine.Import(doc, src, plot, MapImportEngine.ReferencePoint(plot) + shift, warnings);
+                    ed.WriteMessage($"\n{T} {plot.Label}: wklejono " +
+                        string.Join(", ", counts.Select(c => $"{c.Key} ({c.Value} obiektów)")) + ".");
+                }
+                ed.WriteMessage(" Ponowny import płyty zastąpi jej mapy.");
                 foreach (var w in warnings.Take(20)) ed.WriteMessage($"\n  {w}");
                 ed.WriteMessage("\n");
-                return plot.Label;
+                return labels;
             }
             catch (System.Exception ex)
             {

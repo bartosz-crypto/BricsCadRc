@@ -110,6 +110,19 @@ namespace BricsCadRc.Core
         /// </summary>
         public static Result Analyze(Database db, List<PunchingReport.Plot> plots,
                                      Func<List<PlotChoice>, int, int> choosePlot)
+            => Analyze(db, plots, (Func<List<PlotChoice>, int, List<int>>)((c, d) =>
+               {
+                   int k = choosePlot(c, d);
+                   return k < 0 ? null : new List<int> { k };
+               }));
+
+        /// <summary>
+        /// Kilka płyt naraz (prośba Bartka 2026-10-26, PLOT 357-362 — jak Prepare GA i import map): pale wszystkich wybranych płyt
+        /// w jednym wyniku — tagi przy wszystkich, szablony PH1–PH9 („APPLICABLE FOR PILES …”, „nNo LOCATIONS”) dla całości.
+        /// <paramref name="choosePlots"/> zwraca indeksy płyt (null / pusta — anulowano). Plot = etykiety złączone „ + ”.
+        /// </summary>
+        public static Result Analyze(Database db, List<PunchingReport.Plot> plots,
+                                     Func<List<PlotChoice>, int, List<int>> choosePlots)
         {
             var res = new Result();
             var piles = new List<DwgPile>();
@@ -169,18 +182,15 @@ namespace BricsCadRc.Core
             }).ToList();
             if (choices.Count == 0) { res.Warnings.Add("Raport nie zawiera płyt (PLOT … / GARAGE …)."); return res; }
             int def = choices.IndexOf(choices.OrderByDescending(c => c.Hits).First());
-            int k = choosePlot(choices, def);
-            if (k < 0 || k >= plots.Count) return res;
-            var plot = plots[k];
-            res.Plot = plot.Label;
-            if (choices[k].Hits == 0)
-            {
-                res.Warnings.Add($"{plot.Label}: żaden pal z raportu nie ma podpisu przy palu na rysunku.");
-                return res;
-            }
+            var ks = choosePlots(choices, def)?.Where(i => i >= 0 && i < plots.Count).Distinct().ToList();
+            if (ks == null || ks.Count == 0) return res;
+            res.Plot = string.Join(" + ", ks.Select(i => plots[i].Label));
+            foreach (int i in ks.Where(i => choices[i].Hits == 0))
+                res.Warnings.Add($"{plots[i].Label}: żaden pal z raportu nie ma podpisu przy palu na rysunku.");
+            if (ks.All(i => choices[i].Hits == 0)) return res;
 
             var used = new HashSet<long>();
-            foreach (var r in plot.Piles)
+            foreach (var r in ks.Where(i => choices[i].Hits > 0).SelectMany(i => plots[i].Piles))
             {
                 var (code, reason) = Classify(r);
                 var hit = Find(r.PileId);

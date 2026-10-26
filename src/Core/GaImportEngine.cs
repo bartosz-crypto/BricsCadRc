@@ -719,11 +719,13 @@ namespace BricsCadRc.Core
                 // obrys zewnętrzny, pustki i linie stref narożnych — zastąpione
                 src.Erase();
                 foreach (var id in voidIds) ((Entity)tr.GetObject(id, OpenMode.ForWrite)).Erase();
-                foreach (int k in an.UsedBoxes) ((Entity)tr.GetObject(cornerIds[k], OpenMode.ForWrite)).Erase();
                 tr.Commit();
             }
-            openPl.RemoveAll(id => id.IsErased);
-            nibPieces.RemoveAll(id => id.IsErased);
+            // uwaga Bartka 2026-10-26: linie stref narożnych (pogrubienia przy GB) zostają na rysunku jak w GA — fioletowa strefa belki na wierzchu;
+            // tylko poza listami kawałków obrysu / uskoku (JoinLoops, wsporniki, K8 ich nie biorą)
+            var keptCorners = new HashSet<ObjectId>(an.UsedBoxes.Select(k => cornerIds[k]));
+            openPl.RemoveAll(id => id.IsErased || keptCorners.Contains(id));
+            nibPieces.RemoveAll(id => id.IsErased || keptCorners.Contains(id));
             var used = an.UsedTexts;
             var keep = thkCands.Where((t, i) => !used.Contains(i)).ToList();
             thkCands.Clear(); thkCands.AddRange(keep);

@@ -34,6 +34,8 @@ namespace BricsCadRc.Core
             public Extents3d? Slab;
             /// <summary>Wierzchołki obrysu płyty na mapie (dopasowanie położenia mapy do płyty).</summary>
             public List<Point2d> SlabPts;
+            /// <summary>Wszystkie obrysy płyt na mapie (uwaga Bartka 2026-10-26: mapa „PLOT 357, 358” — dwie płyty w jednej ramce).</summary>
+            public List<(Extents3d box, List<Point2d> pts)> Slabs = new List<(Extents3d, List<Point2d>)>();
             /// <summary>Ramka PH-FRAME mapy (mapy bez XData RC_MAP — wstawione bez RC_IMPORT_MAP).</summary>
             public Extents3d? Frame;
             public List<Extents3d> Rects = new List<Extents3d>();
@@ -90,6 +92,8 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
             var rawBox = GeometryHelper.VerticesBbox(rawVerts);
+            // płyty grupy z Prepare GA (RC_GA [3]) — mapa kilku płyt („PLOT 357, 358”, uwaga Bartka 2026-10-26)
+            var members = GroupMemberBoxes(db, slabId);
 
             var slabPoly = verts.Select(v => (v.X, v.Y)).ToList();
             var piles = FindPilesFor(db, slabId).Select(p => (p.c.X, p.c.Y)).ToList();
@@ -110,7 +114,7 @@ namespace BricsCadRc.Core
                     {
                         if (!maps.Any(m => m.Code == code)) continue;
                         // Mapa tej płyty: obrys mapy przystający do obrysu płyty (ten sam bbox); przy kilku — ta z PLOT płyty
-                        var (map, off) = MatchMap(maps, code, slabPlot, slabBox, rawVerts, rawBox, res);
+                        var (map, off) = MatchMap(maps, code, slabPlot, slabBox, rawVerts, rawBox, res, members);
                         if (map == null)
                         {
                             if (maps.Any(m => m.Code == code))
@@ -149,7 +153,7 @@ namespace BricsCadRc.Core
                     foreach (var code in new[] { "T1", "T2" })
                     {
                         if (!maps.Any(m => m.Code == code)) continue;
-                        var (map, offT) = MatchMap(maps, code, slabPlot, slabBox, rawVerts, rawBox, res);
+                        var (map, offT) = MatchMap(maps, code, slabPlot, slabBox, rawVerts, rawBox, res, members);
                         if (map == null)
                         {
                             res.Messages.Add($"Mapa {code}: obrys mapy nie pasuje do wskazanej płyty — pominięta.");
@@ -202,7 +206,7 @@ namespace BricsCadRc.Core
                         var box = GeometryHelper.PolylineBbox(pl);
                         if (layer == $"PH-{code}-SLAB")
                         {
-                            if (pl.Closed || GeometryHelper.IsEffectivelyClosed(pl)) { m.Slab = box; m.SlabPts = GeometryHelper.GetRawPolylineVertices(pl); }
+                            if (pl.Closed || GeometryHelper.IsEffectivelyClosed(pl)) { m.Slab = box; m.SlabPts = GeometryHelper.GetRawPolylineVertices(pl); m.Slabs.Add((box, m.SlabPts)); }
                         }
                         else if (layer == $"SD-{code} ADD")
                         {
@@ -231,14 +235,16 @@ namespace BricsCadRc.Core
         /// z wspornikami); co najmniej połowa — inaczej mapa nie pasuje. Obwiednie równe — wynik jak dawniej (róg lewy dolny).
         /// </summary>
         private static (MapData map, Vector3d off) MatchMap(List<MapData> maps, string code, string slabPlot, Extents3d slabBox,
-                                                            List<Point2d> rawVerts, Extents3d rawBox, AddResult res)
+                                                            List<Point2d> rawVerts, Extents3d rawBox, AddResult res,
+                                                            List<(string label, Extents3d box)> members = null)
         {
             double sw = rawBox.MaxPoint.X - rawBox.MinPoint.X, sh = rawBox.MaxPoint.Y - rawBox.MinPoint.Y;
             var raw = rawVerts.Select(v => (v.X, v.Y)).ToList();
             (MapData, Vector3d, double) best = (null, new Vector3d(), -1);
+            Extents3d bestBox = default;
             foreach (var m in maps.Where(x => x.Code == code && x.Slab.HasValue))
+            foreach (var (mb, mPts) in m.Slabs.Count > 0 ? m.Slabs : new List<(Extents3d, List<Point2d>)> { (m.Slab.Value, m.SlabPts) })
             {
-                var mb = m.Slab.Value;
                 double mw = mb.MaxPoint.X - mb.MinPoint.X, mh = mb.MaxPoint.Y - mb.MinPoint.Y;
                 if (Math.Abs(mw - sw) > 100 || Math.Abs(mh - sh) > 100) continue;
                 var offs = new[]
@@ -251,17 +257,107 @@ namespace BricsCadRc.Core
                 foreach (var o in offs)
                 {
                     double score = 1.0;
-                    if (m.SlabPts != null && m.SlabPts.Count > 0)
-                        score = m.SlabPts.Count(p => BeamDetailRules.DistToBoundary(raw, (p.X + o.X, p.Y + o.Y)) < 3.0) / (double)m.SlabPts.Count;
+                    if (mPts != null && mPts.Count > 0)
+                        score = mPts.Count(p => BeamDetailRules.DistToBoundary(raw, (p.X + o.X, p.Y + o.Y)) < 3.0) / (double)mPts.Count;
                     if (slabPlot != null && PlotLabelRules.MapPlotMatches(m.Plot, slabPlot)) score += 0.001;   // przy remisie — mapa z PLOT płyty
-                    if (score > best.Item3 + 1e-9) best = (m, o, score);
+                    if (score > best.Item3 + 1e-9) { best = (m, o, score); bestBox = mb; }
+                }
+            }
+            if ((best.Item1 == null || best.Item3 < 0.5) && members != null && slabPlot != null)
+            {
+                // mapa kilku płyt grupy (2026-10-26, PLOT 357-362: „PLOT 357, 358” — jeden obrys 357 + GB + 358): obwiednia płyt z numerami
+                // z etykiety mapy = obwiednia obrysu mapy; przesunięcie z rogu, strefy tylko z części tej płyty
+                var mine = PlotLabelRules.PlotNumbers(slabPlot);
+                foreach (var m in maps.Where(x => x.Code == code && x.Slab.HasValue))
+                {
+                    var nums = PlotLabelRules.PlotNumbers(m.Plot);
+                    if (mine.Count == 0 || !mine.All(nums.Contains)) continue;
+                    var part = members.Where(x => PlotLabelRules.PlotNumbers(x.label) is var xn && xn.Count > 0 && xn.All(nums.Contains)).ToList();
+                    if (part.Count < 2) continue;
+                    var ub = part[0].box;
+                    foreach (var x in part.Skip(1)) ub.AddExtents(x.box);
+                    double uw = ub.MaxPoint.X - ub.MinPoint.X, uh = ub.MaxPoint.Y - ub.MinPoint.Y;
+                    foreach (var (mb, mPts) in m.Slabs.Count > 0 ? m.Slabs : new List<(Extents3d, List<Point2d>)> { (m.Slab.Value, m.SlabPts) })
+                    {
+                        double mw = mb.MaxPoint.X - mb.MinPoint.X, mh = mb.MaxPoint.Y - mb.MinPoint.Y;
+                        if (Math.Abs(mw - uw) > 100 || Math.Abs(mh - uh) > 100) continue;
+                        foreach (var o in new[]
+                        {
+                            new Vector3d(ub.MinPoint.X - mb.MinPoint.X, ub.MinPoint.Y - mb.MinPoint.Y, 0),
+                            new Vector3d(ub.MaxPoint.X - mb.MaxPoint.X, ub.MaxPoint.Y - mb.MaxPoint.Y, 0),
+                            new Vector3d(ub.MinPoint.X - mb.MinPoint.X, ub.MaxPoint.Y - mb.MaxPoint.Y, 0),
+                            new Vector3d(ub.MaxPoint.X - mb.MaxPoint.X, ub.MinPoint.Y - mb.MinPoint.Y, 0),
+                        })
+                        {
+                            // wierzchołki tej płyty (z rysunku) na obrysie mapy
+                            double score = 1.0;
+                            if (mPts != null && mPts.Count > 2)
+                            {
+                                var mp = mPts.Select(q => (q.X + o.X, q.Y + o.Y)).ToList();
+                                score = rawVerts.Count(v => BeamDetailRules.DistToBoundary(mp, (v.X, v.Y)) < 3.0) / (double)rawVerts.Count;
+                            }
+                            if (score > best.Item3 + 1e-9)
+                            {
+                                best = (m, o, score);
+                                bestBox = new Extents3d(rawBox.MinPoint - o, rawBox.MaxPoint - o);
+                            }
+                        }
+                    }
+                }
+                if (best.Item1 != null && best.Item3 >= 0.5)
+                {
+                    res?.Messages.Add($"Mapa {code}: mapa kilku płyt „{best.Item1.Plot}” — dla {slabPlot} strefy z jej części mapy.");
+                    return (OnlyIn(best.Item1, bestBox), best.Item2);
                 }
             }
             if (best.Item1 == null || best.Item3 < 0.5) return (null, new Vector3d());
             if (best.Item3 < 0.999 && res != null)
                 res.Messages.Add($"Mapa {code}: obrys mapy różni się od płyty (np. długość wspornika) — dopasowana po {best.Item3 * 100:F0}% " +
                                  "wierzchołków obrysu.");
+            // mapa z kilkoma płytami (2026-10-26, „PLOT 357, 358”) — strefy i opisy tylko z obrysu dopasowanej płyty
+            if (best.Item1.Slabs.Count > 1) return (OnlyIn(best.Item1, bestBox), best.Item2);
             return (best.Item1, best.Item2);
+        }
+
+        /// <summary>Obrysy płyt grupy wskazanej płyty (RC_GA: ten sam [1] i rzut, etykieta [3]) — (etykieta, obwiednia obrysu z rysunku).</summary>
+        private static List<(string label, Extents3d box)> GroupMemberBoxes(Database db, ObjectId slabId)
+        {
+            var res = new List<(string, Extents3d)>();
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(slabId, OpenMode.ForRead) is Polyline me)) return res;
+                var mv = me.GetXDataForApplication(GaImportEngine.XApp)?.AsArray();
+                if (mv == null || mv.Length < 4) return res;
+                string plot = mv[1].Value as string, view = mv[2].Value as string;
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                    if (!string.Equals(pl.Layer, me.Layer, StringComparison.OrdinalIgnoreCase)) continue;
+                    var v = pl.GetXDataForApplication(GaImportEngine.XApp)?.AsArray();
+                    if (v == null || v.Length < 4 || (v[1].Value as string) != plot || (v[2].Value as string) != view) continue;
+                    if (!(v[3].Value is string lab) || lab.Length == 0) continue;
+                    res.Add((lab, GeometryHelper.VerticesBbox(GeometryHelper.GetRawPolylineVertices(pl))));
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.GroupMemberBoxes", ex); }
+            return res;
+        }
+
+        /// <summary>Kopia mapy ze strefami / konturami / tekstami, których środek leży w obwiedni obrysu płyty <paramref name="box"/> (± 50).</summary>
+        private static MapData OnlyIn(MapData m, Extents3d box)
+        {
+            bool In(double x, double y) => x >= box.MinPoint.X - 50 && x <= box.MaxPoint.X + 50 && y >= box.MinPoint.Y - 50 && y <= box.MaxPoint.Y + 50;
+            bool InE(Extents3d e) => In((e.MinPoint.X + e.MaxPoint.X) / 2, (e.MinPoint.Y + e.MaxPoint.Y) / 2);
+            var r = new MapData { Plot = m.Plot, Code = m.Code, Slab = box, Frame = m.Frame };
+            r.SlabPts = m.Slabs.FirstOrDefault(s => s.box.MinPoint.IsEqualTo(box.MinPoint) && s.box.MaxPoint.IsEqualTo(box.MaxPoint)).pts;
+            r.Slabs.Add((box, r.SlabPts));
+            r.Rects.AddRange(m.Rects.Where(InE));
+            r.Contours.AddRange(m.Contours.Where(InE));
+            r.Texts.AddRange(m.Texts.Where(t => In(t.pt.X, t.pt.Y)));
+            return r;
         }
 
         /// <summary>
@@ -302,7 +398,7 @@ namespace BricsCadRc.Core
                         string layer = e.Layer.ToUpperInvariant();
                         if (e is Polyline pl)
                         {
-                            if (layer == $"PH-{code}-SLAB") { if (pl.Closed || GeometryHelper.IsEffectivelyClosed(pl)) { m.Slab = box; m.SlabPts = GeometryHelper.GetRawPolylineVertices(pl); } }
+                            if (layer == $"PH-{code}-SLAB") { if (pl.Closed || GeometryHelper.IsEffectivelyClosed(pl)) { m.Slab = box; m.SlabPts = GeometryHelper.GetRawPolylineVertices(pl); m.Slabs.Add((box, m.SlabPts)); } }
                             else if (layer == $"SD-{code} ADD")
                             {
                                 if ((pl.Closed || GeometryHelper.IsEffectivelyClosed(pl)) && pl.NumberOfVertices <= 5 && GeometryHelper.IsAxisAlignedPolyline(pl))
@@ -330,6 +426,8 @@ namespace BricsCadRc.Core
                 var d = new Vector3d(m.Frame.Value.MinPoint.X - src.Frame.Value.MinPoint.X, m.Frame.Value.MaxPoint.Y - src.Frame.Value.MaxPoint.Y, 0);
                 m.Slab = new Extents3d(src.Slab.Value.MinPoint + d, src.Slab.Value.MaxPoint + d);
                 m.SlabPts = src.SlabPts?.Select(p => new Point2d(p.X + d.X, p.Y + d.Y)).ToList();
+                foreach (var (sb, sp) in src.Slabs)
+                    m.Slabs.Add((new Extents3d(sb.MinPoint + d, sb.MaxPoint + d), sp?.Select(p => new Point2d(p.X + d.X, p.Y + d.Y)).ToList()));
             }
             return res;
         }

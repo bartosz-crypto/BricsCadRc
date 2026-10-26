@@ -6,6 +6,13 @@ namespace BricsCadRc.Tests
     [TestFixture]
     public class PlotLabelRulesTests
     {
+        [TestCase("PLOT 357, 358", new[] { 357, 358 })]
+        [TestCase("PLOT 357-362", new[] { 357, 358, 359, 360, 361, 362 })]
+        [TestCase("PLOT 359", new[] { 359 })]
+        [TestCase("PLOT 526h = 225 mm", new[] { 526 })]
+        public void PlotNumbers(string label, int[] expected)
+            => Assert.That(PlotLabelRules.PlotNumbers(label), Is.EqualTo(expected));
+
         [TestCase("PLOT 458", true)]
         [TestCase("PLOT 9-10", true)]
         [TestCase("  plot 6-8 ", true)]

@@ -58,6 +58,26 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Numery płyt z etykiety (uwaga Bartka 2026-10-26, mapa „PLOT 357, 358” dla płyt 357 i 358 z grupy): „PLOT 357, 358” → 357, 358;
+        /// „PLOT 357-362” → 357…362 (zakres ≤ 50); „PLOT 359” → 359. Liczby w nawiasie / po „=” (np. „h = 225 mm”) pomijane.
+        /// </summary>
+        public static System.Collections.Generic.List<int> PlotNumbers(string label)
+        {
+            var res = new System.Collections.Generic.List<int>();
+            string s = label ?? "";
+            int cut = s.IndexOfAny(new[] { '=', '(', '|' });
+            if (cut >= 0) s = s.Substring(0, cut);
+            foreach (Match m in Regex.Matches(s, @"(\d+)(?:\s*-\s*(\d+))?"))
+            {
+                int a = int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+                int b = m.Groups[2].Success ? int.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : a;
+                if (b < a || b - a > 50) b = a;
+                for (int k = a; k <= b; k++) if (!res.Contains(k)) res.Add(k);
+            }
+            return res;
+        }
+
+        /// <summary>
         /// Mapa należy do płyty (AutoRebar Add, POPRAWKI_WZORCA 28): etykieta mapy (po normalizacji: wielkie litery,
         /// pojedyncze spacje) zaczyna się od etykiety płyty z GA, a następny znak NIE jest cyfrą ani „-”
         /// (wzorzec: sam StartsWith — „PLOT 52” pasowało do „PLOT 526” i „PLOT 52-53”). Dalszy ciąg etykiety mapy

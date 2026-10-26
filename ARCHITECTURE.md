@@ -1654,6 +1654,22 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   (`standardLeader`, jak przy wspornikach), na rzucie bez detalu — jak dotąd tuż przy pręcie.
 - **Tytuł detalu z liczbą elementów (wzór Bartka 2026-10-26):** detal główny z kopiami identycznych elementów — tytuł
   „DETAIL 'n'” / „{liczba}No.” (podkreślone) / „SCALE 1:25” (`BeamDetailTitle`, aktualizowany w `RefreshCopyBox` przy każdej kopii).
+- **Linie pogrubień z GA zostają (uwaga Bartka 2026-10-26):** `SplitTerrace` nie usuwa linii stref narożnych przy GB (przerywane U
+  SD-PILED-RAFT) — tylko wyjmuje je z list kawałków obrysu / uskoku; wspornik: strefa przy palu z GA zostaje na swojej warstwie
+  (dawniej przenoszona na RC-CANTILEVER). Fioletowa strefa belki / prostokąt wspornika nakładane na wierzch, rysunek GA bez zmian.
+- **Import map / analizy kilku płyt (prośba Bartka 2026-10-26, PLOT 357-362):** RC_IMPORT_MAP / RC_IMPORT_ANALYSIS — lista płyt z wyborem
+  wielu (Ctrl / Shift, „Zaznacz wszystkie”), jedno wskazanie (lewy górny róg T1 pierwszej), pozostałe w układzie z pliku map; każda płyta
+  z własnym RC_MAP [PLOT]. Kilka płyt — w AnalysisStore bez płyty (Punching zapyta). Generate ADD: mapa z kilkoma obrysami płyt
+  („PLOT 357, 358”) — dopasowanie do każdego obrysu, strefy / opisy tylko z obrysu dopasowanej płyty (`MapData.Slabs`, `OnlyIn`).
+- **Punching i ADD dla grupy płyt (uwaga Bartka 2026-10-26, 357-362.dwg):** RC_PUNCHING_AUTO — lista płyt raportu z wyborem wielu
+  (`PunchingAutoEngine.Analyze` z listą indeksów): pale wszystkich wybranych płyt w jednym wyniku — tagi, notatka MANUAL i szablony
+  PH1–PH9 („APPLICABLE FOR PILES …”, „nNo LOCATIONS”) dla całości (Plot = etykiety „ + ”). RC_GENERATE_ADD — pytanie o pozostałe
+  płyty grupy (`GroupPick`). Mapa kilku płyt jednym obrysem („PLOT 357, 358” = 357 + GB + 358): `MatchMap` — numery z etykiety mapy
+  (`PlotLabelRules.PlotNumbers`) → obwiednia tych płyt grupy (RC_GA [3], `GroupMemberBoxes`) = obwiednia obrysu mapy (± 100),
+  przesunięcie z rogu, wierzchołki płyty na obrysie mapy ≥ 50 %; strefy tylko z części tej płyty (`OnlyIn`).
+- **Krótki wspornik — strzemiona zamiast U-barów (uwaga Bartka 2026-10-26, poprawka fix98):** wysięg ≤ 600 ze strefą przy palu —
+  bez U-barów H16; strzemiona 51 z prętami wzdłuż osi na całej długości (koniec strefy przy palu … koniec wspornika, B = długość − 2·otulina),
+  A = A strzemion wysięgu − 2·Ø (jak B U-bara), co 120 dokładnie (`Plan.ShortMainLinks`); strzemiona strefy przy palu — standardowo co 150.
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

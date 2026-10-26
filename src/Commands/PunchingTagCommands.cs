@@ -248,22 +248,26 @@ namespace BricsCadRc.Commands
                 var plots = PunchingReport.Read(reportPath, warnings);
                 ed.WriteMessage($"\n{T} Raport: {plots.Count} płyt, {plots.Sum(p => p.Piles.Count)} pali.");
 
-                var res = PunchingAutoEngine.Analyze(db, plots, (choices, def) =>
+                var res = PunchingAutoEngine.Analyze(db, plots, (System.Func<List<PunchingAutoEngine.PlotChoice>, int, List<int>>)((choices, def) =>
                 {
                     // Raport bez podziału na płyty: płyta z map nie ma tu odpowiednika — cały raport, bez pytania
-                    if (choices.Count == 1 && plots[0].Implicit) return 0;
+                    if (choices.Count == 1 && plots[0].Implicit) return new List<int> { 0 };
                     if (!string.IsNullOrEmpty(plotLabel))
                     {
                         // POPRAWKI 24: dawna etykieta sklejona z nagłówka map („PLOT 526h = 225 mm | …”) → „PLOT 526”
                         string wanted = NormPlot(MTextParagraphs.RepairGluedMapLabel(plotLabel));
                         int hit = choices.FindIndex(c => NormPlot(c.Label) == wanted);
-                        if (hit >= 0) return hit;
+                        if (hit >= 0) return new List<int> { hit };
                         ed.WriteMessage($"\n{T} Płyty {plotLabel} z map nie ma w raporcie przebicia — wybierz płytę z listy.");
                     }
-                    if (choices.Count == 1) return 0;
-                    var dlg = new PunchingPlotPickerDialog(choices.Select(c => c.ToString()).ToList(), def);
-                    return Application.ShowModalWindow(dlg) == true ? dlg.SelectedIndex : -1;
-                });
+                    if (choices.Count == 1) return new List<int> { 0 };
+                    // kilka płyt naraz (2026-10-26, PLOT 357-362): Ctrl / Shift / „Zaznacz wszystkie” — tagi i szablony PH dla całości
+                    var dlg = new PunchingPlotPickerDialog(choices.Select(c => c.ToString()).ToList(), def,
+                        null, "Płyty z raportu przebicia. Kilka płyt: Ctrl / Shift albo „Zaznacz wszystkie”.", multiSelect: true);
+                    if (Application.ShowModalWindow(dlg) != true) return null;
+                    List<int> sel = dlg.SelectedIndices;
+                    return sel;
+                }));
                 if (res.Plot == null && res.Warnings.Count == 0) return;   // anulowany wybór płyty
                 warnings.AddRange(res.Warnings);
                 if (res.Plot == null || res.Items.Count == 0)

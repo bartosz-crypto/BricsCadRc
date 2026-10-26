@@ -282,8 +282,9 @@ namespace BricsCadRc.Core
         /// A = najwyższe możliwe − 15 mm (375: 290 → 275), co 150. Wspornik pionowy (oś Y) — bez zmian (zewnętrzne + wewnętrzne A − 2·Ø).
         /// </summary>
         public const double RootSingleLinkDrop = 15.0, RootSingleLinkSpacing = 150.0;
-        /// <summary>Krótki wspornik (uwaga Bartka 2026-10-26, PLOT 357-362: wysięg 411 od uskoku): strzemiona strefy przy palu w kierunku
-        /// głównym (pręty wzdłuż osi — jak U-bary H16) co 120 dokładnie („5 H12 … LINKS”), nie 150.</summary>
+        /// <summary>Krótki wspornik (uwagi Bartka 2026-10-26, PLOT 357-362: wysięg 411 od uskoku): ZAMIAST U-barów H16 — strzemiona
+        /// w kierunku głównym (pręty wzdłuż osi) na całej długości (strefa przy palu + wysięg) co 120 dokładnie; strzemiona strefy przy palu
+        /// w obu kierunkach — standardowo (co 150).</summary>
         public const double ShortReachMax = 600.0, ShortMainLinkSpacing = 120.0;
         /// <summary>Strefa wspornika bez strefy przy palu — w płycie na długość zakotwienia prętów prostych (magenta nakłada się na płytę).</summary>
         public const double NoRootExtension = StraightIntoSlab;
@@ -396,6 +397,8 @@ namespace BricsCadRc.Core
             public List<StraightRun> SideStraight = new List<StraightRun>();
             /// <summary>Strefa przy palu — jedna pozycja strzemion w obu kierunkach (wspornik poziomy, <see cref="RootSingleLinkDrop"/>).</summary>
             public bool SingleRootLink;
+            /// <summary>Krótki wspornik — strzemiona wzdłuż osi na całej długości zamiast U-barów (<see cref="ShortReachMax"/>).</summary>
+            public bool ShortMainLinks;
         }
 
         /// <summary>
@@ -458,9 +461,8 @@ namespace BricsCadRc.Core
                 Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols, spacing: rs, drop: rd);
                 double inner2 = rootLen - 2 * off;
                 int cols2 = inner2 <= 0 ? 1 : Math.Max(2, (int)Math.Ceiling(inner2 / MaxColumnSpacing - 1e-9) + 1);
-                bool shortC = reach <= ShortReachMax + 0.5;
-                Links(0, width, rootH, shortC ? "strefa przy palu (kierunek główny — krótki wspornik, co 120)" : "strefa przy palu (drugi kierunek)",
-                      LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0, spacing: shortC ? ShortMainLinkSpacing : rs, drop: rd);
+                Links(0, width, rootH, "strefa przy palu (drugi kierunek)",
+                      LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0, spacing: rs, drop: rd);
                 // uwaga Bartka 2026-10-22: oba kierunki tej samej wysokości kolidują — drugi kierunek niższy o Ø strzemienia, w dół do 5
                 // — drugi kierunek wchodzi w pierwszy: A − 2·Ø w dół do 5 (375: 290 − 24 = 266 → 265); jedna pozycja — bez zagnieżdżenia
                 var second = pl.Links.LastOrDefault();
@@ -475,7 +477,30 @@ namespace BricsCadRc.Core
             double aLink = BeamGeometry.StirrupHeightCovers(h, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom);
             double bU = Math.Floor((aLink - 2 * dLink) / 5.0 + 1e-9) * 5.0;
             double backOut = reach - cover;
-            if (root)
+            if (root && reach <= ShortReachMax + 0.5)
+            {
+                // krótki wspornik (uwaga Bartka 2026-10-26): zamiast U-barów H16 strzemiona zamknięte z prętami wzdłuż osi na całej długości
+                // (od końca strefy przy palu do końca wspornika), w środku strzemion wysięgu (A − 2·Ø w dół do 5 — jak B U-bara), co 120
+                double len = Math.Floor((rootLen + reach - 2 * cover) / 5.0 + 1e-9) * 5.0;
+                var (first, step, n, _) = BeamGeometry.StirrupLayout(0, width, ShortMainLinkSpacing,
+                                                                     BeamGeometry.StirrupFirstOffset(dLink, BeamGeometry.LinkEndCover));
+                if (n > 1)
+                {
+                    double av = (n - 1) * step;
+                    int m = (int)Math.Floor(av / ShortMainLinkSpacing + 1e-9) + 1;
+                    first += (av - (m - 1) * ShortMainLinkSpacing) / 2.0; step = ShortMainLinkSpacing; n = m;
+                }
+                if (bU > 0 && len > 0 && n > 0)
+                {
+                    pl.Links.Add(new LinkRun { S0 = 0, S1 = width, First = first, Step = step, Count = n, Dia = dLink, A = bU, B = len,
+                                               Spacing = ShortMainLinkSpacing, Legs = 2, Shape = LinkShapeInSlab, AlongAxis = true,
+                                               L0 = -rootLen, L1 = reach,
+                                               Note = $"krótki wspornik (wysięg {reach:F0} ≤ {ShortReachMax:F0}): zamiast U-barów H{MainDia} " +
+                                                      $"strzemiona wzdłuż osi na całej długości {len:F0}, co {ShortMainLinkSpacing:F0}" });
+                    pl.ShortMainLinks = true;
+                }
+            }
+            else if (root)
             {
                 // tył U przy końcu strefy przy palu — W ŚRODKU strzemion drugiego kierunku (ich ramię przy licu końca strefy):
                 // otulina + Ø strzemienia strefy (bez kolizji, zasada 2026-10-22)

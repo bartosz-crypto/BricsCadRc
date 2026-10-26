@@ -72,7 +72,18 @@ namespace BricsCadRc.Commands
             if (slabId.IsNull) return;
             try
             {
+                // grupa płyt (uwaga Bartka 2026-10-26, PLOT 357-362): ADD wszystkich płyt grupy jednym poleceniem
+                var others = isDrawn ? new System.Collections.Generic.List<(Teigha.DatabaseServices.ObjectId bottom, Teigha.DatabaseServices.ObjectId top, string member)>()
+                                     : GroupPick.Others(doc.Editor, doc.Database, slabId, T);
+                if (others == null) return;
                 var r = BricsCadRc.Core.AutoRebarEngine.GenerateAddFromMaps(doc, slabId);
+                foreach (var g in others)
+                {
+                    doc.Editor.WriteMessage($"\n{T} ── {g.member} ──");
+                    var rg = BricsCadRc.Core.AutoRebarEngine.GenerateAddFromMaps(doc, g.bottom);
+                    r.Distributions += rg.Distributions; r.UbAdd += rg.UbAdd; r.Zones += rg.Zones;
+                    foreach (var m in rg.Messages) r.Messages.Add($"{g.member}: {m}");
+                }
                 string head = $"Dozbrojenie dołem: {r.Distributions} rozkład(y), UB ADD: {r.UbAdd} — z {r.Zones} stref map.";
                 doc.Editor.WriteMessage($"\n{T} {head}\n");
                 foreach (var m in r.Messages) doc.Editor.WriteMessage($"\n{T} {m}");

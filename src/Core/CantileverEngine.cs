@@ -437,7 +437,7 @@ namespace BricsCadRc.Core
                     openPl.Remove(sid); nibPieces.Remove(sid);
                     if (root.u != null)
                     {
-                        MoveToLayer(tr, db, root.id);
+                        // uwaga Bartka 2026-10-26: strefa przy palu z GA zostaje na swojej warstwie (fiolet = prostokąt wspornika na wierzchu)
                         openPl.Remove(root.id); nibPieces.Remove(root.id);
                     }
                     rep.Made++;
@@ -510,7 +510,7 @@ namespace BricsCadRc.Core
                     foreach (var (t, d, rootId) in accepted)
                     {
                         AddRect(tr, db, t.Shape, pl, d);
-                        if (!rootId.IsNull) { MoveToLayer(tr, db, rootId); openPieces?.Remove(rootId); rep.Moved.Add(rootId); }
+                        if (!rootId.IsNull) { openPieces?.Remove(rootId); rep.Moved.Add(rootId); }   // strefa przy palu z GA bez zmian (2026-10-26)
                         rep.Made++;
                         rep.Info.Add($"[RC CANT] {where}: wspornik {Label(d)}, wysięg {t.Shape.Depth:F0} — wyłączony z obrysu siatki.");
                     }
