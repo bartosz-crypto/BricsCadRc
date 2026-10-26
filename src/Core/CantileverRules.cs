@@ -69,7 +69,9 @@ namespace BricsCadRc.Core
         public static List<Tab> FindTabs(IList<(double X, double Y)> poly)
         {
             var res = new List<Tab>();
-            var p = Clean(poly);
+            // uwaga Bartka 2026-10-26 (PLOT 362): wierzchołek współliniowy na boku języczka (GA: …677,−368522 między narożnikami) —
+            // narożniki końca nie sąsiadowały i wspornik nie był wykrywany; punkty współliniowe pomijane (indeksy E0 / E1 — w obrysie)
+            var p = Straight(Clean(poly));
             int n = p.Count;
             if (n < 8) return res;
             double s = Math.Sign(SignedArea(p));
@@ -96,7 +98,7 @@ namespace BricsCadRc.Core
         {
             var drop = new HashSet<(double, double)>();
             foreach (var t in tabs) { drop.Add(t.Shape.C1); drop.Add(t.Shape.C2); }
-            var kept = Clean(poly).Where(q => !drop.Contains(q)).ToList();
+            var kept = Straight(Clean(poly)).Where(q => !drop.Contains(q)).ToList();   // punkt współliniowy na końcu języczka (PLOT 362) — też poza
             // punkty współliniowe (dawne nasady) — usuwane
             bool changed = true;
             while (changed && kept.Count > 3)
@@ -571,6 +573,26 @@ namespace BricsCadRc.Core
             double a = 0;
             for (int i = 0; i < p.Count; i++) { var q = p[i]; var r = p[(i + 1) % p.Count]; a += q.X * r.Y - r.X * q.Y; }
             return a / 2;
+        }
+
+        /// <summary>Bez punktów współliniowych na prostych odcinkach (kierunek bez zmiany, odchyłka ≤ Tol).</summary>
+        private static List<(double X, double Y)> Straight(List<(double X, double Y)> p)
+        {
+            bool changed = true;
+            while (changed && p.Count > 3)
+            {
+                changed = false;
+                for (int i = 0; i < p.Count; i++)
+                {
+                    var a = p[(i - 1 + p.Count) % p.Count]; var b = p[i]; var c = p[(i + 1) % p.Count];
+                    var ac = (c.X - a.X, c.Y - a.Y); double L = Len(ac);
+                    if (L < 1e-9) continue;
+                    double dev = Math.Abs((b.X - a.X) * ac.Item2 - (b.Y - a.Y) * ac.Item1) / L;
+                    double t = ((b.X - a.X) * ac.Item1 + (b.Y - a.Y) * ac.Item2) / (L * L);
+                    if (dev <= Tol && t > 0 && t < 1) { p.RemoveAt(i); changed = true; break; }
+                }
+            }
+            return p;
         }
 
         /// <summary>Bez powtórzonego ostatniego punktu i bez punktów zdublowanych.</summary>

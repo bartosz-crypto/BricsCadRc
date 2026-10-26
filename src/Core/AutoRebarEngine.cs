@@ -2723,9 +2723,11 @@ namespace BricsCadRc.Core
             if (candidates.Count == 0)
             {
                 candidates.Add(distBar.LeaderPoints);
+                // uwaga Bartka 2026-10-26: druga strona — ramię jak wariant domyślny (LeaderArm: w detalu 1:25 2400 · 0,5); dawniej stałe
+                // 2000 — w detalu opis po drugiej stronie odlatywał 1,7 × dalej niż pozostałe
                 double otherEnd = horizontal
-                    ? (leaderUp ? slabMinY - LeaderArmExtension : slabMaxY + LeaderArmExtension) - annotInsertPt.Y
-                    : (leaderRight ? slabMinY - LeaderArmExtension : slabMaxY + LeaderArmExtension) - annotInsertPt.X;
+                    ? (leaderUp ? slabMinY - LeaderArm : slabMaxY + LeaderArm) - annotInsertPt.Y
+                    : (leaderRight ? slabMinY - LeaderArm : slabMaxY + LeaderArm) - annotInsertPt.X;
                 candidates.Add(AnnotationEngine.EncodeLeaderPoints(new List<Point3d>
                 {
                     new Point3d(0, 0, 0),

@@ -628,6 +628,9 @@ Nib (uskok przy krawędzi, wys. 150, szer. zwykle 115–135, zawsze < 255 mm) �
 - **Opis z odnośnikiem prostopadłym do linii rozkładu** (UB ADD: ze środka linii wzdłuż prętów, 2 punkty) — grip tekstu w bok
   wstawia kink na linii rozkładu i przesuwa go po niej (2026-10-19, jak opis ręczny); kropka zejścia wg reguły wyżej. Kink w samym
   środku (ramię zerowe) ślizga się po osi rozkładu. Generowanie — wszystkie ścieżki tworzą opisy przez `AnnotationEngine.CreateLeader`.
+  MOVE / COPY / MIRROR opisu albo rozkładu (uwaga Bartka 2026-10-26, LINKS w detalu GB — leader się łamał): `RebuildDistLineInBtr`
+  → `AlongBarsLeader` — leader prosty albo L (ostatni odcinek wzdłuż prętów) dostaje stopę NA linii rozkładu na wysokości tekstu
+  i ostatni odcinek prosto wzdłuż prętów (jak grip tekstu); leader wzdłuż linii rozkładu (siatka) i trasy z > 1 załamaniem — bez zmian.
 - Kolizje opisów (AutoRebar, `PlaceLabel`): przeszkody = teksty (opisów i rysunku) **oraz linie opisów** (leadery,
   linie rozkładów); nowy leader nie może przecinać tekstów. Kolejność: warianty leadera (druga strona płyty; T IN NIB —
   prosto / załamanie wzdłuż krawędzi w obie strony, krótsza droga najpierw), każdy bez przesunięcia i z przesunięciem
@@ -1639,6 +1642,16 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   góry 500–700 (200) jest węższe niż siatka długości 250, więc przy części szerokości żadna para długości z siatki nie trafia w okno
   i plan przeskakiwał na N + 1 prętów. Teraz przy danym N bez rozwiązania z siatki ostatni pręt ma dowolną długość z siatki 25
   (≥ minLen; `PlanCandidatesCore` — ranking za planami z samej siatki; `TopLapSearch.Find` — to samo przy palach).
+- **Języczek z wierzchołkiem współliniowym (uwaga Bartka 2026-10-26, PLOT 362):** w GA obrys miał dodatkowy wierzchołek na boku
+  końcowym języczka — `CantileverRules.FindTabs` / `RemoveTabs` pomijają punkty współliniowe (`Straight`, odchyłka ≤ Tol), więc taki
+  wspornik jest wykrywany jak pozostałe (indeksy E0 / E1 nadal w oryginalnym obrysie).
+- **Grupa płyt w RC_GENERATE_BEAM / RC_GENERATE_CANTILEVER (uwaga Bartka 2026-10-26, PLOT 357-362):** jak siatka — wskazana płyta
+  grupy (RC_GA [3]) → pytanie o pozostałe płyty (`Commands/GroupPick.Others`, wspólne z RC_GENERUJ_SIATKA) → belki / wsporniki
+  każdej płyty grupy; identyczne wsporniki różnych płyt dzielą jeden detal (kopie nad detalem głównym, fix95).
+- **Opisy w detalach 1:25 (uwaga Bartka 2026-10-26):** wariant „druga strona” w `GenerateDistributionWithLeaderAtOffset` ma ramię
+  `LeaderArm` (w detalu 2400 · 0,5) jak wariant domyślny — dawniej stałe 2000, więc opis po drugiej stronie (np. drugi UB GB /
+  wspornika) odlatywał ok. 1,7 × dalej; na rzucie bez zmian (LeaderArm = 2000). UB SIDE belek w detalu — opis standardowy
+  (`standardLeader`, jak przy wspornikach), na rzucie bez detalu — jak dotąd tuż przy pręcie.
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

@@ -910,7 +910,8 @@ namespace BricsCadRc.Core
                 var sruns = BeamGeometry.PlanSideUBars(an, sideRanges, nSide, p.SideDia, p.StirrupDia, lapS, p.CoverSide, smsgs);
                 foreach (var m in smsgs) msg($"{name}: {m}");
                 foreach (var r in sruns)
-                    if (BeamSideUBar(db, doc.Editor, bottom, r, zbHandle, BeamGeometry.UbSideLabelSpacing, tg)) res.SideDists++;
+                    // uwaga Bartka 2026-10-26 (detal GB): w detalu 1:25 opis UB SIDE jak pozostałe (za oknem detalu), nie tuż przy pręcie
+                    if (BeamSideUBar(db, doc.Editor, bottom, r, zbHandle, BeamGeometry.UbSideLabelSpacing, tg, standardLeader: tg != null)) res.SideDists++;
                 if (sruns.Count > 0)
                     msg($"{name}: UB SIDE: {string.Join(", ", sruns.Select(r => r.ToString()))}.");
             }

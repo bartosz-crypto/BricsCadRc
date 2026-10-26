@@ -117,7 +117,16 @@ namespace BricsCadRc.Commands
                     ed.WriteMessage(top.IsNull ? $"\n{T} Nie znaleziono rzutu górnego (przystający obrys)."
                                                : $"\n{T} Rzut górny znaleziony automatycznie.");
                 }
+                // grupa płyt (uwaga Bartka 2026-10-26, PLOT 357-362): belki wszystkich płyt grupy jednym poleceniem (góra — FindPartnerView)
+                var others = GroupPick.Others(ed, doc.Database, bottom, T);
+                if (others == null) return;
                 AutoRebarEngine.GenerateBeams(doc, bottom, top);
+                foreach (var g in others)
+                {
+                    ed.WriteMessage($"\n{T} ── {g.member} ──");
+                    if (g.top.IsNull) ed.WriteMessage($"\n{T} {g.member}: nie znaleziono rzutu górnego (przystający obrys).");
+                    AutoRebarEngine.GenerateBeams(doc, g.bottom, g.top);
+                }
                 ed.WriteMessage("\n");
             }
             catch (System.Exception ex)

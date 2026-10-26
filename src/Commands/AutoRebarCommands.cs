@@ -100,34 +100,23 @@ namespace BricsCadRc.Commands
             }
 
             // Grupa płyt (uwaga Bartka 2026-10-26, PLOT 357-362): płyty grupy z Prepare GA (RC_GA [3]) — wszystkie jednym poleceniem
-            var group = bottomDrawn ? (null, new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>())
-                                    : AutoRebarEngine.GroupMeshPairs(db, bottomId);
-            var extra = new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>();
-            if (group.Item2.Count > 0)
+            var others = bottomDrawn ? new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>()
+                                     : GroupPick.Others(ed, db, bottomId, "[RC SIATKA]");
+            if (others == null)
             {
-                var gOpts = new PromptKeywordOptions(
-                    $"\n[RC SIATKA] Płyta należy do grupy {group.Item1} — zazbroić także pozostałe płyty grupy ({group.Item2.Count})? [Tak/Nie] <Tak>: ")
-                    { AllowNone = true };
-                gOpts.Keywords.Add("Tak");
-                gOpts.Keywords.Add("Nie");
-                gOpts.Keywords.Default = "Tak";
-                var gRes = ed.GetKeywords(gOpts);
-                if (gRes.Status == PromptStatus.Cancel)
+                if (topDrawn) SlabPicker.Cleanup(db, topId);
+                ed.WriteMessage("\n[RC SIATKA] Anulowano — nic nie wygenerowano.\n");
+                return;
+            }
+            var extra = new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>();
+            foreach (var g in others)
+            {
+                if (g.top.IsNull || g.top == topId)
                 {
-                    if (topDrawn) SlabPicker.Cleanup(db, topId);
-                    ed.WriteMessage("\n[RC SIATKA] Anulowano — nic nie wygenerowano.\n");
-                    return;
+                    ed.WriteMessage($"\n*** WARNING *** [RC SIATKA] {g.member}: brak rzutu górnego tej płyty — pominięto (zbrój osobno).\n");
+                    continue;
                 }
-                if (gRes.Status != PromptStatus.OK || gRes.StringResult == "Tak")
-                    foreach (var g in group.Item2)
-                    {
-                        if (g.top.IsNull || g.top == topId)
-                        {
-                            ed.WriteMessage($"\n*** WARNING *** [RC SIATKA] {g.member}: brak rzutu górnego tej płyty — pominięto (zbrój osobno).\n");
-                            continue;
-                        }
-                        extra.Add(g);
-                    }
+                extra.Add(g);
             }
 
             var total = new MeshCounts();
@@ -148,7 +137,7 @@ namespace BricsCadRc.Commands
                 if (bottomDrawn) SlabPicker.Cleanup(db, bottomId);
             }
 
-            ed.WriteMessage($"\n[RC SIATKA] Gotowe" + (extra.Count > 0 ? $" ({extra.Count + 1} płyt grupy {group.Item1})" : "") +
+            ed.WriteMessage($"\n[RC SIATKA] Gotowe" + (extra.Count > 0 ? $" ({extra.Count + 1} płyt grupy)" : "") +
                             $". Rozkłady: B1={Pos(total.B1)}, B2={Pos(total.B2)}, " +
                             $"UB B1={Pos(total.U1)}, UB B2={Pos(total.U2)}" + (anyNib ? $", UB NIB={Pos(total.U3)}" : "") +
                             $", T1={Pos(total.T1)}, T2={Pos(total.T2)}" + (anyNib ? " (z T IN NIB)" : "") + $", B3 ADD={Pos(total.B3)}. " +

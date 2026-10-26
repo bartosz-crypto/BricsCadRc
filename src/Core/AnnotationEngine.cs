@@ -1784,6 +1784,7 @@ namespace BricsCadRc.Core
                     Point3d target = CalcDistLineCenter(barData);
                     pts[0] = new Point3d(target.X + localOffset.X, target.Y + localOffset.Y, 0);
                     annotBar.Angle = annotBr.Rotation;
+                    if (!NeedsElbow(barData)) pts = AlongBarsLeader(barData, pts);
                     if (NeedsElbow(barData))
                         pts = ApplyElbow(barData, pts, localOffset);   // załamanie zostaje na końcu linii rozkładu
                     annotBar.LeaderPoints = EncodeLeaderPoints(pts);
@@ -1793,6 +1794,42 @@ namespace BricsCadRc.Core
             }
 
             tr.Commit();
+        }
+
+        /// <summary>
+        /// Leader prostopadły do linii rozkładu (ostatni odcinek wzdłuż prętów — strzemiona LINKS w detalach, UB ADD): uwaga Bartka
+        /// 2026-10-26 — po MOVE opisu leader się łamał (początek wracał na środek linii rozkładu, załamanie zostawało w miejscu,
+        /// ostatni odcinek skośny). Teraz jak przy gripie tekstu: stopa leadera NA linii rozkładu na wysokości tekstu
+        /// (pts[0] — środek linii rozkładu, załamanie na linii rozkładu), ostatni odcinek prosto wzdłuż prętów do tekstu.
+        /// Leader wzdłuż linii rozkładu (siatka) — bez zmian.
+        /// </summary>
+        private static List<Point3d> AlongBarsLeader(BarData bar, List<Point3d> pts)
+        {
+            if (pts == null || pts.Count < 2) return pts;
+            var e = pts[pts.Count - 1];
+            var seg = e - pts[pts.Count - 2];
+            if (seg.Length < 1e-6) return pts;
+            bool barsX = bar.Direction == "X";
+            bool lastAlongBars = barsX ? Math.Abs(seg.X) > Math.Abs(seg.Y) : Math.Abs(seg.Y) > Math.Abs(seg.X);
+            if (!lastAlongBars || pts.Count > 3) return pts;
+            var p0 = pts[0];
+            // L z załamaniem na osi linii rozkładu (grip tekstu / PlaceLabel) — inne trasy (np. wokół krawędzi) bez zmian
+            if (pts.Count == 3)
+            {
+                var s0 = pts[1] - p0;
+                // po MOVE załamanie bywa przesunięte (kompensata w AnnotTransformOverrule) — wystarczy przewaga kierunku osi rozkładu
+                bool onDistAxis = barsX ? Math.Abs(s0.Y) >= Math.Abs(s0.X) : Math.Abs(s0.X) >= Math.Abs(s0.Y);
+                if (!onDistAxis) return pts;
+            }
+            // stopa na linii rozkładu (współrzędna poprzeczna = pts[0]) na wysokości tekstu wzdłuż rozkładu
+            var foot = barsX ? new Point3d(p0.X, e.Y, 0) : new Point3d(e.X, p0.Y, 0);
+            // tekst po drugiej stronie stopy niż wcześniej (wzdłuż prętów) — bez zmian (nie odwracamy kierunku ramienia)
+            if ((e - foot).Length < 1e-6) return pts;
+            var res = new List<Point3d> { p0 };
+            if ((foot - p0).Length > 1e-3) res.Add(foot);
+            // ostatni odcinek ściśle wzdłuż prętów
+            res.Add(barsX ? new Point3d(e.X, foot.Y, 0) : new Point3d(foot.X, e.Y, 0));
+            return res;
         }
 
         /// <summary>
