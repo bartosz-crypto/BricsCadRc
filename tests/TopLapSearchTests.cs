@@ -39,6 +39,21 @@ namespace BricsCadRc.Tests
         }
 
         [Test]
+        public void Width6503_TwoBarsNotThree()
+        {
+            // uwaga Bartka 2026-10-26 (PLOT 357): okno zakładu 500–700 węższe niż siatka 250 — wcześniej 3 pręty
+            double available = 6503;
+            var p = TopLapSearch.Find(available, new List<(double, double)>(), new List<(double, double)>(), 2, 4, 1250, 6000, 250, 500, 700, 600, 750);
+            Assert.That(p, Is.Not.Null);
+            Assert.That(p.Count, Is.EqualTo(2));
+            Assert.That(p[1].xOffset + p[1].length, Is.EqualTo(available).Within(1e-6));
+            Assert.That(p[0].length % 250, Is.EqualTo(0).Within(1e-6));
+            Assert.That(p[1].length % 25, Is.EqualTo(0).Within(1e-6));
+            Assert.That(p[0].length - p[1].xOffset, Is.InRange(500 - 1e-6, 700 + 1e-6));
+            Assert.That(p[1].length, Is.GreaterThanOrEqualTo(1250));
+        }
+
+        [Test]
         public void NoRoomBetweenPiles_ReturnsNull()
         {
             var forbidden = new List<(double, double)> { (3000, 16000) };

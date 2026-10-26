@@ -202,6 +202,7 @@ namespace BricsCadRc.Core
                 }
 
             var seen = new bool[nx, ny];
+            var attach = new List<(int slab, RectilinearPolygons.Rect r)>();
             for (int i0 = 0; i0 < nx; i0++)
                 for (int j0 = 0; j0 < ny; j0++)
                 {
@@ -226,6 +227,20 @@ namespace BricsCadRc.Core
                     if (comp.Count != (ib - ia + 1) * (jb - ja + 1))
                     {
                         res.Messages.Add($"{where}: beton poza płytami nie jest prostokątem — belka nie utworzona (RC_BEAM ręcznie).");
+                        continue;
+                    }
+                    // uwaga Bartka 2026-10-26 (PLOT 357-362): beton przy JEDNEJ płycie (języczek wspornika 276 × 600 za krawędzią) — część obrysu
+                    // tej płyty (wspornik wykryje CantileverEngine), nie pas między płytami
+                    var adj = new HashSet<int>();
+                    foreach (var probe in new[] { ((x0 + x1) / 2, y0 - SnapTol), ((x0 + x1) / 2, y1 + SnapTol), (x0 - SnapTol, (y0 + y1) / 2), (x1 + SnapTol, (y0 + y1) / 2) })
+                    {
+                        int si = SlabAt(res.Slabs, probe);
+                        if (si >= 0) adj.Add(si);
+                    }
+                    if (adj.Count == 1)
+                    {
+                        attach.Add((adj.First(), new RectilinearPolygons.Rect(x0, y0, x1, y1)));
+                        res.Messages.Add($"{where}: beton przy jednej płycie — dołączony do jej obrysu (wspornik / występ).");
                         continue;
                     }
                     bool alongX = x1 - x0 >= y1 - y0;
@@ -271,6 +286,15 @@ namespace BricsCadRc.Core
                         res.Messages.Add($"{where}: szerokość pasa {band.Width:F0} ≠ {band.GbWidth} z opisu GB — przyjęto szerokość pasa.");
                     res.Bands.Add(band);
                 }
+            foreach (var g in attach.GroupBy(a => a.slab))
+            {
+                var sl = res.Slabs[g.Key];
+                var rs = g.Select(a => a.r).ToList();
+                double cx0 = Math.Min(sl.Min(q => q.X), rs.Min(r => r.X0)) - 10, cy0 = Math.Min(sl.Min(q => q.Y), rs.Min(r => r.Y0)) - 10;
+                double cx1 = Math.Max(sl.Max(q => q.X), rs.Max(r => r.X1)) + 10, cy1 = Math.Max(sl.Max(q => q.Y), rs.Max(r => r.Y1)) + 10;
+                var loops = RectilinearPolygons.AddClipped(sl, rs, new List<(double X, double Y)> { (cx0, cy0), (cx1, cy0), (cx1, cy1), (cx0, cy1) });
+                if (loops.Count > 0) res.Slabs[g.Key] = Clean(loops[0]);
+            }
             return res;
         }
 

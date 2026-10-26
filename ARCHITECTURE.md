@@ -1624,6 +1624,21 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   `GaPlot.Parts`). Jeden rysunek RC: każda część — własny obrys (RC_GA [3] = etykieta części), opis, SSL / grubość
   (`BeamGaContext.For`), szereg w części (np. PLOT 357-358) dzielony jak dotąd (`SplitTerrace(tagLabel)`); wsporniki, nib, K8 per płyta
   (kawałki w obwiedni + 300). Belki GB MIĘDZY osobnymi obrysami (języczki 276 + przerwa, różne SSL) — jeszcze nie (kolejny etap).
+  Uwagi Bartka 2026-10-26: opisy i ramki WSZYSTKICH płyt (główna, szereg, grupa — `GaPlot.LabelKeys`) kopiowane i przebudowane
+  (dawniej opis z „NIB TOC=…” innej płyty ginął); odnośnik bez treści (strzałka opisu MText) kopiowany; w szeregu beton przy JEDNEJ
+  płycie (języczek 276 × 600) zostaje w jej obrysie (`TerraceRules` — nie pas GB), wspornik wykrywa CantileverEngine; krótkie
+  wsporniki: `CantileverRules.MinDepth` 200 (dawniej 300), opis „300THK / TOC=…” (`ParseThkToc` — wysokość od TOC; jeden opis
+  dla dwóch wsporników), opisy wsporników ze wszystkich opisów rzutu; wysięg ≤ 600 od uskoku — strzemiona strefy przy palu
+  w kierunku głównym co 120 dokładnie („5 H12 … LINKS”, `ShortMainLinkSpacing`).
+- **Siatka grupy płyt (prośba Bartka 2026-10-26):** RC_GENERUJ_SIATKA — wskazana płyta z RC_GA [3] (grupa / szereg z Prepare GA) →
+  pytanie „zazbroić także pozostałe płyty grupy? [Tak/Nie]”; `AutoRebarEngine.GroupMeshPairs` (ten sam RC_GA [1] i rzut, inna [3];
+  góra przez `FindPartnerView`) → ta sama sekwencja B1, B2, T1, T2, UB, UB NIB, kolizje, B3 ADD dla każdej pary (`GenerateMeshPair`,
+  grubość pytana raz). Płyta bez rzutu górnego — ostrzeżenie i pominięcie. Płyty przystające bez pali / otworów w innych miejscach
+  dostają ten sam układ (planowanie deterministyczne); różnice wynikają z omijania pali i otworów.
+- **Zakład przy szerokości „między siatką” (uwaga Bartka 2026-10-26, PLOT 357, szer. ~6500 — 3 rozkłady T1 zamiast 2):** okno zakładu
+  góry 500–700 (200) jest węższe niż siatka długości 250, więc przy części szerokości żadna para długości z siatki nie trafia w okno
+  i plan przeskakiwał na N + 1 prętów. Teraz przy danym N bez rozwiązania z siatki ostatni pręt ma dowolną długość z siatki 25
+  (≥ minLen; `PlanCandidatesCore` — ranking za planami z samej siatki; `TopLapSearch.Find` — to samo przy palach).
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
 

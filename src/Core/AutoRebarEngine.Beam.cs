@@ -121,6 +121,58 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Grupa płyt (uwaga Bartka 2026-10-26, PLOT 357-362): pozostałe płyty grupy wskazanej płyty — obrysy z tym samym RC_GA [1]
+        /// (etykieta grupy / szeregu) i rzutem co wskazany dół, z inną etykietą płyty [3]; dla każdej rzut górny przez FindPartnerView
+        /// (ta sama etykieta płyty, przeciwny rzut). Zwraca (etykieta grupy, lista par dół–góra bez wskazanej płyty).
+        /// Płyta bez [3] (zwykła płyta) — pusta lista.
+        /// </summary>
+        internal static (string group, List<(ObjectId bottom, ObjectId top, string member)> pairs) GroupMeshPairs(Database db, ObjectId bottomId)
+        {
+            var pairs = new List<(ObjectId, ObjectId, string)>();
+            string group = null;
+            try
+            {
+                var outer = NibDetector.OuterOf(db, bottomId);
+                var others = new List<(ObjectId id, string member, Point2d at)>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    if (!(tr.GetObject(outer, OpenMode.ForRead) is Polyline me)) return (null, pairs);
+                    var (plot, view) = GaTagOf(me);
+                    string myMember = GaImportEngine.MemberTag(me);
+                    if (plot == null || view == null || myMember == null) return (null, pairs);
+                    group = plot;
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { myMember };
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    foreach (ObjectId id in ms)
+                    {
+                        if (id.IsErased || id == outer) continue;
+                        if (!(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || !GeometryHelper.IsEffectivelyClosed(pl)) continue;
+                        if (!string.Equals(pl.Layer, me.Layer, StringComparison.OrdinalIgnoreCase)) continue;
+                        var (p2, v2) = GaTagOf(pl);
+                        string m2 = GaImportEngine.MemberTag(pl);
+                        if (p2 != plot || v2 != view || m2 == null || !seen.Add(m2)) continue;
+                        var ext = pl.GeometricExtents;
+                        others.Add((id, m2, new Point2d(ext.MinPoint.X, ext.MinPoint.Y)));
+                    }
+                    tr.Commit();
+                }
+                // kolejność na rysunku: od lewej, od góry
+                foreach (var o in others.OrderBy(o => Math.Round(o.at.X / 1000.0)).ThenByDescending(o => o.at.Y))
+                {
+                    var (top, _) = FindPartnerView(db, o.id);
+                    if (top.IsNull) { pairs.Add((o.id, ObjectId.Null, o.member)); continue; }
+                    using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                    bool ok = tr.GetObject(top, OpenMode.ForRead) is Polyline tp && GaImportEngine.MemberTag(tp) == o.member
+                              && GaTagOf(tp).view != GaTagOf((Entity)tr.GetObject(o.id, OpenMode.ForRead)).view;
+                    tr.Commit();
+                    pairs.Add((o.id, ok ? top : ObjectId.Null, o.member));
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.GroupMeshPairs", ex); }
+            return (group, pairs);
+        }
+
+        /// <summary>
         /// Czy obrys to rzut górny: RC_GA [2] = T; bez znacznika — rozkłady T1/T2 (a nie B1/B2) w obrysie; inaczej dolny.
         /// </summary>
         internal static bool IsTopView(Database db, ObjectId slabOuterId)

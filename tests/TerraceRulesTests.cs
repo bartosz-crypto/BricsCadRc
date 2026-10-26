@@ -154,6 +154,26 @@ namespace BricsCadRc.Tests
             Assert.That(TerraceRules.ExactLayout(27258, 27722, 150, 46).Count, Is.EqualTo(3));
         }
 
+        // PLOT 357-358 (uwaga Bartka 2026-10-26): języczki 276 × 600 za prawą krawędzią 358 (wsporniki do PLOT 359) — w obrysie płyty, nie pasy
+        [Test]
+        public void Analyze_TabAtOneSlab_StaysInSlabOutline()
+        {
+            var outer = new List<(double X, double Y)>
+            {
+                (5926453, -360072), (5933306, -360072), (5933306, -362582), (5933582, -362582), (5933582, -363182), (5933306, -363182),
+                (5933306, -368443), (5933582, -368443), (5933582, -369043), (5933306, -369043), (5933306, -369512), (5926453, -369512),
+                (5926453, -369043), (5919694, -369043), (5919694, -369512), (5912841, -369512), (5912841, -360072), (5919694, -360072),
+                (5919694, -362582), (5926453, -362582), (5926453, -360072)
+            };
+            var steps = new List<IList<(double X, double Y)>> { R(5912976, -369377, 5919559, -360207), R(5926588, -369377, 5933171, -360207) };
+            var voids = new List<IList<(double X, double Y)>> { R(5919694, -368443, 5926453, -363182) };
+            var r = TerraceRules.Analyze(outer, steps, voids, new List<TerraceRules.Box>(), new List<TerraceRules.Text>(), 21.325);
+            var s358 = r.Slabs[1];
+            Assert.That(s358.Max(q => q.X), Is.EqualTo(5933582).Within(0.5), string.Join(" ", s358));
+            Assert.That(s358.Count, Is.EqualTo(12), "prostokąt + 2 języczki");
+            Assert.That(r.Bands.Count, Is.EqualTo(2), "pasy GB między 357 i 358 (górny i dolny), bez języczków");
+        }
+
         [Test]
         public void Analyze_NoCornerLines_ThkFallback()
         {

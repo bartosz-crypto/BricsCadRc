@@ -99,38 +99,47 @@ namespace BricsCadRc.Commands
                 return;
             }
 
-            // Nib: otwarta linia uskoku domykana krawędzią obrysu (po obu wskazaniach; obrys rysowany — pomijany)
-            if (!bottomDrawn) NibAutoClose.EnsureForCommand(doc, bottomId, "[AutoRebar]");
-            if (!topDrawn) NibAutoClose.EnsureForCommand(doc, topId, "[AutoRebar]");
+            // Grupa płyt (uwaga Bartka 2026-10-26, PLOT 357-362): płyty grupy z Prepare GA (RC_GA [3]) — wszystkie jednym poleceniem
+            var group = bottomDrawn ? (null, new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>())
+                                    : AutoRebarEngine.GroupMeshPairs(db, bottomId);
+            var extra = new System.Collections.Generic.List<(ObjectId bottom, ObjectId top, string member)>();
+            if (group.Item2.Count > 0)
+            {
+                var gOpts = new PromptKeywordOptions(
+                    $"\n[RC SIATKA] Płyta należy do grupy {group.Item1} — zazbroić także pozostałe płyty grupy ({group.Item2.Count})? [Tak/Nie] <Tak>: ")
+                    { AllowNone = true };
+                gOpts.Keywords.Add("Tak");
+                gOpts.Keywords.Add("Nie");
+                gOpts.Keywords.Default = "Tak";
+                var gRes = ed.GetKeywords(gOpts);
+                if (gRes.Status == PromptStatus.Cancel)
+                {
+                    if (topDrawn) SlabPicker.Cleanup(db, topId);
+                    ed.WriteMessage("\n[RC SIATKA] Anulowano — nic nie wygenerowano.\n");
+                    return;
+                }
+                if (gRes.Status != PromptStatus.OK || gRes.StringResult == "Tak")
+                    foreach (var g in group.Item2)
+                    {
+                        if (g.top.IsNull || g.top == topId)
+                        {
+                            ed.WriteMessage($"\n*** WARNING *** [RC SIATKA] {g.member}: brak rzutu górnego tej płyty — pominięto (zbrój osobno).\n");
+                            continue;
+                        }
+                        extra.Add(g);
+                    }
+            }
 
-            int nB1 = 0, nB2 = 0, nU1 = 0, nU2 = 0, nU3 = 0, nT1 = 0, nT2 = 0, nB3 = 0;
-            bool hasNib = NibDetector.Detect(db, bottomId) != null;
+            var total = new MeshCounts();
+            bool anyNib = false;
             try
             {
-                nB1 = Run(ed, "B1", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "X", "B1",
-                                               diameter: 10, representativeOnly: true));
-                nB2 = Run(ed, "B2", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "Y", "B2",
-                                               diameter: 10, representativeOnly: true));
-                // Góra liczy zakłady względem właśnie wygenerowanego dołu (≥ 750 mm)
-                nT1 = Run(ed, "T1", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "X", "T1",
-                                               diameter: 12, representativeOnly: true));
-                nT2 = Run(ed, "T2", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "Y", "T2",
-                                               diameter: 12, representativeOnly: true));
-                // UB (dół) — po górze
-                nU1 = Run(ed, "UB B1", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B1",
-                                               thickness, "X", representativeOnly: true));
-                nU2 = Run(ed, "UB B2", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B2",
-                                               thickness, "Y", representativeOnly: true));
-                // Nib: UB 03 przy krawędzi zewnętrznej (UB 01/02 stoją wtedy na uskoku)
-                if (hasNib)
-                    nU3 = Run(ed, "UB NIB", () => AutoRebarEngine.GenerateNibUBLayer(doc, bottomId, "rebar_bottom",
-                                                   representativeOnly: true));
-
-                // Czytelność: widoczne pręty odsunięte od linii rozkładów i innych widocznych prętów
-                Run(ed, "kolizje dół", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, bottomId));
-                Run(ed, "kolizje góra", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, topId));
-                // B3 ADD w narożnikach wklęsłych (pręty ukośne — poza rozsuwaniem kolizji)
-                nB3 = Run(ed, "B3 ADD", () => AutoRebarEngine.GenerateB3Corners(doc, bottomId));
+                anyNib |= GenerateMeshPair(doc, bottomId, topId, thickness, bottomDrawn, topDrawn, total);
+                foreach (var g in extra)
+                {
+                    ed.WriteMessage($"\n[RC SIATKA] ── {g.member} ──");
+                    anyNib |= GenerateMeshPair(doc, g.bottom, g.top, thickness, false, false, total);
+                }
             }
             finally
             {
@@ -139,10 +148,50 @@ namespace BricsCadRc.Commands
                 if (bottomDrawn) SlabPicker.Cleanup(db, bottomId);
             }
 
-            ed.WriteMessage($"\n[RC SIATKA] Gotowe. Rozkłady: B1={Pos(nB1)}, B2={Pos(nB2)}, " +
-                            $"UB B1={Pos(nU1)}, UB B2={Pos(nU2)}" + (hasNib ? $", UB NIB={Pos(nU3)}" : "") +
-                            $", T1={Pos(nT1)}, T2={Pos(nT2)}" + (hasNib ? " (z T IN NIB)" : "") + $", B3 ADD={Pos(nB3)}. " +
+            ed.WriteMessage($"\n[RC SIATKA] Gotowe" + (extra.Count > 0 ? $" ({extra.Count + 1} płyt grupy {group.Item1})" : "") +
+                            $". Rozkłady: B1={Pos(total.B1)}, B2={Pos(total.B2)}, " +
+                            $"UB B1={Pos(total.U1)}, UB B2={Pos(total.U2)}" + (anyNib ? $", UB NIB={Pos(total.U3)}" : "") +
+                            $", T1={Pos(total.T1)}, T2={Pos(total.T2)}" + (anyNib ? " (z T IN NIB)" : "") + $", B3 ADD={Pos(total.B3)}. " +
                             "Widoczny pręt reprezentatywny — wszystkie: RC_SHOW_ALL_BARS.\n");
+        }
+
+        private sealed class MeshCounts { public int B1, B2, U1, U2, U3, T1, T2, B3; }
+
+        /// <summary>Siatka jednej płyty (para obrysów dół–góra): B1, B2, T1, T2, UB B1/B2 (i UB NIB), kolizje, B3 ADD. Zwraca: czy nib.</summary>
+        private static bool GenerateMeshPair(Document doc, ObjectId bottomId, ObjectId topId, int thickness,
+                                             bool bottomDrawn, bool topDrawn, MeshCounts c)
+        {
+            var ed = doc.Editor;
+            // Nib: otwarta linia uskoku domykana krawędzią obrysu (obrys rysowany — pomijany)
+            if (!bottomDrawn) NibAutoClose.EnsureForCommand(doc, bottomId, "[AutoRebar]");
+            if (!topDrawn) NibAutoClose.EnsureForCommand(doc, topId, "[AutoRebar]");
+
+            bool hasNib = NibDetector.Detect(doc.Database, bottomId) != null;
+            c.B1 += Run(ed, "B1", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "X", "B1",
+                                           diameter: 10, representativeOnly: true));
+            c.B2 += Run(ed, "B2", () => AutoRebarEngine.GenerateLayer(doc, bottomId, "rebar_bottom", "Y", "B2",
+                                           diameter: 10, representativeOnly: true));
+            // Góra liczy zakłady względem właśnie wygenerowanego dołu (≥ 750 mm)
+            c.T1 += Run(ed, "T1", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "X", "T1",
+                                           diameter: 12, representativeOnly: true));
+            c.T2 += Run(ed, "T2", () => AutoRebarEngine.GenerateLayer(doc, topId, "rebar_top", "Y", "T2",
+                                           diameter: 12, representativeOnly: true));
+            // UB (dół) — po górze
+            c.U1 += Run(ed, "UB B1", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B1",
+                                           thickness, "X", representativeOnly: true));
+            c.U2 += Run(ed, "UB B2", () => AutoRebarEngine.GenerateUBLayer(doc, bottomId, "rebar_bottom", "B2",
+                                           thickness, "Y", representativeOnly: true));
+            // Nib: UB 03 przy krawędzi zewnętrznej (UB 01/02 stoją wtedy na uskoku)
+            if (hasNib)
+                c.U3 += Run(ed, "UB NIB", () => AutoRebarEngine.GenerateNibUBLayer(doc, bottomId, "rebar_bottom",
+                                               representativeOnly: true));
+
+            // Czytelność: widoczne pręty odsunięte od linii rozkładów i innych widocznych prętów
+            Run(ed, "kolizje dół", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, bottomId));
+            Run(ed, "kolizje góra", () => AutoRebarEngine.ResolveRepresentativeCollisions(doc, topId));
+            // B3 ADD w narożnikach wklęsłych (pręty ukośne — poza rozsuwaniem kolizji)
+            c.B3 += Run(ed, "B3 ADD", () => AutoRebarEngine.GenerateB3Corners(doc, bottomId));
+            return hasNib;
         }
 
         /// <summary>

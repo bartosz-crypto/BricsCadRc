@@ -57,6 +57,17 @@ namespace BricsCadRc.Core
                                 plan.Add((x, L)); plan.Add((s, Ll));
                                 return true;
                             }
+                        // uwaga Bartka 2026-10-26: okno zakładu węższe niż siatka — ostatni pręt dowolnej długości (siatka 25)
+                        foreach (double L in grid)
+                            foreach (double o in overlaps)
+                            {
+                                double e = x + L, s = e - o, Ll = Math.Ceiling((available - s) / 25.0 - 1e-9) * 25.0;
+                                s = available - Ll; double oo = e - s;
+                                if (oo < oMin - 1e-6 || oo > oMax + 1e-6 || s <= x + 1e-6 || Ll < minLen - 1e-6 || Ll > maxLen + 1e-6) continue;
+                                if (!Clear(s, e)) continue;
+                                plan.Add((x, L)); plan.Add((s, Ll));
+                                return true;
+                            }
                         return false;
                     }
                     foreach (double L in grid)

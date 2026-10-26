@@ -54,6 +54,21 @@ namespace BricsCadRc.Core
             /// płyta). Label = etykieta łączna, Region / Outline = obwiednia; każda część — własny obrys, opis, SSL (RC_GA [3] = etykieta części).</summary>
             public List<GaPlot> Parts;
             public bool IsGroup => Parts != null && Parts.Count > 1;
+            private HashSet<ObjectId> _labelKeys;
+            /// <summary>Opisy i ramki wszystkich płyt (główna, szereg, grupa) — kopiowane i przebudowywane (uwaga Bartka 2026-10-26: opisy
+            /// z „NIB TOC=…” innych płyt ginęły).</summary>
+            public HashSet<ObjectId> LabelKeys
+            {
+                get
+                {
+                    if (_labelKeys != null) return _labelKeys;
+                    var k = new HashSet<ObjectId> { LabelId, LabelBoxId };
+                    foreach (var pp in Parts ?? new List<GaPlot>()) foreach (var x in pp.LabelKeys) k.Add(x);
+                    foreach (var m in Members ?? new List<(string, ObjectId, ObjectId, ObjectId)>()) { k.Add(m.LabelId); k.Add(m.BoxId); }
+                    k.Remove(ObjectId.Null);
+                    return _labelKeys = k;
+                }
+            }
             public override string ToString()
                 => $"{Label}   —   {Outline.MaxPoint.X - Outline.MinPoint.X:F0} × {Outline.MaxPoint.Y - Outline.MinPoint.Y:F0} mm";
         }
@@ -407,11 +422,12 @@ namespace BricsCadRc.Core
                 return e is DBText || e is MText ? 2 : 0;
             if (layer.Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
             {
-                if (id == plot.LabelId || id == plot.LabelBoxId) return 1;   // przebudowywane po skopiowaniu
+                if (plot.LabelKeys.Contains(id)) return 1;   // opisy i ramki płyt — przebudowywane po skopiowaniu
                 string t = e is MText mt ? string.Join(" ", TextLines(mt)) : e is DBText dt ? dt.TextString : null;
                 if (t != null && Regex.IsMatch(t, @"NIB\s*TOC", RegexOptions.IgnoreCase)) return 0;
                 // K8: odnośnik (MLeader) z opisem belki („525THK”, „GB-600x450mm deep”) — oba rzuty; inne odnośniki jak dotąd pomijane
-                if (e is MLeader ml) return IsBeamText(MLeaderLines(ml)) ? 1 : 0;
+                // uwaga Bartka 2026-10-26 (PLOT 357-362): odnośnik bez treści = strzałka opisu MText („300THK / TOC=21.250”) — też kopiowany
+                if (e is MLeader ml) { var mll = MLeaderLines(ml); return IsBeamText(mll) || (mll.Count == 0 && ml.ContentType != ContentType.BlockContent) ? 1 : 0; }
                 return e is MText || e is DBText || e is Polyline || e is Line ? 1 : 0;
             }
             // Strefa pogrubienia (belka): zamknięta polilinia → oba rzuty, w CloneInto warstwa RC-BEAM + RC_BEAM
@@ -588,7 +604,7 @@ namespace BricsCadRc.Core
                 var zc = zoneClones.Where(id => !id.IsErased && Near(ExtOf(db, id))).ToList();
                 var tt = thkTexts.Where(t => Near(new Extents3d(new Point3d(t.mid.X, t.mid.Y, 0), new Point3d(t.mid.X, t.mid.Y, 0)))).ToList();
                 ProcessSlab(db, slab, op, np, tc, zc, tt, slabCtx.TryGetValue(slab, out var sc) ? sc : beamCtx, d, plot, view, warnings, ref joined,
-                            ref nibClosed, result, restrictTo: slab);
+                            ref nibClosed, result, restrictTo: slab, cantCands: thkCands);
             }
             return n;
         }
@@ -725,14 +741,16 @@ namespace BricsCadRc.Core
                                         List<BeamGeometry.ThkText> thkCands, List<ObjectId> zoneClones,
                                         List<(Point2d ins, Point2d mid, List<string> lines)> thkTexts, BeamGaContext beamCtx, Vector3d d,
                                         GaPlot plot, string view, List<string> warnings, ref int joined, ref int nibClosed, Result result,
-                                        ObjectId restrictTo = default)
+                                        ObjectId restrictTo = default, List<BeamGeometry.ThkText> cantCands = null)
         {
             var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
 
             // Wsporniki (decyzja Bartka 2026-10-21, etap 1): kawałek obrysu w kształcie U (GB poza krawędzią) → prostokąt RC-CANTILEVER,
             // w obrysie prosty odcinek nasady — PRZED domknięciem nibu i JoinLoops (krawędź płyty prosto przez nasadę)
             string cantWhere = $"{plot.Label} ({(view == "B" ? "rzut dolny" : "rzut górny")})";
-            var cantTexts = thkCands.Select(t => new CantileverEngine.Txt { Text = t.Text, X = t.X, Y = t.Y }).ToList();
+            // grupa / szereg (2026-10-26): opisy wsporników ze wszystkich opisów rzutu (opis „300THK / TOC=…” między płytami — dalej niż 300 od obrysu)
+            var cantList = cantCands ?? thkCands;
+            var cantTexts = cantList.Select(t => new CantileverEngine.Txt { Text = t.Text, X = t.X, Y = t.Y }).ToList();
             var cantUsed = new HashSet<int>();
             if (!outline.IsNull)
                 try
@@ -819,7 +837,10 @@ namespace BricsCadRc.Core
                 }
             // opisy wspornika („GB-…”, „375THK” strefy przy palu) — nie dla K8 (belki z opisów)
             if (cantUsed.Count > 0)
-                thkCands = thkCands.Where((t, i) => !cantUsed.Contains(i)).ToList();
+            {
+                var usedObj = new HashSet<BeamGeometry.ThkText>(cantUsed.Where(i => i >= 0 && i < cantList.Count).Select(i => cantList[i]));
+                thkCands = thkCands.Where(t => !usedObj.Contains(t)).ToList();
+            }
 
             // 2026-10-16 (zgłoszenie kolegi: nib z GA nierozpoznany, płyta z prostą krawędzią): kawałki SD-PILED-RAFT, które zostały
             // otwarte i leżą tuż ZA obrysem (zewnętrzna krawędź nibu) — ostrzeżenie zamiast milczenia

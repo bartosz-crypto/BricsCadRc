@@ -142,7 +142,10 @@ namespace BricsCadRc.Core
             int best = -1; double bd = double.MaxValue;
             for (int i = 0; i < texts.Count; i++)
             {
-                if (taken.Contains(i) || CantileverRules.ParseGb(texts[i].Text) == null) continue;
+                // „GB-…” — jeden wspornik; „300THK / TOC=…” (krótkie wsporniki, PLOT 357-362) — jeden opis z dwiema strzałkami do dwóch wsporników
+                bool gbText = CantileverRules.ParseGb(texts[i].Text) != null;
+                if (!gbText && CantileverRules.ParseThkToc(texts[i].Text) == null) continue;
+                if (gbText && taken.Contains(i)) continue;
                 double d = DistToBox(box, texts[i].X, texts[i].Y);
                 if (d <= GbSearch && d < bd) { bd = d; best = i; }
             }
@@ -155,7 +158,7 @@ namespace BricsCadRc.Core
             var box = CantileverRules.Box(root);
             for (int i = 0; i < texts.Count; i++)
             {
-                if (taken.Contains(i) || CantileverRules.ParseGb(texts[i].Text) != null) continue;
+                if (taken.Contains(i) || CantileverRules.ParseGb(texts[i].Text) != null || CantileverRules.ParseThkToc(texts[i].Text) != null) continue;
                 if (!texts[i].Text.Split('\n').Any(l => BeamGeometry.ParseThk(l) != null)) continue;
                 if (CantileverRules.InBox(box, texts[i].X, texts[i].Y, ThkSearch)) return i;
             }
@@ -168,8 +171,8 @@ namespace BricsCadRc.Core
                                Reach = stub.Depth, Ext = root?.Depth ?? CantileverRules.NoRootExtension };
             if (gb >= 0)
             {
-                var g = CantileverRules.ParseGb(texts[gb].Text).Value;
-                d.Height = g.Height;
+                var g = CantileverRules.ParseGb(texts[gb].Text);
+                d.Height = g?.Height ?? CantileverRules.ParseThkToc(texts[gb].Text) ?? 0;
                 d.Toc = CantileverRules.ParseToc(texts[gb].Text) ?? 0;
             }
             if (thk >= 0)

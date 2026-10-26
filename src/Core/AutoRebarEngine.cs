@@ -5499,6 +5499,30 @@ namespace BricsCadRc.Core
                 int outBand = (O >= pMin - 1e-6 && O <= pMax + 1e-6) ? 0 : 1;
                 result.Add(((outBand, lens.Distinct().Count() - 1, Math.Abs(O - target)), plan));
             }
+            // uwaga Bartka 2026-10-26 (PLOT 357, szer. ~6500 — 3 rozkłady T1 zamiast 2): okno zakładu góry 500–700 (200) jest węższe niż
+            // siatka 250 — przy części szerokości żadna para długości z siatki nie daje zakładu w zakresie i plan przeskakiwał na N + 1.
+            // Gdy tak — ostatni pręt dowolnej długości (siatka 25), pozostałe z siatki 250; ranking za planami z samej siatki
+            if (result.Count == 0)
+                foreach (double L0 in grid)
+                foreach (double L1 in middle)
+                {
+                    double rest = L0 + (N - 2) * L1;
+                    double lo = Math.Ceiling((available + (N - 1) * oMin - rest) / 25.0 - 1e-9) * 25.0;
+                    double hi = Math.Floor((available + (N - 1) * oMax - rest) / 25.0 + 1e-9) * 25.0;
+                    for (double L2 = Math.Max(lo, minLen); L2 <= Math.Min(hi, TemplateMaxLen) + 1e-6; L2 += 25.0)
+                    {
+                        var lens = new List<double> { L0 };
+                        for (int i = 0; i < N - 2; i++) lens.Add(L1);
+                        lens.Add(L2);
+                        double O = (lens.Sum() - available) / (N - 1);
+                        if (O < oMin - 1e-6 || O > oMax + 1e-6) continue;
+                        var plan = new List<(double, double)>();
+                        double x = 0;
+                        foreach (double L in lens) { plan.Add((x, L)); x += L - O; }
+                        int outBand = (O >= pMin - 1e-6 && O <= pMax + 1e-6) ? 2 : 3;
+                        result.Add(((outBand, lens.Distinct().Count() - 1, Math.Abs(O - target)), plan));
+                    }
+                }
             result.Sort((a, b) => a.Item1.CompareTo(b.Item1));
             return result;
         }

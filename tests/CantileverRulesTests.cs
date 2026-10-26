@@ -265,5 +265,24 @@ namespace BricsCadRc.Tests
             Assert.That(a, Is.LessThan(1275));
             Assert.That(BarLengthRules.TotalLengthFor("21", new[] { a, 175, a }, 16) % 50.0, Is.EqualTo(0).Within(1e-9));
         }
-}
+        // uwaga Bartka 2026-10-26 (PLOT 357-362): krótki wspornik (wysięg 411 od uskoku, „300THK / TOC=21.250”, strefa 375THK × 600) —
+        // strzemiona w kierunku głównym „5 H12 … LINKS” co 120
+        [Test]
+        public void ShortCantilever_MainDirLinks_5At120()
+        {
+            var p = CantileverRules.PlanBars(411, 600, 300, 600, 375, singleRootLink: true);
+            var main = p.Links.Single(l => l.AlongAxis);
+            Assert.That(main.Count, Is.EqualTo(5));
+            Assert.That(main.Step, Is.EqualTo(120).Within(1e-9));
+            Assert.That(main.Dia, Is.EqualTo(12));
+            var longer = CantileverRules.PlanBars(923, 600, 300, 600, 375, singleRootLink: true);
+            Assert.That(longer.Links.Single(l => l.AlongAxis).Step, Is.EqualTo(150).Within(1e-9), "dłuższy wspornik bez zmian");
+        }
+
+        [TestCase("300THK\nTOC=21.250", 300.0)]
+        [TestCase("375THK", null)]
+        [TestCase("GB-600x450mm deep\nTOC=21.250", null)]
+        public void ParseThkToc(string t, double? h)
+            => Assert.That(CantileverRules.ParseThkToc(t.Replace("\\n", "\n")), Is.EqualTo(h));
+    }
 }

@@ -19,7 +19,7 @@ namespace BricsCadRc.Core
     {
         public const double MinWidth = 300.0;
         public const double MaxWidth = 1500.0;
-        public const double MinDepth = 300.0;
+        public const double MinDepth = 200.0;   // uwaga Bartka 2026-10-26 (PLOT 357-362): krótkie wsporniki — języczek 276 za krawędzią (dawniej 300)
         public const double MaxDepth = 3000.0;
         /// <summary>Tolerancja geometrii (zgodność końców, prostopadłość) [mm].</summary>
         public const double Tol = 1.0;
@@ -120,6 +120,18 @@ namespace BricsCadRc.Core
         private static readonly Regex TocRx = new Regex(@"(?<!NIB\s{0,3})\bTOC\s*=\s*(-?\d+(?:[.,]\d+)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>„GB-600x300mm deep” → (600, 300); inaczej null.</summary>
+        /// <summary>
+        /// Opis krótkiego wspornika bez „GB-…” (uwaga Bartka 2026-10-26, PLOT 357-362): „300THK / TOC=21.250” — wysokość 300 od TOC; null —
+        /// brak (THK bez TOC to grubość strefy przy palu, nie wspornik).
+        /// </summary>
+        public static double? ParseThkToc(string text)
+        {
+            if (string.IsNullOrEmpty(text) || ParseToc(text) == null) return null;
+            foreach (var l in text.Split('\n'))
+                if (BeamGeometry.ParseThk(l) is int t) return t;
+            return null;
+        }
+
         public static (double Width, double Height)? ParseGb(string text)
         {
             if (string.IsNullOrEmpty(text)) return null;
@@ -268,6 +280,9 @@ namespace BricsCadRc.Core
         /// A = najwyższe możliwe − 15 mm (375: 290 → 275), co 150. Wspornik pionowy (oś Y) — bez zmian (zewnętrzne + wewnętrzne A − 2·Ø).
         /// </summary>
         public const double RootSingleLinkDrop = 15.0, RootSingleLinkSpacing = 150.0;
+        /// <summary>Krótki wspornik (uwaga Bartka 2026-10-26, PLOT 357-362: wysięg 411 od uskoku): strzemiona strefy przy palu w kierunku
+        /// głównym (pręty wzdłuż osi — jak U-bary H16) co 120 dokładnie („5 H12 … LINKS”), nie 150.</summary>
+        public const double ShortReachMax = 600.0, ShortMainLinkSpacing = 120.0;
         /// <summary>Strefa wspornika bez strefy przy palu — w płycie na długość zakotwienia prętów prostych (magenta nakłada się na płytę).</summary>
         public const double NoRootExtension = StraightIntoSlab;
         /// <summary>
@@ -441,8 +456,9 @@ namespace BricsCadRc.Core
                 Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols, spacing: rs, drop: rd);
                 double inner2 = rootLen - 2 * off;
                 int cols2 = inner2 <= 0 ? 1 : Math.Max(2, (int)Math.Ceiling(inner2 / MaxColumnSpacing - 1e-9) + 1);
-                Links(0, width, rootH, "strefa przy palu (drugi kierunek)", LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0,
-                      spacing: rs, drop: rd);
+                bool shortC = reach <= ShortReachMax + 0.5;
+                Links(0, width, rootH, shortC ? "strefa przy palu (kierunek główny — krótki wspornik, co 120)" : "strefa przy palu (drugi kierunek)",
+                      LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0, spacing: shortC ? ShortMainLinkSpacing : rs, drop: rd);
                 // uwaga Bartka 2026-10-22: oba kierunki tej samej wysokości kolidują — drugi kierunek niższy o Ø strzemienia, w dół do 5
                 // — drugi kierunek wchodzi w pierwszy: A − 2·Ø w dół do 5 (375: 290 − 24 = 266 → 265); jedna pozycja — bez zagnieżdżenia
                 var second = pl.Links.LastOrDefault();
