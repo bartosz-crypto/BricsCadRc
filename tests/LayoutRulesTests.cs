@@ -88,7 +88,7 @@ namespace BricsCadRc.Tests
             Assert.That(plan.Sheets[1].Has(K.Detail), Is.True);
             Assert.That(plan.Sheets.Skip(iT + 1).All(s => s.Placed.All(p => p.Item.Kind == K.Ph)), Is.True, "nadmiar PH — osobne arkusze");
             Assert.That(plan.Sheets.Count, Is.GreaterThan(iT + 1));
-            Assert.That(LayoutRules.Title3(plan.Sheets.Last()), Is.EqualTo("PH DETAILS."));
+            Assert.That(LayoutRules.Title3(plan.Sheets.Last()), Is.EqualTo("TOP LAYER PH DETAILS."), "wzór Bartka 2026-10-26");
         }
 
         [Test]
@@ -160,6 +160,32 @@ namespace BricsCadRc.Tests
             Assert.That(LayoutRules.IsBeamSection(new Dictionary<string, string> { ["BEAM:2A1"] = "S0:0;S1:600;H:525" }), Is.True);
             Assert.That(LayoutRules.SectionDir(b, cutAlongX: true), Is.EqualTo(1));
             Assert.That(LayoutRules.SectionDir(new Dictionary<string, string>(), false), Is.EqualTo(2));
+        }
+
+        // wzór Bartka 2026-10-26 (SO302HH001-DR-RC3570-3575, PLOT 357-362): rzuty podzielone na dwa arkusze, odsyłacze z zakresem
+        [Test]
+        public void SplitPlans_Titles_And_CrossRefs()
+        {
+            Assert.That(LayoutRules.Title3(true, false, false, false, false, "1/2", null), Is.EqualTo("BOTTOM LAYER 1/2."));
+            Assert.That(LayoutRules.Title3(false, false, false, false, true), Is.EqualTo("TOP LAYER PH DETAILS."));
+            Assert.That(LayoutRules.WithoutPart("TOP LAYER 2/2."), Is.EqualTo("TOP LAYER."));
+            Assert.That(LayoutRules.NumberRange("SO302HH001-RC3570", "SO302HH001-RC3571"), Is.EqualTo("SO302HH001-RC3570-3571"));
+            var sheets = new List<(string, string)>
+            {
+                ("BOTTOM LAYER 1/2.", "SO302HH001-RC3570"), ("BOTTOM LAYER 2/2.", "SO302HH001-RC3571"),
+                ("TOP LAYER 1/2.", "SO302HH001-RC3572"), ("TOP LAYER 2/2.", "SO302HH001-RC3573"),
+                ("DETAILS & SECTIONS.", "SO302HH001-RC3574"), ("TOP LAYER PH DETAILS.", "SO302HH001-RC3575"),
+            };
+            Assert.That(LayoutRules.CrossRefLines(LayoutRules.CrossRefsFor(sheets, 0)), Is.EqualTo(new[]
+            {
+                "BOTTOM LAYER 2/2 SEE DRG. SO302HH001-RC3571", "TOP LAYER SEE DRG. SO302HH001-RC3572-3573",
+                "DETAILS & SECTIONS SEE DRG. SO302HH001-RC3574", "TOP LAYER PH DETAILS SEE DRG. SO302HH001-RC3575",
+            }));
+            Assert.That(LayoutRules.CrossRefLines(LayoutRules.CrossRefsFor(sheets, 4)), Is.EqualTo(new[]
+            {
+                "BOTTOM LAYER SEE DRG. SO302HH001-RC3570-3571", "TOP LAYER SEE DRG. SO302HH001-RC3572-3573",
+                "TOP LAYER PH DETAILS SEE DRG. SO302HH001-RC3575",
+            }));
         }
     }
 }

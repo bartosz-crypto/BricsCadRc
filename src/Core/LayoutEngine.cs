@@ -52,6 +52,13 @@ namespace BricsCadRc.Core
             public Box Grow(double d) => new Box { X0 = X0 - d, Y0 = Y0 - d, X1 = X1 + d, Y1 = Y1 + d };
             public bool Inside(Box b) => X0 >= b.X0 && Y0 >= b.Y0 && X1 <= b.X1 && Y1 <= b.Y1;
             public bool HasPoint(double x, double y) => x >= X0 && x <= X1 && y >= Y0 && y <= Y1;
+            /// <summary>Pole części wspólnej (0 — rozłączne).</summary>
+            public double OverlapArea(Box b)
+            {
+                if (IsEmpty || b.IsEmpty) return 0;
+                double w = Math.Min(X1, b.X1) - Math.Max(X0, b.X0), h = Math.Min(Y1, b.Y1) - Math.Max(Y0, b.Y0);
+                return w > 0 && h > 0 ? w * h : 0;
+            }
             /// <summary>Odległość punktu od prostokąta (0 wewnątrz).</summary>
             public double Dist(double x, double y)
             {
@@ -371,9 +378,17 @@ namespace BricsCadRc.Core
                 var cores = new Dictionary<string, Box>();
                 foreach (var view in new[] { "B", "T" })
                 {
-                    var core = Box.Empty;
-                    foreach (var g in gaTags.Where(g => g.plot == plot && g.view == view)) core.Add(g.e.Box);
-                    if (!core.IsEmpty) cores[view] = core;
+                    // uwaga Bartka 2026-10-26 (357-362-z.dwg): obrysy skopiowane na plan sytuacyjny 1:250 mają znacznik RC_GA rzutu — rzut =
+                    // NAJWIĘKSZE skupisko obiektów ze znacznikiem (odstęp > PlanClusterGap rozdziela), reszta pominięta (dawniej obwiednia
+                    // wszystkich — rzut „rozciągnięty” na plan sytuacyjny, środek poza rzutniami, arkusze bez opisów)
+                    var boxes = gaTags.Where(g => g.plot == plot && g.view == view).Select(g => g.e.Box).ToList();
+                    var clusters = ClusterBoxes(boxes, PlanClusterGap);
+                    if (clusters.Count == 0) continue;
+                    var best = clusters.OrderByDescending(c => c.n).First();
+                    if (clusters.Count > 1)
+                        ctx.Warnings.Add($"rzut {(view == "B" ? "dolny" : "górny")}: {clusters.Count - 1} skupisk(a) obiektów z Prepare GA poza rzutem " +
+                                         $"(np. kopia obrysów na plan sytuacyjny, {boxes.Count - best.n} obiektów) — pominięte przy rozpoznawaniu rzutu");
+                    cores[view] = best.box;
                 }
                 if (cores.Count == 0) ctx.Errors.Add("brak rzutów płyty (obrys z Prepare GA, znacznik RC_GA) — arkusze bez rzutów");
                 foreach (var kv in cores)
@@ -406,6 +421,33 @@ namespace BricsCadRc.Core
                 }
             }
 
+        }
+
+        /// <summary>Odstęp rozdzielający skupiska obiektów rzutu (mm modelu) — rzut a kopia obrysów na planie sytuacyjnym.</summary>
+        private const double PlanClusterGap = 10000.0;
+
+        /// <summary>Skupiska prostokątów: łączone, gdy odstęp między nimi ≤ <paramref name="gap"/> (obwiednia, liczba).</summary>
+        private static List<(Box box, int n)> ClusterBoxes(List<Box> boxes, double gap)
+        {
+            var parent = Enumerable.Range(0, boxes.Count).ToArray();
+            int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
+            for (int i = 0; i < boxes.Count; i++)
+                for (int j = i + 1; j < boxes.Count; j++)
+                {
+                    var a = boxes[i].Grow(gap / 2); var c = boxes[j].Grow(gap / 2);
+                    if (a.X1 < c.X0 || c.X1 < a.X0 || a.Y1 < c.Y0 || c.Y1 < a.Y0) continue;
+                    int ri = Find(i), rj = Find(j);
+                    if (ri != rj) parent[ri] = rj;
+                }
+            var res = new Dictionary<int, (Box box, int n)>();
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                int r = Find(i);
+                var cur = res.TryGetValue(r, out var v) ? v : (Box.Empty, 0);
+                var bx = cur.Item1; bx.Add(boxes[i]);
+                res[r] = (bx, cur.Item2 + 1);
+            }
+            return res.Values.ToList();
         }
 
         /// <summary>
@@ -807,6 +849,9 @@ namespace BricsCadRc.Core
             public ObjectId LayoutId;
             public string Layout, NewLayout, Number, Title3, Scale;
             public List<string> Contents = new List<string>();
+            internal HashSet<LayoutRules.Kind> Kinds = new HashSet<LayoutRules.Kind>();
+            /// <summary>Lewa krawędź widocznej części rzutu (kolejność części „1/2”, „2/2”).</summary>
+            internal Dictionary<LayoutRules.Kind, double> PlanX = new Dictionary<LayoutRules.Kind, double>();
             internal List<(string Letter, int Dir, double X, double YTop, string Key)> Notes = new List<(string, int, double, double, string)>();
         }
 
@@ -875,11 +920,15 @@ namespace BricsCadRc.Core
                         double cx = vp.ViewTarget.X + vp.ViewCenter.X, cy = vp.ViewTarget.Y + vp.ViewCenter.Y;
                         double hw = vp.ViewHeight * vp.Width / vp.Height / 2, hh = vp.ViewHeight / 2;
                         var win = new Box { X0 = cx - hw, Y0 = cy - hh, X1 = cx + hw, Y1 = cy + hh };
-                        bool any = false;
+                        // uwaga Bartka 2026-10-26 (PLOT 357-362): rzut podzielony na dwa arkusze („1/2”, „2/2”) — środek rzutu nie leży w żadnej
+                        // rzutni; element jest na arkuszu, gdy rzutnia pokazuje ≥ 25 % elementu albo element zajmuje ≥ 25 % rzutni
+                        double winArea = win.W * win.H;
                         foreach (var it in ctx.Items)
                         {
-                            if (!win.HasPoint(it.Ext.Cx, it.Ext.Cy)) continue;
-                            any = true;
+                            double ov = it.Ext.OverlapArea(win), itArea = Math.Max(it.Ext.W * it.Ext.H, 1e-6);
+                            if (!win.HasPoint(it.Ext.Cx, it.Ext.Cy) && ov < 0.25 * itArea && ov < 0.25 * winArea) continue;
+                            if (it.Item.Kind == LayoutRules.Kind.PlanBottom || it.Item.Kind == LayoutRules.Kind.PlanTop)
+                                sh.PlanX[it.Item.Kind] = Math.Min(sh.PlanX.TryGetValue(it.Item.Kind, out var px0) ? px0 : double.MaxValue, Math.Max(win.X0, it.Ext.X0));
                             kinds.Add(it.Item.Kind);
                             if (!sh.Contents.Contains(it.Item.Key)) sh.Contents.Add(it.Item.Key);
                             if (it.Item.Kind == LayoutRules.Kind.Section && it.NibDir > 0
@@ -891,16 +940,26 @@ namespace BricsCadRc.Core
                                 sh.Notes.Add((it.Letter, it.NibDir, px, py, it.Item.Key));
                             }
                         }
-                        if (any) scales.Add(n);
+                        // skala każdej rzutni arkusza (wzór Bartka: także 1:250 — plan sytuacyjny, który nie jest rzutem / detalem programu)
+                        scales.Add(n);
                     }
-                    if (sh.Contents.Count == 0) t.Warnings.Add($"{name}: w rzutniach nie rozpoznano rzutów / przekrojów / detali — TITLE_3 i SCALE bez zmian");
-                    sh.Title3 = sh.Contents.Count == 0 ? "" : LayoutRules.Title3(kinds.Contains(LayoutRules.Kind.PlanBottom), kinds.Contains(LayoutRules.Kind.PlanTop),
-                        kinds.Contains(LayoutRules.Kind.Section), kinds.Contains(LayoutRules.Kind.Detail), kinds.Contains(LayoutRules.Kind.Ph));
+                    if (sh.Contents.Count == 0) t.Warnings.Add($"{name}: w rzutniach nie rozpoznano rzutów / przekrojów / detali — TITLE_3 bez zmian");
+                    sh.Kinds = kinds;
                     sh.Scale = LayoutRules.ScaleText(scales);
                     t.Sheets.Add(sh);
                 }
                 tr.Commit();
             }
+            // rzut na kilku arkuszach (wzór Bartka 2026-10-26): „BOTTOM LAYER 1/2.”, „2/2.” — kolejność wg położenia części rzutu (od lewej)
+            string Part(TextsSheet s, LayoutRules.Kind k)
+            {
+                var all = t.Sheets.Where(x => x.Kinds.Contains(k)).OrderBy(x => x.PlanX.TryGetValue(k, out var v) ? v : 0).ToList();
+                return all.Count > 1 && s.Kinds.Contains(k) ? (all.IndexOf(s) + 1) + "/" + all.Count : null;
+            }
+            foreach (var sh in t.Sheets)
+                sh.Title3 = sh.Contents.Count == 0 ? "" : LayoutRules.Title3(sh.Kinds.Contains(LayoutRules.Kind.PlanBottom), sh.Kinds.Contains(LayoutRules.Kind.PlanTop),
+                    sh.Kinds.Contains(LayoutRules.Kind.Section), sh.Kinds.Contains(LayoutRules.Kind.Detail), sh.Kinds.Contains(LayoutRules.Kind.Ph),
+                    Part(sh, LayoutRules.Kind.PlanBottom), Part(sh, LayoutRules.Kind.PlanTop));
             return t;
         }
 
@@ -938,7 +997,8 @@ namespace BricsCadRc.Core
                     foreach (var n in sh.Notes) { AddNibNote(tr, db, btr, noteLayer, noteStyle, n.Letter, n.Dir, n.X, n.YTop, n.Key); res.Notes++; }
                     if (t.Sheets.Count > 1)
                     {
-                        var others = t.Sheets.Where((_, j) => j != k).Select(o => (o.Title3, o.Number)).ToList();
+                        // wzór Bartka 2026-10-26: rzut na kilku arkuszach — na innych arkuszach jeden odsyłacz z zakresem numerów
+                        var others = LayoutRules.CrossRefsFor(t.Sheets.Select(o => (o.Title3, o.Number)).ToList(), k);
                         AddCrossRefs(tr, db, btr, noteLayer, noteStyle, others);
                         res.CrossRefs += others.Count;
                     }

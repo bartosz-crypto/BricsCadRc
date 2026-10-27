@@ -311,12 +311,19 @@ namespace BricsCadRc.Core
         /// „BOTTOM LAYER &amp; SECTIONS.”, „TOP LAYER &amp; PH DETAILS.”. Same detale PH (bez detali belek / otworów) — „PH DETAILS” (decyzja Bartka 2026-10-19: „BOTTOM LAYER, TOP LAYER &amp; PH DETAILS.”).
         /// </summary>
         public static string Title3(bool bottom, bool top, bool sections, bool details, bool ph)
+            => Title3(bottom, top, sections, details, ph, null, null);
+
+        /// <summary>
+        /// TITLE_3 z częścią rzutu podzielonego na kilka arkuszy (wzór Bartka 2026-10-26, PLOT 357-362: „BOTTOM LAYER 1/2.”);
+        /// same detale PH bez rzutu górnego — „TOP LAYER PH DETAILS” (detale przebicia to zbrojenie górne; ten sam wzór).
+        /// </summary>
+        public static string Title3(bool bottom, bool top, bool sections, bool details, bool ph, string bottomPart, string topPart)
         {
             var parts = new List<string>();
-            if (bottom) parts.Add("BOTTOM LAYER");
-            if (top) parts.Add("TOP LAYER");
+            if (bottom) parts.Add("BOTTOM LAYER" + (string.IsNullOrEmpty(bottomPart) ? "" : " " + bottomPart));
+            if (top) parts.Add("TOP LAYER" + (string.IsNullOrEmpty(topPart) ? "" : " " + topPart));
             if (details) parts.Add("DETAILS");
-            else if (ph) parts.Add("PH DETAILS");
+            else if (ph) parts.Add(top ? "PH DETAILS" : "TOP LAYER PH DETAILS");
             if (sections) parts.Add("SECTIONS");
             if (parts.Count == 0) return "";
             string s = parts.Count == 1 ? parts[0] : string.Join(", ", parts.Take(parts.Count - 1)) + " & " + parts[parts.Count - 1];
@@ -336,6 +343,43 @@ namespace BricsCadRc.Core
         }
 
         public static int ScaleOf(Kind k) => k == Kind.PlanBottom || k == Kind.PlanTop ? 50 : k == Kind.Section ? 20 : 25;
+
+        /// <summary>Część rzutu w tytule („BOTTOM LAYER 1/2.” → „1/2”); null — brak.</summary>
+        private static readonly Regex PartRx = new Regex(@"\s+(\d+)/(\d+)(?=[\s.,&]|$)");
+
+        /// <summary>Tytuł bez numeracji części („BOTTOM LAYER 1/2.” → „BOTTOM LAYER.”).</summary>
+        public static string WithoutPart(string title3) => PartRx.Replace(title3 ?? "", "");
+
+        /// <summary>Zakres numerów rysunków: „SO302HH001-RC3570” … „SO302HH001-RC3571” → „SO302HH001-RC3570-3571”.</summary>
+        public static string NumberRange(string first, string last)
+        {
+            if (string.IsNullOrEmpty(last) || string.Equals(first, last, StringComparison.OrdinalIgnoreCase)) return first ?? "";
+            var m = Regex.Match(last, @"(\d+)$");
+            return (first ?? "") + "-" + (m.Success ? m.Groups[1].Value : last);
+        }
+
+        /// <summary>
+        /// Odsyłacze arkusza <paramref name="k"/> (wzór Bartka 2026-10-26): pozostałe arkusze w kolejności; rzut podzielony na kilka arkuszy
+        /// („BOTTOM LAYER 1/2.”, „… 2/2.”) — na innym arkuszu JEDEN odsyłacz z zakresem („BOTTOM LAYER SEE DRG. …RC3570-3571”), na arkuszu tej
+        /// samej grupy — pozostałe części osobno („BOTTOM LAYER 2/2 SEE DRG. …RC3571”).
+        /// </summary>
+        public static List<(string Title3, string Number)> CrossRefsFor(IList<(string Title3, string Number)> sheets, int k)
+        {
+            var res = new List<(string, string)>();
+            string Key(int i) => PartRx.IsMatch(sheets[i].Title3 ?? "") ? WithoutPart(sheets[i].Title3) : null;
+            string myKey = Key(k);
+            var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int j = 0; j < sheets.Count; j++)
+            {
+                if (j == k) continue;
+                string key = Key(j);
+                if (key == null || key == myKey) { res.Add(sheets[j]); continue; }
+                if (!done.Add(key)) continue;
+                var grp = Enumerable.Range(0, sheets.Count).Where(i => Key(i) == key).ToList();
+                res.Add((key, NumberRange(sheets[grp.First()].Number, sheets[grp.Last()].Number)));
+            }
+            return res;
+        }
 
         /// <summary>Odsyłacz do innych arkuszy: „TOP LAYER &amp; PH DETAILS SEE DRG. CV129QD001-RC0091” — linia na arkusz.</summary>
         public static List<string> CrossRefLines(IEnumerable<(string Title3, string Number)> others)

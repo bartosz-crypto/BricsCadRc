@@ -1436,6 +1436,15 @@ arkusza, nazwa layoutu = numer + REV (za zgodą; zmiana w dwóch krokach przez �
 od lewej krawędzi przekroju; pominięte, gdy layout ma już tekst „Section X-X has longitudinal”), odsyłacze w ramkach. Poprzednie odsyłacze /
 notatki RC_LAYOUT (XData RC_LAYOUT NOTE / XREF) usuwane. Rzutni nie zmienia.
 
+### Poprawki 2026-10-27 — RC_LAYOUT_TEXTS wg arkuszy ręcznych PLOT 357-362 (SO302HH001-DR-RC3570-3575, wzór Bartka)
+- **Rzut = największe skupisko obiektów RC_GA** (`ClusterBoxes`, odstęp 10 m) — obrysy skopiowane na plan sytuacyjny 1:250 mają znacznik
+  rzutu i rozciągały rzut na pół modelu (środek poza rzutniami, arkusze nierozpoznane, stary TITLE_3 zostawał). Pozostałe skupiska — ostrzeżenie.
+- **Element pokazany w rzutni**: środek w oknie ALBO część wspólna ≥ 25 % elementu ALBO ≥ 25 % okna (rzut na dwóch arkuszach).
+- **SCALE — skale wszystkich rzutni arkusza** (także 1:250 planu sytuacyjnego): „1:250 & 1:50 @ A1”, „1:250, 1:25 & 1:20 @ A1”.
+- **Rzut na kilku arkuszach**: „BOTTOM LAYER 1/2.”, „2/2.” (kolejność wg lewej krawędzi widocznej części); same detale PH bez rzutu górnego —
+  „TOP LAYER PH DETAILS.” (zmiana decyzji 2026-10-19 wg wzoru). Odsyłacze (`LayoutRules.CrossRefsFor`): na innych arkuszach jeden z zakresem
+  („BOTTOM LAYER SEE DRG. …RC3570-3571”), na arkuszu tej samej grupy pozostałe części osobno („BOTTOM LAYER 2/2 SEE DRG. …RC3571”).
+
 ### Poprawki 2026-10-20 (decyzje Bartka)
 - **Notatka „Section X-X has longitudinal lacer bars…”** (RC_LAYOUT / RC_LAYOUT_TEXTS) — nie przy przekrojach przez belkę (`LayoutRules.IsBeamSection`:
   składnik BEAM:… albo rozkład Kind:Beam).
