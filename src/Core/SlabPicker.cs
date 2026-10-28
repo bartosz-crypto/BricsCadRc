@@ -83,11 +83,13 @@ namespace BricsCadRc.Core
                 var res = ed.GetEntity(opts);
                 if (res.Status == PromptStatus.Cancel) return ObjectId.Null;
                 if (res.Status != PromptStatus.OK) continue;
+                // obrys GA szeregu płyt (warstwa rysunkowa, 2026-10-28) → obrys obliczeniowy płyty
+                var picked = GaImportEngine.ResolveSlabPick(db, res.ObjectId, res.PickedPoint);
 
                 bool layerOk = false;
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    if (tr.GetObject(res.ObjectId, OpenMode.ForRead) is Polyline pl)
+                    if (tr.GetObject(picked, OpenMode.ForRead) is Polyline pl)
                     {
                         if (pl.Layer == targetLayer) layerOk = true;
                         else ed.WriteMessage(
@@ -96,7 +98,7 @@ namespace BricsCadRc.Core
                     tr.Commit();
                 }
                 if (!layerOk) continue;
-                return res.ObjectId;
+                return picked;
             }
         }
 

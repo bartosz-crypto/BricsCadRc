@@ -1600,8 +1600,8 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   i pustkami (prostokąt 200–1500 szer.; współrzędne sklejane ≤ 5 — GA 27857 / 27858); belka tylko z opisem GB w pasie (bez opisu — komunikat).
   Strefa belki = pas + strefy narożne w płytach (linia strefy z GA; bez niej opis „…THK” → nib + 600; inaczej do krawędzi płyty) — jedna belka
   od narożnika do narożnika (test11: 735 + 6650 + 735 = 8120). H = głębokość GB + (SSL − TOC) (bez TOC: THK narożnika − głębokość),
-  [39] = SSL − TOC, [6] = płyta przy początku pasa (strefę generuje RC_GENERATE → Beam tej płyty). Obrys zewnętrzny, pustki i użyte linie stref
-  usunięte; lica pasa — linie SD-PILED-RAFT; opisy GB / „…THK” stref nie idą do K8 ani wsporników. Dalej każda płyta jak zwykła
+  [39] = SSL − TOC, [6] = płyta przy początku pasa (strefę generuje RC_GENERATE → Beam tej płyty). Obrys zewnętrzny i pustki GA zostają
+  (od 2026-10-28 — warstwa rysunkowa, niżej); opisy GB / „…THK” stref nie idą do K8 ani wsporników. Dalej każda płyta jak zwykła
   (`ProcessSlab`: wsporniki, nib, JoinLoops, K8 — kawałki / opisy w obwiedni płyty + 300). PH / ramki: obrys najbardziej na prawo.
 - **Rzuty przystające (PLOT 304 i 307 tego samego kształtu):** `FindPartnerView`, `FindBottomView` (siatka górna) i widoki przekroju biorą
   tylko obrys z tym samym RC_GA [3]; mapy (Add) — dopasowanie po [3].
@@ -1690,6 +1690,19 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   przywróć Prepare GA, Beam / Cantilever) zamiast cicho rysować samą płytę.
 - Do zrobienia (kolejne etapy): przekrój GB — sprawdzenie prętów w BricsCAD, belki stopnia (dwa SSL), złącze GB–płyta 975/900THK z NIB STEP,
   stopa 1070 z prętami lacer.
+
+### Poprawka 2026-10-28 — Prepare GA nie zmienia geometrii płyt (KARDYNALNE, Bartek: „chcę mieć DOKŁADNIE taką geometrię, jak GA”)
+- PLOT 344-346: obrysy płyt szeregu (`SplitTerrace`) miały krawędź w poprzek wylotu pasa GB (linia, której w GA nie ma) + dorysowane lica pasów
+  — psuło rysunek i detal belki. Teraz:
+  - obrys zewnętrzny GA i pustki — **bez zmian geometrii**, przeniesione na warstwę rysunkową `SD-PILED-RAFT-GA` (`GaImportEngine.IsDisplayLayer`;
+    kolor / rodzaj / grubość linii, drukowanie jak warstwa źródłowa; „JakWarstwa” zapisane jawnie), znacznik RC_GA (EraseOld je usuwa);
+  - obrysy płyt szeregu (SD-PILED-RAFT, RC_GA [3]) — tylko obliczeniowe, **niewidoczne** (`Visible = false`); lica pasów nie są dorysowywane;
+  - `NibDetector.Detect` pomija warstwę rysunkową (obrys GA nie jest „obrysem zewnętrznym” linii uskoku);
+  - wskazanie obrysu (`GaImportEngine.ResolveSlabPick`: SlabPicker, belki, wsporniki, przekroje, adopcja przekroju, 3D, RC_GENERATE_SLAB):
+    obiekt warstwy rysunkowej → niewidoczny obrys płyty tego samego [1]/[2], zawierający punkt wskazania (inaczej najbliższy);
+  - detal belki / wspornika (`PrepareBeamDetail`): przy niewidocznym obrysie linie betonu nie z obrysu, tylko z rysunku (`OtherPlanLines`
+    bierze obrys / pustki GA, pomija obiekty niewidoczne).
+  Płyty pojedyncze (bez szeregu) — bez zmian.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

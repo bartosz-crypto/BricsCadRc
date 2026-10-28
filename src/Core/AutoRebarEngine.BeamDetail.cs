@@ -563,7 +563,10 @@ namespace BricsCadRc.Core
                 // 3. Obiekty detalu (warstwa RC-BEAM-DETAIL) — dane czytane przed transakcją zapisu
                 SingleBarEngine.EnsureLayer(db, BeamStore.DetailLayer, 7);
                 var dashed = EnsureDashedLinetype(db);
-                var lines = BeamDetailRules.ClipPolygon(frameT, outlT);
+                // KARDYNALNE (2026-10-28): obrys obliczeniowy płyty szeregu (niewidoczny) nie jest rysowany — linie betonu z obrysu GA
+                // (warstwa rysunkowa) bierze OtherPlanLines, bez linii w poprzek wylotu pasa GB
+                bool hiddenOutl = IsHidden(db, bottom.OuterId);
+                var lines = hiddenOutl ? new List<((double X, double Y) A, (double X, double Y) B)>() : BeamDetailRules.ClipPolygon(frameT, outlT);
                 // rekord [38] „bez nibu”: przy tej belce bez linii uskoku (nib płyty bez części przy belkach bez nibu)
                 var nib = WithoutBeamNibs(db, NibDetector.Detect(db, bottom.OuterId));
                 var nibLines = nib?.Inner != null
@@ -572,7 +575,8 @@ namespace BricsCadRc.Core
                 // decyzja 2026-10-12 (wzór — screen Bartka): linie betonu w kolorach / rodzajach linii rzutu (obrys, linia uskoku)
                 var outlStyle = SourceStyle(db, bottom.OuterId);
                 var nibStyle = nib != null ? SourceStyle(db, nib.InnerId) ?? outlStyle : outlStyle;
-                var others = OtherPlanLines(db, win, frameT, bottom, nib?.InnerId ?? ObjectId.Null, outlT, nib?.Inner, m => msg($"{name}: {m}"));
+                var others = OtherPlanLines(db, win, frameT, bottom, nib?.InnerId ?? ObjectId.Null,
+                                            hiddenOutl ? new List<(double X, double Y)>() : outlT, nib?.Inner, m => msg($"{name}: {m}"));
                 // GB poza płytą (2026-10-23): pale w całej ramce (także w pasie i w drugiej płycie), nie tylko w obrysie płyty [6]
                 var piles = FindPiles(db, allPilesInFrame ? frameT.Select(q => new Point2d(q.X, q.Y)).ToList() : bottom.Verts)
                                 .Where(pc => BeamDetailRules.InsideOrOn(frameT, (pc.c.X, pc.c.Y))).ToList();
@@ -938,6 +942,20 @@ namespace BricsCadRc.Core
             }
         }
 
+        /// <summary>Obiekt niewidoczny (obrys obliczeniowy płyty szeregu po Prepare GA, 2026-10-28).</summary>
+        private static bool IsHidden(Database db, ObjectId id)
+        {
+            if (id.IsNull) return false;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                bool h = tr.GetObject(id, OpenMode.ForRead) is Entity e && !e.Visible;
+                tr.Commit();
+                return h;
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.IsHidden", ex); return false; }
+        }
+
         /// <summary>
         /// Pozostałe linie rzutu dolnego w oknie detalu (dowolna warstwa poza obiektami programu, SD-Text, SD-Pile…, SD-Thickening-Zone): Line, Polyline
         /// (cięciwy łuków), Arc (cięciwy) — przycięte do okna, bez odcinków leżących na obrysie albo linii uskoku (te rysowane osobno);
@@ -950,7 +968,7 @@ namespace BricsCadRc.Core
             var res = new List<(List<((double X, double Y) A, (double X, double Y) B)>, (Color, ObjectId, double)?)>();
             var innerT = inner?.Select(v => (v.X, v.Y)).ToList();
             bool OnKnown((double X, double Y) p)
-                => BeamDetailRules.DistToBoundary(outline, p) < 1.0 || (innerT != null && innerT.Count > 2 && BeamDetailRules.DistToBoundary(innerT, p) < 1.0);
+                => (outline != null && outline.Count > 2 && BeamDetailRules.DistToBoundary(outline, p) < 1.0) || (innerT != null && innerT.Count > 2 && BeamDetailRules.DistToBoundary(innerT, p) < 1.0);
             var taken = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var skipped = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             void Count(SortedDictionary<string, int> d, string k) { d.TryGetValue(k, out int v); d[k] = v + 1; }
@@ -1027,6 +1045,7 @@ namespace BricsCadRc.Core
                 {
                     if (id.IsErased || id == bottom.OuterId || id == innerId) continue;
                     if (!(tr.GetObject(id, OpenMode.ForRead) is Entity e) || !(e is Curve || e is BlockReference)) continue;
+                    if (!e.Visible) continue;   // obrysy obliczeniowe płyt szeregu (2026-10-28) — nie ma ich na rysunku GA
                     if (!Touches(e)) continue;
                     // decyzja 2026-10-12 („to, co jest w czerwonej obramówce, program zbiera i daje jako detal”): wszystkie linie rzutu
                     // w oknie, dowolna warstwa — poza obiektami programu (strefy belek, detale, ramki szablonów, pręty, przekroje: XData

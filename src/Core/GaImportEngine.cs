@@ -674,20 +674,14 @@ namespace BricsCadRc.Core
                                             LinetypeScale = src.LinetypeScale, Elevation = src.Elevation };
                     for (int k = 0; k < an.Slabs[i].Count; k++) pl.AddVertexAt(k, new Point2d(an.Slabs[i][k].X, an.Slabs[i][k].Y), 0, 0, 0);
                     pl.Closed = true;
+                    // KARDYNALNE (Bartek 2026-10-28: „chcę mieć DOKŁADNIE taką geometrię, jak GA”): obrys płyty szeregu jest tylko
+                    // obliczeniowy — niewidoczny (jego krawędź w poprzek wylotu pasa GB nie istnieje w GA); na rysunku zostaje obrys GA
+                    pl.Visible = false;
                     made.Add(ms.AppendEntity(pl));
                     tr.AddNewlyCreatedDBObject(pl, true);
                     Tag(pl, tl, view, plot.Members[i].Label);
                 }
-                // lica pasów poza płytami (krawędź betonu z obrysu GA)
-                foreach (var b in an.Bands)
-                    foreach (var (a, c) in b.Faces())
-                    {
-                        var ln = new Line(new Point3d(a.X, a.Y, src.Elevation), new Point3d(c.X, c.Y, src.Elevation))
-                        { Layer = src.Layer, Color = src.Color, LinetypeId = src.LinetypeId, LineWeight = src.LineWeight };
-                        ms.AppendEntity(ln);
-                        tr.AddNewlyCreatedDBObject(ln, true);
-                        Tag(ln, tl, view);
-                    }
+                // (2026-10-28) lica pasów NIE są już dorysowywane — są w obrysie GA, który zostaje na rysunku
                 // strefy belek GB
                 BeamStore.EnsureLayer(tr, db, ThickeningLayer);
                 int k2 = 0;
@@ -716,11 +710,21 @@ namespace BricsCadRc.Core
                             k2, b.Label.Replace("\n", " "), b.Height, b.GbDepth, b.TopDrop, b.ZoneHi - b.ZoneLo,
                             si >= 0 ? plot.Members[si].Label : "brak płyty"));
                 }
-                // obrys zewnętrzny, pustki i linie stref narożnych — zastąpione
-                src.Erase();
-                foreach (var id in voidIds) ((Entity)tr.GetObject(id, OpenMode.ForWrite)).Erase();
+                // (2026-10-28) obrys zewnętrzny i pustki GA — BEZ ZMIAN geometrii: przeniesione na warstwę rysunkową DisplayLayer
+                // (te same właściwości co warstwa obrysu), silniki ich nie biorą; wskazanie → ResolveSlabPick (obrys obliczeniowy płyty)
+                string disp = EnsureDisplayLayer(tr, db, src.Layer);
+                foreach (var id in new[] { outlineId }.Concat(voidIds))
+                {
+                    var e = (Entity)tr.GetObject(id, OpenMode.ForWrite);
+                    var lid = e.LayerId;
+                    e.Layer = disp;
+                    KeepLayerLook(tr, e, lid);
+                    if (e.GetXDataForApplication(XApp) == null) Tag(e, tl, view);
+                }
                 tr.Commit();
             }
+            openPl.RemoveAll(id => id == outlineId || voidIds.Contains(id));
+            nibPieces.RemoveAll(id => id == outlineId || voidIds.Contains(id));
             // uwaga Bartka 2026-10-26: linie stref narożnych (pogrubienia przy GB) zostają na rysunku jak w GA — fioletowa strefa belki na wierzchu;
             // tylko poza listami kawałków obrysu / uskoku (JoinLoops, wsporniki, K8 ich nie biorą)
             var keptCorners = new HashSet<ObjectId>(an.UsedBoxes.Select(k => cornerIds[k]));
@@ -1531,6 +1535,85 @@ namespace BricsCadRc.Core
                     if (tr.GetObject(id, OpenMode.ForWrite) is Entity e) e.Erase();
                 tr.Commit();
             }
+        }
+
+        /// <summary>
+        /// Warstwa rysunkowa obrysu GA szeregu płyt (2026-10-28): „SD-PILED-RAFT-GA” — obrys zewnętrzny i pustki GA bez zmian geometrii;
+        /// silniki (NibDetector, wsporniki, K8, detale) jej nie traktują jako obrysu płyty.
+        /// </summary>
+        public const string DisplaySuffix = "-GA";
+        public static bool IsDisplayLayer(string layer)
+            => !string.IsNullOrEmpty(layer) && layer.Equals(SlabLayer + DisplaySuffix, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Warstwa rysunkowa dla warstwy obrysu — kolor, rodzaj i grubość linii, drukowanie jak warstwa źródłowa.</summary>
+        private static string EnsureDisplayLayer(Transaction tr, Database db, string srcLayer)
+        {
+            string name = SlabLayer + DisplaySuffix;
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (lt.Has(name)) return name;
+            var rec = new LayerTableRecord { Name = name };
+            if (lt.Has(srcLayer) && tr.GetObject(lt[srcLayer], OpenMode.ForRead) is LayerTableRecord sl)
+            {
+                rec.Color = sl.Color; rec.LinetypeObjectId = sl.LinetypeObjectId; rec.LineWeight = sl.LineWeight;
+                rec.IsPlottable = sl.IsPlottable; rec.Transparency = sl.Transparency;
+            }
+            lt.UpgradeOpen();
+            lt.Add(rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+            return name;
+        }
+
+        /// <summary>Po zmianie warstwy: właściwości „JakWarstwa” zapisane jawnie z poprzedniej warstwy (wygląd identyczny z GA).</summary>
+        private static void KeepLayerLook(Transaction tr, Entity e, ObjectId oldLayerId)
+        {
+            try
+            {
+                if (!(tr.GetObject(oldLayerId, OpenMode.ForRead) is LayerTableRecord ol)) return;
+                if (e.Color.IsByLayer) e.Color = ol.Color;
+                if (e.Linetype.Equals("BYLAYER", StringComparison.OrdinalIgnoreCase)) e.LinetypeId = ol.LinetypeObjectId;
+                if (e.LineWeight == LineWeight.ByLayer) e.LineWeight = ol.LineWeight;
+            }
+            catch (System.Exception ex) { Log.Error("GaImport.KeepLayerLook", ex); }
+        }
+
+        /// <summary>
+        /// Wskazanie obrysu płyty (2026-10-28): obiekt na warstwie rysunkowej szeregu (obrys / pustka GA) → niewidoczny obrys
+        /// obliczeniowy płyty tego samego plotu i rzutu (RC_GA [1], [2]) najbliższy punktowi wskazania (wewnątrz — pierwszeństwo).
+        /// Inny obiekt — bez zmian.
+        /// </summary>
+        public static ObjectId ResolveSlabPick(Database db, ObjectId picked, Point3d pickPt)
+        {
+            if (db == null || picked.IsNull) return picked;
+            try
+            {
+                using var tr = db.TransactionManager.StartOpenCloseTransaction();
+                if (!(tr.GetObject(picked, OpenMode.ForRead) is Entity pe) || !IsDisplayLayer(pe.Layer)) return picked;
+                string[] Key(Entity e)
+                {
+                    using var rb = e.GetXDataForApplication(XApp);
+                    var v = rb?.AsArray();
+                    return v != null && v.Length > 2 ? new[] { v[1].Value as string ?? "", v[2].Value as string ?? "" } : null;
+                }
+                var k = Key(pe);
+                var p = new Point2d(pickPt.X, pickPt.Y);
+                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                ObjectId best = ObjectId.Null;
+                double bestD = double.MaxValue;
+                foreach (ObjectId id in ms)
+                {
+                    if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || pl.Visible) continue;
+                    if (!pl.Layer.Equals(SlabLayer, StringComparison.OrdinalIgnoreCase) || !pl.Closed) continue;
+                    var kk = Key(pl);
+                    if (kk == null || (k != null && (kk[0] != k[0] || kk[1] != k[1]))) continue;
+                    var vs = GeometryHelper.GetPolylineVertices(pl);
+                    double dd = NibDetector.DistToBoundary(vs, p);
+                    if (GeometryHelper.IsPointInsidePolygon(vs, p)) dd -= 1.0e9;
+                    if (dd < bestD) { bestD = dd; best = id; }
+                }
+                tr.Commit();
+                return best.IsNull ? picked : best;
+            }
+            catch (System.Exception ex) { Log.Error("GaImport.ResolveSlabPick", ex); return picked; }
         }
 
         private static void Tag(Entity e, string plot, string view)

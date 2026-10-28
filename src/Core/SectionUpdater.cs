@@ -415,15 +415,16 @@ namespace BricsCadRc.Core
                 peo.AddAllowedClass(typeof(Polyline), true);
                 var per = ed.GetEntity(peo);
                 if (per.Status != PromptStatus.OK) { Msg(ed, $"{L}-{L}: anulowano."); return false; }
+                var slabPick = GaImportEngine.ResolveSlabPick(db, per.ObjectId, per.PickedPoint);   // obrys GA szeregu (2026-10-28)
                 using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
-                    var pl = (Polyline)tr.GetObject(per.ObjectId, OpenMode.ForRead);
+                    var pl = (Polyline)tr.GetObject(slabPick, OpenMode.ForRead);
                     var verts = GeometryHelper.GetPolylineVertices(pl);
                     pair = pairs.FirstOrDefault(p => Crossings(verts, p.P1, p.P2) >= 2);
                     tr.Commit();
                 }
                 if (pair == null) { Msg(ed, $"{L}-{L}: linia cięcia ze znaczników nie przecina wskazanego obrysu — adopcja przerwana."); return false; }
-                pair.Slab = per.ObjectId;
+                pair.Slab = slabPick;
             }
 
             // 3. obiekty starego przekroju — wskazane przez użytkownika

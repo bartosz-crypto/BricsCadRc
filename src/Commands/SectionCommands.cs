@@ -33,6 +33,7 @@ namespace BricsCadRc.Commands
                 peo.AddAllowedClass(typeof(Polyline), true);
                 var per = ed.GetEntity(peo);
                 if (per.Status != PromptStatus.OK) return;
+                var slabId = GaImportEngine.ResolveSlabPick(db, per.ObjectId, per.PickedPoint);   // obrys GA szeregu (2026-10-28)
 
                 var pp1 = ed.GetPoint(new PromptPointOptions("\nPierwszy punkt linii przekroju: "));
                 if (pp1.Status != PromptStatus.OK) return;
@@ -49,9 +50,9 @@ namespace BricsCadRc.Commands
                 if (pp3.Status != PromptStatus.OK) return;
 
                 // Nib: otwarta linia uskoku domykana krawędzią obrysu (decyzja użytkownika A9.5)
-                NibAutoClose.EnsureForCommand(doc, per.ObjectId, T);
+                NibAutoClose.EnsureForCommand(doc, slabId, T);
 
-                var ctx = AutoRebarEngine.PrepareSection(db, per.ObjectId, p1, p2, new Point2d(pp3.Value.X, pp3.Value.Y));
+                var ctx = AutoRebarEngine.PrepareSection(db, slabId, p1, p2, new Point2d(pp3.Value.X, pp3.Value.Y));
                 if (ctx == null) { ed.WriteMessage($"\n{T} Obrys płyty musi być zamkniętą polilinią.\n"); return; }
                 foreach (var s in ctx.Info) ed.WriteMessage($"\n{T} {s}");
 

@@ -145,7 +145,7 @@ namespace BricsCadRc.Commands
             peo.SetRejectMessage("\nTo nie jest polilinia.");
             peo.AddAllowedClass(typeof(Polyline), true);
             var r = ed.GetEntity(peo);
-            if (r.Status == PromptStatus.OK) return r.ObjectId;
+            if (r.Status == PromptStatus.OK) return GaImportEngine.ResolveSlabPick(ed.Document.Database, r.ObjectId, r.PickedPoint);
             if (r.Status != PromptStatus.None) _lastPickCancelled = true;
             return ObjectId.Null;
         }

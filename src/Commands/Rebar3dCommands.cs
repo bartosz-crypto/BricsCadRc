@@ -242,7 +242,7 @@ namespace BricsCadRc.Commands
                 o.AddAllowedClass(typeof(Polyline), false);
                 var r = ed.GetEntity(o);
                 if (r.Status != PromptStatus.OK) return ObjectId.Null;
-                return r.ObjectId;
+                return GaImportEngine.ResolveSlabPick(ed.Document.Database, r.ObjectId, r.PickedPoint);   // obrys GA szeregu (2026-10-28)
             }
         }
 

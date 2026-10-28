@@ -82,6 +82,7 @@ namespace BricsCadRc.Core
                     if (BeamStore.IsBeamLayer(pl.Layer) || BeamStore.IsManualLayer(pl.Layer)
                         || string.Equals(pl.Layer, BeamStore.DetailLayer, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(pl.Layer, GaImportEngine.ThickeningLayer, StringComparison.OrdinalIgnoreCase)
+                        || GaImportEngine.IsDisplayLayer(pl.Layer)   // obrys / pustki GA szeregu (rysunek, 2026-10-28)
                         || CantileverEngine.IsLayer(pl.Layer)) continue;   // wspornik (RC-CANTILEVER, 2026-10-21)
                     var q = Clean(GeometryHelper.SquaredOrSame(GeometryHelper.GetPolylineVertices(pl)));
                     if (q.Count < 3) continue;
@@ -182,7 +183,7 @@ namespace BricsCadRc.Core
             return In(a.x0 - b.x0) && In(a.y0 - b.y0) && In(b.x1 - a.x1) && In(b.y1 - a.y1);
         }
 
-        private static double DistToBoundary(List<Point2d> poly, Point2d p)
+        internal static double DistToBoundary(List<Point2d> poly, Point2d p)
         {
             double best = double.MaxValue;
             for (int i = 0; i < poly.Count; i++)

@@ -25,6 +25,7 @@ namespace BricsCadRc.Commands
             selOpts.AddAllowedClass(typeof(Polyline), true);
             var selResult = ed.GetEntity(selOpts);
             if (selResult.Status != PromptStatus.OK) return;
+            var slabPick = BricsCadRc.Core.GaImportEngine.ResolveSlabPick(db, selResult.ObjectId, selResult.PickedPoint);   // obrys GA szeregu (2026-10-28)
 
             // 2. Pozycja (BOT / TOP)
             var kwPos = new PromptKeywordOptions("\nPozycja zbrojenia [BOT/TOP] <BOT>: ");
@@ -108,7 +109,7 @@ namespace BricsCadRc.Commands
             bar.Mark = BarData.FormatMark(diameter, posNr, spacing, 2);
 
             // 10. Modul pretow — RC_SLAB_BARS_nnn (prety only, styl ASD RBCR_EN_CONSTLINEMODULE)
-            var barResult = BarBlockEngine.Generate(db, selResult.ObjectId, bar, horizontal, cover, posNr);
+            var barResult = BarBlockEngine.Generate(db, slabPick, bar, horizontal, cover, posNr);
 
             if (!barResult.IsValid)
             {
