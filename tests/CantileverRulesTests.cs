@@ -297,8 +297,15 @@ namespace BricsCadRc.Tests
             Assert.That(p.UBars, Is.Empty, "bez U-barów H16");
             Assert.That(p.ShortMainLinks, Is.True);
             var full = p.Links.Single(l => l.AlongAxis && l.L1 > 1);
-            Assert.That(full.Step, Is.EqualTo(120).Within(1e-9));
+            // uwaga Bartka 2026-10-28 (F-F): skrajne ramiona w środku strzemion wspornika (50 + 12 + 6 = 68), 5 co 116 (≤ 120)
+            Assert.That(full.First, Is.EqualTo(68).Within(1e-9));
+            Assert.That(full.Step, Is.EqualTo(116).Within(1e-9));
+            Assert.That(full.Spacing, Is.EqualTo(120).Within(1e-9), "opis co 120");
             Assert.That(full.Count, Is.EqualTo(5));
+            // strzemiona 4-cięte wysięgu i strefy przy palu poszerzone — każde obejmuje 4 pręty: 3·116 + 12 + 24 = 384 → 390
+            Assert.That(p.Links.Single(l => l.Shape == "63").B, Is.EqualTo(390).Within(1e-9));
+            Assert.That(p.Links.Single(l => l.Shape == "51" && !l.AlongAxis).B, Is.EqualTo(390).Within(1e-9));
+            Assert.That(p.Links.Single(l => l.AlongAxis && l.L1 <= 1).B, Is.EqualTo(370).Within(1e-9), "drugi kierunek strefy — bez zmian");
             Assert.That(full.L0, Is.EqualTo(-600).Within(1e-9));
             Assert.That(full.L1, Is.EqualTo(411).Within(1e-9));
             Assert.That(full.Legs, Is.EqualTo(2));

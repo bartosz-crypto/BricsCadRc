@@ -181,6 +181,8 @@ namespace BricsCadRc.Core
             var planTitles = new List<(Ent e, string view)>();
             var phTitles = new List<(Ent e, int nr, bool used)>();
             var beamParts = new List<(Ent e, string zone, int nr, string role)>();
+            // kopie rozkładów identycznych elementów nad detalem głównym (ANCHOR z [6] = strefa detalu głównego) — bez rzutni (2026-10-28)
+            var copyZones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var holeFrames = new List<(Ent e, int nr)>();
             var detailTitles = new List<(Ent e, int nr)>();
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
@@ -212,7 +214,12 @@ namespace BricsCadRc.Core
                         }
                         var bd = BeamStore.ReadDetail(e);
                         if (bd != null && !string.IsNullOrEmpty(bd.Value.zone) && bd.Value.role != BeamStore.RolePlanRef)
-                        { beamParts.Add((en, XLink.Norm(bd.Value.zone), bd.Value.nr, bd.Value.role)); continue; }
+                        {
+                            beamParts.Add((en, XLink.Norm(bd.Value.zone), bd.Value.nr, bd.Value.role));
+                            if (bd.Value.role == BeamStore.RoleAnchor && !string.IsNullOrEmpty(BeamStore.ReadDetailGroup(e).master))
+                                copyZones.Add(XLink.Norm(bd.Value.zone));
+                            continue;
+                        }
                         if (bd == null && AutoRebarEngine.TryReadDetailFrame(e, out int hnr, out _, out _)) { holeFrames.Add((en, hnr)); continue; }
                         if (e is MText mt)
                         {
@@ -319,12 +326,25 @@ namespace BricsCadRc.Core
             // 3. detale belek i otworów
             {
                 var dets = new List<(string key, int nr, Box core, Box box)>();
+                // uwaga Bartka 2026-10-28 (PLOT 344-346): kopie rozkładów identycznych elementów (ramka z przekątnymi) — NIE na arkuszach;
+                // ich obiekty (i rozkłady w pobliżu) zajęte przez „kopie”, żeby nie trafiły do detalu głównego; ramka COPYBOX — też pominięta
+                var copies = new List<Box>();
                 foreach (var g in beamParts.GroupBy(p => (p.zone, p.nr)))
                 {
                     var core = Box.Empty;
-                    foreach (var p in g) { core.Add(p.e.Box); p.e.Claimed = true; }
-                    dets.Add(("DETAIL '" + g.Key.nr + "'", g.Key.nr, core, core));
+                    bool copy = copyZones.Contains(g.Key.zone);
+                    foreach (var p in g)
+                    {
+                        p.e.Claimed = true;
+                        if (p.role == BeamStore.RoleCopyBox) { copies.Add(p.e.Box); continue; }
+                        core.Add(p.e.Box);
+                    }
+                    if (core.IsEmpty) continue;
+                    if (copy) copies.Add(core);
+                    else dets.Add(("DETAIL '" + g.Key.nr + "'", g.Key.nr, core, core));
                 }
+                foreach (var en in ents)
+                    if (!en.Claimed && copies.Any(c => en.Box.Inside(c.Grow(1.0)))) en.Claimed = true;
                 foreach (var (fe, nr) in holeFrames)
                 {
                     var core = fe.Box; fe.Claimed = true;

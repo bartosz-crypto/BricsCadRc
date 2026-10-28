@@ -820,11 +820,20 @@ namespace BricsCadRc.Core
                 msg($"{name}: brak strefy na rzucie górnym (pręty belki i tak na rzucie dolnym).");
             BeamGeometry.LayerPlan planMain = null;
             bool spacingWarn = false;
+            // strefy zakładów prętów głównych (wszystkie warstwy) na odcinku — pręty boczne z zakładami odsuniętymi (uwaga Bartka 2026-10-28)
+            var mainLaps = new Dictionary<BeamGeometry.Segment, List<(double Lo, double Hi)>>();
             foreach (var L in layers)
             {
                 double lap = p.LapFor(L.d);
                 var plan = BeamGeometry.PlanLayer(an, L.d, lap, p.MaxLength, p.CoverSide, endOff, p.CornerStraightIntoSquare);
                 if (planMain == null) planMain = plan;
+                foreach (var g in plan.Straight.GroupBy(x => x.Seg))
+                {
+                    var runs = g.OrderBy(x => x.Start).ToList();
+                    if (!mainLaps.TryGetValue(g.Key, out var zl)) mainLaps[g.Key] = zl = new List<(double Lo, double Hi)>();
+                    for (int k = 1; k < runs.Count; k++)
+                        if (runs[k].Start < runs[k - 1].Start + runs[k - 1].Length) zl.Add((runs[k].Start, runs[k - 1].Start + runs[k - 1].Length));
+                }
                 foreach (var m in plan.Messages) msg($"{name}: {m}");
                 foreach (var g in plan.Straight.GroupBy(x => x.Seg).Where(g => g.Count() > 1))
                 {
@@ -905,6 +914,17 @@ namespace BricsCadRc.Core
                     var (lo, hi) = BeamGeometry.StraightRange(s, p.CoverSide, p.CoverSide + p.SideDia, p.CornerStraightIntoSquare);
                     var (c0, c1) = BeamGeometry.SideBarsAcross(s, p.SideDia, p.StirrupDia, p.CoverSide);
                     var plan = BeamGeometry.PlanBars(hi - lo, p.MaxLength, lapS);
+                    // uwaga Bartka 2026-10-28: zakłady prętów bocznych min. 500 (w świetle) od zakładów prętów głównych
+                    if (plan.Count > 1 && mainLaps.TryGetValue(s, out var ml) && ml.Count > 0)
+                    {
+                        var shifted = BeamGeometry.StaggerLaps(plan, p.MaxLength, ml.Select(z => (z.Lo - lo, z.Hi - lo)).ToList());
+                        if (!ReferenceEquals(shifted, plan))
+                            msg($"{name}: pręty boczne — zakłady odsunięte od zakładów prętów głównych (≥ {BeamGeometry.LapStaggerGap:F0}): " +
+                                string.Join(" + ", shifted.Select(x => x.Length.ToString("F0", CultureInfo.InvariantCulture))) + ".");
+                        else if (BeamGeometry.LapZones(plan).Any(z => ml.Any(m => Math.Max(m.Lo - lo - z.Hi, z.Lo - (m.Hi - lo)) < BeamGeometry.LapStaggerGap)))
+                            msg($"{name}: pręty boczne — nie udało się odsunąć zakładów od zakładów prętów głównych (max. długość {p.MaxLength:F0}) — sprawdź.");
+                        plan = shifted;
+                    }
                     if (plan.Count > 0) sideRanges[s] = (lo + plan[0].Offset, lo + plan[plan.Count - 1].Offset + plan[plan.Count - 1].Length);
                     for (int k = 0; k < plan.Count; k++)
                     {

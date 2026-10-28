@@ -511,21 +511,32 @@ namespace BricsCadRc.Core
                 // krótki wspornik (uwaga Bartka 2026-10-26): zamiast U-barów H16 strzemiona zamknięte z prętami wzdłuż osi na całej długości
                 // (od końca strefy przy palu do końca wspornika), w środku strzemion wysięgu (A − 2·Ø w dół do 5 — jak B U-bara), co 120
                 double len = Math.Floor((rootLen + reach - rootCover - cover) / 5.0 + 1e-9) * 5.0;   // koniec strefy 45, koniec wspornika 50
-                var (first, step, n, _) = BeamGeometry.StirrupLayout(0, width, ShortMainLinkSpacing,
-                                                                     BeamGeometry.StirrupFirstOffset(dLink, BeamGeometry.LinkEndCover));
-                if (n > 1)
-                {
-                    double av = (n - 1) * step;
-                    int m = (int)Math.Floor(av / ShortMainLinkSpacing + 1e-9) + 1;
-                    first += (av - (m - 1) * ShortMainLinkSpacing) / 2.0; step = ShortMainLinkSpacing; n = m;
-                }
+                // uwaga Bartka 2026-10-28 (PLOT 344-346, przekrój F-F): ramiona strzemion wzdłuż osi (pręty główne w przekroju) W ŚRODKU strzemion
+                // wysięgu — skrajne na otulinie wspornika + Ø strzemienia + Ø/2, pozostałe po równo, rozstaw nie większy niż 120 (5 co 116 na 600)
+                double first = cover + dLink + dLink / 2.0, step = 0;
+                double av = width - 2 * first;
+                int n = av > 0 ? (int)Math.Ceiling(av / ShortMainLinkSpacing - 1e-9) + 1 : 1;
+                if (n > 1) step = av / (n - 1); else first = width / 2.0;
                 if (bU > 0 && len > 0 && n > 0)
                 {
+                    // strzemiona 4-cięte (2 zachodzące) wysięgu i strefy przy palu (w poprzek osi): każde obejmuje n − 1 prętów — lekko
+                    // poszerzone (Ceil10: 3·116 + 12 + 2·12 = 384 → 390), skrajny pręt w środku strzemienia
+                    if (n >= 4)
+                        foreach (var lr in pl.Links.Where(x => !x.AlongAxis && x.Legs == 4))
+                        {
+                            double need = first + (n - 2) * step + dLink / 2.0 + lr.Dia - lr.CoverAcross;
+                            double b4 = Math.Ceiling(need / 10.0 - 1e-9) * 10.0;
+                            if (b4 > lr.B && b4 < width - 2 * lr.CoverAcross)
+                            {
+                                lr.Note += $"; B {lr.B:F0} → {b4:F0} (pręty strzemion wzdłuż osi w środku — {n - 1} w każdym)";
+                                lr.B = b4;
+                            }
+                        }
                     pl.Links.Add(new LinkRun { S0 = 0, S1 = width, First = first, Step = step, Count = n, Dia = dLink, A = bU, B = len,
                                                Spacing = ShortMainLinkSpacing, Legs = 2, Shape = LinkShapeInSlab, AlongAxis = true,
                                                L0 = -rootLen, L1 = reach, CoverL0 = rootCover, CoverL1 = cover,
                                                Note = $"krótki wspornik (wysięg {reach:F0} ≤ {ShortReachMax:F0}): zamiast U-barów H{MainDia} " +
-                                                      $"strzemiona wzdłuż osi na całej długości {len:F0}, co {ShortMainLinkSpacing:F0}" });
+                                                      $"strzemiona wzdłuż osi na całej długości {len:F0}, {n} co {step:F0} (opis co {ShortMainLinkSpacing:F0})" });
                     pl.ShortMainLinks = true;
                 }
             }

@@ -764,5 +764,23 @@ namespace BricsCadRc.Tests
             Assert.That(BeamGeometry.IsBeamCode("B1"), Is.False);
             Assert.That(BeamGeometry.IsBeamCode("T2"), Is.False);
         }
+
+        // uwaga Bartka 2026-10-28 (detal GB PLOT 344-346): zakłady prętów bocznych min. 500 w świetle od zakładów prętów głównych
+        [Test]
+        public void StaggerLaps_SideLapsAwayFromMainLaps()
+        {
+            var plan = new List<(double Offset, double Length)> { (0, 4500), (4000, 4500) };   // zakład 4000…4500
+            var main = new List<(double Lo, double Hi)> { (3850, 4500) };                     // zakład H16 650
+            var r = BeamGeometry.StaggerLaps(plan, 6000, main);
+            Assert.That(r, Is.Not.SameAs(plan));
+            var z = BeamGeometry.LapZones(r).Single();
+            Assert.That(Math.Max(main[0].Lo - z.Hi, z.Lo - main[0].Hi), Is.GreaterThanOrEqualTo(500 - 1e-6));
+            Assert.That(r[0].Offset + r[0].Length - r[1].Offset, Is.EqualTo(500).Within(1e-9), "zakład bez zmian");
+            Assert.That(r[1].Offset + r[1].Length, Is.EqualTo(8500).Within(1e-9), "koniec bez zmian");
+            Assert.That(r.All(x => x.Length <= 6000), Is.True);
+            // już odsunięte — bez zmian
+            Assert.That(BeamGeometry.StaggerLaps(plan, 6000, new List<(double, double)> { (1000, 1650) }), Is.SameAs(plan));
+        }
+
     }
 }

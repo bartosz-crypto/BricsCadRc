@@ -842,6 +842,61 @@ namespace BricsCadRc.Core
             return true;
         }
 
+        /// <summary>Odsunięcie zakładów prętów bocznych od zakładów prętów głównych (uwaga Bartka 2026-10-28): min. odstęp w świetle.</summary>
+        public const double LapStaggerGap = 500.0;
+
+        /// <summary>Strefy zakładów planu [początek następnego pręta, koniec poprzedniego] (układ planu 0 … available).</summary>
+        public static List<(double Lo, double Hi)> LapZones(List<(double Offset, double Length)> plan)
+        {
+            var r = new List<(double, double)>();
+            if (plan == null) return r;
+            for (int i = 1; i < plan.Count; i++) r.Add((plan[i].Offset, plan[i - 1].Offset + plan[i - 1].Length));
+            return r;
+        }
+
+        /// <summary>
+        /// Uwaga Bartka 2026-10-28 (detal GB PLOT 344-346): zakłady prętów (np. bocznych SIDE) NIE w tym samym miejscu co zakłady prętów
+        /// głównych — wszystkie złącza planu przesunięte o to samo delta (pierwszy pręt dłuższy, ostatni krótszy), najmniejsze |delta|
+        /// (najpierw co <paramref name="grid"/>, potem co 50), tak by każda strefa zakładu była ≥ <paramref name="minGap"/> w świetle od każdej
+        /// strefy z <paramref name="avoid"/>; pręty ≤ maxLen i ≥ minLen. Gdy się nie da albo nie trzeba — plan bez zmian.
+        /// </summary>
+        public static List<(double Offset, double Length)> StaggerLaps(List<(double Offset, double Length)> plan, double maxLen,
+                                                                       IList<(double Lo, double Hi)> avoid, double minGap = LapStaggerGap,
+                                                                       double grid = 250, double minLen = 1000)
+        {
+            if (plan == null || plan.Count < 2 || avoid == null || avoid.Count == 0) return plan;
+            bool Ok(List<(double Offset, double Length)> p)
+            {
+                foreach (var (lo, hi) in LapZones(p))
+                    foreach (var (a, b) in avoid)
+                        if (Math.Max(a - hi, lo - b) < minGap - 1e-6) return false;
+                return true;
+            }
+            if (Ok(plan)) return plan;
+            List<(double Offset, double Length)> Shift(double d)
+            {
+                var p = new List<(double Offset, double Length)>();
+                int n = plan.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    double o = i == 0 ? plan[i].Offset : plan[i].Offset + d;
+                    double len = plan[i].Length + (i == 0 ? d : 0) - (i == n - 1 ? d : 0);
+                    if (n == 1) len = plan[i].Length;
+                    if (len > maxLen + 1e-6 || len < minLen - 1e-6) return null;
+                    p.Add((o, len));
+                }
+                return p;
+            }
+            foreach (double step in new[] { grid, 50.0 })
+                for (int k = 1; k * step <= maxLen; k++)
+                    foreach (double d in new[] { k * step, -k * step })
+                    {
+                        var p = Shift(d);
+                        if (p != null && Ok(p)) return p;
+                    }
+            return plan;
+        }
+
         /// <summary>Zakład planu (z dwóch pierwszych prętów); 0 dla jednego pręta.</summary>
         public static double LapOf(List<(double Offset, double Length)> plan)
             => plan != null && plan.Count > 1 ? plan[0].Offset + plan[0].Length - plan[1].Offset : 0;

@@ -1731,6 +1731,15 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   dostawał A (wysokość 425 / 275) — teraz bok B (`PositionReconciler.PlanLengthOf`, `BarCommands.GetViewLength` dla 51 / 63 kodu BL).
 - **Odnośnik „DETAIL 'n'” na rzucie:** zawsze tekst na prawo od półki (`PlaceNoteLeader(dogleg)`); przy lewym boku ramki punkt półki
   odsunięty w lewo o długość tekstu (DETAIL '3' rysował się lustrzanie).
+- **Krótki wspornik — przekrój F-F (fix116):** ramiona strzemion wzdłuż osi (pręty główne w przekroju) W ŚRODKU strzemion wspornika:
+  skrajne na otulinie 50 + Ø strzemienia + Ø/2 (68), pozostałe po równo, rozstaw ≤ 120 (5 co 116 na 600, opis co 120); strzemiona 4-cięte
+  wysięgu i strefy przy palu (w poprzek osi) poszerzone tak, by każde obejmowało n − 1 prętów (Ceil10: 384 → 390).
+- **RC_LAYOUTS — detale z kopiami (fix117):** kopie rozkładów identycznych elementów (ANCHOR z [6] = strefa detalu głównego) i ramka
+  COPYBOX — bez rzutni; ich obiekty (także rozkłady w ramce kopii) zajęte, żeby nie trafiły do detalu głównego. Dawniej detal główny i kopia
+  miały ten sam klucz „DETAIL 'n'” i na arkusz trafiała kopia.
+- **Zakłady prętów bocznych belki (fix118, uwaga Bartka):** nie w tym samym miejscu co zakłady prętów głównych (B+T / B / T) — min. 500
+  w świetle (`BeamGeometry.StaggerLaps`, `LapStaggerGap`): wszystkie złącza prętów SIDE przesunięte o to samo delta (najpierw co 250,
+  potem co 50; pręty ≤ max. długości, ≥ 1000); gdy się nie da — komunikat.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
