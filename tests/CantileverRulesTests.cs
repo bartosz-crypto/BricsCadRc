@@ -112,7 +112,7 @@ namespace BricsCadRc.Tests
             Assert.That((lr.Dia, lr.Spacing, lr.A), Is.EqualTo((12, 200.0, 290.0)));
             Assert.That(p.UBars.Count, Is.EqualTo(2));
             Assert.That(p.UBars.All(u => u.A == 1075 && u.Dia == 16), Is.True, "zakład ≥ 700 (2026-10-23), długość 2300 — moduł 50");
-            Assert.That(p.UBars[0].Back, Is.EqualTo(743).Within(1e-9));
+            Assert.That(p.UBars[0].Back, Is.EqualTo(738).Within(1e-9), "otulina wspornika 50 (uwaga Bartka 2026-10-28)");
             Assert.That(p.UBars[1].Back, Is.EqualTo(-678).Within(1e-9), "tył w środku strzemion strefy: −735 + 45 + 12");
             Assert.That(p.Straight, Is.Empty);
         }
@@ -142,12 +142,13 @@ namespace BricsCadRc.Tests
         {
             // test4.dwg: GB 600 × 525, pile cap 600THK; od uskoku wspornik 652,5, strefa 600 — zasady belek (H > 375 → 2-cięte, boki)
             var p = CantileverRules.PlanBars(652.5, 600, 525, 600, 600);
-            Assert.That((p.Links[0].Legs, p.Links[0].B, p.Links[0].A, p.Links[0].Shape), Is.EqualTo((2, 510.0, 440.0, "63")));
+            // uwaga Bartka 2026-10-28: wspornik — otulina boczna 50 (600 − 100 = 500), strefa przy palu — 45 (510)
+            Assert.That((p.Links[0].Legs, p.Links[0].B, p.Links[0].A, p.Links[0].Shape), Is.EqualTo((2, 500.0, 440.0, "63")));
             Assert.That((p.Links[1].Legs, p.Links[1].B, p.Links[1].A, p.Links[1].Shape), Is.EqualTo((2, 510.0, 515.0, "51")));
             Assert.That((p.Links[2].Legs, p.Links[2].B, p.Links[2].A), Is.EqualTo((2, 510.0, 490.0)), "drugi kierunek: 515 − 24 → 490");
             Assert.That(p.SideLevels, Is.EqualTo(1));
             Assert.That(p.SideUBars.Count, Is.EqualTo(2));
-            Assert.That(p.SideUBars.All(u => u.B == 485 && u.Dia == 12 && u.A == 825), Is.True, "tył UB SIDE w środku tyłu U-bara (o Ø16, 2026-10-23)");
+            Assert.That(p.SideUBars.All(u => u.B == 475 && u.Dia == 12), Is.True, "B = 500 − 24 → 475 (otulina wspornika 50, 2026-10-28)");
             Assert.That(p.SideUBars[0].Back, Is.EqualTo(p.UBars[0].Back - 16).Within(1e-9));
             Assert.That(p.SideUBars[1].Back, Is.EqualTo(p.UBars[1].Back + 16).Within(1e-9));
             Assert.That(p.SideStraight, Is.Empty);
@@ -260,7 +261,9 @@ namespace BricsCadRc.Tests
             var p = CantileverRules.PlanBars(1243, 600, 300, 600, 375, singleRootLink: true);
             var root = p.Links.Where(l => l.Shape == "51").ToList();
             Assert.That(root.Count, Is.EqualTo(2));
-            Assert.That(root.Select(l => (l.A, l.B, l.Spacing, l.Step, l.Count)).Distinct().Single(), Is.EqualTo((275.0, 370.0, 150.0, 150.0, 4)));
+            // uwaga Bartka 2026-10-28 (PLOT 344-346): rozłożone wzdłuż strefy — co 200 (3 na 508), w poprzek — co 150 (4)
+            Assert.That(root.Where(l => !l.AlongAxis).Select(l => (l.A, l.B, l.Spacing, l.Step, l.Count)).Single(), Is.EqualTo((275.0, 370.0, 200.0, 200.0, 3)));
+            Assert.That(root.Where(l => l.AlongAxis).Select(l => (l.A, l.B, l.Spacing, l.Step, l.Count)).Single(), Is.EqualTo((275.0, 370.0, 150.0, 150.0, 4)));
             Assert.That(p.SingleRootLink, Is.True);
             CantileverRules.NestRootLinksGlobal(p, axisAlongX: true);
             Assert.That(root.All(l => l.A == 275), Is.True, "bez zagnieżdżenia przy jednej pozycji");
@@ -299,12 +302,28 @@ namespace BricsCadRc.Tests
             Assert.That(full.L0, Is.EqualTo(-600).Within(1e-9));
             Assert.That(full.L1, Is.EqualTo(411).Within(1e-9));
             Assert.That(full.Legs, Is.EqualTo(2));
-            Assert.That(full.B, Is.EqualTo(Math.Floor((1011 - 2 * BeamGeometry.DefaultCoverSide) / 5.0) * 5.0).Within(1e-9));
+            // otuliny końców: strefa przy palu 45, koniec wspornika 50 (2026-10-28)
+            Assert.That(full.B, Is.EqualTo(Math.Floor((1011 - BeamGeometry.DefaultCoverSide - CantileverRules.OutsideCover) / 5.0) * 5.0).Within(1e-9));
+            Assert.That((full.CoverL0, full.CoverL1), Is.EqualTo((45.0, 50.0)));
             var rootAlong = p.Links.Single(l => l.AlongAxis && l.L1 <= 1);
             Assert.That(rootAlong.Step, Is.EqualTo(150).Within(1e-9), "strefa przy palu — co 150");
             var longer = CantileverRules.PlanBars(923, 600, 300, 600, 375, singleRootLink: true);
             Assert.That(longer.UBars, Is.Not.Empty, "dłuższy wspornik bez zmian");
             Assert.That(longer.Links.Count(l => l.AlongAxis), Is.EqualTo(1));
+        }
+
+        // uwaga Bartka 2026-10-28: strzemiona strefy przy palu wzdłuż strefy co 200; gdy wejdą mniej niż 3 — co 150
+        [Test]
+        public void RootLinksAlongZone_200_UnlessFewerThan3()
+        {
+            var p = CantileverRules.PlanBars(411, 600, 300, 735, 375, singleRootLink: true);
+            var r = p.Links.Single(l => l.Shape == "51" && !l.AlongAxis);
+            Assert.That((r.Step, r.Count), Is.EqualTo((200.0, 4)));
+            var q = CantileverRules.PlanBars(411, 600, 300, 400, 375, singleRootLink: true);
+            var rq = q.Links.Single(l => l.Shape == "51" && !l.AlongAxis);
+            Assert.That(rq.Step, Is.EqualTo(150.0), "400 − 2·46 = 308 → przy 200 tylko 2 → co 150");
+            Assert.That(rq.CoverAcross, Is.EqualTo(45.0));
+            Assert.That(p.Links.Single(l => l.Shape == "63").CoverAcross, Is.EqualTo(50.0));
         }
 
         [TestCase("300THK\nTOC=21.250", 300.0)]

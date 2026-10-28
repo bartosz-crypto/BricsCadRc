@@ -1131,6 +1131,11 @@ namespace BricsCadRc.Commands
             double[] p = bar.ParamValues;   // [A, B, C, D, E]
             string code = bar.ShapeCode ?? "00";
 
+            // strzemiona belki / wspornika (kod BL, 2026-10-28 — błąd PLOT 344-346): w rzucie bok B (szerokość), A to wysokość
+            // (po zmianie B szablonu 500 → 510 rozkład dostawał A = 425)
+            if ((code == "51" || code == "63") && bar.LayerCode == BeamGeometry.CodeLinks && p.Length > 1 && p[1] > 0)
+                return p[1];
+
             switch (code)
             {
                 // Pierścień (W4c: 75, BS 8666:2020) — średnica A

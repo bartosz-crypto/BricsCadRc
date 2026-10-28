@@ -1044,7 +1044,7 @@ namespace BricsCadRc.Core
         public static List<VUBarRun> PlanVerticalUBars(Result an, LayerPlan straight, int columns, int dMain, int uDia, double stirrupA,
                                                        int dLink, double lap, double armExtra, double drop, double maxLen,
                                                        double cover, double endOffset, bool intoSquare, List<string> msgs,
-                                                       bool noSecondLayerDrop = false)
+                                                       bool noSecondLayerDrop = false, Func<Segment, bool, double> endCover = null)
         {
             var res = new List<VUBarRun>();
             if (an == null || columns <= 0 || uDia <= 0) return res;
@@ -1067,7 +1067,8 @@ namespace BricsCadRc.Core
                     string kind = c == Closure.UBar ? "E" : c == Closure.LBar ? "L" : "T";
                     int sE = atLo ? 1 : -1;
                     double face = atLo ? s.FaceLo : s.FaceHi;
-                    double back = face + sE * cover;
+                    // otulina czołowa końca (2026-10-28: koniec GB w narożniku w płycie — 45 zamiast 50)
+                    double back = face + sE * (endCover != null ? endCover(s, atLo) : cover);
                     (double Lo, double Hi) bars = (double.NaN, double.NaN);
                     bool hasBars = straight != null && straight.Straight.Any(x => x.Seg == s) && straight.Bars.TryGetValue(s, out bars);
                     double start = hasBars ? (atLo ? bars.Lo : bars.Hi) : back;
@@ -1406,7 +1407,8 @@ namespace BricsCadRc.Core
         /// sideBars — zakres prętów bocznych odcinka (początek pierwszego, koniec ostatniego pręta).
         /// </summary>
         public static List<SideUBarRun> PlanSideUBars(Result an, IDictionary<Segment, (double Lo, double Hi)> sideBars, int levels,
-                                                      int dSide, int dLink, double lap, double cover, List<string> msgs)
+                                                      int dSide, int dLink, double lap, double cover, List<string> msgs,
+                                                      Func<Segment, bool, double> backOffset = null)
         {
             var res = new List<SideUBarRun>();
             if (an == null || levels <= 0 || dSide <= 0) return res;
@@ -1422,7 +1424,8 @@ namespace BricsCadRc.Core
                     if (c != Closure.UBar && c != Closure.LBar && c != Closure.Tee) continue;
                     string kind = c == Closure.UBar ? "E" : c == Closure.LBar ? "L" : "T";
                     int sE = atLo ? 1 : -1;
-                    double back = (atLo ? s.FaceLo : s.FaceHi) + sE * cover;
+                    // tył od lica: otulina; backOffset (2026-10-28, PLOT 344-346) — W ŚRODKU tyłu pionowego U-bara (otulina + Ø U-bara)
+                    double back = (atLo ? s.FaceLo : s.FaceHi) + sE * (backOffset != null ? backOffset(s, atLo) : cover);
                     double start = atLo ? bars.Lo : bars.Hi;
                     double a = Ceil25(Math.Max(0, sE * (start - back)) + lap);
                     double max = Floor25(sE * ((atLo ? bars.Hi : bars.Lo) - back));

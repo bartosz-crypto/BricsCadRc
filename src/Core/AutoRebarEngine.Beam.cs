@@ -438,9 +438,10 @@ namespace BricsCadRc.Core
                                            List<(int n, int d)> legLayers, string zbHandle, string name, Action<string> msg, BeamRunResult res)
         {
             var plan = TerraceRules.PlanGbLinks(s.LinkLo, s.LinkHi, s.AcrossLo, s.AcrossHi, GbSlabParts(s, slabLoops));
-            double cv = p.CoverSide;
             // across = true: pręty w poprzek osi, rozstaw wzdłuż [lo, hi], pręt na [c0, c1]; false: pręty wzdłuż osi na [lo, hi], rozstaw w poprzek
-            void Run(string shape, double A, double hh, double lo, double hi, double c0, double c1, double sp, bool across, int side, string what)
+            // cv — otulina boczna: GB 50 (rekord), narożnik w płycie (pogrubienie) — standardowa 40 + 5 (uwaga Bartka 2026-10-28, PLOT 344-346)
+            void Run(string shape, double A, double hh, double lo, double hi, double c0, double c1, double sp, bool across, int side, string what,
+                     double cv)
             {
                 double span = across ? c1 - c0 : hi - lo;
                 var legs = BeamGeometry.PlanLinkLegs(p.StirrupLegs, hh, span, cv, p.CoverBottom, p.StirrupDia, legLayers, edgeBeam: s.OuterSide != 0);
@@ -469,13 +470,15 @@ namespace BricsCadRc.Core
             }
             foreach (var (lo, hi) in plan.Outside)
                 Run(CantileverRules.LinkShapeOutside, Agb, Hgb, lo, hi, s.AcrossLo, s.AcrossHi, p.StirrupSpacing, true, 0,
-                    $"strzemiona GB {lo:F0}..{hi:F0}");
+                    $"strzemiona GB {lo:F0}..{hi:F0}", p.CoverSide);
             foreach (var c in plan.Corners)
             {
                 int side = Math.Abs(c.A0 - s.LinkLo) < 1.0 ? -1 : Math.Abs(c.A1 - s.LinkHi) < 1.0 ? 1 : 0;
                 string w = $"narożnik w płycie {c.A0:F0}..{c.A1:F0}{(c.FullWidth ? "" : " (belka krawędziowa — strzemiona GB przez narożnik)")}";
-                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, true, side, w);
-                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, false, side, w + ", drugi kierunek");
+                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, true, side, w,
+                    BeamGeometry.DefaultCoverSide);
+                Run(CantileverRules.LinkShapeInSlab, A51, H, c.A0, c.A1, c.C0, c.C1, CantileverRules.RootSingleLinkSpacing, false, side, w + ", drugi kierunek",
+                    BeamGeometry.DefaultCoverSide);
             }
         }
 
@@ -856,9 +859,18 @@ namespace BricsCadRc.Core
             if (!both && p.BottomCount != p.TopCount)
                 msg($"{name}: różna liczba prętów dołem / górą — U-bary w {columns} kolumnach (mniejsza liczba) — sprawdź.");
             var umsgs = new List<string>();
+            // uwaga Bartka 2026-10-28 (PLOT 344-346): koniec GB w narożniku w płycie (pogrubienie) — otulina czołowa 40 + 5, nie 50
+            double EndCover(BeamGeometry.Segment sg, bool atLo)
+            {
+                if (drop <= 0 || slabLoops == null || slabLoops.Count == 0) return p.CoverSide;
+                double al = atLo ? sg.FaceLo + 1.0 : sg.FaceHi - 1.0;
+                var pt = sg.AlongX ? new Point2d(al, sg.Axis) : new Point2d(sg.Axis, al);
+                bool inSlab = slabLoops.Any(l => GeometryHelper.IsPointInsidePolygon(l.Select(q => new Point2d(q.X, q.Y)).ToList(), pt));
+                return inSlab ? BeamGeometry.DefaultCoverSide : p.CoverSide;
+            }
             var uruns = BeamGeometry.PlanVerticalUBars(an, planMain, columns, dMain, p.UBarDia, Agb, p.StirrupDia, p.LapFor(dMain),
                                                        p.UBarArmExtra, p.UBarDrop, p.MaxLength, p.CoverSide, endOff,
-                                                       p.CornerStraightIntoSquare, umsgs, noSecondLayerDrop: drop > 0);
+                                                       p.CornerStraightIntoSquare, umsgs, noSecondLayerDrop: drop > 0, endCover: EndCover);
             foreach (var m in umsgs) msg($"{name}: {m}");
             foreach (var r in uruns)
                 if (BeamVerticalUBar(db, doc.Editor, bottom, r, p.AcrossNominal, zbHandle, tg)) res.BentDists++;
@@ -907,7 +919,11 @@ namespace BricsCadRc.Core
                     }
                 }
                 var smsgs = new List<string>();
-                var sruns = BeamGeometry.PlanSideUBars(an, sideRanges, nSide, p.SideDia, p.StirrupDia, lapS, p.CoverSide, smsgs);
+                // uwaga Bartka 2026-10-28 (przekrój PLOT 344-346): tył UB SIDE W ŚRODKU tyłu pionowego U-bara tego końca (otulina + Ø U-bara)
+                // — jak we wsporniku (2026-10-23); bez pionowego U-bara — na otulinie
+                var sruns = BeamGeometry.PlanSideUBars(an, sideRanges, nSide, p.SideDia, p.StirrupDia, lapS, p.CoverSide, smsgs,
+                                                       backOffset: (sg, atLo) => EndCover(sg, atLo)
+                                                                                 + (uruns.Any(u => u.Seg == sg && u.AtLo == atLo) ? p.UBarDia : 0));
                 foreach (var m in smsgs) msg($"{name}: {m}");
                 foreach (var r in sruns)
                     // uwaga Bartka 2026-10-26 (detal GB): w detalu 1:25 opis UB SIDE jak pozostałe (za oknem detalu), nie tuż przy pręcie

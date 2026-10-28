@@ -183,7 +183,7 @@ namespace BricsCadRc.Core
             SetBeamDetailOverrides(tg);
 
             // ── strzemiona 4-leg: wysięg — 63 (poza płytą), strefa przy palu — 51 w obu kierunkach (decyzja Bartka 2026-10-21) ──
-            double cover = BeamGeometry.DefaultCoverSide;
+            // otuliny z planu (2026-10-28): wspornik 50, strefa przy palu 45
             foreach (var L in plan.Links)
             {
                 if (!string.IsNullOrEmpty(L.Note)) msg($"{name}: {L.Note}");
@@ -198,15 +198,17 @@ namespace BricsCadRc.Core
                     // pręty w poprzek osi wysięgu, rozstaw wzdłuż osi
                     double f = W(L.First), l = W(L.First + (L.Count - 1) * L.Step);
                     s0 = Math.Min(f, l); s1 = Math.Max(f, l);
-                    k0 = c0 + cover; k1Full = c1 - cover;
+                    k0 = c0 + L.CoverAcross; k1Full = c1 - L.CoverAcross;
                     barsX = !alongX;
                 }
                 else
                 {
                     // drugi kierunek (strefa przy palu): pręty wzdłuż osi na L0…L1, rozstaw w poprzek (t od boku c0)
                     s0 = c0 + L.First; s1 = c0 + L.First + (L.Count - 1) * L.Step;
+                    // otulina końca L0 / L1 (koniec strefy przy palu 45, koniec wspornika 50)
+                    bool l0Low = W(L.L0) <= W(L.L1);
                     double a0L = Math.Min(W(L.L0), W(L.L1)), a1L = Math.Max(W(L.L0), W(L.L1));
-                    k0 = a0L + cover; k1Full = a1L - cover;
+                    k0 = a0L + (l0Low ? L.CoverL0 : L.CoverL1); k1Full = a1L - (l0Low ? L.CoverL1 : L.CoverL0);
                     barsX = alongX;
                 }
                 double k1 = four ? k0 + L.B : k1Full;

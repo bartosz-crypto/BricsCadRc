@@ -275,7 +275,7 @@ namespace BricsCadRc.Tests
             ["hole-S1"]     = "cf9c88950c7911e95abdc2279fcd0bd737b7f83bf76131f6beccaccf1d420164",
             ["fitshape-S1"] = "523c042c8ab58617cc9f3cb2355ce1a0cb4f8331d411b5d7bcdeb16b64c5131d",
             ["beam-S1"]     = "a149fa28faf2ff9161213e18c76a50cb06500f0ee6911329f153574ca3734cca",
-            ["along-S1"]    = "a802e5c780f85315bab3461b04395d632f1eb3f383b583d6bfc81e3627be942a",   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
+            ["along-S1"]    = "8678b00dd6e36df96132571d86bf22a4001d903f94bbceaac11a4eaa707ab1be",   // 2026-10-28 (uwaga Bartka, PLOT 344-346): bez prętów bocznych SIDE nieprzeciętych linią cięcia (jedyna zmiana);   // 2026-10-14: UB 03 licuje się ze strzemieniem; kolejność poziomów siatki przy belce (górny pierwszy — te same kropki)
         };
 
         [TestCaseSource(nameof(Cases))]

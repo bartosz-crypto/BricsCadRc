@@ -161,7 +161,8 @@ namespace BricsCadRc.Core
                     brDist.UpgradeOpen();
                     barDist.Mark     = BarData.FormatMark(bar.Diameter, newPosNr, distSp, barDist.Count) + sfx;
                     barDist.Diameter = bar.Diameter;
-                    barDist.LengthA  = bar.LengthA;
+                    // długość w rzucie (2026-10-28): strzemię belki / wspornika — bok B (szerokość), inaczej A (jak dotąd)
+                    barDist.LengthA  = PlanLengthOf(bar);
                     BarBlockEngine.WriteXData(brDist, barDist);
                     toRebuild.Add((oid, barDist));
                 }
@@ -170,10 +171,21 @@ namespace BricsCadRc.Core
 
             foreach (var (id, bd) in toRebuild)
             {
-                BarBlockEngine.UpdateBarLength(db, id, bar.LengthA);
+                BarBlockEngine.UpdateBarLength(db, id, PlanLengthOf(bar));
                 AnnotationEngine.SyncAnnotation(db, bd);
             }
             return toRebuild.Count;
+        }
+
+        /// <summary>
+        /// Długość pręta w rzucie rozkładu: strzemię belki / wspornika (kształt 51 / 63, kod BL) — bok B (szerokość; A to wysokość),
+        /// inaczej A (błąd PLOT 344-346, 2026-10-28: zmiana B szablonu 500 → 510 dawała w rzucie 425).
+        /// </summary>
+        public static double PlanLengthOf(BarData bar)
+        {
+            string code = bar?.ShapeCode ?? "00";
+            if ((code == "51" || code == "63") && bar.LayerCode == BeamGeometry.CodeLinks && bar.LengthB > 0) return bar.LengthB;
+            return bar?.LengthA ?? 0;
         }
 
         /// <summary>Te same wymiary pręta (średnica, kształt, A–E) z tolerancją 1 mm.</summary>

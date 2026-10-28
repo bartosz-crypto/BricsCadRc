@@ -286,6 +286,17 @@ namespace BricsCadRc.Core
         /// w kierunku głównym (pręty wzdłuż osi) na całej długości (strefa przy palu + wysięg) co 120 dokładnie; strzemiona strefy przy palu
         /// w obu kierunkach — standardowo (co 150).</summary>
         public const double ShortReachMax = 600.0, ShortMainLinkSpacing = 120.0;
+        /// <summary>
+        /// Otuliny boczne (uwaga Bartka 2026-10-28, PLOT 344-346): wspornik (część wystająca) — 50 (jak GB); strefa przy palu / pogrubienie
+        /// w płycie — standardowa 40 + 5 zapasu (<see cref="BeamGeometry.DefaultCoverSide"/>).
+        /// </summary>
+        public const double OutsideCover = 50.0;
+        /// <summary>
+        /// Strzemiona strefy przy palu rozłożone wzdłuż strefy („wystające ze wspornika”, uwaga Bartka 2026-10-28): co 200, chyba że przy 200
+        /// wejdą mniej niż 3 — wtedy co 150 (<see cref="RootSingleLinkSpacing"/>).
+        /// </summary>
+        public const double RootAlongLinkSpacing = 200.0;
+        public const int RootAlongLinkMinCount = 3;
         /// <summary>Strefa wspornika bez strefy przy palu — w płycie na długość zakotwienia prętów prostych (magenta nakłada się na płytę).</summary>
         public const double NoRootExtension = StraightIntoSlab;
         /// <summary>
@@ -358,6 +369,11 @@ namespace BricsCadRc.Core
             /// </summary>
             public bool AlongAxis;
             public double L0, L1;
+            /// <summary>
+            /// Otuliny (2026-10-28): CoverAcross — od boków wspornika (pręty w poprzek osi); CoverL0 / CoverL1 — od końców L0 / L1 (pręty wzdłuż
+            /// osi). Wspornik 50, strefa przy palu 45.
+            /// </summary>
+            public double CoverAcross = BeamGeometry.DefaultCoverSide, CoverL0 = BeamGeometry.DefaultCoverSide, CoverL1 = BeamGeometry.DefaultCoverSide;
         }
 
         public sealed class UBarRun
@@ -412,7 +428,8 @@ namespace BricsCadRc.Core
                                     bool singleRootLink = false)
         {
             var pl = new Plan();
-            double cover = BeamGeometry.DefaultCoverSide;
+            // uwaga Bartka 2026-10-28: wspornik (wystający) — otulina 50, strefa przy palu (pogrubienie w płycie) — 40 + 5
+            double cover = OutsideCover, rootCover = BeamGeometry.DefaultCoverSide;
             var (dLink, sLink) = LinkFor(h);
             // kolumny prętów głównych w poprzek
             double off = cover + dLink + MainDia / 2.0;
@@ -427,15 +444,25 @@ namespace BricsCadRc.Core
             // lo…hi — zakres rozstawu; span — wymiar przekroju w poprzek prętów strzemienia (szerokość / długość strefy), ncol — pręty
             // wewnątrz; along — drugi kierunek (pręty wzdłuż osi na L0…L1)
             void Links(double lo, double hi, double hh, string where, string shape, double span, int ncol, bool along = false,
-                       double l0 = 0, double l1 = 0, double spacing = double.NaN, double drop = 0)
+                       double l0 = 0, double l1 = 0, double spacing = double.NaN, double drop = 0, double cv = BeamGeometry.DefaultCoverSide,
+                       double minCountFallback = double.NaN)
             {
                 var (d, s) = LinkFor(hh);
                 if (!double.IsNaN(spacing)) s = spacing;
+                // 2026-10-28: co 200, a gdy wejdą mniej niż 3 — co minCountFallback (150)
+                if (!double.IsNaN(minCountFallback))
+                {
+                    // liczba przy rozstawie dokładnie s (jak niżej: (n − 1) · krok / s + 1)
+                    var (_, st0, n0, _) = BeamGeometry.StirrupLayout(lo, hi, s, BeamGeometry.StirrupFirstOffset(d, BeamGeometry.LinkEndCover));
+                    int nExact = n0 > 1 ? (int)Math.Floor((n0 - 1) * st0 / s + 1e-9) + 1 : n0;
+                    if (nExact < RootAlongLinkMinCount) s = minCountFallback;
+                    spacing = s;
+                }
                 double a = BeamGeometry.StirrupHeightCovers(hh, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom);
                 if (drop > 0) a = Math.Floor((a - drop) / 5.0 + 1e-9) * 5.0;
                 // uwaga Bartka 2026-10-22 („te same zasady co w belkach”): Auto jak belki — H ≤ 375 dwa zachodzące (4-leg, B 370),
                 // wyżej 2-cięte na pełną szerokość (600 → B 510)
-                var legs = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, hh, span, cover, BeamGeometry.DefaultCoverBottom, d,
+                var legs = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, hh, span, cv, BeamGeometry.DefaultCoverBottom, d,
                                                      new[] { (ncol, MainDia) }, edgeBeam: true);
                 var (first, step, n, _) = BeamGeometry.StirrupLayout(lo, hi, s, BeamGeometry.StirrupFirstOffset(d, BeamGeometry.LinkEndCover));
                 if (!double.IsNaN(spacing) && n > 1)
@@ -448,9 +475,9 @@ namespace BricsCadRc.Core
                 if (a <= 0 || n <= 0) { pl.Messages.Add($"{where}: strzemiona pominięte (h = {hh:F0})."); return; }
                 pl.Links.Add(new LinkRun { S0 = lo, S1 = hi, First = first, Step = step, Count = n, Dia = d, A = a, Spacing = s,
                                            Legs = legs.Legs, B = legs.Legs == 4 ? legs.B4 : legs.BOuter, Note = $"{where}: {legs.Note}",
-                                           Shape = shape, AlongAxis = along, L0 = l0, L1 = l1 });
+                                           Shape = shape, AlongAxis = along, L0 = l0, L1 = l1, CoverAcross = cv, CoverL0 = cv, CoverL1 = cv });
             }
-            Links(0, reach, h, "wysięg", LinkShapeOutside, width, cols);
+            Links(0, reach, h, "wysięg", LinkShapeOutside, width, cols, cv: cover);
             bool root = rootLen > 1.0 && rootH > 0;
             if (root)
             {
@@ -458,11 +485,13 @@ namespace BricsCadRc.Core
                 // wspornik poziomy (decyzja Bartka 2026-10-23): jedna pozycja w obu kierunkach, A − 15, co 150
                 double rs = singleRootLink ? RootSingleLinkSpacing : double.NaN, rd = singleRootLink ? RootSingleLinkDrop : 0;
                 pl.SingleRootLink = singleRootLink;
-                Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols, spacing: rs, drop: rd);
+                // uwaga Bartka 2026-10-28: strzemiona rozłożone wzdłuż strefy — co 200 (mniej niż 3 → co 150), otulina 40 + 5
+                Links(-rootLen, 0, rootH, "strefa przy palu", LinkShapeInSlab, width, cols, spacing: RootAlongLinkSpacing, drop: rd,
+                      cv: rootCover, minCountFallback: RootSingleLinkSpacing);
                 double inner2 = rootLen - 2 * off;
                 int cols2 = inner2 <= 0 ? 1 : Math.Max(2, (int)Math.Ceiling(inner2 / MaxColumnSpacing - 1e-9) + 1);
                 Links(0, width, rootH, "strefa przy palu (drugi kierunek)",
-                      LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0, spacing: rs, drop: rd);
+                      LinkShapeInSlab, rootLen, cols2, along: true, l0: -rootLen, l1: 0, spacing: rs, drop: rd, cv: rootCover);
                 // uwaga Bartka 2026-10-22: oba kierunki tej samej wysokości kolidują — drugi kierunek niższy o Ø strzemienia, w dół do 5
                 // — drugi kierunek wchodzi w pierwszy: A − 2·Ø w dół do 5 (375: 290 − 24 = 266 → 265); jedna pozycja — bez zagnieżdżenia
                 var second = pl.Links.LastOrDefault();
@@ -481,7 +510,7 @@ namespace BricsCadRc.Core
             {
                 // krótki wspornik (uwaga Bartka 2026-10-26): zamiast U-barów H16 strzemiona zamknięte z prętami wzdłuż osi na całej długości
                 // (od końca strefy przy palu do końca wspornika), w środku strzemion wysięgu (A − 2·Ø w dół do 5 — jak B U-bara), co 120
-                double len = Math.Floor((rootLen + reach - 2 * cover) / 5.0 + 1e-9) * 5.0;
+                double len = Math.Floor((rootLen + reach - rootCover - cover) / 5.0 + 1e-9) * 5.0;   // koniec strefy 45, koniec wspornika 50
                 var (first, step, n, _) = BeamGeometry.StirrupLayout(0, width, ShortMainLinkSpacing,
                                                                      BeamGeometry.StirrupFirstOffset(dLink, BeamGeometry.LinkEndCover));
                 if (n > 1)
@@ -494,7 +523,7 @@ namespace BricsCadRc.Core
                 {
                     pl.Links.Add(new LinkRun { S0 = 0, S1 = width, First = first, Step = step, Count = n, Dia = dLink, A = bU, B = len,
                                                Spacing = ShortMainLinkSpacing, Legs = 2, Shape = LinkShapeInSlab, AlongAxis = true,
-                                               L0 = -rootLen, L1 = reach,
+                                               L0 = -rootLen, L1 = reach, CoverL0 = rootCover, CoverL1 = cover,
                                                Note = $"krótki wspornik (wysięg {reach:F0} ≤ {ShortReachMax:F0}): zamiast U-barów H{MainDia} " +
                                                       $"strzemiona wzdłuż osi na całej długości {len:F0}, co {ShortMainLinkSpacing:F0}" });
                     pl.ShortMainLinks = true;
@@ -504,7 +533,7 @@ namespace BricsCadRc.Core
             {
                 // tył U przy końcu strefy przy palu — W ŚRODKU strzemion drugiego kierunku (ich ramię przy licu końca strefy):
                 // otulina + Ø strzemienia strefy (bez kolizji, zasada 2026-10-22)
-                double backIn = -rootLen + cover + LinkFor(rootH).Dia;
+                double backIn = -rootLen + rootCover + LinkFor(rootH).Dia;
                 double span = backOut - backIn;
                 double arm = BeamGeometry.Ceil25((span + lap) / 2.0);
                 if (arm <= MaxUBarArm + 0.5)
@@ -555,7 +584,7 @@ namespace BricsCadRc.Core
                 double sOut = backOut - MainDia;
                 if (root)
                 {
-                    double backIn = -rootLen + cover + LinkFor(rootH).Dia + MainDia;   // UB SIDE — w środku strzemion strefy i U-bara
+                    double backIn = -rootLen + rootCover + LinkFor(rootH).Dia + MainDia;   // UB SIDE — w środku strzemion strefy i U-bara
                     double span = sOut - backIn;
                     double arm = BeamGeometry.Ceil25((span + lapS) / 2.0);
                     if (arm <= MaxUBarArm + 0.5)

@@ -387,7 +387,10 @@ namespace BricsCadRc.Core
                             // strzemiona 4-cięte (decyzja użytkownika 2026-10-11): CountDisplay = 2 × Count → Layers 2 (dwa strzemiona w widoku);
                             // 2-cięte (bez CountDisplay) — Layers 1, jak dotąd
                             if (bar.LayerCode == BeamGeometry.CodeLinks && bar.Count > 0 && bar.EffectiveCount == 2 * bar.Count)
+                            {
                                 last.Layers = 2;
+                                last.PairShift = Math.Max(0, bar.PairShift);
+                            }
                             // K3: pionowe U-bary (BU) — bez drugiego ramienia w poprzek (przekrój U-barów pionowych: krok K6)
                             if (last.ShapeCode == "21" && bar.LayerCode != BeamGeometry.CodeUBar
                                 && last.SourceDims != null && last.SourceDims.Length > 1 && last.SourceDims[1] > last.Diameter)
@@ -478,7 +481,8 @@ namespace BricsCadRc.Core
                                 inp.Beams.Add(new SectionPlanner.BeamBand
                                 {
                                     Handle = g.handle, S0 = a, S1 = b, Height = gp.Height, TopDrop = 0, Cantilever = true, PileCap = true,
-                                    NibWidth = 0, NibHeight = 0, Cover = gp.CoverSide, CoverBottom = gp.CoverBottom, StirrupDia = dS,
+                                    // narożnik w płycie (pogrubienie) — otulina boczna 40 + 5 (uwaga Bartka 2026-10-28)
+                                    NibWidth = 0, NibHeight = 0, Cover = BeamGeometry.DefaultCoverSide, CoverBottom = gp.CoverBottom, StirrupDia = dS,
                                     StirrupA = BeamGeometry.StirrupHeightCovers(gp.Height, gp.CoverTop, gp.CoverBottom),
                                     Params = $"GBCORNER {r.X1 - r.X0:0}x{r.Y1 - r.Y0:0} {gp.Height:0}THK"
                                 });
@@ -534,7 +538,7 @@ namespace BricsCadRc.Core
                                 inp.Beams.Add(new SectionPlanner.BeamBand
                                 {
                                     Handle = cr.handle, S0 = a, S1 = b, Height = drop + g.H, TopDrop = drop, Cantilever = true, TocText = cr.data.Toc > 0 ? cr.data.Toc.ToString("0.000", CultureInfo.InvariantCulture) : null,
-                                    NibWidth = 0, NibHeight = 0, StirrupDia = dC,
+                                    NibWidth = 0, NibHeight = 0, StirrupDia = dC, Cover = CantileverRules.OutsideCover,   // wspornik — 50 (2026-10-28)
                                     StirrupA = BeamGeometry.StirrupHeightCovers(g.H, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom),
                                     Params = $"CANT {g.Width:0}x{g.H:0} TOC-{drop:0}"
                                 });

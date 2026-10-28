@@ -89,6 +89,8 @@ namespace BricsCadRc.Core
             public double SkewStart, SkewEnd;
             /// <summary>U-bar (kształt 21): drugie ramię w odległości PairOffset (oś–oś, ze znakiem) wzdłuż osi rozkładu; 0 = brak.</summary>
             public double PairOffset;
+            /// <summary>Strzemiona 4-cięte: przesunięcie drugiego strzemienia wzdłuż pręta (BarData.PairShift); 0 = brak.</summary>
+            public double PairShift;
             /// <summary>E4b: pręty boczne (BS) — liczba prętów na bok (poziomy między prętami dołu i góry); 1 = jeden poziom.
             /// Strzemiona BL (decyzja użytkownika 2026-10-11): 2 = 4-cięte — dwa identyczne strzemiona przy obu licach (rozkład na całą
             /// szerokość, pręt wzorcowy węższy); 1 = jedno strzemię (jak dotąd).</summary>
@@ -916,7 +918,9 @@ namespace BricsCadRc.Core
             if (!b.Src.Cantilever || !b.Src.PileCap) return 0;
             if (!b.LinkAByDir.TryGetValue(true, out double ax) || !b.LinkAByDir.TryGetValue(false, out double ay)) return 0;
             if (Math.Abs(ax - ay) > 0.5) return 0;
-            double drop = b.LinkA - ax;
+            // uwaga Bartka 2026-10-28 (PLOT 344-346, przekroje): strzemiona z prętami wzdłuż X — przy WIERZCHU, otulina górna 40 (A1),
+            // pozostałe przy spodzie; podniesienie = H − 40 − A − otulina dolna (strefa przy palu 375: 15; narożnik GB 525 / 425: 10)
+            double drop = b.H - BeamGeometry.CoverTopA1 - ax - b.Src.CoverBottom;
             return drop > 0.5 && drop <= CantileverRules.RootSingleLinkDrop + 0.5 ? drop : 0;
         }
 
@@ -1228,7 +1232,11 @@ namespace BricsCadRc.Core
                     for (int i = 0; i < n; i++)
                     {
                         double sk = Skew(d, i, n);
-                        if (c < p0 + sk - 1.0 || c > p0 + sk + d.LengthA + 1.0) continue;
+                        // strzemiona 4-cięte (2 zachodzące): drugie przesunięte wzdłuż pręta o PairShift (2026-10-28 — przekrój PLOT 344-346:
+                        // linia cięcia tylko przez drugie strzemię dawała brak kropek)
+                        bool onFirst = c >= p0 + sk - 1.0 && c <= p0 + sk + d.LengthA + 1.0;
+                        bool onSecond = d.PairShift > 0.5 && c >= p0 + sk + d.PairShift - 1.0 && c <= p0 + sk + d.PairShift + d.LengthA + 1.0;
+                        if (!onFirst && !onSecond) continue;
                         var spos = new List<double> { q0 + i * sp };
                         if (Math.Abs(d.PairOffset) > 1e-6) spos.Add(q0 + i * sp + d.PairOffset);
                         foreach (double s in spos)
@@ -1316,6 +1324,8 @@ namespace BricsCadRc.Core
                     int ib = -1; double best = double.MaxValue;
                     for (int i = 0; i < n; i++) { double dd = Math.Abs(q0 + i * sp - c); if (dd < best) { best = dd; ib = i; } }
                     double tol = Math.Max(n > 1 ? sp / 2.0 : d.Spacing / 2.0, 100.0) + 0.5;
+                    // uwaga Bartka 2026-10-28 (PLOT 344-346): pręty boczne SIDE leżą przy licach — tylko gdy linia cięcia je przecina
+                    if (d.LayerCode == BeamGeometry.CodeSide) tol = d.Diameter / 2.0 + 1.0;
                     if (ib < 0 || best > tol) continue;
                     double a = (d.AlongX ? d.X0 : d.Y0) + Skew(d, ib, n), bEnd = a + d.LengthA;
                     if (bEnd < s0 - 1.0 || a > s1 + 1.0) continue;
@@ -1367,6 +1377,21 @@ namespace BricsCadRc.Core
                         double inset = NestInset(band, d);
                         double lift = SingleLinkLift(band, d);
                         double vBot = band.VLinkBot + inset + lift + hl, vTop = band.VLinkTop - inset + lift - hl;
+                        // krótki wspornik (uwaga Bartka 2026-10-28, PLOT 344-346 przekrój): strzemię wzdłuż osi przez strefę przy palu i wspornik —
+                        // W ŚRODKU strzemion wspornika (dolne ramię na ich dolnym ramieniu), nie w środku strefy przy palu
+                        if (band.Src.Cantilever)
+                        {
+                            double ua = Math.Min(U(a), U(bEnd)), ub = Math.Max(U(a), U(bEnd));
+                            double Ov(BandU x) => Math.Min(ub, x.U1) - Math.Max(ua, x.U0);
+                            var cb = bands.FirstOrDefault(x => x.Src.Cantilever && !x.Src.PileCap && x.Src.Handle == band.Src.Handle && Ov(x) > 50.0);
+                            bool viaRoot = bands.Any(x => x.Src.Cantilever && x.Src.PileCap && x.Src.Handle == band.Src.Handle && Ov(x) > 50.0);
+                            double ownA = d.SourceDims != null && d.SourceDims.Length > 0 && d.SourceDims[0] > 0 ? d.SourceDims[0] : 0;
+                            if (cb != null && viaRoot && ownA > 0 && ownA < cb.LinkA - 0.5)
+                            {
+                                vBot = cb.VLinkBot + cb.LinkDia + hl;
+                                vTop = vBot + ownA - 2 * hl;
+                            }
+                        }
                         List<(double U, double V)> axis;
                         if (d.ShapeLocal != null && d.ShapeLocal.Count >= 2)
                         {

@@ -264,7 +264,7 @@ namespace BricsCadRc.Core
 
         public static ObjectId PlaceNoteLeader(Database db, IList<Point3d> arrowTips, Point3d textPt,
                                                string text, double textHeight = 125.0, short colorIndex = 2,
-                                               string textStyle = null, string layer = null)
+                                               string textStyle = null, string layer = null, Vector3d? dogleg = null)
         {
             if (arrowTips == null || arrowTips.Count == 0) return ObjectId.Null;
             LayerManager.EnsureLayersExist(db);
@@ -302,6 +302,10 @@ namespace BricsCadRc.Core
                 ml.AddFirstVertex(lni, tip);
                 ml.AddLastVertex(lni, textPt);
             }
+            // kierunek półki (tekst po stronie półki) — np. odnośnik detalu zawsze z tekstem na prawo (2026-10-28)
+            if (dogleg.HasValue)
+                try { ml.SetDogleg(li, dogleg.Value); }
+                catch (System.Exception ex) { Log.Error("SingleBarEngine.PlaceNoteLeader.Dogleg", ex); }
 
             space.AppendEntity(ml);
             tr.AddNewlyCreatedDBObject(ml, true);

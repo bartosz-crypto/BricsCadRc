@@ -1713,6 +1713,25 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
     i drukowania) — zgłoszenie „nie mogę zapisać” po Prepare GA. Podgląd odnośnika (`LeaderTransientDrawer`): bez `Linetype` na obiekcie
     chwilowym (eNoDatabase w logu).
 
+### Poprawki 2026-10-28 (fix115) — przekroje i detale PLOT 344-346 wg poprawek Bartka (344-346-poprawione.dwg)
+- **Otuliny boczne:** wspornik (część wystająca) — 50 (`CantileverRules.OutsideCover`: strzemiona wysięgu, kolumny prętów, tył U-bara
+  na końcu, pręty boczne); strefa przy palu / pogrubienie w płycie — 40 + 5 (`DefaultCoverSide`); `LinkRun.CoverAcross / CoverL0 / CoverL1`
+  (strzemię wzdłuż osi krótkiego wspornika: koniec strefy 45, koniec wspornika 50). GB: narożnik w płycie (strzemiona „4 H12-12-150 LINKS”
+  w obu kierunkach) — 45 (B 510), strzemiona 63 poza płytą — bez zmian (50); koniec GB w narożniku w płycie — otulina czołowa 45 (pionowy
+  U-bar, `PlanVerticalUBars(endCover)`).
+- **UB SIDE:** tył W ŚRODKU tyłu pionowego U-bara tego końca (otulina + Ø U-bara, `PlanSideUBars(backOffset)`) — wszystkie belki, jak wspornik.
+- **Strzemiona strefy przy palu rozłożone wzdłuż strefy** („2x3 H12-24-200 LINKS”): co 200; gdy przy 200 wejdą mniej niż 3 — co 150
+  (`RootAlongLinkSpacing`, `RootAlongLinkMinCount`); w poprzek — co 150 jak dotąd.
+- **Przekroje:** strefa przy palu i narożnik GB (jedna pozycja w obu kierunkach) — strzemiona z prętami wzdłuż X przy wierzchu, otulina
+  górna 40 (`SingleRootLinkDrop` = H − 40 − A − otulina dolna: 375 → 15, 525 / 425 → 10), pozostałe przy spodzie; strzemię wzdłuż osi
+  krótkiego wspornika — w środku strzemion wspornika (dolne ramię na ich dolnym ramieniu; dawniej w środku strefy, 15 pod wierzchem);
+  strzemiona 4-cięte — kropki także, gdy linia cięcia przecina tylko drugie (przesunięte o `PairShift`) strzemię; pręty boczne SIDE
+  w cięciu równoległym — tylko gdy linia cięcia je przecina (złoty along-S1 zmieniony tylko o to).
+- **Błąd długości w rzucie strzemion belki / wspornika:** po zmianie B szablonu (500 → 510) albo RC_EDIT_DISTRIBUTION (Auto) rozkład
+  dostawał A (wysokość 425 / 275) — teraz bok B (`PositionReconciler.PlanLengthOf`, `BarCommands.GetViewLength` dla 51 / 63 kodu BL).
+- **Odnośnik „DETAIL 'n'” na rzucie:** zawsze tekst na prawo od półki (`PlaceNoteLeader(dogleg)`); przy lewym boku ramki punkt półki
+  odsunięty w lewo o długość tekstu (DETAIL '3' rysował się lustrzanie).
+
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach
    plan recenzuje ChatGPT: `scripts/recenzja-gpt.ps1 -Plan <plik>`.

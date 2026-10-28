@@ -926,9 +926,15 @@ namespace BricsCadRc.Core
                     }
                     var side = cand.OrderBy(c => c.pri).ThenByDescending(c => c.len).FirstOrDefault();
                     if (cand.Count == 0) side = (0, 0, new Point2d(fp[0].X, fp[0].Y), new Vector2d(1, 1));
-                    var lid = SingleBarEngine.PlaceNoteLeader(db, new[] { new Point3d(side.tip.X, side.tip.Y, 0) },
-                                                              new Point3d(side.tip.X + 500 * side.dir.X, side.tip.Y + 500 * side.dir.Y, 0),
-                                                              $"DETAIL '{tg.Number}'", BeamDetailRefHeight, 2, NoteTextStyle, BeamStore.DetailLayer);
+                    // uwaga Bartka 2026-10-28 (PLOT 344-346, DETAIL '3'): odnośnik zawsze jak DETAIL '1' / '2' — tekst NA PRAWO od półki;
+                    // przy boku lewym ramki punkt półki odsunięty w lewo o długość tekstu (tekst nie wchodzi na ramkę)
+                    string refText = $"DETAIL '{tg.Number}'";
+                    var textPt = new Point3d(side.tip.X + 500 * side.dir.X, side.tip.Y + 500 * side.dir.Y, 0);
+                    if (side.dir.X < -0.5)
+                        textPt = new Point3d(side.tip.X - 500 - 0.5 * BeamDetailRefHeight * refText.Length - 100, side.tip.Y + 500 * side.dir.Y, 0);
+                    var lid = SingleBarEngine.PlaceNoteLeader(db, new[] { new Point3d(side.tip.X, side.tip.Y, 0) }, textPt,
+                                                              refText, BeamDetailRefHeight, 2, NoteTextStyle, BeamStore.DetailLayer,
+                                                              dogleg: Vector3d.XAxis);
                     using (var tr = db.TransactionManager.StartTransaction())
                     {
                         foreach (var id in new[] { fid, lid })
