@@ -1703,6 +1703,9 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   - detal belki / wspornika (`PrepareBeamDetail`): przy niewidocznym obrysie linie betonu nie z obrysu, tylko z rysunku (`OtherPlanLines`
     bierze obrys / pustki GA, pomija obiekty niewidoczne).
   Płyty pojedyncze (bez szeregu) — bez zmian.
+  - (fix112) warstwa `SD-PILED-RAFT-GA`: rekord najpierw dodany do tabeli warstw, potem kolor / rodzaj / grubość linii (bez przezroczystości
+    i drukowania) — zgłoszenie „nie mogę zapisać” po Prepare GA. Podgląd odnośnika (`LeaderTransientDrawer`): bez `Linetype` na obiekcie
+    chwilowym (eNoDatabase w logu).
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

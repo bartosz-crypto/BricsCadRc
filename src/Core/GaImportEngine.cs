@@ -1551,15 +1551,21 @@ namespace BricsCadRc.Core
             string name = SlabLayer + DisplaySuffix;
             var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
             if (lt.Has(name)) return name;
+            // (2026-10-28) najpierw dodanie do tabeli, potem właściwości (rekord w bazie); bez kopiowania przezroczystości
             var rec = new LayerTableRecord { Name = name };
-            if (lt.Has(srcLayer) && tr.GetObject(lt[srcLayer], OpenMode.ForRead) is LayerTableRecord sl)
-            {
-                rec.Color = sl.Color; rec.LinetypeObjectId = sl.LinetypeObjectId; rec.LineWeight = sl.LineWeight;
-                rec.IsPlottable = sl.IsPlottable; rec.Transparency = sl.Transparency;
-            }
             lt.UpgradeOpen();
             lt.Add(rec);
             tr.AddNewlyCreatedDBObject(rec, true);
+            try
+            {
+                if (lt.Has(srcLayer) && tr.GetObject(lt[srcLayer], OpenMode.ForRead) is LayerTableRecord sl)
+                {
+                    rec.Color = sl.Color;
+                    if (!sl.LinetypeObjectId.IsNull) rec.LinetypeObjectId = sl.LinetypeObjectId;
+                    rec.LineWeight = sl.LineWeight;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("GaImport.EnsureDisplayLayer", ex); }
             return name;
         }
 
@@ -1570,7 +1576,7 @@ namespace BricsCadRc.Core
             {
                 if (!(tr.GetObject(oldLayerId, OpenMode.ForRead) is LayerTableRecord ol)) return;
                 if (e.Color.IsByLayer) e.Color = ol.Color;
-                if (e.Linetype.Equals("BYLAYER", StringComparison.OrdinalIgnoreCase)) e.LinetypeId = ol.LinetypeObjectId;
+                if (e.Linetype.Equals("BYLAYER", StringComparison.OrdinalIgnoreCase) && !ol.LinetypeObjectId.IsNull) e.LinetypeId = ol.LinetypeObjectId;
                 if (e.LineWeight == LineWeight.ByLayer) e.LineWeight = ol.LineWeight;
             }
             catch (System.Exception ex) { Log.Error("GaImport.KeepLayerLook", ex); }

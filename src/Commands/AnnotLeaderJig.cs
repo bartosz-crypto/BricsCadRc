@@ -957,8 +957,7 @@ namespace BricsCadRc.Commands
             {
                 var seg = new Line(points[i], points[i + 1])
                 {
-                    ColorIndex = 2,
-                    Linetype   = "Continuous"
+                    ColorIndex = 2   // bez Linetype — obiekt chwilowy bez bazy (eNoDatabase, log 2026-10-28)
                 };
                 _ents.Add(seg);
                 _tm.AddTransient(seg, TransientDrawingMode.DirectShortTerm, 128, _viewports);
@@ -968,8 +967,7 @@ namespace BricsCadRc.Commands
             {
                 var rubber = new Line(points[points.Count - 1], cursor)
                 {
-                    ColorIndex = 3,
-                    Linetype   = "Continuous"
+                    ColorIndex = 3   // bez Linetype — obiekt chwilowy bez bazy (eNoDatabase, log 2026-10-28)
                 };
                 _ents.Add(rubber);
                 _tm.AddTransient(rubber, TransientDrawingMode.DirectShortTerm, 128, _viewports);
