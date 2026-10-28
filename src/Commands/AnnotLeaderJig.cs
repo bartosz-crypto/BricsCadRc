@@ -418,6 +418,17 @@ namespace BricsCadRc.Commands
             try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelDirectionJig.WorldDraw", logEx); }
         }
 
+        /// <summary>
+        /// ETAP 3 (uwaga Bartka 2026-10-28): po kliknięciu kierunku zostaje sama linia rozkładu z kropkami (bez strzałki kierunku) —
+        /// widać, gdzie na rozkładzie staje stopa leadera. Usuwane przez ClearTransients po ETAP 3.
+        /// </summary>
+        public void ShowDistLineOnly()
+        {
+            ClearTransients();
+            DrawDistLine(TransientManager.CurrentTransientManager, new IntegerCollection());
+            try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("AnnotLabelDirectionJig.ShowDistLineOnly", logEx); }
+        }
+
         void DrawDistLine(TransientManager tm, IntegerCollection vpIds)
         {
             if (_horizontal)

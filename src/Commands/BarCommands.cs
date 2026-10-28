@@ -793,10 +793,14 @@ namespace BricsCadRc.Commands
                     horizontal, AnnotationEngine.DotRadius, jigCount, finalSpacing,
                     sourceBar.Angle, jigRotCenter);
                 var res2 = ed.Drag(jig2);
-                jig2.ClearTransients();
+                if (res2.Status != PromptStatus.OK) jig2.ClearTransients();
                 if (res2.Status == PromptStatus.Cancel) return false;
                 if (res2.Status == PromptStatus.OK)
                 {
+                    // uwaga Bartka 2026-10-28: w ETAP 3 linia rozkładu z kropkami zostaje na ekranie (jak w ETAP 2)
+                    jig2.ShowDistLineOnly();
+                    try
+                    {
                     var direction = jig2.Direction;
                     kinkPt           = jig2.KinkPt;
                     leaderHorizontal = horizontal
@@ -829,11 +833,12 @@ namespace BricsCadRc.Commands
                             bool slideFoot = leaderWcsPts.Count == 1 && !obliqueLeader && Math.Abs(sourceBar.Angle) < 1e-6;
                             Point3d Foot(Point3d c)
                             {
-                                var k0 = leaderWcsPts[0];
-                                double lo = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X, hi = lo + barsSpan;   // jak kinkPt (środek = MinPoint + span/2)
+                                // 2026-10-28: stopa NA linii rozkładu (distCenter z ETAP 1) — wcześniej brana z kinkPt ETAP 2 (koniec odcinka
+                                // kierunku, poza linią) → skośny pierwszy odcinek i „obracanie” opisu przy gripie
+                                double lo = minFixed, hi = lo + barsSpan;   // jak distCenter (środek = minFixed + span/2)
                                 return horizontal
-                                    ? new Point3d(k0.X, Math.Max(lo, Math.Min(hi, c.Y)), 0)    // X-bars: linia rozkładu pionowa
-                                    : new Point3d(Math.Max(lo, Math.Min(hi, c.X)), k0.Y, 0);   // Y-bars: linia rozkładu pozioma
+                                    ? new Point3d(distCenter.X, Math.Max(lo, Math.Min(hi, c.Y)), 0)    // X-bars: linia rozkładu pionowa
+                                    : new Point3d(Math.Max(lo, Math.Min(hi, c.X)), distCenter.Y, 0);   // Y-bars: linia rozkładu pozioma
                             }
                             if (slideFoot) ptOpts.UseBasePoint = false;   // gumka BricsCAD od stałego punktu — zamiast niej podgląd ze stopą
                             PointMonitorEventHandler monitor = (s, ev) =>
@@ -891,6 +896,8 @@ namespace BricsCadRc.Commands
                         ? new Point3d(0, sourceBar.BarsSpan / 2.0, 0)   // X-bars: dist line wzdłuż Y
                         : new Point3d(sourceBar.BarsSpan / 2.0, 0, 0);  // Y-bars: dist line wzdłuż X
                     localPts.Insert(0, distLinePt);
+                    // stopa w środku rozkładu (= distLinePt) — bez zerowego odcinka (2026-10-28)
+                    if (localPts.Count > 2 && (localPts[1] - localPts[0]).Length < 1e-3) localPts.RemoveAt(1);
 
                     // Detekcja "zawracania" — usuń punkty pośrednie które tworzą kąt ostry
                     // (obrócony ukośnie: punkt [1] to koniec ramienia, a nie załamanie przy środku — nie usuwaj)
@@ -919,6 +926,8 @@ namespace BricsCadRc.Commands
                             leaderUp = lastMsDir.Y >= 0;
                     }
                     // else: Enter od razu → zachowaj leaderHorizontal/leaderRight/leaderUp z jig2
+                    }
+                    finally { jig2.ClearTransients(); }
                 }
                 else
                 {
