@@ -501,8 +501,10 @@ namespace BricsCadRc.Core
                     if (m != null)
                     {
                         copyOf = m.Value.zone; nr = m.Value.nr;
-                        bool sameSlot = shift != null && XLink.Same(oldMaster, copyOf);
-                        if (!sameSlot) shift = CopySlotShift(db, m.Value, zbHandle);
+                        // 2026-10-28: dotychczasowe miejsce kopii — tylko gdy nie nachodzi na detal główny (wspornik: kopia lądowała na nim)
+                        bool sameSlot = shift != null && XLink.Same(oldMaster, copyOf)
+                                        && !Overlaps(BeamDetailRules.Bbox(zoneT).Offset(shift.Value.X, shift.Value.Y), m.Value.frame);
+                        if (!sameSlot) shift = CopySlotShift(db, m.Value, zbHandle, zoneT);
                         msg($"{name}: identyczny element jak w DETAIL '{nr}' (strefa {copyOf}) — ten sam detal, rozkłady jako kopia nad detalem.");
                     }
                     else if (!string.IsNullOrEmpty(oldMaster)) shift = null;   // detal główny zniknął — własny detal w nowym miejscu
@@ -674,7 +676,7 @@ namespace BricsCadRc.Core
         /// Detal główny identycznego elementu (uwaga Bartka 2026-10-23): ANCHOR innej, istniejącej strefy z tym samym podpisem [5] i bez [6]
         /// (sam jest główny). Null — brak.
         /// </summary>
-        private static (string zone, int nr, Vector2d shift, Extents3d frame)? FindDetailMaster(Database db, string signature, string ownZone)
+        private static (string zone, int nr, Vector2d shift, Extents3d frame, Point2d anchorMin)? FindDetailMaster(Database db, string signature, string ownZone)
         {
             try
             {
@@ -697,7 +699,8 @@ namespace BricsCadRc.Core
                     foreach (var (fid, _, role) in BeamStore.FindDetail(tr, db, d.Value.zone))
                         if (role == BeamStore.RoleFrame && tr.GetObject(fid, OpenMode.ForRead) is Entity fe) { fr = fe.GeometricExtents; break; }
                     tr.Commit();
-                    return (d.Value.zone, d.Value.nr, new Vector2d(sh.X, sh.Y), fr);
+                    var ab = BeamDetailRules.Bbox(av);
+                    return (d.Value.zone, d.Value.nr, new Vector2d(sh.X, sh.Y), fr, new Point2d(ab.X0, ab.Y0));
                 }
                 tr.Commit();
             }
@@ -709,7 +712,8 @@ namespace BricsCadRc.Core
         /// Miejsce kopii rozkładów nad detalem głównym: przesunięcie detalu głównego + k · (wysokość ramki + 2 ramiona opisów + 1500) w górę,
         /// najmniejsze k ≥ 1 niezajęte przez inne kopie tego detalu.
         /// </summary>
-        private static (double X, double Y) CopySlotShift(Database db, (string zone, int nr, Vector2d shift, Extents3d frame) m, string ownZone)
+        private static (double X, double Y) CopySlotShift(Database db, (string zone, int nr, Vector2d shift, Extents3d frame, Point2d anchorMin) m,
+                                                          string ownZone, IList<(double X, double Y)> ownZoneT)
         {
             double pitch = (m.frame.MaxPoint.Y - m.frame.MinPoint.Y) + 2 * BeamDetailLeaderArm * BeamDetailAnnotScale + 1500.0;
             var used = new HashSet<int>();
@@ -732,8 +736,14 @@ namespace BricsCadRc.Core
             catch (System.Exception ex) { Log.Error("AutoRebar.CopySlotShift", ex); }
             int k = 1;
             while (used.Contains(k)) k++;
-            return (m.shift.X, m.shift.Y + k * pitch);
+            // 2026-10-28 (wspornik — kopia na detalu głównym): przesunięcie liczone od WŁASNEJ strefy do ANCHOR-a detalu głównego
+            // (dawniej przesunięcie detalu głównego — poprawne tylko dla strefy w tym samym miejscu co strefa główna)
+            var zb = BeamDetailRules.Bbox(ownZoneT);
+            return (m.anchorMin.X - zb.X0, m.anchorMin.Y - zb.Y0 + k * pitch);
         }
+
+        private static bool Overlaps(BeamDetailRules.Rect r, Extents3d e)
+            => r.X1 >= e.MinPoint.X && r.X0 <= e.MaxPoint.X && r.Y1 >= e.MinPoint.Y && r.Y0 <= e.MaxPoint.Y;
 
         /// <summary>
         /// Tytuł detalu belki / wspornika: „DETAIL 'n'” (podkreślony), przy kilku identycznych elementach „{count}No.” (podkreślony —

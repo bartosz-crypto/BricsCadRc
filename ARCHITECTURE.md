@@ -478,6 +478,9 @@ Ogólne:
   Podgląd kropek w jigach opisu do 200 prętów (`JigPreview.MaxDots`, dawniej 20 — podgląd „w połowie rozkładu”). ETAP 3 odnośnika
   (wszystkie rozkłady): przed pierwszym kliknięciem stopa na linii rozkładu idzie za kursorem (prostopadle, w granicach rozkładu),
   bez gumki BricsCAD od stałego punktu; rozkład obrócony / ukośny — bez zmian.
+  Poprawka 2026-10-28 (fix113): stopa liczona NA linii rozkładu (distCenter z ETAP 1, zakres minFixed..+span) — wcześniej z kinkPt ETAP 2
+  (poza linią) → skośny pierwszy odcinek, grip końca opisu „obracał” opis zamiast przesuwać wzdłuż / w poprzek; stopa w środku — bez
+  zerowego odcinka. W ETAP 3 zostaje podgląd linii rozkładu z kropkami (`AnnotLabelDirectionJig.ShowDistLineOnly`, czyszczony po ETAP 3).
 - **RC_EDIT_LABEL — liczba „kxn” (decyzja Bartka 2026-10-23):** wpis „2x5” (też 2X5, 2×5, 2*5) → opis „2x5”, BBS liczy 10
   (CountDisplay = 10, `CountMult` = 2 — XData rozkładu [34], opisu [24]; `BarLabelRules.ParseCountInput`); krotność zostaje po gripie.
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**
@@ -1627,6 +1630,9 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   kolejny o tym samym podpisie — na rzucie ramka i „DETAIL ’n’” detalu głównego, jego rozkłady (cały detal bez tytułu) nad detalem
   głównym w miejscu k · (ramka + 2 ramiona opisów + 1500), wokół kopii ramka z przekątnymi (rola COPYBOX, odświeżana po każdym
   generowaniu). BBS liczy kopie (zwykłe rozkłady). Tylko przesunięcie — obrót / odbicie = inny detal.
+  Poprawka 2026-10-28 (fix114, wspornik — kopia na detalu głównym): miejsce kopii = ANCHOR detalu głównego − obwiednia WŁASNEJ strefy
+  + k · skok (dawniej przesunięcie detalu głównego — złe, gdy strefa kopii leży gdzie indziej niż strefa główna); dotychczasowe miejsce
+  kopii zostaje tylko, gdy nie nachodzi na ramkę detalu głównego.
 - **Uwagi Bartka 2026-10-23 (cd. 2):** belka wewnętrzna vs krawędziowa z nibem — inne zbrojenie (wzór): `TerraceRules.PlanGbLinks` —
   narożnik = strefa ∩ linia uskoku; na całą szerokość (wewnętrzna) — strzemiona GB (63) przerwane (35 co 200 na 6920), węższy (krawędziowa:
   nib przy krawędzi płyty w narożu, 600 × 465) — strzemiona GB przez całą belkę (41 co 200); w narożniku 51 w obu kierunkach co 150
