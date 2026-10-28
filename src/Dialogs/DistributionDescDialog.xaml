@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     x:Class="BricsCadRc.Dialogs.DistributionDescDialog"
     Title="Reinforcement description"
-    Width="420" Height="320"
+    Width="420" SizeToContent="Height"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterScreen"
     Background="#F0F0F0">
@@ -40,6 +40,8 @@
             <RowDefinition Height="6"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="6"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="10"/>
             <RowDefinition Height="Auto"/>
@@ -85,8 +87,19 @@
                      TextChanged="Input_Changed"/>
         </Grid>
 
+        <!-- Widoczność prętów (RC_EDIT_DISTRIBUTION → „Dodaj opis rozkładu”, prośba Bartka 2026-10-28) — jak RC_EDIT_LABEL -->
+        <StackPanel Grid.Row="8" x:Name="VisibilityPanel" Visibility="Collapsed">
+            <TextBlock Text="Widoczność prętów:" FontWeight="Bold" Margin="0,0,0,4"/>
+            <WrapPanel>
+                <RadioButton x:Name="RbManual"    Content="Manualny"         GroupName="vis" IsChecked="True"/>
+                <RadioButton x:Name="RbAll"       Content="Wszystkie"        GroupName="vis"/>
+                <RadioButton x:Name="RbMiddle"    Content="Środkowy"         GroupName="vis"/>
+                <RadioButton x:Name="RbFirstLast" Content="Pierwszy+Ostatni" GroupName="vis"/>
+            </WrapPanel>
+        </StackPanel>
+
         <!-- Przyciski -->
-        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="10" Orientation="Horizontal" HorizontalAlignment="Right"
                     FlowDirection="RightToLeft" Margin="0,4,0,0">
             <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"/>
             <Button Content="OK" Click="OK_Click"

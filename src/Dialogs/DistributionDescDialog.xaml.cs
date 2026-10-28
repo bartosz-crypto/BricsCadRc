@@ -17,10 +17,16 @@ namespace BricsCadRc.Dialogs
         public int    BarCount   { get; private set; }
         public double BarSpacing { get; private set; }
         public string Suffix     { get; private set; }
+        /// <summary>Widoczność prętów (tylko gdy <c>askVisibility</c>; domyślnie Manualny — prośba Bartka 2026-10-28).</summary>
+        public BarVisibilityMode ResultVisibility { get; private set; } = BarVisibilityMode.Manual;
+        public bool AskVisibility { get; }
 
-        public DistributionDescDialog(BarData sourceBar, int autoCount, double autoSpacing, string baseMark, string initialSuffix = "")
+        public DistributionDescDialog(BarData sourceBar, int autoCount, double autoSpacing, string baseMark, string initialSuffix = "",
+                                      bool askVisibility = false)
         {
             InitializeComponent();
+            AskVisibility = askVisibility;
+            if (askVisibility) VisibilityPanel.Visibility = System.Windows.Visibility.Visible;
             _sourceBar = sourceBar;
             _diameter  = sourceBar.Diameter;
             _posNr     = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
@@ -69,6 +75,10 @@ namespace BricsCadRc.Dialogs
             BarCount   = count;
             BarSpacing = spacing;
             Suffix     = SuffixBox.Text.Trim();
+            ResultVisibility = RbAll.IsChecked == true ? BarVisibilityMode.All
+                        : RbMiddle.IsChecked == true ? BarVisibilityMode.MiddleOnly
+                        : RbFirstLast.IsChecked == true ? BarVisibilityMode.FirstLast
+                        : BarVisibilityMode.Manual;
 
             DialogResult = true;
             Close();

@@ -43,10 +43,11 @@
 
         <TextBlock Text="Widoczność prętów:" FontWeight="Bold" Margin="0,8,0,4"/>
         <WrapPanel>
-            <RadioButton x:Name="RbAll"       Content="Wszystkie"        GroupName="vis" Margin="0,0,12,4" IsChecked="True"/>
+            <!-- prośba Bartka 2026-10-28: Manualny pierwszy i zawsze domyślny -->
+            <RadioButton x:Name="RbManual"    Content="Manualny"         GroupName="vis" Margin="0,0,12,4" IsChecked="True"/>
+            <RadioButton x:Name="RbAll"       Content="Wszystkie"        GroupName="vis" Margin="0,0,12,4"/>
             <RadioButton x:Name="RbMiddle"    Content="Środkowy"         GroupName="vis" Margin="0,0,12,4"/>
-            <RadioButton x:Name="RbFirstLast" Content="Pierwszy+Ostatni" GroupName="vis" Margin="0,0,12,4"/>
-            <RadioButton x:Name="RbManual"    Content="Manualny"         GroupName="vis" Margin="0,0,0,4"/>
+            <RadioButton x:Name="RbFirstLast" Content="Pierwszy+Ostatni" GroupName="vis" Margin="0,0,0,4"/>
         </WrapPanel>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">

@@ -472,6 +472,12 @@ Ogólne:
   prompt „Position of first bar along edge” — tylko położenie PIERWSZEGO pręta (przypięty, grip [0]; `BarData.Cover`); drugi koniec
   wolny — przy tworzeniu 40, dalej dowolnie gripem (grip [1] i obrys o otulinę końców, nie o Cover);
   otulina końców w XData [33] `CoverEnd` (gripy i obrys podświetlenia wzdłuż pręta — `EndCover`; stare rozkłady — jak Cover).
+- **Widoczność prętów i opis rozkładu (prośba Bartka 2026-10-28):** RC_EDIT_LABEL i RC_EDIT_DISTRIBUTION → „Dodaj opis rozkładu”
+  (okno „Reinforcement description” — `DistributionDescDialog(askVisibility)`): kolejność Manualny, Wszystkie, Środkowy, Pierwszy+Ostatni,
+  domyślnie ZAWSZE Manualny; po opisie — `EditCommands.ApplyDistributionVisibility` (Manualny: wszystkie widoczne na czas klikania).
+  Podgląd kropek w jigach opisu do 200 prętów (`JigPreview.MaxDots`, dawniej 20 — podgląd „w połowie rozkładu”). ETAP 3 odnośnika
+  (wszystkie rozkłady): przed pierwszym kliknięciem stopa na linii rozkładu idzie za kursorem (prostopadle, w granicach rozkładu),
+  bez gumki BricsCAD od stałego punktu; rozkład obrócony / ukośny — bez zmian.
 - **RC_EDIT_LABEL — liczba „kxn” (decyzja Bartka 2026-10-23):** wpis „2x5” (też 2X5, 2×5, 2*5) → opis „2x5”, BBS liczy 10
   (CountDisplay = 10, `CountMult` = 2 — XData rozkładu [34], opisu [24]; `BarLabelRules.ParseCountInput`); krotność zostaje po gripie.
 - **Bez kolizji — wymiar „wchodzący w środek” zawsze W DÓŁ (zasada ogólna Bartka 2026-10-22, KAŻDA sytuacja na płycie):**

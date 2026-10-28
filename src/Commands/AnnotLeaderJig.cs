@@ -11,6 +11,10 @@ namespace BricsCadRc.Commands
 {
     public enum LabelDirection { Up, Down, Left, Right }
 
+    /// <summary>Podgląd kropek prętów w jigach opisu (prośba Bartka 2026-10-28: dawniej 20 — przy 35 prętach podgląd „kończył się w połowie
+    /// rozkładu”); górny limit tylko dla wydajności podglądu.</summary>
+    internal static class JigPreview { internal const int MaxDots = 200; }
+
     internal static class Point3dRotate
     {
         // Transformacja lokalny → WCS: WCS = rotCenter + R(angle) × (localX, localY)
@@ -124,7 +128,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
@@ -150,7 +154,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
@@ -434,7 +438,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
@@ -459,7 +463,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
@@ -611,7 +615,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
@@ -636,7 +640,7 @@ namespace BricsCadRc.Commands
                     else if (t < 0)
                         AddLine(tm, vpIds, rp1, cursorOnLine, 8);
                 }
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);
@@ -789,7 +793,7 @@ namespace BricsCadRc.Commands
                 var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed);
                 var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + _barsSpan);
                 AddLine(tm, vpIds, rp1, rp2, 7);
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, x, _minFixed + i * _spacing);
@@ -802,7 +806,7 @@ namespace BricsCadRc.Commands
                 var rp1 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed,             y);
                 var rp2 = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + _barsSpan, y);
                 AddLine(tm, vpIds, rp1, rp2, 7);
-                int maxDots = Math.Min(_count, 20);
+                int maxDots = Math.Min(_count, JigPreview.MaxDots);
                 for (int i = 0; i < maxDots; i++)
                 {
                     var rc = Point3dRotate.LocalToWCS(_rotCenter, _angle, _minFixed + i * _spacing, y);

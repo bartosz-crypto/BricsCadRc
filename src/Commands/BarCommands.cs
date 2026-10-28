@@ -659,12 +659,13 @@ namespace BricsCadRc.Commands
             double finalSpacing,
             int autoCount,
             string baseMark,
-            ObjectId blockRefId)
+            ObjectId blockRefId,
+            bool askVisibility = false)
         {
             var ed = doc.Editor;
 
-            // Krok 6 — Dialog DistributionDescDialog
-            var descDlg = new DistributionDescDialog(sourceBar, autoCount, finalSpacing, baseMark);
+            // Krok 6 — Dialog DistributionDescDialog (RC_EDIT_DISTRIBUTION → „Dodaj opis rozkładu”: także widoczność prętów, 2026-10-28)
+            var descDlg = new DistributionDescDialog(sourceBar, autoCount, finalSpacing, baseMark, askVisibility: askVisibility);
             if (Application.ShowModalWindow(descDlg) != true) return false;
 
             int    finalCount = descDlg.BarCount;
@@ -823,11 +824,24 @@ namespace BricsCadRc.Commands
                             ptOpts.UseBasePoint = true;
                             ptOpts.BasePoint = leaderWcsPts[leaderWcsPts.Count - 1];
 
+                            // prośba Bartka 2026-10-28: pierwszy odcinek leadera „responsywny” — stopa na linii rozkładu idzie za kursorem
+                            // (prostopadle do linii rozkładu, w granicach rozkładu), zamiast stałego punktu z ETAP 2
+                            bool slideFoot = leaderWcsPts.Count == 1 && !obliqueLeader && Math.Abs(sourceBar.Angle) < 1e-6;
+                            Point3d Foot(Point3d c)
+                            {
+                                var k0 = leaderWcsPts[0];
+                                double lo = horizontal ? barResult.MinPoint.Y : barResult.MinPoint.X, hi = lo + barsSpan;   // jak kinkPt (środek = MinPoint + span/2)
+                                return horizontal
+                                    ? new Point3d(k0.X, Math.Max(lo, Math.Min(hi, c.Y)), 0)    // X-bars: linia rozkładu pionowa
+                                    : new Point3d(Math.Max(lo, Math.Min(hi, c.X)), k0.Y, 0);   // Y-bars: linia rozkładu pozioma
+                            }
+                            if (slideFoot) ptOpts.UseBasePoint = false;   // gumka BricsCAD od stałego punktu — zamiast niej podgląd ze stopą
                             PointMonitorEventHandler monitor = (s, ev) =>
                             {
                                 try
                                 {
-                                    drawer.UpdatePreview(previewPrefix.Concat(leaderWcsPts).ToList(), ev.Context.ComputedPoint);
+                                    var pts0 = slideFoot ? new List<Point3d> { Foot(ev.Context.ComputedPoint) } : leaderWcsPts;
+                                    drawer.UpdatePreview(previewPrefix.Concat(pts0).ToList(), ev.Context.ComputedPoint);
                                     Application.UpdateScreen();
                                 }
                                 catch (System.Exception logEx) { Log.Error("BarCommands.RunAnnotationFlow", logEx); }
@@ -840,6 +854,7 @@ namespace BricsCadRc.Commands
 
                             if (ptRes.Status == PromptStatus.Cancel) { drawer.Clear(); return false; }
                             if (ptRes.Status != PromptStatus.OK) break;
+                            if (slideFoot) leaderWcsPts[0] = Foot(ptRes.Value);
                             leaderWcsPts.Add(ptRes.Value);
                         }
                         drawer.Clear();
@@ -973,6 +988,10 @@ namespace BricsCadRc.Commands
 
             BarBlockEngine.LinkAnnotation(db, blockRefId, annotResult.BlockRefId);
             AnnotationEngine.UpdateBarLabelCount(db, sourceBar.SourceBarHandle ?? "", markOverride: sourceBar.Mark);
+
+            // widoczność prętów z okna opisu (RC_EDIT_DISTRIBUTION, 2026-10-28) — jak RC_EDIT_LABEL
+            if (askVisibility && descDlg.AskVisibility)
+                EditCommands.ApplyDistributionVisibility(doc, db, annotResult.BlockRefId, blockRefId, descDlg.ResultVisibility);
 
             return true;
         }

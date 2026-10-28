@@ -253,7 +253,7 @@ namespace BricsCadRc.Commands
 
                 string baseMark = BarData.FormatMark(bar.Diameter, SingleBarEngine.ExtractPosNr(bar.Mark), bar.Spacing, bar.Count);
                 BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
-                    bar.Spacing, bar.Count, baseMark, blockRefId);
+                    bar.Spacing, bar.Count, baseMark, blockRefId, askVisibility: true);
 
                 try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditDistribution", logEx); }
                 return;
@@ -911,6 +911,51 @@ namespace BricsCadRc.Commands
             }
 
             try { doc.SendStringToExecute("REGEN\n", false, false, false); } catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
+        }
+
+        /// <summary>
+        /// Widoczność prętów po dodaniu opisu (RC_EDIT_DISTRIBUTION → „Dodaj opis rozkładu”, prośba Bartka 2026-10-28) — jak RC_EDIT_LABEL:
+        /// Manualny — wszystkie pręty widoczne na czas klikania, wybór klikanych (Enter — koniec; nic nie wybrane — poprzedni stan);
+        /// pozostałe tryby — od razu. Rozkład przebudowany, opis (kropki na linii rozkładu) zsynchronizowany.
+        /// </summary>
+        internal static void ApplyDistributionVisibility(Document doc, Database db, ObjectId annotId, ObjectId blockRefId, BarVisibilityMode mode)
+        {
+            try
+            {
+                if (annotId.IsNull || blockRefId.IsNull) return;
+                string existing;
+                int count;
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var bb = (tr.GetObject(blockRefId, OpenMode.ForRead) as BlockReference) is BlockReference brb ? BarBlockEngine.ReadXData(brb) : null;
+                    tr.Commit();
+                    if (bb == null) return;
+                    existing = bb.VisibleIndices ?? "";
+                    count = bb.Count;
+                }
+                string indices = "";
+                if (mode == BarVisibilityMode.Manual)
+                {
+                    BarBlockEngine.RebuildVisibility(db, blockRefId, BarVisibilityMode.All, "");
+                    var pick = new BarData { SourceBlockHandle = blockRefId.Handle.Value.ToString("X"), Count = count };
+                    indices = SelectVisibleBarsManually(doc, db, annotId, pick, existing) ?? (existing.Length > 0 ? existing : "0");
+                }
+                BarBlockEngine.RebuildVisibility(db, blockRefId, mode, indices);
+                BarData fresh = null;
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    if (tr.GetObject(blockRefId, OpenMode.ForRead) is BlockReference brf) fresh = BarBlockEngine.ReadXData(brf);
+                    if (tr.GetObject(annotId, OpenMode.ForWrite) is BlockReference ab && AnnotationEngine.ReadAnnotXData(ab) is BarData ad)
+                    {
+                        ad.VisibilityMode = mode;
+                        ad.VisibleIndices = indices;
+                        AnnotationEngine.WriteAnnotXData(ab, ad);
+                    }
+                    tr.Commit();
+                }
+                if (fresh != null) AnnotationEngine.SyncAnnotation(db, fresh);
+            }
+            catch (System.Exception ex) { Log.Error("EditCommands.ApplyDistributionVisibility", ex); }
         }
 
         private static string SelectVisibleBarsManually(

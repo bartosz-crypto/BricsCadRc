@@ -27,13 +27,8 @@ namespace BricsCadRc.Dialogs
             _diameter = diameter;
             _count    = count;
 
-            switch (currentVisibility)
-            {
-                case BarVisibilityMode.MiddleOnly: RbMiddle.IsChecked    = true; break;
-                case BarVisibilityMode.FirstLast:  RbFirstLast.IsChecked = true; break;
-                case BarVisibilityMode.Manual:     RbManual.IsChecked    = true; break;
-                default:                           RbAll.IsChecked       = true; break;
-            }
+            // prośba Bartka 2026-10-28: domyślnie zawsze Manualny (bez względu na obecny tryb)
+            RbManual.IsChecked = true;
 
             // Rozbij mark na coreOfMark i suffix
             // Format: "H12-01-200" lub "H12-01-200 B1"
