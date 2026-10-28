@@ -1740,6 +1740,10 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
 - **Zakłady prętów bocznych belki (fix118, uwaga Bartka):** nie w tym samym miejscu co zakłady prętów głównych (B+T / B / T) — min. 500
   w świetle (`BeamGeometry.StaggerLaps`, `LapStaggerGap`): wszystkie złącza prętów SIDE przesunięte o to samo delta (najpierw co 250,
   potem co 50; pręty ≤ max. długości, ≥ 1000); gdy się nie da — komunikat.
+- **Prepare GA — obrys z linii (fix119, GA PLOT 367):** opis płyty poza każdym zamkniętym obrysem SD-PILED-RAFT → zewnętrzna granica
+  linii i otwartych polilinii SD-PILED-RAFT wokół opisu (`OutlineFromPieces.OuterBoundary`: podział w przecięciach i stykach „na T”, graf
+  bez zwisających końców, największa granica zewnętrzna wokół punktu) → zamknięta polilinia w rysunku źródłowym (tylko w pamięci); kawałki
+  leżące w całości na niej usunięte; komunikat. Testy `OutlineFromPiecesTests`.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

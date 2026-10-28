@@ -97,6 +97,8 @@ namespace BricsCadRc.Core
                 var outlines = new List<(ObjectId id, List<Point2d> v, Extents3d ext, double area)>();
                 var labels = new List<(ObjectId id, string label, Point3d pt)>();
                 var boxes = new List<(ObjectId id, Extents3d ext)>();
+                // kawałki obrysu (linie / otwarte polilinie SD-PILED-RAFT) — GA z obrysem rozbitym na linie (PLOT 367, 2026-10-28)
+                var pieces = new List<(ObjectId id, List<((double X, double Y) A, (double X, double Y) B)> segs)>();
                 using (var tr = src.Db.TransactionManager.StartOpenCloseTransaction())
                 {
                     var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(src.Db), OpenMode.ForRead);
@@ -110,6 +112,21 @@ namespace BricsCadRc.Core
                             var v = GeometryHelper.GetPolylineVertices(pl);
                             outlines.Add((id, v, Ext(v), Math.Abs(Area(v))));
                         }
+                        else if (layer.Equals(SlabLayer, StringComparison.OrdinalIgnoreCase) && e is Line ln && ln.Length > 1.0)
+                            pieces.Add((id, new List<((double X, double Y) A, (double X, double Y) B)>
+                                            { ((ln.StartPoint.X, ln.StartPoint.Y), (ln.EndPoint.X, ln.EndPoint.Y)) }));
+                        else if (layer.Equals(SlabLayer, StringComparison.OrdinalIgnoreCase) && e is Polyline op && op.NumberOfVertices >= 2)
+                        {
+                            bool arcs = false;
+                            for (int i = 0; i < op.NumberOfVertices; i++) if (Math.Abs(op.GetBulgeAt(i)) > 1e-9) arcs = true;
+                            if (!arcs)
+                            {
+                                var v = GeometryHelper.GetPolylineVertices(op);
+                                var sg = new List<((double X, double Y) A, (double X, double Y) B)>();
+                                for (int i = 0; i + 1 < v.Count; i++) sg.Add(((v[i].X, v[i].Y), (v[i + 1].X, v[i + 1].Y)));
+                                pieces.Add((id, sg));
+                            }
+                        }
                         else if (layer.Equals("SD-Text", StringComparison.OrdinalIgnoreCase))
                         {
                             if (e is MText mt && PlotLabelRules.IsPlotLabel(FirstLine(mt)))
@@ -121,6 +138,47 @@ namespace BricsCadRc.Core
                         }
                     }
                     tr.Commit();
+                }
+
+                // obrys z kawałków (uwaga Bartka 2026-10-28, GA PLOT 367): opis poza każdym zamkniętym obrysem — zewnętrzna granica linii
+                // i otwartych polilinii SD-PILED-RAFT wokół opisu → zamknięta polilinia w rysunku źródłowym (tylko w pamięci, plik GA bez
+                // zmian); kawałki leżące w całości na niej — usunięte (nie wracają jako kawałki nibu / JoinLoops)
+                foreach (var (_, label, pt) in labels)
+                {
+                    var p2 = new Point2d(pt.X, pt.Y);
+                    if (outlines.Any(o => GeometryHelper.IsPointInsidePolygon(o.v, p2)) || pieces.Count < 3) continue;
+                    try
+                    {
+                        var all = pieces.SelectMany(x => x.segs).ToList();
+                        var loop = OutlineFromPieces.OuterBoundary(all, (pt.X, pt.Y));
+                        if (loop == null) continue;
+                        using (var trW = src.Db.TransactionManager.StartTransaction())
+                        {
+                            var ms = (BlockTableRecord)trW.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(src.Db), OpenMode.ForWrite);
+                            var first = (Entity)trW.GetObject(pieces[0].id, OpenMode.ForRead);
+                            var npl = new Polyline { Layer = first.Layer, Color = first.Color, LinetypeId = first.LinetypeId, LineWeight = first.LineWeight };
+                            for (int i = 0; i < loop.Count; i++) npl.AddVertexAt(i, new Point2d(loop[i].X, loop[i].Y), 0, 0, 0);
+                            npl.Closed = true;
+                            var nid = ms.AppendEntity(npl);
+                            trW.AddNewlyCreatedDBObject(npl, true);
+                            int gone = 0;
+                            foreach (var pc in pieces.ToList())
+                            {
+                                bool on = pc.segs.All(sg => OutlineFromPieces.DistToBoundary(loop, sg.A) <= 1.0 && OutlineFromPieces.DistToBoundary(loop, sg.B) <= 1.0
+                                                            && OutlineFromPieces.DistToBoundary(loop, ((sg.A.X + sg.B.X) / 2, (sg.A.Y + sg.B.Y) / 2)) <= 1.0);
+                                if (!on) continue;
+                                ((Entity)trW.GetObject(pc.id, OpenMode.ForWrite)).Erase();
+                                pieces.Remove(pc);
+                                gone++;
+                            }
+                            trW.Commit();
+                            var v = loop.Select(q => new Point2d(q.X, q.Y)).ToList();
+                            outlines.Add((nid, v, Ext(v), Math.Abs(Area(v))));
+                            warnings.Add($"{label}: obrys {SlabLayer} z linii / otwartych polilinii ({gone} kawałków) — złożony w zamknięty obrys " +
+                                         $"({loop.Count} wierzchołków).");
+                        }
+                    }
+                    catch (System.Exception ex) { Log.Error("GaImport.ReadSource.OutlineFromPieces", ex); }
                 }
 
                 foreach (var (id, label, pt) in labels)

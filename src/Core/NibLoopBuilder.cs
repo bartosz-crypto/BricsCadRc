@@ -800,4 +800,158 @@ namespace BricsCadRc.Core
         private static string F1g(double v) => v.ToString("0.#", Inv);
         private static string F2(double v) => v.ToString("0.00", Inv);
     }
+
+    /// <summary>
+    /// Obrys płyty z kawałków (uwaga Bartka 2026-10-28, GA PLOT 367: obrys SD-PILED-RAFT rozbity na linie i otwarte polilinie, kawałki
+    /// stykają się także „na T” — koniec jednego w środku drugiego): odcinki dzielone w punktach przecięć / styków, graf płaski bez
+    /// zwisających końców, ściany grafu; wynik — zewnętrzna granica składowej zawierającej punkt (największa granica zewnętrzna wokół
+    /// punktu). Null — nie da się zamknąć.
+    /// </summary>
+    public static class OutlineFromPieces
+    {
+        public static List<(double X, double Y)> OuterBoundary(IList<((double X, double Y) A, (double X, double Y) B)> segs,
+                                                              (double X, double Y) pt, double tol = 1.0)
+        {
+            if (segs == null || segs.Count < 3) return null;
+            // 1. podział w punktach przecięć / styków
+            var parts = new List<((double X, double Y) A, (double X, double Y) B)>();
+            for (int i = 0; i < segs.Count; i++)
+            {
+                var (a, b) = segs[i];
+                double dx = b.X - a.X, dy = b.Y - a.Y, L2 = dx * dx + dy * dy;
+                if (L2 < tol * tol) continue;
+                var ts = new List<double> { 0, 1 };
+                for (int j = 0; j < segs.Count; j++)
+                {
+                    if (j == i) continue;
+                    var (c, d) = segs[j];
+                    foreach (var q in new[] { c, d })
+                    {
+                        double t = ((q.X - a.X) * dx + (q.Y - a.Y) * dy) / L2;
+                        if (t <= 0 || t >= 1) continue;
+                        double px = a.X + t * dx - q.X, py = a.Y + t * dy - q.Y;
+                        if (px * px + py * py <= tol * tol) ts.Add(t);
+                    }
+                    double ex = d.X - c.X, ey = d.Y - c.Y, den = dx * ey - dy * ex;
+                    if (Math.Abs(den) < 1e-9) continue;
+                    double tt = ((c.X - a.X) * ey - (c.Y - a.Y) * ex) / den, uu = ((c.X - a.X) * dy - (c.Y - a.Y) * dx) / den;
+                    if (tt > 0 && tt < 1 && uu >= 0 && uu <= 1) ts.Add(tt);
+                }
+                ts = ts.Distinct().OrderBy(t => t).ToList();
+                for (int k = 1; k < ts.Count; k++)
+                {
+                    var p0 = (a.X + ts[k - 1] * dx, a.Y + ts[k - 1] * dy);
+                    var p1 = (a.X + ts[k] * dx, a.Y + ts[k] * dy);
+                    if (Math.Sqrt((p1.Item1 - p0.Item1) * (p1.Item1 - p0.Item1) + (p1.Item2 - p0.Item2) * (p1.Item2 - p0.Item2)) > tol) parts.Add((p0, p1));
+                }
+            }
+            // 2. węzły (scalanie w tolerancji) i krawędzie bez powtórzeń
+            var nodes = new List<(double X, double Y)>();
+            int Node((double X, double Y) q)
+            {
+                for (int i = 0; i < nodes.Count; i++)
+                    if (Math.Abs(nodes[i].X - q.X) <= tol && Math.Abs(nodes[i].Y - q.Y) <= tol) return i;
+                nodes.Add(q);
+                return nodes.Count - 1;
+            }
+            var edges = new HashSet<(int, int)>();
+            foreach (var (a, b) in parts)
+            {
+                int u = Node(a), v = Node(b);
+                if (u == v) continue;
+                edges.Add(u < v ? (u, v) : (v, u));
+            }
+            var adj = new Dictionary<int, HashSet<int>>();
+            foreach (var (u, v) in edges)
+            {
+                if (!adj.ContainsKey(u)) adj[u] = new HashSet<int>();
+                if (!adj.ContainsKey(v)) adj[v] = new HashSet<int>();
+                adj[u].Add(v); adj[v].Add(u);
+            }
+            // 3. bez zwisających końców
+            bool pruned = true;
+            while (pruned)
+            {
+                pruned = false;
+                foreach (var n in adj.Keys.ToList())
+                    if (adj.TryGetValue(n, out var nb) && nb.Count <= 1)
+                    {
+                        foreach (var m in nb) adj[m].Remove(n);
+                        adj.Remove(n);
+                        pruned = true;
+                    }
+            }
+            if (adj.Count < 3) return null;
+            double Ang(int u, int v) => Math.Atan2(nodes[v].Y - nodes[u].Y, nodes[v].X - nodes[u].X);
+            var sorted = adj.ToDictionary(kv => kv.Key, kv => kv.Value.OrderBy(v => Ang(kv.Key, v)).ToList());
+            // 4. ściany: z u→v dalej krawędzią najbliższą zgodnie z ruchem wskazówek od v→u (ściana po lewej)
+            var usedD = new HashSet<(int, int)>();
+            List<(double X, double Y)> best = null; double bestA = double.MaxValue;
+            foreach (var u0 in sorted.Keys)
+                foreach (var v0 in sorted[u0])
+                {
+                    if (usedD.Contains((u0, v0))) continue;
+                    var cyc = new List<int>();
+                    int u = u0, v = v0, guard = 0;
+                    while (!usedD.Contains((u, v)) && guard++ < 100000)
+                    {
+                        usedD.Add((u, v)); cyc.Add(u);
+                        var lst = sorted[v];
+                        int idx = lst.IndexOf(u);
+                        int w = lst[(idx - 1 + lst.Count) % lst.Count];
+                        u = v; v = w;
+                    }
+                    if (cyc.Count < 3) continue;
+                    var poly = cyc.Select(i => nodes[i]).ToList();
+                    double area = 0;
+                    for (int i = 0; i < poly.Count; i++) { var p = poly[i]; var q = poly[(i + 1) % poly.Count]; area += p.X * q.Y - q.X * p.Y; }
+                    area /= 2;
+                    // ściana po lewej: ograniczone dodatnie, zewnętrzna granica składowej ujemna; linie uskoku bywają osobną składową wewnątrz
+                    // obrysu — bierzemy NAJWIĘKSZĄ granicę zewnętrzną wokół punktu (obrys zewnętrzny płyty)
+                    if (area >= 0) continue;
+                    if (!Inside(poly, pt)) continue;
+                    if (best == null || -area > bestA) { bestA = -area; best = poly; }
+                }
+            if (best == null) return null;
+            best.Reverse();   // przeciwnie do ruchu wskazówek
+            // bez punktów współliniowych
+            bool ch = true;
+            while (ch && best.Count > 3)
+            {
+                ch = false;
+                for (int i = 0; i < best.Count; i++)
+                {
+                    var a = best[(i - 1 + best.Count) % best.Count]; var b = best[i]; var c = best[(i + 1) % best.Count];
+                    double cr = (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
+                    double L = Math.Sqrt((c.X - a.X) * (c.X - a.X) + (c.Y - a.Y) * (c.Y - a.Y));
+                    if (L > 1e-9 && Math.Abs(cr) / L <= tol * 0.5) { best.RemoveAt(i); ch = true; break; }
+                }
+            }
+            return best.Count >= 3 ? best : null;
+        }
+
+        /// <summary>Odległość punktu od brzegu wielokąta.</summary>
+        public static double DistToBoundary(IList<(double X, double Y)> poly, (double X, double Y) p)
+        {
+            double best = double.MaxValue;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var a = poly[i]; var b = poly[(i + 1) % poly.Count];
+                double dx = b.X - a.X, dy = b.Y - a.Y, L2 = dx * dx + dy * dy;
+                double t = L2 > 1e-12 ? Math.Max(0, Math.Min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / L2)) : 0;
+                double ex = a.X + t * dx - p.X, ey = a.Y + t * dy - p.Y;
+                best = Math.Min(best, Math.Sqrt(ex * ex + ey * ey));
+            }
+            return best;
+        }
+
+        private static bool Inside(IList<(double X, double Y)> poly, (double X, double Y) p)
+        {
+            bool c = false;
+            for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
+                if ((poly[i].Y > p.Y) != (poly[j].Y > p.Y)
+                    && p.X < (poly[j].X - poly[i].X) * (p.Y - poly[i].Y) / (poly[j].Y - poly[i].Y) + poly[i].X) c = !c;
+            return c;
+        }
+    }
 }
