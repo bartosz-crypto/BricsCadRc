@@ -233,7 +233,10 @@ namespace BricsCadRc.Commands
         /// <summary>Jedna warstwa siatki — błąd jednej warstwy nie przerywa pozostałych.</summary>
         private static int Run(Editor ed, string name, System.Func<int> generate)
         {
-            try { return generate(); }
+            // 2026-10-30 (Mesh zawieszał BricsCAD): czas każdego etapu w logu — przy kolejnym zawieszeniu widać, na którym
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Log.Info($"RC_GENERUJ_SIATKA {name}: start");
+            try { int n = generate(); Log.Info($"RC_GENERUJ_SIATKA {name}: koniec ({sw.ElapsedMilliseconds} ms, {n})"); return n; }
             catch (System.Exception ex)
             {
                 Log.Error($"RC_GENERUJ_SIATKA {name}", ex);

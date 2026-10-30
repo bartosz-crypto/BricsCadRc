@@ -80,7 +80,7 @@ namespace BricsCadRc.Core
                     string src = NormHandle(dist.SourceBarHandle);
                     if (src.Length > 0 && bars.ContainsKey(src))
                     {
-                        counts[src] = (counts.TryGetValue(src, out int n) ? n : 0) + dist.EffectiveCount;
+                        counts[src] = (counts.TryGetValue(src, out int n) ? n : 0) + dist.BbsCount;   // × elementy (pile cap NNo.)
                         res.Distributions++;
                         continue;
                     }
@@ -91,7 +91,7 @@ namespace BricsCadRc.Core
                         var copy = new BarData
                         {
                             Mark = dist.Mark, Diameter = dist.Diameter, ShapeCode = "00",
-                            LengthA = dist.LengthA, Count = dist.EffectiveCount
+                            LengthA = dist.LengthA, Count = dist.BbsCount
                         };
                         orphanStraight.Add(copy);
                         res.Distributions++;

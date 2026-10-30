@@ -1172,7 +1172,8 @@ namespace BricsCadRc.Core
                                              double x0, double y0, double x1, double y1, bool barsX, int d, double length,
                                              double spacing, double forced, string code, string suffix, bool noSpacing, string shape,
                                              int repr, string zoneHandle, Action<BarData> customize = null,
-                                             Func<Point3d, List<List<Point3d>>> leaderFor = null, BeamDrawTarget tg = null)
+                                             Func<Point3d, List<List<Point3d>>> leaderFor = null, BeamDrawTarget tg = null,
+                                             double alongAt = double.NaN)
         {
             double sMin = barsX ? view.Box.MinPoint.Y : view.Box.MinPoint.X;
             double sMax = barsX ? view.Box.MaxPoint.Y : view.Box.MaxPoint.X;
@@ -1182,13 +1183,14 @@ namespace BricsCadRc.Core
                 x0 += tg.Shift.X; x1 += tg.Shift.X; y0 += tg.Shift.Y; y1 += tg.Shift.Y;
                 sMin = barsX ? tg.Box.MinPoint.Y : tg.Box.MinPoint.X;
                 sMax = barsX ? tg.Box.MaxPoint.Y : tg.Box.MaxPoint.X;
+                if (!double.IsNaN(alongAt)) alongAt += barsX ? tg.Shift.X : tg.Shift.Y;
             }
             _lastDistId = ObjectId.Null;
             bool ok = GenerateDistributionWithLeaderAtOffset(
                 db, x0, y0, x1, y1, tpl.id, tpl.bar, d, length, spacing, code, barsX ? "X" : "Y",
                 DefaultCover, barsX ? (y1 - y0) : (x1 - x0), SpacingMode.Nominal, sMin, sMax,
                 representativeSegment: repr, markSuffix: suffix, forcedSpacing: forced,
-                noSpacingMark: noSpacing, shapeCode: shape, customizeBar: customize, leaderWcsFor: leaderFor);
+                noSpacingMark: noSpacing, shapeCode: shape, customizeBar: customize, leaderWcsFor: leaderFor, alongAt: alongAt);
             if (!ok || _lastDistId.IsNull) return false;
             tg?.Dists.Add(_lastDistId);
             try

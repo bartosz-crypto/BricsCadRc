@@ -87,8 +87,9 @@ namespace BricsCadRc.Core
             {
                 if (_inSnap) return;
                 if (!(e.DBObject is MLeader ml) || ml.IsErased || ml.IsUndoing) return;
-                if (ml.GetXDataForApplication(SingleBarEngine.XLabelAppName) != null)
-                    _pending.Add(ml.ObjectId);
+                // 2026-10-30 (zgłoszenie Bartka: strzałkę opisu pręta dało się odciągnąć od pręta): także MLeader bez / z zerwanym
+                // RC_BAR_LABEL — pręt szukany po LabelHandle pręta (SnapArrowToBar), link naprawiany
+                _pending.Add(ml.ObjectId);
             }
             catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.OnObjectModified", ex); }
         }
@@ -144,12 +145,29 @@ namespace BricsCadRc.Core
             var ml = tr.GetObject(mlId, OpenMode.ForRead) as MLeader;
             if (ml == null || ml.IsErased) return;
 
-            // Odczytaj handle polilinii pręta z XData
+            // Odczytaj handle polilinii pręta z XData; brak / zerwany link (kopia, wklejenie z innego rysunku, stary opis) —
+            // pręt, którego LabelHandle wskazuje ten opis, i naprawa linku (2026-10-30)
             var handleStr = SingleBarEngine.ReadBarHandleFromLabel(ml);
-            if (string.IsNullOrEmpty(handleStr)) return;
-
-            var polyId = SingleBarEngine.HandleToObjectId(db, handleStr);
-            if (polyId.IsNull || polyId.IsErased) return;
+            var polyId = string.IsNullOrEmpty(handleStr) ? ObjectId.Null : SingleBarEngine.HandleToObjectId(db, handleStr);
+            bool linked = !polyId.IsNull && !polyId.IsErased
+                          && BarEntity.From(tr.GetObject(polyId, OpenMode.ForRead) as Entity, BarKinds.Polyline | BarKinds.Block) != null;
+            if (!linked)
+            {
+                var found = FindBarByLabel(tr, db, ml.Handle.Value.ToString("X8"));
+                if (found.IsNull)
+                {
+                    if (!string.IsNullOrEmpty(handleStr))
+                        Log.Info($"RcMLeaderOverrule: opis {ml.Handle} — pręt {handleStr} nie istnieje, brak pręta z tym opisem");
+                    return;
+                }
+                polyId = found;
+                ml.UpgradeOpen();
+                SingleBarEngine.EnsureAppIdRegistered(db);
+                ml.XData = new ResultBuffer(
+                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, SingleBarEngine.XLabelAppName),
+                    XLink.Write(polyId.Handle.Value.ToString("X8")));
+                Log.Info($"RcMLeaderOverrule: opis {ml.Handle} — link do pręta naprawiony ({handleStr ?? "brak"} → {polyId.Handle})");
+            }
 
             var barObj = tr.GetObject(polyId, OpenMode.ForRead);
             var pline  = barObj as Polyline;
@@ -187,6 +205,17 @@ namespace BricsCadRc.Core
             // Snapuj grot z powrotem na pręt
             ml.UpgradeOpen();
             ml.SetFirstVertex(0, closest);
+        }
+
+        /// <summary>Pręt (polilinia albo pręt-blok), którego [13] LabelHandle wskazuje opis o handle labelHex; brak — Null.</summary>
+        private static ObjectId FindBarByLabel(Transaction tr, Database db, string labelHex)
+        {
+            foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+            {
+                var b = be.Read();
+                if (b != null && XLink.Same(b.LabelHandle, labelHex)) return be.Entity.ObjectId;
+            }
+            return ObjectId.Null;
         }
     }
 }

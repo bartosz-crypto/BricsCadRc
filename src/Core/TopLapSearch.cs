@@ -15,6 +15,26 @@ namespace BricsCadRc.Core
     {
         public const int MaxNodes = 20000;   // budżet na jedną liczbę prętów N (dół próbuje wielu planów — szybko)
 
+        /// <summary>
+        /// Bezpiecznik czasu (uwaga Bartka 2026-10-30: RC_GENERATE → Mesh zawieszał BricsCAD — płyta 25,7 m z 40 palami, góra nie mieściła
+        /// zakładów między palami i przeszukanie szło w miliardy prób): jedno wywołanie <see cref="Find"/> najwyżej <see cref="FindBudgetMs"/>,
+        /// a cały plan pasa — do <see cref="Deadline"/> (Stopwatch; 0 = bez limitu). Po czasie — null (plan awaryjny z ostrzeżeniem).
+        /// </summary>
+        public const int FindBudgetMs = 250;
+        public static long Deadline;
+        public static int TimeOuts;
+
+        /// <summary>Limit czasu całego planu pasa (ms od teraz); zwraca poprzedni (do odtworzenia w finally).</summary>
+        public static long BeginBudget(int ms)
+        {
+            long prev = Deadline;
+            long d = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(ms / 1000.0 * System.Diagnostics.Stopwatch.Frequency);
+            Deadline = prev != 0 && prev < d ? prev : d;
+            return prev;
+        }
+
+        public static bool Expired => Deadline != 0 && System.Diagnostics.Stopwatch.GetTimestamp() > Deadline;
+
         public static List<(double xOffset, double length)> Find(
             double available, IList<(double lo, double hi)> bottomLaps, IList<(double lo, double hi)> forbidden,
             int nMin, int nMax, double minLen, double maxLen, double gridStep,
@@ -38,13 +58,29 @@ namespace BricsCadRc.Core
                 return true;
             }
 
+            if (Expired) { TimeOuts++; return null; }
+            long end = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(FindBudgetMs / 1000.0 * System.Diagnostics.Stopwatch.Frequency);
+            if (Deadline != 0 && Deadline < end) end = Deadline;
+            bool timedOut = false;
+            // stany bez rozwiązania (pozostało prętów, początek pręta) — wynik zależy tylko od nich, wspólne dla wszystkich N
+            // (te same rozwiązania w tej samej kolejności, bez ponownego przeszukiwania tych samych gałęzi)
+            var failed = new HashSet<(int, long)>();
             for (int N = nMin; N <= nMax; N++)
             {
                 var plan = new List<(double, double)>();
                 int nodes = 0;
                 bool Dfs(int left, double x)
                 {
+                    var key = (left, (long)Math.Round(x));
+                    if (failed.Contains(key)) return false;
                     if (++nodes > MaxNodes) return false;
+                    if ((nodes & 63) == 0 && System.Diagnostics.Stopwatch.GetTimestamp() > end) { timedOut = true; return false; }
+                    bool ok = DfsCore(left, x);
+                    if (!ok && !timedOut && nodes <= MaxNodes) failed.Add(key);
+                    return ok;
+                }
+                bool DfsCore(int left, double x)
+                {
                     if (left == 2)
                     {
                         // przedostatni pręt z siatki + ostatni z siatki dokładnie do końca; zakład dowolny w [oMin, oMax]
@@ -86,6 +122,7 @@ namespace BricsCadRc.Core
                     return false;
                 }
                 if (Dfs(N, 0)) return plan;
+                if (timedOut) { TimeOuts++; return null; }
             }
             return null;
         }

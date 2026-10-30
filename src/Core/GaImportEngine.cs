@@ -213,9 +213,9 @@ namespace BricsCadRc.Core
                 MergeTerraces(src, outlines.Select(o => (o.id, o.v, o.area)).ToList());
                 if (src.Plots.Count == 0)
                     throw new InvalidOperationException(
-                        $"W pliku nie znaleziono płyt (opis „PLOT …” / „GARAGE …” na SD-Text wewnątrz zamkniętego obrysu {SlabLayer}).");
-                // Najpierw płyty PLOT, potem garaże (domyślnie wybierany pierwszy PLOT, nie GARAGE)
-                src.Plots = src.Plots.OrderBy(p => p.Label.TrimStart().StartsWith("GARAGE", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                        $"W pliku nie znaleziono płyt (opis „PLOT …” / „APARTMENT …” / „GARAGE …” na SD-Text wewnątrz zamkniętego obrysu {SlabLayer}).");
+                // Najpierw płyty PLOT, potem APARTMENT, na końcu garaże (domyślnie wybierany pierwszy PLOT, nie GARAGE)
+                src.Plots = src.Plots.OrderBy(p => PlotLabelRules.SortRank(p.Label))
                                      .ThenBy(p => p.Label, StringComparer.OrdinalIgnoreCase).ToList();
                 return src;
             }
@@ -307,6 +307,8 @@ namespace BricsCadRc.Core
             public int ManualBeams;
             /// <summary>Wsporniki wyłączone z obrysu siatki (CantileverEngine, rzut dolny).</summary>
             public int Cantilevers;
+            /// <summary>Pile cap (RC-PILECAP, rzut dolny; 2026-10-30).</summary>
+            public int PileCaps;
             /// <summary>Obrysy płyty wstawione na rzutach (dolny / górny; Null — brak).</summary>
             public ObjectId OutlineBottom = ObjectId.Null, OutlineTop = ObjectId.Null;
             /// <summary>Wszystkie obrysy płyt obu rzutów (szereg płyt z belkami GB — kilka na rzut).</summary>
@@ -514,6 +516,8 @@ namespace BricsCadRc.Core
             var zoneClones = new List<ObjectId>();  // strefy pogrubień (belki)
             var thkTexts = new List<(Point2d ins, Point2d mid, List<string> lines)>();   // teksty SD-Text (wysokość belki „450THK”)
             var thkCands = new List<BeamGeometry.ThkText>();   // K8: opisy belek (MText — środek obwiedni, MLeader — grot)
+            var capCands = new List<ObjectId>();   // pile cap (2026-10-30): zamknięte prostokąty SD-PILED-RAFT
+            var capTexts = new List<ObjectId>();   // opisy „PILE CAP”
             // szereg płyt (decyzja 2026-10-23): kopie opisów, ramek i linii uskoku płyt
             // grupa płyt (2026-10-26): części — każda z obrysem, opisem (i szeregiem); pojedyncza płyta — jedna część
             var parts = plot.IsGroup ? plot.Parts : new List<GaPlot> { plot };
@@ -574,6 +578,10 @@ namespace BricsCadRc.Core
                         if (IsBeamText(lines) && tip.HasValue)
                             thkCands.Add(new BeamGeometry.ThkText { Text = string.Join("\n", lines), X = tip.Value.X, Y = tip.Value.Y, Leader = true });
                     }
+                    if (e is MText && (e.Layer ?? "").Equals("SD-Text", StringComparison.OrdinalIgnoreCase)) capTexts.Add(e.ObjectId);
+                    if (e is Polyline cpl && !outlineKeys.Contains(pair.Key) && !memberKeys.Contains(pair.Key)
+                        && (e.Layer ?? "").Equals(SlabLayer, StringComparison.OrdinalIgnoreCase) && GeometryHelper.IsEffectivelyClosed(cpl))
+                        capCands.Add(e.ObjectId);
                     if (memberKeys.Contains(pair.Key)) cloneOf[pair.Key] = e.ObjectId;
                     if (pair.Key == plot.LabelId) label = e.ObjectId;
                     else if (otherLabels.Contains(pair.Key)) { }   // opis innej płyty szeregu / grupy — niżej
@@ -603,6 +611,21 @@ namespace BricsCadRc.Core
                         RebuildLabel(tr, msId, lid, cloneOf.TryGetValue(bk, out var bid) ? bid : ObjectId.Null, textClones, plot.Label, view, warnings);
                 tr.Commit();
             }
+
+            // Pile cap (uwaga Bartka 2026-10-30, APARTMENT 2): prostokąt poza płytą z opisem „PILE CAP” → RC-PILECAP (nie płyta, nie nib)
+            if (capCands.Count > 0)
+                try
+                {
+                    var capMsgs = new List<string>();
+                    var caps = PileCapEngine.MarkCaps(db, capCands, capTexts, outline, capMsgs, $"{plot.Label} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                    foreach (var cid in caps) { openPl.Remove(cid); nibPieces.Remove(cid); }
+                    if (view == "B") { warnings.AddRange(capMsgs); if (result != null) result.PileCaps += caps.Count; }
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.PileCap", ex);
+                    warnings.Add($"[RC PILECAP] Błąd wykrywania pile cap — {ex.Message} ({(view == "B" ? "rzut dolny" : "rzut górny")})");
+                }
 
             // Szereg płyt połączonych belkami GB (decyzja Bartka 2026-10-23, etap 1): obrys zewnętrzny → osobne obrysy płyt (linia uskoku
             // + nib), pasy betonu między płytami → strefy belek GB (RC-BEAM, [39] obniżenie góry); dalej każda płyta jak zwykła płyta
@@ -820,7 +843,8 @@ namespace BricsCadRc.Core
             if (!outline.IsNull)
                 try
                 {
-                    var cr = CantileverEngine.ProcessOpenPieces(db, outline, openPl, nibPieces, cantTexts, cantWhere);
+                    var cr = CantileverEngine.ProcessOpenPieces(db, outline, openPl, nibPieces, cantTexts, cantWhere,
+                                                                 slabThk: beamCtx?.SlabThickness ?? 0);
                     cantUsed.UnionWith(cr.UsedTexts);
                     if (view == "B") { warnings.AddRange(cr.Messages); if (result != null) result.Cantilevers += cr.Made; }
                 }
@@ -828,6 +852,21 @@ namespace BricsCadRc.Core
                 {
                     Log.Error("GaImport.CloneInto.CantileverPieces", ex);
                     warnings.Add($"[RC CANT] Błąd wykrywania wsporników — {ex.Message} ({cantWhere})");
+                }
+            // uwaga Bartka 2026-10-30 (APARTMENT 2, „450THK”): pogrubienie w narożniku płyty — języczek + strefa z linii przerywanych;
+            // PRZED domknięciem nibu (linie strefy nie są linią uskoku)
+            if (!outline.IsNull)
+                try
+                {
+                    var cr = CantileverEngine.ProcessCornerTabs(db, new[] { outline }, openPl, nibPieces, cantTexts, cantWhere, cantUsed,
+                                                                slabThk: beamCtx?.SlabThickness ?? 0);
+                    cantUsed.UnionWith(cr.UsedTexts);
+                    if (view == "B") { warnings.AddRange(cr.Messages); if (result != null) result.Cantilevers += cr.Made; }
+                }
+                catch (System.Exception ex)
+                {
+                    Log.Error("GaImport.CloneInto.CantileverCorner", ex);
+                    warnings.Add($"[RC CANT] Błąd wykrywania pogrubienia w narożniku — {ex.Message} ({cantWhere})");
                 }
 
             // Nib: NAJPIERW automat domykania otwartej linii uskoku krawędzią obrysu (NibAutoClose; tylko gdy płyta nie ma
@@ -886,7 +925,7 @@ namespace BricsCadRc.Core
                                                     && ce.MinPoint.Y >= rb.MinPoint.Y - 1 && ce.MaxPoint.Y <= rb.MaxPoint.Y + 1).ToList();
                     if (!closed.Contains(outline)) closed.Insert(0, outline);
                     var cr = CantileverEngine.ProcessClosedOutlines(db, closed, openPl.Where(id => !id.IsErased).ToList(), cantTexts, cantWhere,
-                                                                      usedTexts: cantUsed);
+                                                                      usedTexts: cantUsed, slabThk: beamCtx?.SlabThickness ?? 0);
                     cantUsed.UnionWith(cr.UsedTexts);
                     // wspornik z osobnego kawałka U (JoinLoops skleił krawędź prosto) — języczek z powrotem na obrysie, jak w GA
                     var restoreMsgs = new List<string>();

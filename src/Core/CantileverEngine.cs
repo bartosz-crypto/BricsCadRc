@@ -25,7 +25,7 @@ namespace BricsCadRc.Core
     {
         public const string LayerName = "RC-CANTILEVER";
         public const string App = "RC_CANT";
-        public const short FormatVersion = 1;
+        public const short FormatVersion = 2;   // 2: [10] wypustka (2026-10-30)
         public const string SlabLayer = "SD-PILED-RAFT";
         public const string GaApp = "RC_GA";
         /// <summary>Opis „GB-…” (punkt tekstu / grot odnośnika) najwyżej tyle od prostokąta wspornika [mm].</summary>
@@ -41,6 +41,11 @@ namespace BricsCadRc.Core
             public string Dir = "";
             /// <summary>[8] wysięg poza krawędź płyty, [9] długość strefy wspornika w płycie (od krawędzi w głąb).</summary>
             public double Reach, Ext;
+            /// <summary>
+            /// [10] wypustka płyty (2026-10-30): bez opisu GB i strefy przy palu, wysięg ≤ 900 — wysokość = grubość płyty, zbrojenie
+            /// CantileverRules.PlanBars(protrusion): U-bary H12 ≥ 900 w płytę, strzemiona 4-cięte H10, UB 01/02 przerwane na szerokości.
+            /// </summary>
+            public bool Protrusion;
         }
 
         /// <summary>Opis z rysunku: treść, punkt (MText — środek, MLeader — grot, DBText — środek).</summary>
@@ -79,7 +84,8 @@ namespace BricsCadRc.Core
             if (v == null) return null;
             double R(int i) => v.Length > i && v[i].Value is double d ? d : 0.0;
             return new Data { Width = R(2), Height = R(3), Toc = R(4), RootThk = R(5), RootLen = R(6),
-                              Dir = v.Length > 7 ? v[7].Value?.ToString() ?? "" : "", Reach = R(8), Ext = R(9) };
+                              Dir = v.Length > 7 ? v[7].Value?.ToString() ?? "" : "", Reach = R(8), Ext = R(9),
+                              Protrusion = v.Length > 10 && Convert.ToInt32(v[10].Value) != 0 };
         }
 
         private static void Write(Transaction tr, Database db, Entity e, Data d)
@@ -96,7 +102,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataReal, d.RootLen),           // [6]
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, d.Dir ?? ""),  // [7]
                 new TypedValue((int)DxfCode.ExtendedDataReal, d.Reach),             // [8]
-                new TypedValue((int)DxfCode.ExtendedDataReal, d.Ext));              // [9]
+                new TypedValue((int)DxfCode.ExtendedDataReal, d.Ext),               // [9]
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(d.Protrusion ? 1 : 0)));   // [10] wypustka
         }
 
         /// <summary>Kolor warstwy RC-CANTILEVER — magenta jak strefy belek RC-BEAM (2026-10-21: wspornik ma być widoczny jak strefa belki).</summary>
@@ -182,7 +189,7 @@ namespace BricsCadRc.Core
         }
 
         private static string Label(Data d)
-            => $"GB {d.Width:F0} × {(d.Height > 0 ? d.Height.ToString("F0") : "?")}" +
+            => d.Protrusion ? $"wypustka {d.Width:F0} × {d.Reach:F0} (h = {(d.Height > 0 ? d.Height.ToString("F0") : "?")})" : $"GB {d.Width:F0} × {(d.Height > 0 ? d.Height.ToString("F0") : "?")}" +
                (d.Toc != 0 ? $", TOC={d.Toc:0.000}" : "") +
                (d.RootLen > 0 ? $", strefa przy palu {(d.RootThk > 0 ? d.RootThk + "THK" : "bez opisu")} × {d.RootLen:F0}" : ", bez strefy przy palu");
 
@@ -357,7 +364,7 @@ namespace BricsCadRc.Core
         /// Listy openPl / nibPieces aktualizowane.
         /// </summary>
         public static Report ProcessOpenPieces(Database db, ObjectId outlineId, List<ObjectId> openPl, List<ObjectId> nibPieces,
-                                               IList<Txt> texts, string where)
+                                               IList<Txt> texts, string where, double slabThk = 0)
         {
             var rep = new Report();
             if (outlineId.IsNull || openPl.Count == 0) return rep;
@@ -407,9 +414,13 @@ namespace BricsCadRc.Core
                     var d = Describe(stub, root.u, gb, thk, texts);
                     if (gb < 0 && root.u == null)
                     {
-                        rep.Messages.Add($"[RC CANT] {where}: możliwy wspornik {stub.Width:F0} × {stub.Depth:F0} bez opisu „GB-…” i bez strefy przy " +
-                                         "palu — pominięty (sprawdź; RC_CANTILEVER).");
-                        continue;
+                        if (CantileverRules.IsProtrusion(stub)) { d.Protrusion = true; d.Height = slabThk; }   // wypustka (2026-10-30)
+                        else
+                        {
+                            rep.Messages.Add($"[RC CANT] {where}: możliwy wspornik {stub.Width:F0} × {stub.Depth:F0} bez opisu „GB-…” i bez strefy przy " +
+                                             "palu — pominięty (sprawdź; RC_CANTILEVER).");
+                            continue;
+                        }
                     }
                     if (gb >= 0) { taken.Add(gb); rep.UsedTexts.Add(gb); }
                     if (thk >= 0) { taken.Add(thk); rep.UsedTexts.Add(thk); }
@@ -460,7 +471,7 @@ namespace BricsCadRc.Core
         /// </summary>
         public static Report ProcessClosedOutlines(Database db, IEnumerable<ObjectId> outlines, List<ObjectId> openPieces,
                                                    IList<Txt> texts, string where, Func<string, bool> ask = null,
-                                                   IEnumerable<int> usedTexts = null)
+                                                   IEnumerable<int> usedTexts = null, double slabThk = 0)
         {
             var rep = new Report();
             var taken = new HashSet<int>(usedTexts ?? Enumerable.Empty<int>());
@@ -491,11 +502,15 @@ namespace BricsCadRc.Core
                         var d = Describe(t.Shape, root.u, gb, thk, texts);
                         if (gb < 0 && root.u == null)
                         {
-                            string q = $"możliwy wspornik {t.Shape.Width:F0} × {t.Shape.Depth:F0} bez opisu „GB-…” i bez strefy przy palu";
-                            if (ask == null || !ask(q))
+                            if (CantileverRules.IsProtrusion(t.Shape)) { d.Protrusion = true; d.Height = slabThk; }   // wypustka (2026-10-30)
+                            else
                             {
-                                rep.Messages.Add($"[RC CANT] {where}: {q} — pominięty.");
-                                continue;
+                                string q = $"możliwy wspornik {t.Shape.Width:F0} × {t.Shape.Depth:F0} bez opisu „GB-…” i bez strefy przy palu";
+                                if (ask == null || !ask(q))
+                                {
+                                    rep.Messages.Add($"[RC CANT] {where}: {q} — pominięty.");
+                                    continue;
+                                }
                             }
                         }
                         if (gb >= 0) { taken.Add(gb); rep.UsedTexts.Add(gb); }
@@ -513,6 +528,155 @@ namespace BricsCadRc.Core
                         if (!rootId.IsNull) { openPieces?.Remove(rootId); rep.Moved.Add(rootId); }   // strefa przy palu z GA bez zmian (2026-10-26)
                         rep.Made++;
                         rep.Info.Add($"[RC CANT] {where}: wspornik {Label(d)}, wysięg {t.Shape.Depth:F0} — wyłączony z obrysu siatki.");
+                    }
+                }
+                tr.Commit();
+            }
+            return rep;
+        }
+
+        /// <summary>
+        /// Pogrubienie w narożniku płyty (uwaga Bartka 2026-10-30, GA RG215UH001 BLOCK 2: „450THK” — zbrojone jak belka / wspornik GB):
+        /// języczek obrysu w narożniku (CantileverRules.FindCornerTabs — bok języczka przedłuża krawędź płyty) potwierdzony strefą w płycie
+        /// z kawałków SD-PILED-RAFT (linia przerywana równoległa do nasady w odległości L + linia od nasady wklęsłej). Strefa = strefa przy palu
+        /// (opis „xxxTHK” → [5]); bez opisu GB wysokość wspornika = grubość strefy. Rekord RC_CANT_TAB „…;C”, prostokąt RC-CANTILEVER;
+        /// kawałki strefy usuwane z <paramref name="openPl"/> / <paramref name="nibPieces"/> (nie trafiają do nibu ani JoinLoops),
+        /// na rysunku bez zmian. Wywołanie PRZED NibAutoClose.
+        /// </summary>
+        public static Report ProcessCornerTabs(Database db, IEnumerable<ObjectId> outlines, List<ObjectId> openPl, List<ObjectId> nibPieces,
+                                               IList<Txt> texts, string where, IEnumerable<int> usedTexts = null, double slabThk = 0)
+        {
+            var rep = new Report();
+            openPl = openPl ?? new List<ObjectId>();
+            var taken = new HashSet<int>(usedTexts ?? Enumerable.Empty<int>());
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // odcinki kawałków (linie i polilinie bez łuków)
+                var segs = new List<(ObjectId id, (double X, double Y) a, (double X, double Y) b)>();
+                foreach (var id in openPl)
+                {
+                    if (id.IsErased) continue;
+                    var ent = tr.GetObject(id, OpenMode.ForRead);
+                    if (ent is Line ln) segs.Add((id, (ln.StartPoint.X, ln.StartPoint.Y), (ln.EndPoint.X, ln.EndPoint.Y)));
+                    else if (ent is Polyline pp && !HasArcs(pp) && !GeometryHelper.IsEffectivelyClosed(pp))
+                        for (int k = 0; k + 1 < pp.NumberOfVertices; k++)
+                            segs.Add((id, (pp.GetPoint2dAt(k).X, pp.GetPoint2dAt(k).Y), (pp.GetPoint2dAt(k + 1).X, pp.GetPoint2dAt(k + 1).Y)));
+                }
+                bool Same((double X, double Y) a, (double X, double Y) b, (double X, double Y) p, (double X, double Y) q)
+                    => CantileverRules.Near(a, p) && CantileverRules.Near(b, q) || CantileverRules.Near(a, q) && CantileverRules.Near(b, p);
+                // odcinek p–q pokryty przez odcinek kawałka (współliniowy, końce w zakresie)
+                ObjectId Covering((double X, double Y) p, (double X, double Y) q)
+                {
+                    foreach (var s in segs)
+                    {
+                        if (Same(s.a, s.b, p, q)) return s.id;
+                        bool horiz = Math.Abs(p.Y - q.Y) <= CantileverRules.Tol;
+                        if (horiz && Math.Abs(s.a.Y - p.Y) <= CantileverRules.Tol && Math.Abs(s.b.Y - p.Y) <= CantileverRules.Tol)
+                        {
+                            double lo = Math.Min(s.a.X, s.b.X), hi = Math.Max(s.a.X, s.b.X);
+                            if (lo <= Math.Min(p.X, q.X) + CantileverRules.Tol && hi >= Math.Max(p.X, q.X) - CantileverRules.Tol
+                                && hi - lo <= Math.Abs(p.X - q.X) + 2 * CantileverRules.Tol) return s.id;
+                        }
+                        else if (!horiz && Math.Abs(s.a.X - p.X) <= CantileverRules.Tol && Math.Abs(s.b.X - p.X) <= CantileverRules.Tol)
+                        {
+                            double lo = Math.Min(s.a.Y, s.b.Y), hi = Math.Max(s.a.Y, s.b.Y);
+                            if (lo <= Math.Min(p.Y, q.Y) + CantileverRules.Tol && hi >= Math.Max(p.Y, q.Y) - CantileverRules.Tol
+                                && hi - lo <= Math.Abs(p.Y - q.Y) + 2 * CantileverRules.Tol) return s.id;
+                        }
+                    }
+                    return ObjectId.Null;
+                }
+                foreach (var oid in outlines.Distinct())
+                {
+                    if (oid.IsNull || oid.IsErased || !(tr.GetObject(oid, OpenMode.ForRead) is Polyline pl)) continue;
+                    if (!GeometryHelper.IsEffectivelyClosed(pl) || HasArcs(pl) || IsStub(pl)) continue;
+                    var pts = Pts(pl);
+                    var corners = CantileverRules.FindCornerTabs(pts);
+                    if (corners.Count == 0) continue;
+                    var done = CantileverRules.RecordedTabs(pts, GeometryHelper.CantileverTabRecord(pl));
+                    var accepted = new List<(CantileverRules.Tab t, Data d)>();
+                    foreach (var t in corners)
+                    {
+                        if (done.Any(x => x.Corner != 0 && x.IdxE0 == t.IdxE0 && x.IdxE1 == t.IdxE1)) continue;
+                        var u = t.Shape;
+                        // nasada wklęsła (wierzchołek obrysu) i punkt na krawędzi płyty
+                        var real = t.Corner == 2 ? u.A : u.B; var onEdge = t.Corner == 2 ? u.B : u.A;
+                        // strefa w płycie: odcinek równoległy do nasady w odległości L (koniec na krawędzi płyty) + odcinek od nasady wklęsłej
+                        CantileverRules.UShape root = null; ObjectId parId = ObjectId.Null, perpId = ObjectId.Null;
+                        foreach (var s in segs)
+                        {
+                            foreach (var (e0, e1) in new[] { (s.a, s.b), (s.b, s.a) })
+                            {
+                                // e0 = real − Out·L, e1 = onEdge − Out·L
+                                double L = -((e0.X - real.X) * u.Out.X + (e0.Y - real.Y) * u.Out.Y);
+                                if (L < CantileverRules.MinDepth - CantileverRules.Tol || L > CantileverRules.MaxDepth + CantileverRules.Tol) continue;
+                                var r2 = (real.X - u.Out.X * L, real.Y - u.Out.Y * L);
+                                var b2 = (onEdge.X - u.Out.X * L, onEdge.Y - u.Out.Y * L);
+                                if (!CantileverRules.Near(e0, r2) || !CantileverRules.Near(e1, b2)) continue;
+                                var perp = Covering(real, r2);
+                                if (perp.IsNull) continue;
+                                var ru = t.Corner == 2 ? CantileverRules.TryU(new[] { u.A, r2, b2, u.B }) : CantileverRules.TryU(new[] { u.A, b2, r2, u.B });
+                                if (ru == null || !CantileverRules.IsRootOf(ru, u)) continue;
+                                if (root == null || ru.Depth < root.Depth) { root = ru; parId = s.id; perpId = perp; }
+                            }
+                        }
+                        int gb = GbFor(u, texts, taken);
+                        if (root == null)
+                        {
+                            // uwaga Bartka 2026-10-30 (screen 2): wypustka w narożniku płyty (bok wypustki przedłuża krawędź płyty), bez strefy
+                            // w płycie i bez opisu GB — jak wypustka na krawędzi; inny narożny uskok obrysu — bez zmian
+                            if (gb >= 0 || !CantileverRules.IsProtrusion(u)) continue;
+                            var dp = Describe(u, null, -1, -1, texts);
+                            dp.Protrusion = true; dp.Height = slabThk;
+                            accepted.Add((t, dp));
+                            continue;
+                        }
+                        // uwaga Bartka 2026-10-30 (po teście fix132): pogrubienie w narożniku zbroimy JAK BELKĘ (RC_GENERATE → Beam: U-bary H16
+                        // długie albo krótkie + pręty proste), nie jak wspornik — strefa RC-BEAM (języczek + część w płycie), obrys płyty
+                        // z języczkiem bez zmian (bez rekordu RC_CANT_TAB — języczek jest częścią płyty, strefa belki go obejmuje)
+                        int thk = ThkFor(root, texts, taken);
+                        var d = Describe(u, root, gb, thk, texts);
+                        double hb = gb >= 0 && d.Height > 0 ? d.Height : d.RootThk;
+                        var zp = ZonePts(u, root.Depth);
+                        var zc = (zp.Average(q => q.X), zp.Average(q => q.Y));
+                        bool exists = false;
+                        foreach (var zid in BeamStore.AllZones(tr, db))
+                            if (tr.GetObject(zid, OpenMode.ForRead) is Polyline bz
+                                && GeometryHelper.IsPointInsidePolygon(GeometryHelper.GetPolylineVertices(bz), new Point2d(zc.Item1, zc.Item2)))
+                            { exists = true; break; }
+                        if (gb >= 0) { taken.Add(gb); rep.UsedTexts.Add(gb); }
+                        if (thk >= 0) { taken.Add(thk); rep.UsedTexts.Add(thk); }
+                        if (!exists)
+                        {
+                            BeamStore.EnsureLayer(tr, db, GaImportEngine.ThickeningLayer);
+                            var zpl = new Polyline { Layer = BeamStore.LayerName };
+                            for (int q = 0; q < 4; q++) zpl.AddVertexAt(q, new Point2d(zp[q].X, zp[q].Y), 0, 0, 0);
+                            zpl.Closed = true;
+                            var msw = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                            msw.AppendEntity(zpl);
+                            tr.AddNewlyCreatedDBObject(zpl, true);
+                            CopyGaTag(pl, zpl);
+                            BeamStore.Write(tr, db, zpl, new BeamParams { Height = Math.Round(hb), Width = u.Width }, pl.Handle.ToString());
+                            rep.Made++;
+                            rep.Info.Add($"[RC CANT] {where}: pogrubienie w narożniku {u.Width:F0} × {u.Depth + root.Depth:F0} " +
+                                         $"({(hb > 0 ? hb.ToString("F0") + "THK" : "bez opisu „xxxTHK”")}) — strefa belki RC-BEAM (RC_GENERATE → Beam).");
+                            if (hb <= 0)
+                                rep.Messages.Add($"[RC CANT] {where}: pogrubienie w narożniku bez opisu „xxxTHK” — ustaw H w RC_BEAM.");
+                        }
+                        foreach (var pid in new[] { parId, perpId }.Distinct())
+                        {
+                            openPl.Remove(pid); nibPieces?.Remove(pid);
+                            if (!rep.Moved.Contains(pid)) rep.Moved.Add(pid);
+                        }
+                    }
+                    if (accepted.Count == 0) continue;
+                    AddTabRecord(tr, db, pl, accepted.Select(a => CantileverRules.TabRec.Of(a.t, pts)));
+                    foreach (var (t, d) in accepted)
+                    {
+                        AddRect(tr, db, t.Shape, pl, d);
+                        rep.Made++;
+                        rep.Info.Add($"[RC CANT] {where}: {(d.Protrusion ? "wypustka w narożniku" : "pogrubienie w narożniku")} — {Label(d)}, " +
+                                     $"wysięg {t.Shape.Depth:F0} — wyłączone z obrysu siatki.");
                     }
                 }
                 tr.Commit();
@@ -590,7 +754,7 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>Otwarte polilinie SD-PILED-RAFT w modelu (kandydaci na strefę przy palu).</summary>
-        public static List<ObjectId> OpenSlabPieces(Database db)
+        public static List<ObjectId> OpenSlabPieces(Database db, bool includeLines = false)
         {
             var res = new List<ObjectId>();
             using (var tr = db.TransactionManager.StartOpenCloseTransaction())
@@ -600,6 +764,9 @@ namespace BricsCadRc.Core
                     if (!id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Polyline pl
                         && string.Equals(pl.Layer, SlabLayer, StringComparison.OrdinalIgnoreCase) && !GeometryHelper.IsEffectivelyClosed(pl))
                         res.Add(id);
+                    else if (includeLines && !id.IsErased && tr.GetObject(id, OpenMode.ForRead) is Line ln
+                             && string.Equals(ln.Layer, SlabLayer, StringComparison.OrdinalIgnoreCase))
+                        res.Add(id);   // strefa pogrubienia w narożniku (2026-10-30) — linie
                 tr.Commit();
             }
             return res;

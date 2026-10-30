@@ -59,7 +59,7 @@ namespace BricsCadRc.Core
         }
 
         private static readonly Regex GluedRx =
-            new Regex(@"^\s*((?:PLOTS?|GARAGES?)\s+.*?\S)h\s*=\s*\d+(?:\.\d+)?\s*mm\b", RegexOptions.IgnoreCase);
+            new Regex(@"^\s*((?:PLOTS?|GARAGES?|APARTMENTS?)\s+.*?\S)h\s*=\s*\d+(?:\.\d+)?\s*mm\b", RegexOptions.IgnoreCase);
 
         /// <summary>
         /// Ta sama płyta: etykiety równe po normalizacji białych znaków (bez rozróżniania wielkości liter) — także gdy

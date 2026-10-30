@@ -13,7 +13,8 @@ namespace BricsCadRc.Core
     /// </summary>
     public static class PlotLabelRules
     {
-        private static readonly Regex GaLabelRx = new Regex(@"^(?:PLOTS?\s+\S|GARAGES?\s+\d)", RegexOptions.IgnoreCase);
+        // 2026-10-30: także „APARTMENT n” / „APARTMENTS …” (GA RG215UH001 BLOCK 2 — Prepare GA nie widział płyty)
+        private static readonly Regex GaLabelRx = new Regex(@"^(?:PLOTS?\s+\S|GARAGES?\s+\d|APARTMENTS?\s+\d)", RegexOptions.IgnoreCase);
 
         /// <summary>Nagłówek PLOT w raporcie — wzorzec bez zmian (np. „PLOTS 3-4” nierozpoznane, jak dawniej).</summary>
         internal static readonly Regex ReportPlotRx =
@@ -24,6 +25,20 @@ namespace BricsCadRc.Core
             new Regex(@"^\s*(GARAGES?\s+\d.*?)\s*(?:\(\s*(\d+)\s*piles?\s*\))?\s*$", RegexOptions.IgnoreCase);
 
         private static readonly Regex GarageKeyRx = new Regex(@"^\s*GARAGES?\s+\d", RegexOptions.IgnoreCase);
+
+        /// <summary>Nagłówek / klucz płyty „APARTMENT n…” (2026-10-30).</summary>
+        private static readonly Regex ReportApartmentRx =
+            new Regex(@"^\s*(APARTMENTS?\s+\d.*?)\s*(?:\(\s*(\d+)\s*piles?\s*\))?\s*$", RegexOptions.IgnoreCase);
+        private static readonly Regex ApartmentKeyRx = new Regex(@"^\s*APARTMENTS?\s+\d", RegexOptions.IgnoreCase);
+
+        /// <summary>Kolejność płyt na liście Prepare GA: PLOT 0, APARTMENT 1, GARAGE 2 (domyślnie pierwsza PLOT).</summary>
+        public static int SortRank(string label)
+        {
+            string s = (label ?? "").TrimStart();
+            if (s.StartsWith("GARAGE", StringComparison.OrdinalIgnoreCase)) return 2;
+            if (s.StartsWith("APARTMENT", StringComparison.OrdinalIgnoreCase)) return 1;
+            return 0;
+        }
 
         /// <summary>Opis płyty w rysunku GA (pierwsza linia tekstu SD-Text): „PLOT …”, „PLOTS …”, „GARAGE n…”.</summary>
         public static bool IsPlotLabel(string s) => GaLabelRx.IsMatch((s ?? "").Trim());
@@ -40,6 +55,7 @@ namespace BricsCadRc.Core
             if (!(pm.Success && a.TrimStart().StartsWith("PLOT", StringComparison.OrdinalIgnoreCase)))
             {
                 pm = ReportGarageRx.Match(a);
+                if (!pm.Success) pm = ReportApartmentRx.Match(a);
                 if (!pm.Success) return false;
             }
             label = pm.Groups[1].Value.Trim();
@@ -54,7 +70,7 @@ namespace BricsCadRc.Core
         public static bool IsReportPlotKey(string key)
         {
             string k = key ?? "";
-            return k.StartsWith("PLOT", StringComparison.OrdinalIgnoreCase) || GarageKeyRx.IsMatch(k);
+            return k.StartsWith("PLOT", StringComparison.OrdinalIgnoreCase) || GarageKeyRx.IsMatch(k) || ApartmentKeyRx.IsMatch(k);
         }
 
         /// <summary>

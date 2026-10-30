@@ -887,7 +887,9 @@ namespace BricsCadRc.Core
                 double eC = isUBB1 ? seg.Start.X : seg.Start.Y;
                 double eLo = isUBB1 ? Math.Min(seg.Start.Y, seg.End.Y) : Math.Min(seg.Start.X, seg.End.X);
                 double eHi = isUBB1 ? Math.Max(seg.Start.Y, seg.End.Y) : Math.Max(seg.Start.X, seg.End.X);
-                var spans = nibUB ? CantileverSpansOnEdge(db, isUBB1, eC) : null;
+                // uwaga Bartka 2026-10-30 (wypustki): UB 01/02 przerwane na szerokości wypustki (w środku dłuższe U-bary wypustki)
+                var spans = nibUB ? CantileverSpansOnEdge(db, isUBB1, eC)
+                                  : CantileverSpansOnEdge(db, isUBB1, eC, d => d.Protrusion);
                 // uwaga Bartka 2026-10-23 (test13): belka GB poza płytą przechodząca przez krawędź — bez UB 03 na jej szerokości
                 if (nibUB) { var gb = GroundBeamSpansOnEdge(db, isUBB1, eC); if (gb.Count > 0) (spans ??= new List<(double Lo, double Hi)>()).AddRange(gb); }
                 if (spans == null || spans.Count == 0) { pieces.Add((seg, eLo, eHi)); continue; }
@@ -895,7 +897,8 @@ namespace BricsCadRc.Core
                 foreach (var (pLo, pHi) in SubtractSpans(eLo, eHi, spans)) pieces.Add((seg, pLo, pHi));
             }
             if (cantCuts > 0)
-                ed.WriteMessage($"\n[AutoRebar UB] UB 03: {cantCuts} wspornik(ów) — bez UB 03 na odcinku wspornika.\n");
+                ed.WriteMessage(nibUB ? $"\n[AutoRebar UB] UB 03: {cantCuts} wspornik(ów) — bez UB 03 na odcinku wspornika.\n"
+                                      : $"\n[AutoRebar UB] {layerCode}: {cantCuts} wypustk(i) — UB przerwane na szerokości wypustki.\n");
 
             foreach (var (seg, pieceLo, pieceHi) in pieces)
             {
@@ -2571,7 +2574,8 @@ namespace BricsCadRc.Core
             double forcedSpacing = double.NaN,   // rozstaw geometryczny narzucony (np. góra przy nibie = pręty dołu); opis nominalny
             bool noSpacingMark = false,          // belka: opis bez rozstawu także dla > 1 pręta („4 H16-05 BEAM B”)
             string shapeCode = null,             // belka: kod kształtu rozkładu (strzemiona 51 — symbol strzemienia na rzucie)
-            Action<BarData> customizeBar = null) // belka E4: skos rozkładu i symbol zagięcia (pręty L, U-bary) przed utworzeniem bloku
+            Action<BarData> customizeBar = null, // belka E4: skos rozkładu i symbol zagięcia (pręty L, U-bary) przed utworzeniem bloku
+            double alongAt = double.NaN)         // pile cap (2026-10-30): linia opisu w tym miejscu wzdłuż prętów (NaN — środek)
         {
             bool horizontal = filterDirection == "X";
 
@@ -2664,6 +2668,12 @@ namespace BricsCadRc.Core
             double firstBarY    = barResult.MinPoint.Y;
             double lastBarY     = barResult.MinPoint.Y + distBar.BarsSpan;
             double alongMid = AnnotAlong(horizontal ? barResult.MinPoint.X : barResult.MinPoint.Y, length);
+            if (!double.IsNaN(alongAt))
+            {
+                alongMid = alongAt;
+                if (double.IsNaN(alongMinOverride)) alongMinOverride = alongAt;
+                if (double.IsNaN(alongMaxOverride)) alongMaxOverride = alongAt;
+            }
             double annotInsertY = horizontal
                 ? barResult.MinPoint.Y                   // per current annotInsertPt definition
                 : alongMid;                              // (vertical case for B2 future)
@@ -5210,8 +5220,14 @@ namespace BricsCadRc.Core
             // Liczba prętów NA KRAWĘDZI (rozstaw) jest jak dół z definicji — ten sam pas.
             // Liczba odcinków wzdłuż (zakładów) góry może być INNA niż dołem: najpierw najmniej zakładów,
             // zakłady ≥ LapStaggerMinGap od dołu i ≥ PileLapClearance od pali.
-            var plan = PlanTopLine(available, spacing, bz, pileForbidden, ed,
+            List<(double xOffset, double length)> plan;
+            long prevDl = TopLapSearch.BeginBudget(JointPlanBudgetMs);   // bezpiecznik czasu (2026-10-30)
+            try
+            {
+                plan = PlanTopLine(available, spacing, bz, pileForbidden, ed,
                                    $"Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}", deep: true);
+            }
+            finally { TopLapSearch.Deadline = prevDl; }
             if (plan != null) return plan;
 
             ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas scan={strip.ScanLow:F0}..{strip.ScanHigh:F0}: " +
@@ -5242,8 +5258,10 @@ namespace BricsCadRc.Core
                     foreach (var t in PlanCandidates(available, N, minLen, TopOverlapMin, TopOverlapMax,
                                                      TopOverlapPreferredMin, TopOverlapPreferredMax, TopOverlapTarget))
                     {
-                        if (!LapsStaggered(LapZones(t.plan), bz)) continue;
-                        if (LapsClearOfPiles(t.plan, pileForbidden))
+                        if (hasPiles && TopLapSearch.Expired) goto timeUp;   // bezpiecznik czasu (2026-10-30)
+                        var tz = LapZonesCached(t.plan);   // kandydaci z pamięci PlanCandidates — strefy zakładów raz (2026-10-30)
+                        if (!LapsStaggered(tz, bz)) continue;
+                        if (ZonesClearOfPiles(tz, pileForbidden))
                         {
                             if (N > nMin)
                                 ed?.WriteMessage($"\n[AutoRebar] {where}: góra {N} prętów wzdłuż (min. {nMin}) — " +
@@ -5254,6 +5272,7 @@ namespace BricsCadRc.Core
                         double clr = PileLapClearanceOf(t.plan, pileForbidden);
                         if (clr > bestClr + 1.0) { bestClr = clr; best = t.plan; }
                     }
+            timeUp:
 
             // decyzja 2026-10-15: wzór „pierwszy, środkowe równe, ostatni” nie omija pali — pręty różnej długości (siatka 250),
             // każdy zakład osobno (TopLapSearch); tylko w wywołaniu końcowym (deep), bo przeszukanie jest droższe
@@ -5298,6 +5317,27 @@ namespace BricsCadRc.Core
                              List<(double lo, double hi)> topPileForbidden = null,
                              double topInsetLo = 0, double topInsetHi = 0)
         {
+            // bezpiecznik czasu (2026-10-30, płyta 25,7 m z 40 palami — Mesh zawieszał BricsCAD): przeszukania zakładów omijających pale
+            // najwyżej JointPlanBudgetMs na pas, potem plan awaryjny (ostrzeżenie)
+            int to0 = TopLapSearch.TimeOuts;
+            long prev = TopLapSearch.BeginBudget(JointPlanBudgetMs);
+            try { return ComputeJointPlanCore(available, spacing, ed, topPileForbidden, topInsetLo, topInsetHi); }
+            finally
+            {
+                TopLapSearch.Deadline = prev;
+                if (TopLapSearch.TimeOuts > to0)
+                    Log.Info($"AutoRebar.ComputeJointPlan: pas {available:F0} — przeszukanie zakładów przerwane po czasie ({TopLapSearch.TimeOuts - to0}×).");
+            }
+        }
+
+        /// <summary>Limit czasu planu jednego pasa (dół + góra z omijaniem pali) [ms].</summary>
+        private const int JointPlanBudgetMs = 1500;
+
+        private static (List<(double xOffset, double length)> bottom, List<(double xOffset, double length)> top)
+            ComputeJointPlanCore(double available, double spacing, Editor ed,
+                                 List<(double lo, double hi)> topPileForbidden,
+                                 double topInsetLo, double topInsetHi)
+        {
             if (available <= TemplateMaxLen + 0.5)
             {
                 var single = ComputeDistributionPlan(available, spacing);
@@ -5326,12 +5366,14 @@ namespace BricsCadRc.Core
                 foreach (var B in groups)
                     foreach (var b in B.Take(40))
                     {
+                        if (TopLapSearch.Expired) goto timeUp;
                         var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "");
                         if (t != null && LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
                     }
                 foreach (var B in groups)
                     foreach (var b in B.Take(8))
                     {
+                        if (TopLapSearch.Expired) goto timeUp;
                         var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), topPileForbidden, null, "", deep: true);
                         if (t != null && LapsClearOfPiles(t, topPileForbidden)) return (b.plan, t);
                     }
@@ -5343,6 +5385,7 @@ namespace BricsCadRc.Core
                                                new[] { TemplatePreferredMinLen, TemplateMinLen }, TemplateMaxLen, TemplateGridStep,
                                                OverlapMin, OverlapMax, OverlapTarget, TopOverlapMin, TopOverlapMax, TopOverlapTarget,
                                                LapStaggerMinGap);
+                if (TopLapSearch.Expired) goto timeUp;
                 if (tf != null)
                 {
                     ed?.WriteMessage($"\n[AutoRebar] Pas {available:F0}mm: najpierw góra — góra " +
@@ -5351,6 +5394,23 @@ namespace BricsCadRc.Core
                     return (tf.Value.bottom, tf.Value.top);
                 }
             }
+            goto planNoTimeout;
+            timeUp:
+            {
+                // bezpiecznik czasu (2026-10-30): przeszukanie z omijaniem pali za długie — pierwszy plan dołu, góra z zakładami
+                // przesuniętymi względem dołu (bez sprawdzania pali), ostrzeżenie
+                TopLapSearch.Deadline = 0;
+                foreach (var B in groups)
+                    foreach (var b in B.Take(40))
+                    {
+                        var t = PlanTopLine(topAvail, spacing, TopBz(b.plan), null, null, "");
+                        if (t == null) continue;
+                        ed?.WriteMessage($"\n*** WARNING *** [AutoRebar] Pas {available:F0}mm: zakłady góry przy palach — przeszukanie przerwane " +
+                                         $"po {JointPlanBudgetMs / 1000.0:0.#} s; zakłady góry przesunięte względem dołu, odległość od pali NIE sprawdzona.\n");
+                        return (b.plan, t);
+                    }
+            }
+            planNoTimeout:
             foreach (var B in groups)
             {
                 // pierwszy plan dołu, przy którym góra w ogóle istnieje (przy palach — najlepsza możliwa, z komunikatem)
@@ -5443,6 +5503,22 @@ namespace BricsCadRc.Core
                 result.Add((perp - r - PileLapClearance - origin, perp + r + PileLapClearance - origin));
             }
             return result;
+        }
+
+        /// <summary>Strefy zakładów kandydata z pamięci (plany z PlanCandidates są stałe; klucz — referencja listy).</summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<List<(double xOffset, double length)>, List<(double lo, double hi)>>
+            _lapZoneCache = new System.Runtime.CompilerServices.ConditionalWeakTable<List<(double xOffset, double length)>, List<(double lo, double hi)>>();
+
+        private static List<(double lo, double hi)> LapZonesCached(List<(double xOffset, double length)> plan)
+            => _lapZoneCache.GetValue(plan, p => LapZones(p));
+
+        private static bool ZonesClearOfPiles(List<(double lo, double hi)> zones, List<(double lo, double hi)> forbidden)
+        {
+            if (forbidden == null || forbidden.Count == 0) return true;
+            foreach (var z in zones)
+                foreach (var f in forbidden)
+                    if (Math.Min(z.hi, f.hi) - Math.Max(z.lo, f.lo) > -1e-6) return false;
+            return true;
         }
 
         private static bool LapsStaggered(List<(double lo, double hi)> top, List<(double lo, double hi)> bottom)

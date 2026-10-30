@@ -838,7 +838,8 @@ namespace BricsCadRc.Core
         /// przesunięcie rzutu górnego) ramka okna detalu i odnośnik „DETAIL 'n'” do ramki — jak detal otworu (decyzja 2026-10-12).
         /// </summary>
         private static void FinishBeamDetail(Document doc, BeamDrawTarget tg, ObjectId zb, ObjectId zt, Action<string> msg,
-                                             List<Point2d> bottomVerts, Vector2d topDelta)
+                                             List<Point2d> bottomVerts, Vector2d topDelta, int titleCount = 1,
+                                             IList<Vector2d> extraRefs = null, bool resolveCollisions = true)
         {
             var db = doc.Database;
             string name = $"belka {tg.ZoneHandle}";
@@ -847,7 +848,8 @@ namespace BricsCadRc.Core
                 // decyzja 2026-10-12 („wygaszajmy tak, żeby pręty na siebie nie nachodziły, jak na Generate Mesh”): widoczne pręty
                 // rozkładów w ramce detalu (pręty belki, UB 03 w detalu) z odstępem jak na rzucie (250 · 0,5 — ta sama odległość na papierze)
                 var area = !tg.Frame.IsNull ? tg.Frame : tg.Anchor;
-                if (!area.IsNull) ResolveRepresentativeCollisions(doc, area, RepresentativeClearance * tg.AnnotScale, beamDetail: true);
+                // pile cap (2026-10-30): widoczne pręty ustawione przy generowaniu — bez rozsuwania (mały oczep, pręty T / B jeden na drugim)
+                if (!area.IsNull && resolveCollisions) ResolveRepresentativeCollisions(doc, area, RepresentativeClearance * tg.AnnotScale, beamDetail: true);
 
                 // najniższy punkt detalu: okno, rozkłady i ich opisy
                 double minY = tg.Box.MinPoint.Y;
@@ -881,7 +883,7 @@ namespace BricsCadRc.Core
                     mt.SetDatabaseDefaults(db);
                     mt.Layer = BeamStore.DetailLayer;
                     // tytuł jak detal otworu (GenerateHoleDetail): „DETAIL 'n'” 125 (5 mm w 1:25), „SCALE 1:25” 0,8×
-                    mt.Contents = BeamDetailTitle(tg.Number, 1);
+                    mt.Contents = BeamDetailTitle(tg.Number, titleCount);   // pile cap (2026-10-30): „DETAIL 'n' / 7No.”
                     mt.TextHeight = DetailScale * 1.6;
                     mt.Location = new Point3d(cx, minY - 200, 0);
                     mt.Attachment = AttachmentPoint.TopCenter;
@@ -899,7 +901,8 @@ namespace BricsCadRc.Core
                 int refs = 0;
                 var dashed = EnsureDashedLinetype(db);
                 // tylko rzut dolny — na rzucie górnym bez odnośnika (jak detal otworu; uwaga Bartka 2026-10-12)
-                foreach (var (z, d) in new[] { (zb, new Vector2d()) })
+                // pile cap (2026-10-30): identyczne oczepy — ramka i odnośnik przy każdym (przesunięcia względem głównego)
+                foreach (var (z, d) in new[] { (zb, new Vector2d()) }.Concat((extraRefs ?? new List<Vector2d>()).Select(v => (zb, v))))
                 {
                     if (z.IsNull || z.IsErased) continue;
                     // ramka detalu na rzucie — ten sam wielokąt co w detalu (offset strefy L / U, decyzja 2026-10-13)

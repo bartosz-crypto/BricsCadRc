@@ -342,7 +342,7 @@ namespace BricsCadRc.Core
             var outl = outline != null ? Clean(outline) : null;
 
             var (axisEdges, diagonals) = Edges(poly);
-            var rects = Pair(axisEdges, poly);
+            var rects = DropCrossRects(Pair(axisEdges, poly));
             if (rects.Count == 0)
             {
                 res.Messages.Add("strefa belki bez par krawędzi osiowych (strefa nieosiowa) — detal ręczny.");
@@ -434,6 +434,27 @@ namespace BricsCadRc.Core
                     diag.Add((a, b));
             }
             return (axis, diag);
+        }
+
+        /// <summary>
+        /// Uwaga Bartka 2026-10-30 (APARTMENT 2, pogrubienie 600 × 1500 w narożniku — pręty w dwóch kierunkach): prostokąt „w poprzek”
+        /// (długość &lt; szerokość) leżący w całości w prostokącie prostopadłym, który jest wyraźnie wydłużony (długość ≥ 2 × szerokość),
+        /// to przekrój tej samej belki, nie drugi odcinek (przy MaxWidth 1500 strefa 600 × 1500 dawała oba). Strefy narożne bliskie
+        /// kwadratu (np. 735 × 600, PLOT 304) — bez zmian (oba kierunki).
+        /// </summary>
+        private static List<Rect> DropCrossRects(List<Rect> rects)
+        {
+            const double t = 1.0;
+            (double x0, double y0, double x1, double y1) Box(Rect r)
+                => r.AlongX ? (r.Lo, r.CLo, r.Hi, r.CHi) : (r.CLo, r.Lo, r.CHi, r.Hi);
+            return rects.Where(r =>
+            {
+                double len = r.Hi - r.Lo, w = r.CHi - r.CLo;
+                if (len >= w) return true;
+                var b = Box(r);
+                return !rects.Any(q => q != r && q.AlongX != r.AlongX && (q.Hi - q.Lo) >= 2.0 * (q.CHi - q.CLo)
+                                       && Box(q) is var c && b.x0 >= c.x0 - t && b.y0 >= c.y0 - t && b.x1 <= c.x1 + t && b.y1 <= c.y1 + t);
+            }).ToList();
         }
 
         /// <summary>Pary krawędzi „lico — lico”: dla każdej krawędzi najbliższa przeciwległa w zakresie MinWidth–MaxWidth.</summary>

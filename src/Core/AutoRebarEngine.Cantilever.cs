@@ -142,7 +142,7 @@ namespace BricsCadRc.Core
 
             // wspornik poziomy (oś X): strefa przy palu — jedna pozycja strzemion w obu kierunkach, A − 15, co 150 (decyzja Bartka 2026-10-23);
             // pionowy — zagnieżdżone jak dotąd
-            var plan = CantileverRules.PlanBars(reach, width, h, rootLen, rootH, singleRootLink: alongX);
+            var plan = CantileverRules.PlanBars(reach, width, h, rootLen, rootH, singleRootLink: alongX, protrusion: data.Protrusion);
             CantileverRules.NestRootLinksGlobal(plan, alongX);   // bez zmian przy jednej pozycji (SingleRootLink)
             foreach (var m in plan.Messages) msg($"{name}: {m}");
             double W(double s) => root + sign * s;                         // s (lokalne) → współrzędna wzdłuż osi
@@ -174,7 +174,7 @@ namespace BricsCadRc.Core
             // uwaga Bartka 2026-10-21: ramka jak przy belce — po prostu offset strefy (bez przycinania do obrysu z języczkiem)
             // uwaga Bartka 2026-10-23: identyczne wsporniki (kierunek, wymiary, strefa przy palu, uskok) — jeden detal, kopie rozkładów nad nim
             string F(double x) => (Math.Round(x / 10.0) * 10.0).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
-            string sig = $"C|{(alongX ? "X" : "Y")}{sign}|{F(reach)}|{F(width)}|{F(h)}|{F(rootLen)}|{F(rootH)}|{(stepped ? 1 : 0)}|{F(g.StepIn)}|{F(g.InSlab)}|" +
+            string sig = $"{(data.Protrusion ? "P" : "C")}|{(alongX ? "X" : "Y")}{sign}|{F(reach)}|{F(width)}|{F(h)}|{F(rootLen)}|{F(rootH)}|{(stepped ? 1 : 0)}|{F(g.StepIn)}|{F(g.InSlab)}|" +
                          $"{data.Height}|{data.RootThk}|{data.RootLen}";
             var tg = PrepareBeamDetail(doc, dv, null, handle, zone, m => msg(m.Replace("belka", "wspornik")), offsetFrame: true,
                                        extraLines: stepLines, signature: sig);
@@ -275,28 +275,32 @@ namespace BricsCadRc.Core
                 }
             }
 
-            // ── pręty proste (górą i dołem jedną pozycją „2xn … B+T”) ──
+            // ── pręty proste (górą i dołem jedną pozycją „2xn … B+T”; wypustka szeroka — osobno dołem H10 i górą H12, 2026-10-30) ──
             int k = 0;
             foreach (var st in plan.Straight)
             {
                 double s0 = Math.Min(W(st.S0), W(st.S1)), s1 = Math.Max(W(st.S0), W(st.S1));
                 double len = s1 - s0;
-                var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: false, d: st.Dia, shape: "00", a: len, b: 0,
-                                                   code: BeamGeometry.CodeBoth);
+                bool both = string.IsNullOrEmpty(st.Code);
+                string code = both ? BeamGeometry.CodeBoth : st.Code;
+                string suffix = both ? BeamGeometry.SuffixBoth
+                              : st.Code == BeamGeometry.CodeTop ? BeamGeometry.SuffixTop : BeamGeometry.SuffixBottom;
+                var tpl = FindOrCreateBeamTemplate(db, doc.Editor, bottom.Box, top: st.Code == BeamGeometry.CodeTop, d: st.Dia, shape: "00",
+                                                   a: len, b: 0, code: code);
                 if (tpl.id.IsNull) continue;
                 double f0 = c0 + plan.T0, fl = f0 + (plan.Columns - 1) * plan.ColumnSpacing;
                 double x0 = alongX ? s0 : f0, x1 = alongX ? s1 : fl;
                 double y0 = alongX ? f0 : s0, y1 = alongX ? fl : s1;
-                int total = 2 * plan.Columns;
+                int total = both ? 2 * plan.Columns : plan.Columns;
                 if (BeamDistribution(db, dv, tpl, x0, y0, x1, y1, alongX, st.Dia, len, CantileverRules.NominalColumnSpacing,
-                                     plan.Columns > 1 ? plan.ColumnSpacing : double.NaN, BeamGeometry.CodeBoth, BeamGeometry.SuffixBoth,
+                                     plan.Columns > 1 ? plan.ColumnSpacing : double.NaN, code, suffix,
                                      noSpacing: plan.Columns <= 1, shape: null, repr: k++, zoneHandle: handle,
-                                     customize: bar => bar.CountDisplay = total, tg: tg))
+                                     customize: both ? (Action<BarData>)(bar => bar.CountDisplay = total) : null, tg: tg))
                     res.Straight++;
             }
 
             FinishBeamDetail(doc, tg, zid, ObjectId.Null, m => msg(m.Replace("belka", "wspornik")), dv.Verts, new Vector2d());
-            msg($"{name}: GB {width:F0} × {h:F0}, wysięg {reach:F0}" +
+            msg($"{name}: {(data.Protrusion ? "wypustka" : "GB")} {width:F0} × {h:F0}, wysięg {reach:F0}" +
                 (rootLen > 0 ? $", strefa przy palu {rootH:F0} × {rootLen:F0}" : ", bez strefy przy palu") +
                 $", kolumny prętów: {plan.Columns} (co {plan.ColumnSpacing:F0}).");
         }
@@ -357,6 +361,8 @@ namespace BricsCadRc.Core
             g.Reach = Math.Abs(g.End - g.Root); g.InSlab = Math.Abs(g.Root - g.Other); g.Width = g.C1 - g.C0;
             if (g.Reach < CantileverRules.MinDepth - 1.0) { g.Error = $"wysięg {g.Reach:F0} — za mały, pominięty."; return g; }
             g.H = data.Height;
+            // wypustka bez wysokości w rekordzie (RC_CANTILEVER bez opisu płyty) — grubość płyty z opisu „xxx mm THK” w obrysie (2026-10-30)
+            if (g.H <= 0 && data.Protrusion) g.H = SlabThicknessInside(db, outline) ?? 0;
             if (g.H <= 0) { g.Error = "brak wysokości GB (opis „GB-…x…mm deep”) — pominięty; uzupełnij opis i uruchom RC_CANTILEVER / Prepare GA."; return g; }
             g.StepIn = Math.Abs(g.Root - g.RootEdge);
             if (g.Stepped) g.Notes.Add($"uskok (linia nibu) {g.StepIn:F0} od krawędzi płyty — wspornik {g.Reach:F0} od uskoku.");
@@ -367,6 +373,31 @@ namespace BricsCadRc.Core
         }
 
         private static (double X, double Y) Tup(Point2d p) => (p.X, p.Y);
+
+        /// <summary>Grubość płyty z opisu („300mm THK SLAB”) — MText / DBText w obrysie; brak — null.</summary>
+        internal static double? SlabThicknessInside(Database db, List<Point2d> outline)
+        {
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+                    foreach (ObjectId id in ms)
+                    {
+                        var o = tr.GetObject(id, OpenMode.ForRead);
+                        string t; Point3d p;
+                        if (o is MText mt) { t = string.Join("\n", GaImportEngine.TextLines(mt)); p = mt.Location; }
+                        else if (o is DBText dt) { t = dt.TextString; p = dt.Position; }
+                        else continue;
+                        if (!GeometryHelper.IsPointInsidePolygon(outline, new Point2d(p.X, p.Y))) continue;
+                        foreach (var l in t.Split('\n'))
+                            if (SectionPlanner.ParseThickness(l) is double thk) return thk;
+                    }
+                }
+            }
+            catch (System.Exception ex) { Log.Error("AutoRebar.SlabThicknessInside", ex); }
+            return null;
+        }
 
         /// <summary>Środek obwiedni wierzchołków.</summary>
         private static Point2d CentroidOf(List<Point2d> v)
@@ -446,7 +477,8 @@ namespace BricsCadRc.Core
         /// strefy RC-CANTILEVER), UB 03 nie ma — UB 01/02 bez zmian. Zakresy [lo, hi] wzdłuż krawędzi o współrzędnej
         /// <paramref name="edgeCoord"/> (krawędź pionowa — <paramref name="vertical"/>: x = edgeCoord, zakres w Y).
         /// </summary>
-        internal static List<(double Lo, double Hi)> CantileverSpansOnEdge(Database db, bool vertical, double edgeCoord)
+        internal static List<(double Lo, double Hi)> CantileverSpansOnEdge(Database db, bool vertical, double edgeCoord,
+                                                                            Func<CantileverEngine.Data, bool> filter = null)
         {
             var res = new List<(double Lo, double Hi)>();
             try
@@ -457,6 +489,7 @@ namespace BricsCadRc.Core
                     foreach (ObjectId id in ms)
                     {
                         if (id.IsErased || !(tr.GetObject(id, OpenMode.ForRead) is Polyline pl) || !CantileverEngine.IsStub(pl)) continue;
+                        if (filter != null) { var cd = CantileverEngine.Read(pl); if (cd == null || !filter(cd)) continue; }
                         var v = GeometryHelper.GetPolylineVertices(pl);
                         if (v.Count < 3) continue;
                         double x0 = v.Min(p => p.X), x1 = v.Max(p => p.X), y0 = v.Min(p => p.Y), y1 = v.Max(p => p.Y);

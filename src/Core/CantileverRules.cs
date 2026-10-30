@@ -37,6 +37,11 @@ namespace BricsCadRc.Core
         {
             public int IdxE0, IdxE1;
             public UShape Shape;
+            /// <summary>
+            /// Języczek w narożniku płyty (2026-10-30, GA RG215UH001 BLOCK 2 — pogrubienie 450THK): bok języczka przedłuża krawędź płyty;
+            /// 1 — punkt nasady A dopisany na krawędzi (nie wierzchołek obrysu), 2 — punkt B; 0 — zwykły języczek.
+            /// </summary>
+            public int Corner;
         }
 
         // ── U z czterech punktów ─────────────────────────────────────────
@@ -59,6 +64,19 @@ namespace BricsCadRc.Core
 
         public static bool InRange(UShape u)
             => u != null && u.Width >= MinWidth - Tol && u.Width <= MaxWidth + Tol && u.Depth >= MinDepth - Tol && u.Depth <= MaxDepth + Tol;
+
+        /// <summary>Wypustka (2026-10-30, GA RG215UH001 BLOCK 2): języczek bez opisu GB i bez strefy przy palu, wysięg do tyle [mm].</summary>
+        public const double ProtrusionMaxReach = 900.0;
+        /// <summary>Wypustka: U-bary H12 wchodzą w płytę co najmniej tyle za krawędź [mm] (zasada Bartka 2026-10-30).</summary>
+        public const double ProtrusionAnchor = 900.0;
+        /// <summary>Wypustka węższa niż tyle — strzemiona 4-cięte H10 co 150, szersza — co 200 + pręty proste H10 dół / H12 góra [mm].</summary>
+        public const double ProtrusionWideFrom = 800.0;
+
+        /// <summary>
+        /// Wypustka płyty (zasada Bartka 2026-10-30): języczek w zakresach <see cref="InRange"/> o wysięgu ≤ <see cref="ProtrusionMaxReach"/>,
+        /// bez opisu „GB-…” i bez strefy przy palu — zbrojona jak wspornik wysokości płyty (U-bary H12 ≥ 900 w płytę, strzemiona 4-cięte H10).
+        /// </summary>
+        public static bool IsProtrusion(UShape u) => InRange(u) && u.Depth <= ProtrusionMaxReach + Tol;
 
         // ── języczki zamkniętego obrysu ───────────────────────────────────
 
@@ -93,12 +111,72 @@ namespace BricsCadRc.Core
             return res;
         }
 
+        /// <summary>
+        /// Języczki w narożniku płyty (2026-10-30, GA RG215UH001 BLOCK 2): dwa kolejne narożniki wypukłe E0, E1, z jednej strony nasada
+        /// wklęsła (R), z drugiej bok języczka przechodzi prosto w krawędź płyty (dłuższą niż wysięg). Drugi punkt nasady — na tej krawędzi
+        /// (<see cref="Tab.Corner"/>). Bez strefy w płycie (linie przerywane) to zwykły uskok obrysu — wykrywane tylko na żądanie
+        /// (CantileverEngine.ProcessCornerTabs, rekord RC_CANT_TAB z „;C”).
+        /// </summary>
+        public static List<Tab> FindCornerTabs(IList<(double X, double Y)> poly)
+        {
+            var res = new List<Tab>();
+            var p = Straight(Clean(poly));
+            int n = p.Count;
+            if (n < 6) return res;
+            double s = Math.Sign(SignedArea(p));
+            if (s == 0) return res;
+            int Turn(int i)
+            {
+                var a = p[(i - 1 + n) % n]; var b = p[i]; var c = p[(i + 1) % n];
+                double cr = (b.X - a.X) * (c.Y - b.Y) - (b.Y - a.Y) * (c.X - b.X);
+                return Math.Abs(cr) < 1e-6 ? 0 : Math.Sign(cr) * (int)s;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n, r0 = (i - 1 + n) % n, r1 = (j + 1) % n;
+                if (Turn(i) != 1 || Turn(j) != 1) continue;
+                // uwaga Bartka 2026-10-30 (screen 2): bok przedłużony może kończyć się też narożnikiem wklęsłym (uskok krawędzi płyty
+                // dalej niż wysięg) — wtedy oba sąsiednie wklęsłe, ramiona różne (FindTabs takiego języczka nie bierze)
+                if (Turn(r0) == -1 && Turn(r1) != 0)
+                {
+                    // nasada R0 wklęsła, bok E1 → R1 przedłuża krawędź płyty: B = E1 + (R0 − E0)
+                    var arm = (p[r0].X - p[i].X, p[r0].Y - p[i].Y);
+                    var side = (p[r1].X - p[j].X, p[r1].Y - p[j].Y);
+                    if (Len(side) > Len(arm) + MinDepth && arm.Item1 * side.Item1 + arm.Item2 * side.Item2 > 0)
+                    {
+                        var u = TryU(new[] { p[r0], p[i], p[j], (p[j].X + arm.Item1, p[j].Y + arm.Item2) });
+                        if (u != null && InRange(u)) res.Add(new Tab { IdxE0 = Index(poly, p[i]), IdxE1 = Index(poly, p[j]), Shape = u, Corner = 2 });
+                    }
+                }
+                if (Turn(r1) == -1 && Turn(r0) != 0)
+                {
+                    // nasada R1 wklęsła, bok R0 → E0 przedłuża krawędź płyty: A = E0 + (R1 − E1)
+                    var arm = (p[r1].X - p[j].X, p[r1].Y - p[j].Y);
+                    var side = (p[r0].X - p[i].X, p[r0].Y - p[i].Y);
+                    if (Len(side) > Len(arm) + MinDepth && arm.Item1 * side.Item1 + arm.Item2 * side.Item2 > 0)
+                    {
+                        var u = TryU(new[] { (p[i].X + arm.Item1, p[i].Y + arm.Item2), p[i], p[j], p[r1] });
+                        if (u != null && InRange(u)) res.Add(new Tab { IdxE0 = Index(poly, p[i]), IdxE1 = Index(poly, p[j]), Shape = u, Corner = 1 });
+                    }
+                }
+            }
+            return res;
+        }
+
         /// <summary>Obrys bez języczków: usunięte końce języczka (E0, E1) i nasady (R0, R1), gdy leżą na prostej krawędzi płyty.</summary>
         public static List<(double X, double Y)> RemoveTabs(IList<(double X, double Y)> poly, IEnumerable<Tab> tabs)
         {
             var drop = new HashSet<(double, double)>();
-            foreach (var t in tabs) { drop.Add(t.Shape.C1); drop.Add(t.Shape.C2); }
-            var kept = Straight(Clean(poly)).Where(q => !drop.Contains(q)).ToList();   // punkt współliniowy na końcu języczka (PLOT 362) — też poza
+            // języczek w narożniku (2026-10-30): koniec przy krawędzi płyty → punkt nasady na krawędzi (narożnik płyty bez języczka)
+            var swap = new Dictionary<(double, double), (double X, double Y)>();
+            foreach (var t in tabs)
+            {
+                if (t.Corner == 2) { drop.Add(t.Shape.C1); swap[t.Shape.C2] = t.Shape.B; }
+                else if (t.Corner == 1) { drop.Add(t.Shape.C2); swap[t.Shape.C1] = t.Shape.A; }
+                else { drop.Add(t.Shape.C1); drop.Add(t.Shape.C2); }
+            }
+            var kept = Straight(Clean(poly)).Where(q => !drop.Contains(q))
+                                            .Select(q => swap.TryGetValue(q, out var r) ? r : q).ToList();   // punkt współliniowy na końcu języczka (PLOT 362) — też poza
             // punkty współliniowe (dawne nasady) — usuwane
             bool changed = true;
             while (changed && kept.Count > 3)
@@ -187,17 +265,43 @@ namespace BricsCadRc.Core
         {
             public string Dir;
             public double Width, Depth;
+            /// <summary>Języczek w narożniku płyty (wpis „…;C”, 2026-10-30) — dopasowanie wśród <see cref="FindCornerTabs"/>.</summary>
+            public bool Corner;
+            /// <summary>
+            /// Narożnik (fix134): położenie końca C1 względem lewego dolnego narożnika obwiedni obrysu (wpis „…;C;dx;dy” — MOVE / COPY obrysu
+            /// nie psuje). Bez niego dwa narożne języczki o tych samych wymiarach (wypustka i pogrubienie-belka, APARTMENT 2) myliły się.
+            /// </summary>
+            public double? RelX, RelY;
             public override string ToString()
-                => string.Format(CultureInfo.InvariantCulture, "{0};{1:0.###};{2:0.###}", Dir, Width, Depth);
+                => string.Format(CultureInfo.InvariantCulture, "{0};{1:0.###};{2:0.###}", Dir, Width, Depth)
+                   + (Corner ? ";C" : "")
+                   + (Corner && RelX.HasValue && RelY.HasValue ? string.Format(CultureInfo.InvariantCulture, ";{0:0.###};{1:0.###}", RelX.Value, RelY.Value) : "");
             public static TabRec Parse(string s)
             {
                 var p = (s ?? "").Split(';');
-                if (p.Length != 3) return null;
+                if (p.Length != 3 && !((p.Length == 4 || p.Length == 6) && p[3] == "C")) return null;
                 if (!double.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double w)) return null;
                 if (!double.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double d)) return null;
-                return new TabRec { Dir = p[0], Width = w, Depth = d };
+                var r = new TabRec { Dir = p[0], Width = w, Depth = d, Corner = p.Length >= 4 };
+                if (p.Length == 6 && double.TryParse(p[4], NumberStyles.Float, CultureInfo.InvariantCulture, out double rx)
+                                  && double.TryParse(p[5], NumberStyles.Float, CultureInfo.InvariantCulture, out double ry))
+                { r.RelX = rx; r.RelY = ry; }
+                return r;
             }
             public static TabRec Of(UShape u) => new TabRec { Dir = DirCode(u.Out), Width = u.Width, Depth = u.Depth };
+            public static TabRec Of(Tab t, IList<(double X, double Y)> raw = null)
+            {
+                var r = new TabRec { Dir = DirCode(t.Shape.Out), Width = t.Shape.Width, Depth = t.Shape.Depth, Corner = t.Corner != 0 };
+                if (r.Corner && raw != null && raw.Count > 0)
+                { r.RelX = t.Shape.C1.X - raw.Min(q => q.X); r.RelY = t.Shape.C1.Y - raw.Min(q => q.Y); }
+                return r;
+            }
+            /// <summary>Narożny języczek z położeniem — ten sam C1 względem obwiedni (± 1); wpis bez położenia — każdy.</summary>
+            public bool AtSamePlace(Tab t, IList<(double X, double Y)> raw)
+            {
+                if (!RelX.HasValue || !RelY.HasValue || raw == null || raw.Count == 0) return true;
+                return Math.Abs(t.Shape.C1.X - raw.Min(q => q.X) - RelX.Value) <= 1.0 && Math.Abs(t.Shape.C1.Y - raw.Min(q => q.Y) - RelY.Value) <= 1.0;
+            }
             public bool Matches(UShape u)
                 => u != null && DirCode(u.Out) == Dir && Math.Abs(u.Width - Width) <= Tol && Math.Abs(u.Depth - Depth) <= Tol;
         }
@@ -208,9 +312,11 @@ namespace BricsCadRc.Core
             var take = new List<Tab>();
             var left = (rec ?? Enumerable.Empty<TabRec>()).Where(r => r != null).ToList();
             if (left.Count == 0 || raw == null) return take;
-            foreach (var t in FindTabs(raw))
+            var cand = FindTabs(raw);
+            if (left.Any(r => r.Corner)) cand.AddRange(FindCornerTabs(raw));   // języczki w narożniku (2026-10-30)
+            foreach (var t in cand)
             {
-                var m = left.FirstOrDefault(r => r.Matches(t.Shape));
+                var m = left.FirstOrDefault(r => r.Corner == (t.Corner != 0) && r.Matches(t.Shape) && (!r.Corner || r.AtSamePlace(t, raw)));
                 if (m == null) continue;
                 left.Remove(m);
                 take.Add(t);
@@ -269,6 +375,8 @@ namespace BricsCadRc.Core
         public const double MaxUBarArm = 1300.0;
         /// <summary>Pręty główne / U-bary wspornika (Speedeck: min. 4H16 górą i dołem).</summary>
         public const int MainDia = 16;
+        /// <summary>Wypustka (2026-10-30): U-bary H12, strzemiona H10, szeroka — pręty proste H10 dołem / H12 górą.</summary>
+        public const int ProtrusionMainDia = 12, ProtrusionLinkDia = 10, ProtrusionBottomDia = 10, ProtrusionTopDia = 12;
         /// <summary>Pręty boczne (jak belki: BeamParams.SideDia).</summary>
         public const int SideDia = 12;
         /// <summary>Największy rozstaw kolumn prętów w poprzek (600 → 4, 450 → 3, 800 → 5); opis „-150”.</summary>
@@ -391,6 +499,8 @@ namespace BricsCadRc.Core
         {
             public double S0, S1;
             public int Dia;
+            /// <summary>Wypustka szeroka (2026-10-30): osobna pozycja dołem („BB” / B) albo górą („BT” / T); null — jedna pozycja „2xn … B+T”.</summary>
+            public string Code;
         }
 
         public sealed class Plan
@@ -425,12 +535,15 @@ namespace BricsCadRc.Core
         /// Strzemiona 4-leg (2 zachodzące) wg <see cref="LinkFor"/> — osobno wysięg (h) i strefa przy palu (rootH).
         /// </summary>
         public static Plan PlanBars(double reach, double width, double h, double rootLen, double rootH, double maxLen = 6000,
-                                    bool singleRootLink = false)
+                                    bool singleRootLink = false, bool protrusion = false)
         {
             var pl = new Plan();
+            // wypustka (zasada Bartka 2026-10-30): U-bary H12, strzemiona 4-cięte H10 co 150 (szerokość < 800) / co 200 (szersza)
+            int MainDia = protrusion ? ProtrusionMainDia : CantileverRules.MainDia;
+            bool wide = protrusion && width >= ProtrusionWideFrom - 0.5;
             // uwaga Bartka 2026-10-28: wspornik (wystający) — otulina 50, strefa przy palu (pogrubienie w płycie) — 40 + 5
             double cover = OutsideCover, rootCover = BeamGeometry.DefaultCoverSide;
-            var (dLink, sLink) = LinkFor(h);
+            var (dLink, sLink) = protrusion ? (ProtrusionLinkDia, wide ? 200.0 : 150.0) : LinkFor(h);
             // kolumny prętów głównych w poprzek
             double off = cover + dLink + MainDia / 2.0;
             double inner = width - 2 * off;
@@ -448,6 +561,7 @@ namespace BricsCadRc.Core
                        double minCountFallback = double.NaN)
             {
                 var (d, s) = LinkFor(hh);
+                if (protrusion) { d = dLink; s = sLink; }   // wypustka: H10 co 150 / 200
                 if (!double.IsNaN(spacing)) s = spacing;
                 // 2026-10-28: co 200, a gdy wejdą mniej niż 3 — co minCountFallback (150)
                 if (!double.IsNaN(minCountFallback))
@@ -462,7 +576,7 @@ namespace BricsCadRc.Core
                 if (drop > 0) a = Math.Floor((a - drop) / 5.0 + 1e-9) * 5.0;
                 // uwaga Bartka 2026-10-22 („te same zasady co w belkach”): Auto jak belki — H ≤ 375 dwa zachodzące (4-leg, B 370),
                 // wyżej 2-cięte na pełną szerokość (600 → B 510)
-                var legs = BeamGeometry.PlanLinkLegs(BeamParams.LegsAuto, hh, span, cv, BeamGeometry.DefaultCoverBottom, d,
+                var legs = BeamGeometry.PlanLinkLegs(protrusion ? BeamParams.Legs4 : BeamParams.LegsAuto, hh, span, cv, BeamGeometry.DefaultCoverBottom, d,
                                                      new[] { (ncol, MainDia) }, edgeBeam: true);
                 var (first, step, n, _) = BeamGeometry.StirrupLayout(lo, hi, s, BeamGeometry.StirrupFirstOffset(d, BeamGeometry.LinkEndCover));
                 if (!double.IsNaN(spacing) && n > 1)
@@ -568,6 +682,21 @@ namespace BricsCadRc.Core
                             pl.Straight.Add(new StraightRun { S0 = s0 + o, S1 = s0 + o + len, Dia = MainDia });
                     pl.Messages.Add($"ramię U-bara {arm:F0} > {MaxUBarArm:F0} — U-bary A = {a2:F0} + pręty proste H{MainDia}.");
                 }
+            }
+            else if (protrusion)
+            {
+                // wypustka (zasada Bartka 2026-10-30): U-bar H12 od końca wypustki w płytę co najmniej 900 za krawędź (bez limitu 1300,
+                // bez prętów prostych); szeroka (≥ 800) — dodatkowo pręty proste H10 dołem i H12 górą na tej samej długości
+                double arm = BeamGeometry.UBarArmForModule(BeamGeometry.Ceil25(backOut + ProtrusionAnchor), bU, MainDia);
+                pl.UBars.Add(new UBarRun { Back = backOut, ArmDir = -1, A = arm, B = bU, Dia = MainDia });
+                if (wide)
+                {
+                    double len = BeamGeometry.Ceil25(backOut + ProtrusionAnchor);
+                    pl.Straight.Add(new StraightRun { S0 = backOut - len, S1 = backOut, Dia = ProtrusionBottomDia, Code = BeamGeometry.CodeBottom });
+                    pl.Straight.Add(new StraightRun { S0 = backOut - len, S1 = backOut, Dia = ProtrusionTopDia, Code = BeamGeometry.CodeTop });
+                }
+                pl.Messages.Add($"wypustka {width:F0} × {reach:F0}: U-bar H{MainDia} A = {arm:F0} ({arm - backOut:F0} za krawędź), strzemiona " +
+                                $"4-cięte H{dLink} co {sLink:F0}" + (wide ? $", pręty proste H{ProtrusionBottomDia} dołem i H{ProtrusionTopDia} górą" : "") + ".");
             }
             else
             {

@@ -44,6 +44,16 @@ namespace BricsCadRc.Core
         /// </summary>
         public int CountMult { get; set; }
 
+        /// <summary>
+        /// Liczba identycznych elementów, które rozkład zbroi (pile cap „DETAIL 'n' / 7No.”, 2026-10-30): opis podaje pręty jednego
+        /// elementu („5 H12-17-120 B1 U-BARS”), BBS liczy <see cref="BbsCount"/> = EffectiveCount × Members. 0 / 1 — jeden element.
+        /// XData rozkładu [35].
+        /// </summary>
+        public int Members { get; set; }
+
+        /// <summary>Liczba prętów do BBS: EffectiveCount × Members (Members ≤ 1 — EffectiveCount).</summary>
+        public int BbsCount => EffectiveCount * System.Math.Max(1, Members);
+
         /// <summary>Kod ksztaltu wg BS8666 np. "00", "11", "21"</summary>
         public string ShapeCode { get; set; } = "00";
 

@@ -533,6 +533,7 @@ namespace BricsCadRc.Core
                                     : new List<(double X, double Y)> { (g.C0, p0), (g.C1, p0), (g.C1, p1), (g.C0, p1) };
                             }
                             var (dC, _) = CantileverRules.LinkFor(g.H);
+                            if (cr.data.Protrusion) dC = CantileverRules.ProtrusionLinkDia;   // wypustka — linki H10 4-cięte (2026-10-30)
                             foreach (var (a, b) in SectionPlanner.CutIntervals(Rect(0, g.Reach), inp.CutAlongX, inp.CutCoord))
                             {
                                 inp.Beams.Add(new SectionPlanner.BeamBand
@@ -540,7 +541,7 @@ namespace BricsCadRc.Core
                                     Handle = cr.handle, S0 = a, S1 = b, Height = drop + g.H, TopDrop = drop, Cantilever = true, TocText = cr.data.Toc > 0 ? cr.data.Toc.ToString("0.000", CultureInfo.InvariantCulture) : null,
                                     NibWidth = 0, NibHeight = 0, StirrupDia = dC, Cover = CantileverRules.OutsideCover,   // wspornik — 50 (2026-10-28)
                                     StirrupA = BeamGeometry.StirrupHeightCovers(g.H, BeamGeometry.CoverTopA1, BeamGeometry.DefaultCoverBottom),
-                                    Params = $"CANT {g.Width:0}x{g.H:0} TOC-{drop:0}"
+                                    Params = cr.data.Protrusion ? $"PROTRUSION {g.Width:0}x{g.H:0} TOC-{drop:0}" : $"CANT {g.Width:0}x{g.H:0} TOC-{drop:0}"
                                 });
                                 nCant++;
                             }

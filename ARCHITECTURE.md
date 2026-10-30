@@ -1590,6 +1590,80 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   niż płyta, strefa przy palu 600 × 375, płyta 225 + nib; C-C w poprzek — 600 × 300, 4 kolumny U-barów, strzemiona 4-leg), wspornik
   w narożniku (Plot 13 CNH).
 
+### Poprawki 2026-10-30 (fix131) — GA RG215UH001 BLOCK 2 „APARTMENT 2” (uwagi Bartka)
+- **Prepare GA — opis „APARTMENT n”:** `PlotLabelRules.GaLabelRx` przyjmuje PLOT / GARAGE / APARTMENT (także sklejone w MText —
+  `MTextParagraphs.GluedRx`, nagłówek raportu `ReportApartmentRx`); kolejność na liście `SortRank` (PLOT 0, APARTMENT 1, GARAGE 2).
+- **Wypustki płyty** (języczek 300–1500 × wysięg ≤ 900 bez opisu „GB-…” i bez strefy przy palu, `CantileverRules.IsProtrusion`):
+  RC_CANT [10] = 1 (`FormatVersion` 2), wysokość = grubość płyty (opis płyty / `SlabThicknessInside`). Zbrojenie (`PlanBars(protrusion)`):
+  U-bary H12 z ramionami do `Ceil25(wysięg + 900)` w płytę (min. 900 za krawędź), strzemiona 4-cięte H10 co 150 (szerokość < 800),
+  szersze — co 200 + pręty proste H10 dołem (BB) i H12 górą (BT) na długość wysięg + 900. UB 01/02 przerwane na szerokości wypustki
+  (`CantileverSpansOnEdge(filter: Protrusion)` także dla zwykłych UB). RC_SECTION: pas `PROTRUSION`, strzemiona H10.
+- **Pogrubienie w narożniku** („450THK”, odnośnik MLeader): języczek obrysu w narożniku płyty (`FindCornerTabs` — bok języczka przedłuża
+  krawędź płyty; drugi punkt nasady na krawędzi, `Tab.Corner` 1 / 2) potwierdzony strefą z kawałków SD-PILED-RAFT (odcinek równoległy do
+  nasady w odległości L, koniec na krawędzi, + odcinek od nasady wklęsłej; linie przerywane GA) → wspornik jak GB: strefa przy palu L,
+  grubość z „xxxTHK”, bez opisu GB wysokość = grubość strefy (`CantileverEngine.ProcessCornerTabs`, Prepare GA — po kawałkach U,
+  PRZED NibAutoClose; RC_CANTILEVER — także linie). Rekord obrysu RC_CANT_TAB „Dir;W;D;C” (`TabRec.Corner`), `RemoveTabs` — narożnik
+  bez języczka (koniec przy krawędzi → punkt nasady). Linie strefy zostają na rysunku, poza listami nibu / JoinLoops.
+- **Pile cap** (`PileCapEngine`, warstwa RC-PILECAP, rekord RC_PILECAP [1] wersja, [2] B, [3] L, [4] H, [5] TOC): Prepare GA — zamknięty
+  prostokąt SD-PILED-RAFT poza obrysem płyty z MText „PILE CAP” ≤ 1500 („600SQx600DP”, „TOC=…”) — nie płyta (poza nibem, otworami,
+  wspornikami). RC_GENERATE → PileCap (RC_GENERATE_PILECAP, `AutoRebarEngine.GeneratePileCaps`): oczepy przy płycie (obwiednia + 1500),
+  identyczne — jeden detal 1:25 „DETAIL 'n' / NNo.” (ramka i odnośnik przy każdym, `FinishBeamDetail(titleCount, extraRefs)`).
+  Zbrojenie zawsze jak wzór biura (pilecap.dwg / dlugosci.xls): U-bary H12 21 A = H − 120 / B = bok − 100 (600 → 480 / 500 / 480) —
+  5 dołem (BB) i 5 górą (BT) w obu kierunkach (pozycje 50 + 12 + 6 od lica), U-bary H12 21 A480 / B270 / C480 przy osi pala — 2 dołem
+  i 2 górą wzdłuż X co 135; opis „Nx5” / „Nx2” (`CountMult` = liczba oczepów — BBS liczy wszystkie). Pod tytułem przekroje (litery z
+  `NextSectionLetter`, znaczniki na SD-SECTION przy oczepie w detalu): cięcie wzdłuż X i wzdłuż Y — beton, U-bar w płaszczyźnie,
+  pręty przecięte z numerem pozycji, w drugim ramiona U-barów przy osi pala; rola detalu SECTION (usuwane z detalem).
+
+### Poprawki 2026-10-30 (fix132) — uwagi Bartka po teście APARTMENT 2
+- **Pile cap jak wzór biura** (pilecap.dwg, opisy odczytane z encji ASD): opis = pręty JEDNEGO oczepu — „5 H12-17-120 B1 U-BARS”,
+  „5 … T1 U-BARS” (wzdłuż X), „5 … B2 / T2 U-BARS” (wzdłuż Y), „2x2 H12-18-150 T1+B1 U-BARS” (przy osi pala, kod BM); rozstaw 120
+  symetrycznie (`PileCapEngine.MainLayout`, 600 → 5), U-bary przy osi co 150. Liczba oczepów (NNo.) — `BarData.Members` (XData
+  rozkładu [35]); BBS (`BbsDrawingReader`, `BarScheduleEngine`) liczy `BbsCount` = EffectiveCount × Members. Linie opisów poza oczepem
+  (`leaderFor`): T1 po lewej, B1 po prawej, T1+B1 w osi — teksty w osobnych rzędach nad oczepem, T2 / B2 nad / pod oczepem w prawo.
+  Przekroje: warstwa SD-SECTION / RC-BEAM-DETAIL zakładana przed rysowaniem (pierwsza wersja — eKeyNotFound, przekrojów nie było).
+- **Wypustka w narożniku** bez linii strefy (bok wypustki przedłuża krawędź płyty, także gdy krawędź kończy się dalej uskokiem —
+  oba sąsiednie narożniki wklęsłe, ramiona różne): `FindCornerTabs` + `ProcessCornerTabs` → wypustka (RC_CANT [10]) jak na krawędzi.
+- **Mesh zawieszał BricsCAD** (płyta 25,7 m, 40 pali — przeszukanie zakładów góry omijających pale): `TopLapSearch.Find` z pamięcią
+  stanów bez rozwiązania (wspólną dla N; te same wyniki, szybciej) i limitem 250 ms, plan pasa (`ComputeJointPlan`, plan góry pasa)
+  najwyżej 1,5 s — potem pierwszy plan dołu i góra z zakładami przesuniętymi względem dołu (ostrzeżenie: odległość od pali nie
+  sprawdzona); strefy zakładów kandydatów z pamięci (`LapZonesCached`). Log: czas każdego etapu RC_GENERATE → Mesh.
+- Wypustki: strefa RC-CANTILEVER sięga 1000 w płytę (zakotwienie U-barów H12 ≥ 900) — celowo, mimo braku pogrubienia (wysokość = płyta).
+
+### Poprawki 2026-10-30 (fix133) — uwagi Bartka po teście fix132
+- **Pogrubienie w narożniku („450THK”) zbrojone JAK BELKA**, nie jak wspornik (wspornik dawał strzemiona 5 co 120 — za duża belka):
+  `ProcessCornerTabs` z linią strefy → strefa RC-BEAM (języczek + część w płycie, H z „xxxTHK”, szerokość języczka, [6] = obrys,
+  znacznik RC_GA), obrys płyty z języczkiem BEZ rekordu RC_CANT_TAB (języczek jest częścią płyty); pręty — RC_GENERATE → Beam
+  (U-bary H16 długie / krótkie + pręty proste wg zasad belek). Strefa już jest (ponowne RC_CANTILEVER) — bez dubla.
+- **Pile cap — opisy jak w innych detalach:** linie proste prostopadle do prętów (bez załamań — leader z załamaniem rysował się
+  ukośnie od środka rozkładu), każda w innym miejscu wzdłuż prętów (`BeamDistribution(alongAt)` → `GenerateDistributionWithLeaderAtOffset`):
+  wzdłuż X T1 / T1+B1 / B1 co 150 (−150 / oś / +150), linie w górę; wzdłuż Y T2 / B2 (+150 / −150), linie w prawo.
+  Bez znaczników i przekrojów C-C / D-D (przekroje — ręcznie, RC_SECTION).
+
+### Poprawki 2026-10-30 (fix134) — uwagi Bartka po teście fix133 (TEST.dwg)
+- **Belka w narożniku dostawała pręty w dwóch kierunkach** (strzemiona X i Y, B+T X i Y, UB X i Y — ~10 pozycji): rekord obrysu
+  „-Y;600;450;C” (wypustka w prawym narożniku) pasował też do lewego narożnego języczka tych samych wymiarów (pogrubienie-belka,
+  części płyty) — obrys obliczeniowy tracił lewy języczek i strefa belki wystawała poza płytę. Wpis narożny ma teraz położenie końca C1
+  względem obwiedni obrysu („Dir;W;D;C;dx;dy”, `TabRec.RelX/RelY`, `AtSamePlace`; MOVE / COPY obrysu bez zmian). Stare wpisy „;C” —
+  bez położenia (ponowne Prepare GA).
+- **Pile cap — kopie dla każdego oczepu** (decyzja Bartka): jak identyczne belki / wsporniki — podpis „PC|wymiary”, pierwszy oczep
+  detal główny „DETAIL 'n' / NNo.”, kolejne — kopie rozkładów nad detalem (ramka z przekątnymi), każdy oczep w BBS (bez `Members`).
+  Opisy — domyślne linie prostopadle do prętów w różnych miejscach wzdłuż prętów (`alongAt`), bez własnych załamań. Wygaszanie: widoczny
+  pręt T za osią, B przed osią (indeksy 3 / 1 z 5) — górny nie leży na dolnym; `FinishBeamDetail(resolveCollisions: false)`.
+
+### Poprawka 2026-10-30 (fix135) — belka w narożniku nadal w dwóch kierunkach (TEST.dwg)
+- Przyczyna w `BeamGeometry.Analyze`: strefa 600 × 1500 — pary lic w obu kierunkach mieszczą się w MaxWidth (1500), więc powstawał
+  odcinek wzdłuż Y (szer. 600) i drugi wzdłuż X (szer. 1500, dł. 600). `DropCrossRects`: prostokąt krótszy niż szeroki, leżący w całości
+  w prostopadłym prostokącie wyraźnie wydłużonym (dł. ≥ 2 × szer.), to przekrój tej samej belki — pomijany. Strefy bliskie kwadratu
+  (735 × 600 — narożniki PLOT 304) i L / T — bez zmian (sprawdzone na kształtach testowych: stary i nowy wynik).
+
+### Poprawki 2026-10-30 (fix136) — pile cap wg wzoru Bartka (TEST2.dwg) + BAR_END Hook / Both
+- **BAR_END Hook + Both** (`BarBlockEngine.AddBarSymbols`, kategoria LBar): dotąd hak tylko na jednym końcu (Both traktowane jak Right) —
+  teraz hak na obu końcach (początek — do przodu, koniec — wstecz, ta sama strona Up / Down).
+- **Pile cap — zakończenia i wygaszanie jak we wzorze** (rozkłady detalu głównego z TEST2.dwg, poprawione ręcznie przez Bartka): wszystkie
+  rozkłady Hook / Both / Down (hak w głąb oczepu, bez kółek); widoczny pręt — górny i dolny U-bar tym samym prętem (jeden na drugim):
+  wzdłuż X środkowy (indeks 2 z 5), wzdłuż Y drugi (indeks 1), T1+B1 — drugi z dwóch. Opisy: wzdłuż X linia w dół ≈ 1650 pod lico
+  oczepu, wzdłuż Y w lewo ≈ 1650 (jak we wzorze: −1692 od wstawienia opisu), T1+B1 — domyślnie w górę; linie w osobnych miejscach ±150.
+
 ## 4l. Szereg płyt z belkami GB poza płytą — decyzja Bartka 2026-10-23 (etap 1, wzorzec PLOT 304–307 / test11)
 - **GA:** jeden obrys zewnętrzny SD-PILED-RAFT obejmuje kilka płyt; w nim zamknięte linie uskoku płyt (każda z opisem „PLOT …”), prostokątne
   pustki między płytami, otwarte linie stref narożnych (735 × 600, opis „525THK”) i pasy betonu między płytami z opisem
@@ -1801,6 +1875,9 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
     do P + s · n (zasięg pręta bez zmian), stała szerokość d, narożniki skosu na dwusiecznej (ML / MR zamiast rogów końca).
     Maska bit 2 (4) = ta geometria; `Strip` odtwarza rogi końca (środek skosu + s · t, d = szerokość końca kreski). Obrys z
     fix128 (bez bitu 4) — tylko usunięcie rogów kreski.
+- **Strzałka opisu pręta przypięta do pręta (fix130, zgłoszenie 2026-10-30: opis dało się odciągnąć):** `RcMLeaderOverrule` kolejkuje
+  każdy zmieniony MLeader; brak / zerwany link RC_BAR_LABEL (pręt usunięty, kopia, wklejenie) → pręt, którego [13] LabelHandle
+  wskazuje opis (`FindBarByLabel`), link naprawiony (log „link do pręta naprawiony”), potem snap grotu jak dotąd.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

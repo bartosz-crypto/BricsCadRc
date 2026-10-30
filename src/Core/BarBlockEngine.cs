@@ -556,31 +556,34 @@ namespace BricsCadRc.Core
                     double px   = isUp ? -uy :  uy;
                     double py   = isUp ?  ux : -ux;
 
-                    // Baza haka i składowe kierunkowe zależne od strony
-                    bool    isLeft = !string.IsNullOrEmpty(symbolSide) && symbolSide == "Left";
-                    Point3d hookBase;
-                    double  bx, by;
-                    if (isLeft)
+                    // Baza haka i składowe kierunkowe zależne od strony; „Both” — hak na OBU końcach (uwaga Bartka 2026-10-30:
+                    // BAR_END Hook + Both rysował tylko prawy koniec — pile cap: U-bary z hakami w głąb oczepu po obu stronach)
+                    string sd = string.IsNullOrEmpty(symbolSide) ? "Right" : symbolSide;
+                    void Hook(bool atStart)
                     {
-                        hookBase = startPt;
-                        // Przy lewym końcu: hak biegnie WZDŁUŻ (do przodu) + prostopadle → kąt ostry
-                        bx = ux * Cos45 + px * Cos45;
-                        by = uy * Cos45 + py * Cos45;
+                        Point3d hookBase;
+                        double  bx, by;
+                        if (atStart)
+                        {
+                            hookBase = startPt;
+                            // Przy lewym końcu: hak biegnie WZDŁUŻ (do przodu) + prostopadle → kąt ostry
+                            bx = ux * Cos45 + px * Cos45;
+                            by = uy * Cos45 + py * Cos45;
+                        }
+                        else
+                        {
+                            hookBase = endPt;
+                            // Przy prawym końcu: hak COFA SIĘ (wstecz) + prostopadle → kąt ostry
+                            bx = -ux * Cos45 + px * Cos45;
+                            by = -uy * Cos45 + py * Cos45;
+                        }
+                        var hookTip  = new Point3d(hookBase.X + HookLen * bx, hookBase.Y + HookLen * by, 0);
+                        var hookLine = new Line(hookBase, hookTip) { Layer = layer, ColorIndex = 256 };
+                        btr.AppendEntity(hookLine);
+                        tr.AddNewlyCreatedDBObject(hookLine, true);
                     }
-                    else   // Right (domyślnie)
-                    {
-                        hookBase = endPt;
-                        // Przy prawym końcu: hak COFA SIĘ (wstecz) + prostopadle → kąt ostry
-                        bx = -ux * Cos45 + px * Cos45;
-                        by = -uy * Cos45 + py * Cos45;
-                    }
-
-                    var hookTip  = new Point3d(hookBase.X + HookLen * bx,
-                                               hookBase.Y + HookLen * by, 0);
-
-                    var hookLine = new Line(hookBase, hookTip) { Layer = layer, ColorIndex = 256 };
-                    btr.AppendEntity(hookLine);
-                    tr.AddNewlyCreatedDBObject(hookLine, true);
+                    if (sd == "Left" || sd == "Both") Hook(true);
+                    if (sd != "Left") Hook(false);   // Right (domyślnie) i Both
                     break;
                 }
 
@@ -1072,7 +1075,8 @@ namespace BricsCadRc.Core
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, bar.CutZones ?? ""),                  // [31] CutZones (otwory)
                 new TypedValue((int)DxfCode.ExtendedDataReal,        bar.PairShift),                       // [32] PairShift (strzemiona 4-cięte)
                 new TypedValue((int)DxfCode.ExtendedDataReal,        double.IsNaN(bar.CoverEnd) ? -1.0 : bar.CoverEnd), // [33] CoverEnd (−1 = jak Cover)
-                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)Math.Max(0, Math.Min(short.MaxValue, bar.CountMult))) // [34] CountMult („2x5”)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)Math.Max(0, Math.Min(short.MaxValue, bar.CountMult))), // [34] CountMult („2x5”)
+                new TypedValue((int)DxfCode.ExtendedDataInteger16,   (short)Math.Max(0, Math.Min(short.MaxValue, bar.Members)))    // [35] Members (pile cap NNo., 2026-10-30)
             );
             if (entity is BlockReference br) RecolorAdd(br, bar);
         }
@@ -1184,6 +1188,11 @@ namespace BricsCadRc.Core
             {
                 try { bd.CountMult = Convert.ToInt32(v[34].Value); }
                 catch { bd.CountMult = 0; }
+            }
+            if (v.Length >= 36)
+            {
+                try { bd.Members = Convert.ToInt32(v[35].Value); }
+                catch (System.Exception ex) { Log.Error("BarBlockEngine.ReadXData.Members", ex); bd.Members = 0; }
             }
 
             return bd;

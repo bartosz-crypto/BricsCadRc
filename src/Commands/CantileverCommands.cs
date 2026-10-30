@@ -63,7 +63,12 @@ namespace BricsCadRc.Commands
                 var restored = new List<string>();
                 using (doc.LockDocument())
                 {
-                    rep = CantileverEngine.ProcessClosedOutlines(db, outlines, pieces, texts, "rysunek", Ask);
+                    // pogrubienie w narożniku (2026-10-30): strefa z linii przerywanych — kawałki z liniami (LINE)
+                    var cornerPieces = CantileverEngine.OpenSlabPieces(db, includeLines: true);
+                    var corner = CantileverEngine.ProcessCornerTabs(db, outlines, cornerPieces, null, texts, "rysunek");
+                    pieces.RemoveAll(id => corner.Moved.Contains(id));
+                    rep = CantileverEngine.ProcessClosedOutlines(db, outlines, pieces, texts, "rysunek", Ask, usedTexts: corner.UsedTexts);
+                    rep.Made += corner.Made; rep.Info.AddRange(corner.Info); rep.Messages.AddRange(corner.Messages);
                     // obrys na rysunku jak w GA (języczek) — także rysunki przygotowane poprzednią wersją (obrys przecięty)
                     CantileverEngine.RestoreOutlineTabs(db, outlines, restored);
                 }
@@ -79,6 +84,40 @@ namespace BricsCadRc.Commands
             {
                 Log.Error("RC_CANTILEVER", ex);
                 ed.WriteMessage($"\n{T} Błąd: {ex.Message}\n");
+            }
+        }
+
+        /// <summary>
+        /// RC_GENERATE_PILECAP (RC_GENERATE → PileCap; uwaga Bartka 2026-10-30, APARTMENT 2): oczepy pali (RC-PILECAP z Prepare GA) przy
+        /// wskazanej płycie (rzut dolny) — detal 1:25 z przekrojami, zbrojenie standardowe (AutoRebarEngine.GeneratePileCaps).
+        /// </summary>
+        [CommandMethod("RC_GENERATE_PILECAP", CommandFlags.Modal)]
+        public static void GeneratePileCap()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+            try
+            {
+                var peo = new PromptEntityOptions("\nWskaż obrys płyty na rzucie DOLNYM (pile cap przy płycie): ");
+                peo.SetRejectMessage("\nTo nie jest polilinia.");
+                peo.AddAllowedClass(typeof(Polyline), true);
+                var r = ed.GetEntity(peo);
+                if (r.Status != PromptStatus.OK) return;
+                var picked = GaImportEngine.ResolveSlabPick(doc.Database, r.ObjectId, r.PickedPoint);
+                var outer = NibDetector.OuterOf(doc.Database, picked);
+                if (AutoRebarEngine.IsTopView(doc.Database, outer))
+                {
+                    ed.WriteMessage($"\n{T} Wskazany obrys to rzut GÓRNY — wskaż obrys rzutu DOLNEGO. Przerwano.\n");
+                    return;
+                }
+                AutoRebarEngine.GeneratePileCaps(doc, picked);
+                ed.WriteMessage("\n");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("RC_GENERATE_PILECAP", ex);
+                ed.WriteMessage($"\n*** ERROR *** {T} {ex.Message}\n");
             }
         }
 
