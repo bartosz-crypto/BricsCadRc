@@ -1672,6 +1672,12 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
 - Diagnostyka `BarCopyWatcher`: każda komenda kopiowania — liczba paczek / par i nowych obiektów, komenda zagnieżdżona (przepięcie
   odłożone) — do ustalenia, czemu przepięcie nie zaszło.
 
+### RC_FIX_BAR_LABELS (2026-10-30, prośba Bartka — naprawa opisów prętów popsutych kopiowaniem)
+- `LabelRepairCommands.FixBarLabels`: zaznaczenie (Enter — cały model); pary wzajemne pręt [13] ↔ opis RC_BAR_LABEL zostają, pozostałe
+  opisy i pręty dobierane po odległości tekstu / grota od pręta (najbliższe najpierw, ≤ 3000) → zapis obu powiązań; grot na pręt (gdy
+  > 300 od pręta — punkt pręta najbliżej tekstu); tekst każdego opisu z pręta (`AnnotationEngine.UpdateBarLabelCount`). Nic nie jest
+  usuwane ani tworzone — opisy bez pręta i pręty bez opisu tylko w komunikacie.
+
 ## 4l. Szereg płyt z belkami GB poza płytą — decyzja Bartka 2026-10-23 (etap 1, wzorzec PLOT 304–307 / test11)
 - **GA:** jeden obrys zewnętrzny SD-PILED-RAFT obejmuje kilka płyt; w nim zamknięte linie uskoku płyt (każda z opisem „PLOT …”), prostokątne
   pustki między płytami, otwarte linie stref narożnych (735 × 600, opis „525THK”) i pasy betonu między płytami z opisem
