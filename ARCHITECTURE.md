@@ -1678,6 +1678,11 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   > 300 od pręta — punkt pręta najbliżej tekstu); tekst każdego opisu z pręta (`AnnotationEngine.UpdateBarLabelCount`). Nic nie jest
   usuwane ani tworzone — opisy bez pręta i pręty bez opisu tylko w komunikacie.
 
+### Poprawka 2026-10-30 (fix139) — opis pręta nie jest zwykłym tekstem (zgłoszenie Bartka: „dsfsdf6 H16-18”)
+- `RcMLeaderOverrule.OnCommandEnded`: po każdej komendzie, która zmieniła opis pręta (MLeader RC_BAR_LABEL — MTEDIT, dwuklik, …),
+  tekst przywracany z pręta (`AnnotationEngine.UpdateBarLabelCount`: liczba z rozkładów + „H16-18”) z komunikatem; numer / liczba
+  zmieniają się tylko przez pręt i rozkłady. `UpdateBarLabelCount` zwraca bool i nie zapisuje, gdy tekst bez zmian (bez znakowania rysunku).
+
 ## 4l. Szereg płyt z belkami GB poza płytą — decyzja Bartka 2026-10-23 (etap 1, wzorzec PLOT 304–307 / test11)
 - **GA:** jeden obrys zewnętrzny SD-PILED-RAFT obejmuje kilka płyt; w nim zamknięte linie uskoku płyt (każda z opisem „PLOT …”), prostokątne
   pustki między płytami, otwarte linie stref narożnych (735 × 600, opis „525THK”) i pasy betonu między płytami z opisem

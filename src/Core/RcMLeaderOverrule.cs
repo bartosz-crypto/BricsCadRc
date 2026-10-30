@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Bricscad.ApplicationServices;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
@@ -130,10 +131,28 @@ namespace BricsCadRc.Core
                 tr.Commit();
             }
             catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.OnCommandEnded", ex); }
-            finally
+            // uwaga Bartka 2026-10-30 („labele mogę zmieniać jak zwykły tekst — to musi być zablokowane”): tekst opisu pręta zawsze
+            // z pręta (liczba z rozkładów + numer pozycji) — edycja tekstu (MTEDIT / dwuklik / właściwości) cofana po komendzie
+            int restored = 0;
+            try
             {
-                _inSnap = false;
+                var bars = new List<string>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var mlId in toProcess)
+                        if (!mlId.IsErased && tr.GetObject(mlId, OpenMode.ForRead) is MLeader ml
+                            && ml.GetXDataForApplication(SingleBarEngine.XLabelAppName) != null
+                            && SingleBarEngine.ReadBarHandleFromLabel(ml) is string bh && bh.Length > 0)
+                            bars.Add(bh);
+                    tr.Commit();
+                }
+                foreach (var bh in bars.Distinct())
+                    if (AnnotationEngine.UpdateBarLabelCount(db, bh)) restored++;
             }
+            catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.RestoreText", ex); }
+            if (restored > 0)
+                doc.Editor.WriteMessage($"\n[RC] Opis pręta zmienia się przez pręt (numer, liczba z rozkładów) — tekst opisu przywrócony ({restored}).\n");
+            _inSnap = false;   // oba bloki wyżej łapią wszystkie wyjątki
         }
 
         // ----------------------------------------------------------------

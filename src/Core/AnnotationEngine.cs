@@ -2069,19 +2069,20 @@ namespace BricsCadRc.Core
         /// <summary>
         /// Aktualizuje tekst MLeadera pręta na podstawie sumy prętów ze wszystkich powiązanych rozkładów.
         /// </summary>
-        public static void UpdateBarLabelCount(Database db, string sourceBarHandle,
+        public static bool UpdateBarLabelCount(Database db, string sourceBarHandle,
                                                string markOverride = null)
         {
-            if (string.IsNullOrEmpty(sourceBarHandle)) return;
+            bool changed = false;
+            if (string.IsNullOrEmpty(sourceBarHandle)) return false;
 
             try
             {
                 // Krok 1 — znajdź polilnię pręta
                 if (!long.TryParse(sourceBarHandle,
                         System.Globalization.NumberStyles.HexNumber,
-                        null, out long srcHVal)) return;
+                        null, out long srcHVal)) return changed;
                 var srcHandle = new Handle(srcHVal);
-                if (!db.TryGetObjectId(srcHandle, out ObjectId srcId) || srcId.IsErased) return;
+                if (!db.TryGetObjectId(srcHandle, out ObjectId srcId) || srcId.IsErased) return changed;
 
                 using var tr = db.TransactionManager.StartTransaction();
 
@@ -2090,7 +2091,7 @@ namespace BricsCadRc.Core
                                             BarKinds.Polyline | BarKinds.Block);
                 var srcBar = srcEnt != null ? srcEnt.Read() : null;
                 if (srcBar == null || string.IsNullOrEmpty(srcBar.LabelHandle))
-                { tr.Commit(); return; }
+                { tr.Commit(); return changed; }
 
                 // Krok 2 — zsumuj pręty ze wszystkich rozkładów powiązanych z tym prętem
                 int totalCount = 0;
@@ -2115,17 +2116,16 @@ namespace BricsCadRc.Core
                 if (!long.TryParse(srcBar.LabelHandle,
                         System.Globalization.NumberStyles.HexNumber,
                         null, out long lblHVal))
-                { tr.Commit(); return; }
+                { tr.Commit(); return changed; }
                 var lblHandle = new Handle(lblHVal);
                 if (!db.TryGetObjectId(lblHandle, out ObjectId lblId) || lblId.IsErased)
-                { tr.Commit(); return; }
+                { tr.Commit(); return changed; }
 
                 var ml = tr.GetObject(lblId, OpenMode.ForRead) as MLeader;
                 // Etykieta musi należeć do tego pręta (back-link) — kopia pręta bez etykiety
                 // nie może nadpisywać liczby na etykiecie oryginału.
                 if (ml == null || !XLink.Same(SingleBarEngine.ReadBarHandleFromLabel(ml), srcId.Handle.Value.ToString("X8")))
-                { tr.Commit(); return; }
-                ml.UpgradeOpen();
+                { tr.Commit(); return changed; }
                 if (ml.ContentType == ContentType.MTextContent)
                 {
                     var mt = ml.MText?.Clone() as MText;
@@ -2141,16 +2141,25 @@ namespace BricsCadRc.Core
                             ? $"{parts[0]}-{parts[1]}"
                             : rawMark;
 
-                        mt.Contents = totalCount > 0
+                        string contents = totalCount > 0
                             ? $"{totalCount} {markForLabel}"
                             : markForLabel;
-                        ml.MText = mt;
+                        // bez zmian — bez zapisu (2026-10-30: przywracanie tekstu opisu po każdej komendzie nie może znakować rysunku)
+                        if (!string.Equals(mt.Contents, contents, StringComparison.Ordinal))
+                        {
+                            ml.UpgradeOpen();
+                            mt.Contents = contents;
+                            ml.MText = mt;
+                            changed = true;
+                        }
+                        else mt.Dispose();
                     }
                 }
 
                 tr.Commit();
             }
             catch (System.Exception logEx) { Log.Error("AnnotationEngine.UpdateBarLabelCount", logEx); }
+            return changed;
         }
 
         // ----------------------------------------------------------------
