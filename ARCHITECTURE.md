@@ -1664,6 +1664,14 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   wzdłuż X środkowy (indeks 2 z 5), wzdłuż Y drugi (indeks 1), T1+B1 — drugi z dwóch. Opisy: wzdłuż X linia w dół ≈ 1650 pod lico
   oczepu, wzdłuż Y w lewo ≈ 1650 (jak we wzorze: −1692 od wstawienia opisu), T1+B1 — domyślnie w górę; linie w osobnych miejscach ±150.
 
+### Poprawka 2026-10-30 (fix137) — kopia RC_BAR: opis odłączony od pręta (zgłoszenie Bartka)
+- Log: COPY pręta z opisem (paczka CloneMap 2 par) bez przepięcia (brak „CloneRemap: przepięto …”) — opis kopii wskazywał oryginał,
+  a `RcMLeaderOverrule` w CommandEnded dociągał grot opisu-kopii do ORYGINAŁU pręta (grot w powietrzu, zmiana numeru kopii bez wpływu
+  na opis). `SnapArrowToBar`: opis sklonowany w trwającej komendzie (`CloneMap.TryResolvePending`) — grot do pręta-kopii z mapy
+  klonowania, klon bez sklonowanego pręta — bez zmian (link przepina CloneRemap).
+- Diagnostyka `BarCopyWatcher`: każda komenda kopiowania — liczba paczek / par i nowych obiektów, komenda zagnieżdżona (przepięcie
+  odłożone) — do ustalenia, czemu przepięcie nie zaszło.
+
 ## 4l. Szereg płyt z belkami GB poza płytą — decyzja Bartka 2026-10-23 (etap 1, wzorzec PLOT 304–307 / test11)
 - **GA:** jeden obrys zewnętrzny SD-PILED-RAFT obejmuje kilka płyt; w nim zamknięte linie uskoku płyt (każda z opisem „PLOT …”), prostokątne
   pustki między płytami, otwarte linie stref narożnych (735 × 600, opis „525THK”) i pasy betonu między płytami z opisem

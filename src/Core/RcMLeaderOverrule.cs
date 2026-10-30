@@ -148,9 +148,24 @@ namespace BricsCadRc.Core
             // Odczytaj handle polilinii pręta z XData; brak / zerwany link (kopia, wklejenie z innego rysunku, stary opis) —
             // pręt, którego LabelHandle wskazuje ten opis, i naprawa linku (2026-10-30)
             var handleStr = SingleBarEngine.ReadBarHandleFromLabel(ml);
+            // uwaga Bartka 2026-10-30 („kopiowanie RC_BAR psuje pręt — odłączają się labele”): opis sklonowany w tej komendzie
+            // (COPY / MIRROR …) wskazuje jeszcze ORYGINAŁ pręta — grot nie może być dociągany do oryginału; pręt-kopia z mapy klonowania
+            // (CloneMap), link przepina potem CloneRemap (BarCopyWatcher). Klon bez sklonowanego pręta — bez zmian.
+            bool pendingClone = false;
+            try
+            {
+                if (CloneMap.TryResolvePending(db, mlId, handleStr, out string resolved))
+                {
+                    pendingClone = true;
+                    if (string.IsNullOrEmpty(resolved)) return;
+                    handleStr = resolved;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("RcMLeaderOverrule.SnapArrowToBar.Pending", ex); }
             var polyId = string.IsNullOrEmpty(handleStr) ? ObjectId.Null : SingleBarEngine.HandleToObjectId(db, handleStr);
             bool linked = !polyId.IsNull && !polyId.IsErased
                           && BarEntity.From(tr.GetObject(polyId, OpenMode.ForRead) as Entity, BarKinds.Polyline | BarKinds.Block) != null;
+            if (!linked && pendingClone) return;
             if (!linked)
             {
                 var found = FindBarByLabel(tr, db, ml.Handle.Value.ToString("X8"));

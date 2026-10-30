@@ -111,9 +111,13 @@ namespace BricsCadRc.Core
             try
             {
                 if (doc != null && (SingleBarGripOverrule.IsViewOrTransparentCommand(cmdRaw)
-                                    || SingleBarGripOverrule.OtherCommandInProgress(doc, cmdRaw ?? "", out _)))
+                                    || SingleBarGripOverrule.OtherCommandInProgress(doc, cmdRaw ?? "", out string cipN)))
                 {
-                    if (doc.Database != null && IsCopyLikeCommand(cmdRaw)) _deferredCopyLike.Add(doc.Database);
+                    if (doc.Database != null && IsCopyLikeCommand(cmdRaw))
+                    {
+                        _deferredCopyLike.Add(doc.Database);
+                        Log.Info($"BarCopyWatcher: {cmdRaw} zagnieżdżona (w toku: „{doc.CommandInProgress}”) — przepięcie po komendzie nadrzędnej.");
+                    }
                     return;
                 }
             }
@@ -140,6 +144,10 @@ namespace BricsCadRc.Core
                 // 2) Mapa klonowania tej komendy (W2, docs/PLAN_POPRAWKI_W1_W2.md 4.4)
                 var batches = CloneMap.Take(db);
                 if (db == null) return;
+                // diagnostyka (2026-10-30, kopia RC_BAR bez przepięcia opisu): każda komenda kopiowania — paczki i nowe obiekty
+                if (isCopyLike || batches.Count > 0)
+                    Log.Info($"BarCopyWatcher: {cmd} — paczek {batches.Count} ({batches.Sum(b => b.Map.Count)} par), nowe pręty {_newBars.Count}, " +
+                             $"opisy {_newLabels.Count}, rozkłady {_newBlocks.Count}, opisy rozkładów {_newAnnots.Count}.");
 
                 var mapped = new HashSet<ObjectId>();
                 using (CloneMap.Suppress())   // DeepCloneObjects w EnsureUniqueBtr nie tworzy paczek
