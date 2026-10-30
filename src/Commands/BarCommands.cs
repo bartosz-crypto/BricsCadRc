@@ -240,6 +240,7 @@ namespace BricsCadRc.Commands
             // Inicjalizacja: narysuj najpierw, potem usuń transienty jiga → brak luki wizualnej
             DrawFlipPreview(pt1, pt2, edgeHorizontal, isFlipped, viewLength, liveTransients);
             jig.ClearTransients();
+            // (2026-10-29) podgląd od pierwszego punktu — DrawFlipPreview rysuje od pt1
 
             while (true)
             {
@@ -343,12 +344,16 @@ namespace BricsCadRc.Commands
             // GetBarAngle (linia 142) może zwrócić ±90° gdy polilinia rysowana "od góry" —
             // to niepoprawnie ustawia blockRef.Rotation i obraca pręty w złym kierunku.
             sourceBar.Angle = 0.0;
+            // prośba Bartka 2026-10-29: pierwszy pręt (otulina z promptu) ZAWSZE od PIERWSZEGO klikniętego punktu krawędzi — także po S
+            // (dawniej zawsze od mniejszej współrzędnej; po flipie „rozkład od prawej” zaczynał się od lewej)
+            bool fromMax = edgeHorizontal ? pt1.X > pt2.X : pt1.Y > pt2.Y;
+            double covLo = fromMax ? endCover : cover, covHi = fromMax ? cover : endCover;
             double x0, y0, x1Bound, y1Bound;
             if (edgeHorizontal)
             {
                 double edgeY = (pt1.Y + pt2.Y) / 2.0;
-                x0      = Math.Min(pt1.X, pt2.X) + cover;
-                x1Bound = Math.Max(pt1.X, pt2.X) - endCover;   // drugi koniec wolny (grip) — 40 (2026-10-23)
+                x0      = Math.Min(pt1.X, pt2.X) + covLo;
+                x1Bound = Math.Max(pt1.X, pt2.X) - covHi;   // drugi koniec wolny (grip) — 40 (2026-10-23)
                 // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
                 if (isFlipped) { y1Bound = edgeY - endCover; y0 = y1Bound - viewLength; }
                 else           { y0 = edgeY + endCover;      y1Bound = y0 + viewLength; }
@@ -356,8 +361,8 @@ namespace BricsCadRc.Commands
             else
             {
                 double edgeX = (pt1.X + pt2.X) / 2.0;
-                y0      = Math.Min(pt1.Y, pt2.Y) + cover;
-                y1Bound = Math.Max(pt1.Y, pt2.Y) - endCover;   // drugi koniec wolny (grip) — 40 (2026-10-23)
+                y0      = Math.Min(pt1.Y, pt2.Y) + covLo;
+                y1Bound = Math.Max(pt1.Y, pt2.Y) - covHi;   // drugi koniec wolny (grip) — 40 (2026-10-23)
                 // Pręty o otulinę od klikniętej krawędzi (także wzdłuż pręta) — grip [0] zostaje na krawędzi
                 if (isFlipped) { x1Bound = edgeX - endCover; x0 = x1Bound - viewLength; }
                 else           { x0 = edgeX + endCover;      x1Bound = x0 + viewLength; }
@@ -378,7 +383,7 @@ namespace BricsCadRc.Commands
             {
                 var old = liveTransients;
                 liveTransients = new List<Line>();
-                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients, fromMax);
                 ClearBarPreview(old);
             }
 
@@ -403,7 +408,7 @@ namespace BricsCadRc.Commands
                 spacing = spacResult.Value;
                 var oldT = liveTransients;
                 liveTransients = new List<Line>();
-                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients);
+                DrawBarPreview(horizontal, x0, y0, x1Bound, y1Bound, spacing, liveTransients, fromMax);
                 ClearBarPreview(oldT);
             }
             // liveTransients widoczne — NIE czyścimy
@@ -411,6 +416,13 @@ namespace BricsCadRc.Commands
             // Auto count
             double rawSpan = horizontal ? (y1Bound - y0) : (x1Bound - x0);
             int    autoCount = Math.Max(1, (int)(rawSpan / spacing) + 1);
+            // od pierwszego punktu po stronie większej współrzędnej: ostatni pręt (w bloku) na otulinie przy pt1, pozostałe co rozstaw
+            // w stronę pt2 (zakres rozkładu = (n − 1) · rozstaw)
+            if (fromMax)
+            {
+                rawSpan = (autoCount - 1) * spacing;
+                if (horizontal) y0 = y1Bound - rawSpan; else x0 = x1Bound - rawSpan;
+            }
 
             // Numer pozycji: z marka preta ("H12-13" → 13), lub nowy (Peek — nie inkrementuj przed OK)
             int posNr        = SingleBarEngine.ExtractPosNr(sourceBar.Mark);
@@ -650,6 +662,122 @@ namespace BricsCadRc.Commands
         /// Wspólny flow annotacji rozkładu: dialog DistributionDescDialog + 3-etapowy JIG + CreateLeader.
         /// Wywoływany z RC_DISTRIBUTION i RC_EDIT_DISTRIBUTION (re-annotacja).
         /// </summary>
+        /// <summary>
+        /// Numer pozycji rozkładu: z pręta źródłowego ([SourceBarHandle] — on decyduje), inaczej z Mark rozkładu
+        /// (2026-10-29: opis Any „H12-11 UB SIDE” po MIRROR i ponownym opisie dawał „H12-00” — numer czytany z Mark z sufiksem).
+        /// </summary>
+        internal static int DistPosNr(Database db, BarData dist)
+        {
+            try
+            {
+                if (dist != null && XLink.TryParse(dist.SourceBarHandle, out long h) && h != 0
+                    && db.TryGetObjectId(new Handle(h), out ObjectId srcId) && !srcId.IsNull && !srcId.IsErased)
+                {
+                    BarData src;
+                    using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                    {
+                        src = BarEntity.Open(tr, srcId, OpenMode.ForRead, BarKinds.Polyline | BarKinds.Block)?.Read();
+                        tr.Commit();
+                    }
+                    int n = SingleBarEngine.ExtractPosNr(src?.Mark);
+                    if (n > 0) return n;
+                }
+            }
+            catch (System.Exception ex) { Log.Error("BarCommands.DistPosNr", ex); }
+            return SingleBarEngine.ExtractPosNr(dist?.Mark);
+        }
+
+        /// <summary>
+        /// Strona drugiego strzemienia pary „2xn” (prośba Bartka 2026-10-29): podgląd drugiego strzemienia (czerwony) po stronie
+        /// kursora wzdłuż prętów, klik albo słowo kluczowe (Lewo / Prawo albo Góra / Dół — wg kierunku prętów w rysunku) → znak
+        /// PairShift i przebudowa bloku. Enter / Esc — bez zmian. Zwraca PairShift po wyborze (0 — brak pary).
+        /// </summary>
+        internal static double PickLinkPairSide(Document doc, Database db, ObjectId blockRefId)
+        {
+            var ed = doc.Editor;
+            BarData bar = null;
+            Matrix3d xf = Matrix3d.Identity;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                if (tr.GetObject(blockRefId, OpenMode.ForRead) is BlockReference br)
+                {
+                    bar = BarBlockEngine.ReadXData(br);
+                    xf  = br.BlockTransform;
+                }
+                tr.Commit();
+            }
+            if (bar == null || Math.Abs(bar.PairShift) < 1.0) return bar?.PairShift ?? 0;
+            var vis = BarBlockEngine.GetVisibleIndicesPublic(bar.VisibilityMode, bar.VisibleIndices, bar.Count);
+            int j = BarBlockEngine.PairBarIndex(bar.Count, vis);
+            if (j < 0) return bar.PairShift;
+
+            bool   alongX = bar.Direction == "X";
+            double len = bar.LengthA, t = j * bar.Spacing, sh = Math.Abs(bar.PairShift);
+            Point3d P(double along) => (alongX ? new Point3d(along, t, 0) : new Point3d(t, along, 0)).TransformBy(xf);
+            Point3d  mid  = P(len / 2.0);
+            Vector3d axis = P(len) - P(0);
+            if (axis.Length < 1e-9) return bar.PairShift;
+            axis = axis.GetNormal();
+            // słowa kluczowe wg kierunku +osi prętów w rysunku
+            bool axisHoriz = Math.Abs(axis.X) >= Math.Abs(axis.Y);
+            string kwPlus  = axisHoriz ? (axis.X > 0 ? "Prawo" : "Lewo") : (axis.Y > 0 ? "Gora" : "Dol");
+            string kwMinus = axisHoriz ? (axis.X > 0 ? "Lewo" : "Prawo") : (axis.Y > 0 ? "Dol" : "Gora");
+
+            var tm = TransientManager.CurrentTransientManager;
+            var vp = new IntegerCollection();
+            Line prev = null;
+            void Clear()
+            {
+                if (prev == null) return;
+                try { tm.EraseTransient(prev, vp); } catch (System.Exception ex) { Log.Error("BarCommands.PickLinkPairSide", ex); }
+                prev.Dispose();
+                prev = null;
+            }
+            void Show(int s)
+            {
+                Clear();
+                prev = new Line(P(s * sh), P(s * sh + len)) { ColorIndex = 1 };
+                try { tm.AddTransient(prev, TransientDrawingMode.DirectTopmost, 128, vp); }
+                catch (System.Exception ex) { Log.Error("BarCommands.PickLinkPairSide", ex); }
+            }
+            int SideOf(Point3d c) => (c - mid).DotProduct(axis) >= 0 ? 1 : -1;
+
+            int sign = bar.PairShift >= 0 ? 1 : -1;
+            if (ScriptMode.IsNonInteractive()) return bar.PairShift;
+            var opts = new PromptPointOptions($"\nStrona drugiego strzemienia (2x) — wskaż [{kwMinus}/{kwPlus}] <bez zmian>: ")
+            { AllowNone = true };
+            opts.Keywords.Add(kwMinus);
+            opts.Keywords.Add(kwPlus);
+            PointMonitorEventHandler monitor = (s, ev) =>
+            {
+                try { Show(SideOf(ev.Context.ComputedPoint)); Application.UpdateScreen(); }
+                catch (System.Exception ex) { Log.Error("BarCommands.PickLinkPairSide", ex); }
+            };
+            Show(sign);
+            ed.PointMonitor += monitor;
+            PromptPointResult res;
+            try { res = ed.GetPoint(opts); }
+            finally { ed.PointMonitor -= monitor; Clear(); }
+
+            int newSign = sign;
+            if (res.Status == PromptStatus.OK) newSign = SideOf(res.Value);
+            else if (res.Status == PromptStatus.Keyword) newSign = res.StringResult == kwPlus ? 1 : -1;
+            double newShift = newSign * sh;
+            if (newSign == sign) return bar.PairShift;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (tr.GetObject(blockRefId, OpenMode.ForWrite) is BlockReference brW && BarBlockEngine.ReadXData(brW) is BarData bw)
+                {
+                    bw.PairShift = newShift;
+                    BarBlockEngine.WriteXData(brW, bw);
+                }
+                tr.Commit();
+            }
+            BarBlockEngine.RebuildBars(db, blockRefId);
+            return newShift;
+        }
+
         internal static bool RunAnnotationFlow(
             Document doc,
             Database db,
@@ -670,22 +798,31 @@ namespace BricsCadRc.Commands
 
             int    finalCount = descDlg.BarCount;
             string suffix     = descDlg.Suffix ?? "";
-            finalSpacing      = descDlg.BarSpacing;
+            // Puste pole rozstawu (2026-10-29) → opis bez rozstawu (ShowSpacing = false); rozkład w rzucie bez zmian —
+            // podgląd kropek w jigu dalej z rozstawem rozkładu
+            double labelSpacing = descDlg.BarSpacing;
+            if (labelSpacing > 0) finalSpacing = labelSpacing;
+            sourceBar.ShowSpacing = labelSpacing > 0;
 
             // Odbuduj mark z finalSpacing/finalCount (baseMark ma command-line spacing — nie nadpisuj)
-            // Any (2026-10-14): rozstaw zawsze w opisie, także przy 1 pręcie
+            // Any (2026-10-14): rozstaw zawsze w opisie, także przy 1 pręcie (chyba że pole rozstawu puste)
             string newBaseMark = BarData.FormatMark(
                 sourceBar.Diameter,
-                SingleBarEngine.ExtractPosNr(sourceBar.Mark),
-                finalSpacing, BarBlockEngine.IsAny(sourceBar) ? Math.Max(2, finalCount) : finalCount);
+                DistPosNr(db, sourceBar),
+                labelSpacing, BarBlockEngine.IsAny(sourceBar) ? Math.Max(2, finalCount) : finalCount);
             string mark = string.IsNullOrEmpty(suffix) ? newBaseMark : $"{newBaseMark} {suffix}";
             sourceBar.Mark         = mark;
             sourceBar.CountDisplay = (finalCount != sourceBar.Count) ? (int?)finalCount : null;
+            // „kxn” już przy pierwszym opisie (prośba Bartka 2026-10-29, dotąd tylko RC_EDIT_LABEL): krotność w opisie; strzemiona
+            // „2xn” — dwa strzemiona w rzucie jak przy Generate (PairShift)
+            sourceBar.CountMult    = descDlg.BarMult;
+            BarBlockEngine.ApplyLinkPair(sourceBar);
             // ANY: w bloku jeden pręt (Count = 1) — podgląd opisu z jedną kropką; rozstaw z okna zapisany w rozkładzie
             bool any = BarBlockEngine.IsAny(sourceBar);
             int jigCount = any ? 1 : finalCount;
-            if (any) sourceBar.Spacing = finalSpacing;
+            if (any && labelSpacing > 0) sourceBar.Spacing = labelSpacing;
 
+            bool pairChanged = false;
             // Geometria fizycznego rozkładu BEZ ZMIAN — label-override semantics.
             // Zaktualizuj XData RC_BAR_BLOCK: tylko Mark i CountDisplay. Count/Spacing canonical bez zmian.
             using (var trXData = db.TransactionManager.StartTransaction())
@@ -698,14 +835,24 @@ namespace BricsCadRc.Commands
                     {
                         barXd.Mark         = sourceBar.Mark;
                         barXd.CountDisplay = sourceBar.CountDisplay;
-                        if (any) barXd.Spacing = finalSpacing;
+                        barXd.CountMult    = sourceBar.CountMult;
+                        barXd.ShowSpacing  = sourceBar.ShowSpacing;
+                        if (any && labelSpacing > 0) barXd.Spacing = labelSpacing;
+                        pairChanged = BarBlockEngine.ApplyLinkPair(barXd);
                         BarBlockEngine.WriteXData(brXData, barXd);
                     }
                 }
                 trXData.Commit();
             }
+            // strzemiona „2xn” — drugie strzemię w rzucie (przebudowa bloku z tą samą widocznością)
+            if (pairChanged) BarBlockEngine.RebuildBars(db, blockRefId);
+            // para „2xn” — wybór strony drugiego strzemienia w rzucie (prośba Bartka 2026-10-29), także „Dodaj opis” istniejącej pary
+            if (Math.Abs(sourceBar.PairShift) >= 1.0)
+                sourceBar.PairShift = PickLinkPairSide(doc, db, blockRefId);
 
             // Krok 8 — 3-etapowy JIG
+            // nowy opis — bez punktów odnośnika po starym (usuniętym) opisie z XData rozkładu (RC_EDIT_DISTRIBUTION „Dodaj opis”)
+            sourceBar.LeaderPoints = "";
             double barsSpan  = sourceBar.BarsSpan;
             double minFixed, basePos;
 
@@ -788,21 +935,25 @@ namespace BricsCadRc.Commands
                 kinkPt = distCenter;
 
                 // ETAP 2
+                // Any (prośba Bartka 2026-10-29: „o jeden klik za dużo”): linia rozkładu zerowej długości — kierunek / załamanie
+                // z ETAP 2 nic nie wnosi; ETAP 2 pominięty, kierunek z pierwszego odcinka odnośnika w ETAP 3. Jig tylko do
+                // podglądu kropki (bez Drag).
+                bool skipDir = any && !AnnotationEngine.IsOblique(sourceBar.Angle);
                 var jig2 = new AnnotLabelDirectionJig(
                     distCenter, labelPos, minFixed, barsSpan,
                     horizontal, AnnotationEngine.DotRadius, jigCount, finalSpacing,
                     sourceBar.Angle, jigRotCenter);
-                var res2 = ed.Drag(jig2);
-                if (res2.Status != PromptStatus.OK) jig2.ClearTransients();
-                if (res2.Status == PromptStatus.Cancel) return false;
-                if (res2.Status == PromptStatus.OK)
+                var res2Status = skipDir ? PromptStatus.OK : ed.Drag(jig2).Status;
+                if (res2Status != PromptStatus.OK) jig2.ClearTransients();
+                if (res2Status == PromptStatus.Cancel) return false;
+                if (res2Status == PromptStatus.OK)
                 {
                     // uwaga Bartka 2026-10-28: w ETAP 3 linia rozkładu z kropkami zostaje na ekranie (jak w ETAP 2)
                     jig2.ShowDistLineOnly();
                     try
                     {
-                    var direction = jig2.Direction;
-                    kinkPt           = jig2.KinkPt;
+                    var direction = skipDir ? LabelDirection.Up : jig2.Direction;
+                    kinkPt           = skipDir ? distCenter : jig2.KinkPt;
                     leaderHorizontal = horizontal
                         ? direction == LabelDirection.Left || direction == LabelDirection.Right
                         : direction == LabelDirection.Up   || direction == LabelDirection.Down;
@@ -865,6 +1016,20 @@ namespace BricsCadRc.Commands
                         drawer.Clear();
                     }
 
+                    // Any bez ETAP 2: kierunek z pierwszego odcinka odnośnika (snap do 4 kierunków jak w ETAP 2)
+                    if (skipDir && leaderWcsPts.Count >= 2)
+                    {
+                        var d0 = leaderWcsPts[1] - leaderWcsPts[0];
+                        direction = Math.Abs(d0.Y) >= Math.Abs(d0.X)
+                            ? (d0.Y >= 0 ? LabelDirection.Up : LabelDirection.Down)
+                            : (d0.X >= 0 ? LabelDirection.Right : LabelDirection.Left);
+                        leaderHorizontal = horizontal
+                            ? direction == LabelDirection.Left || direction == LabelDirection.Right
+                            : direction == LabelDirection.Up   || direction == LabelDirection.Down;
+                        leaderRight = direction == LabelDirection.Right;
+                        leaderUp    = direction == LabelDirection.Up;
+                    }
+
                     // insertPt = punkt wstawienia RC_BAR_BLOCK (origin BTR w WCS)
                     Point3d insertPt;
                     if (insertOverride.HasValue)
@@ -910,6 +1075,24 @@ namespace BricsCadRc.Commands
                         var d2 = (after - mid).GetNormal();
                         if (d1.DotProduct(d2) < -0.1)
                             localPts.RemoveAt(k);
+                    }
+
+                    // Odnośnik zdegenerowany (zgłoszenie Bartka 2026-10-29, rozkład Any / 1 pręt: kierunek z ETAP 2 wzdłuż prętów leży
+                    // w środku linii rozkładu, Enter w ETAP 3) → AnnotationEngine rysował samą kropkę, bez odnośnika i tekstu.
+                    // Wtedy domyślne ramię (ArmLength) od środka linii rozkładu w kierunku wybranym w ETAP 2.
+                    if (!obliqueLeader)
+                    {
+                        double aScale = sourceBar.AnnotScale > 0 ? sourceBar.AnnotScale : 1.0;
+                        double minArm = 2.0 * AnnotationEngine.DotRadius * aScale;
+                        var p0 = localPts[0];
+                        if (localPts.All(p => (p - p0).Length < minArm))
+                        {
+                            var dv = direction == LabelDirection.Up    ? Vector3d.YAxis
+                                   : direction == LabelDirection.Down  ? -Vector3d.YAxis
+                                   : direction == LabelDirection.Right ? Vector3d.XAxis
+                                   :                                     -Vector3d.XAxis;
+                            localPts = new List<Point3d> { p0, p0 + dv * (AnnotationEngine.ArmLength * aScale) };
+                        }
                     }
 
                     sourceBar.LeaderPoints = AnnotationEngine.EncodeLeaderPoints(localPts);
@@ -1032,12 +1215,8 @@ namespace BricsCadRc.Commands
                 double yStart  = flipped ? edgeY - barLength : edgeY;
                 double yEnd    = flipped ? edgeY             : edgeY + barLength;
                 if (x0 >= x1Bound) return;
-                for (double x = x0; x <= x1Bound + 0.5; x += spacing)
-                {
-                    double xc = Math.Min(x, x1Bound);
+                foreach (double xc in PreviewPositions(x0, x1Bound, spacing, pt1.X > pt2.X))
                     AddPreviewLine(tm, vpIds, new Point3d(xc, yStart, 0), new Point3d(xc, yEnd, 0), transients);
-                    if (xc >= x1Bound) break;
-                }
             }
             else
             {
@@ -1047,42 +1226,47 @@ namespace BricsCadRc.Commands
                 double xStart  = flipped ? edgeX - barLength : edgeX;
                 double xEnd    = flipped ? edgeX             : edgeX + barLength;
                 if (y0 >= y1Bound) return;
-                for (double y = y0; y <= y1Bound + 0.5; y += spacing)
-                {
-                    double yc = Math.Min(y, y1Bound);
+                foreach (double yc in PreviewPositions(y0, y1Bound, spacing, pt1.Y > pt2.Y))
                     AddPreviewLine(tm, vpIds, new Point3d(xStart, yc, 0), new Point3d(xEnd, yc, 0), transients);
-                    if (yc >= y1Bound) break;
-                }
             }
             try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawFlipPreview", logEx); }
         }
 
+        /// <summary>
+        /// Położenia prętów podglądu na [lo, hi] co rozstaw od strony pierwszego punktu (fromHi — od hi w dół); ostatni przycięty do
+        /// drugiego końca (jak dotąd).
+        /// </summary>
+        internal static List<double> PreviewPositions(double lo, double hi, double spacing, bool fromHi)
+        {
+            var r = new List<double>();
+            if (spacing <= 0 || hi < lo) return r;
+            for (double t = 0; t <= hi - lo + 0.5; t += spacing)
+            {
+                double tc = Math.Min(t, hi - lo);
+                r.Add(fromHi ? hi - tc : lo + tc);
+                if (tc >= hi - lo) break;
+            }
+            return r;
+        }
+
         private static void DrawBarPreview(bool horizontal,
             double x0, double y0, double x1, double y1,
-            double spacing, List<Line> transients)
+            double spacing, List<Line> transients, bool fromHi = false)
         {
             var tm    = TransientManager.CurrentTransientManager;
             var vpIds = new IntegerCollection();
 
             if (horizontal)
             {
-                // Pręty poziome: linie od x0 do x1, rozmieszczone co spacing w Y
-                for (double y = y0; y <= y1 + 0.5; y += spacing)
-                {
-                    double yc = Math.Min(y, y1);
+                // Pręty poziome: linie od x0 do x1, rozmieszczone co spacing w Y (od pierwszego punktu)
+                foreach (double yc in PreviewPositions(y0, y1, spacing, fromHi))
                     AddPreviewLine(tm, vpIds, new Point3d(x0, yc, 0), new Point3d(x1, yc, 0), transients);
-                    if (yc >= y1) break;
-                }
             }
             else
             {
-                // Pręty pionowe: linie od y0 do y1, rozmieszczone co spacing w X
-                for (double x = x0; x <= x1 + 0.5; x += spacing)
-                {
-                    double xc = Math.Min(x, x1);
+                // Pręty pionowe: linie od y0 do y1, rozmieszczone co spacing w X (od pierwszego punktu)
+                foreach (double xc in PreviewPositions(x0, x1, spacing, fromHi))
                     AddPreviewLine(tm, vpIds, new Point3d(xc, y0, 0), new Point3d(xc, y1, 0), transients);
-                    if (xc >= x1) break;
-                }
             }
             try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("BarCommands.DrawBarPreview", logEx); }
         }
@@ -1131,9 +1315,9 @@ namespace BricsCadRc.Commands
             double[] p = bar.ParamValues;   // [A, B, C, D, E]
             string code = bar.ShapeCode ?? "00";
 
-            // strzemiona belki / wspornika (kod BL, 2026-10-28 — błąd PLOT 344-346): w rzucie bok B (szerokość), A to wysokość
-            // (po zmianie B szablonu 500 → 510 rozkład dostawał A = 425)
-            if ((code == "51" || code == "63") && bar.LayerCode == BeamGeometry.CodeLinks && p.Length > 1 && p[1] > 0)
+            // strzemiona zamknięte 51 / 63 (P9: A = wysokość, B = szerokość): w rzucie bok B. Dawniej tylko kod BL (2026-10-28,
+            // PLOT 344-346); zgłoszenie Bartka 2026-10-29: kopia linka 07 poszerzona 370 → 500 jako 15 — rozkład rysował A = 370
+            if ((code == "51" || code == "63") && p.Length > 1 && p[1] > 0)
                 return p[1];
 
             switch (code)
@@ -1240,6 +1424,11 @@ namespace BricsCadRc.Commands
             double dx  = sb.X - sa.X;
             double dy  = sb.Y - sa.Y;
             double segLen = Math.Sqrt(dx * dx + dy * dy);
+            // Strzemię zamknięte 51 / 63 (zgłoszenie Bartka 2026-10-29: dłuższy bok 500 dawał 450 — prosty odcinek obrysu bez łuków
+            // narożników): wskazany bok → wymiar A albo B. Wybór po różnicy długości z najdłuższym odcinkiem prostopadłym (oba boki
+            // skrócone o te same łuki) — działa przy obróconym i odbitym pręcie.
+            double? linkSide = LinkSideLength(verts, segIdx, bar);
+            if (linkSide.HasValue) return linkSide.Value;
             if (bar != null && !string.IsNullOrEmpty(bar.ShapeCode))
             {
                 try
@@ -1252,6 +1441,34 @@ namespace BricsCadRc.Commands
                 catch (System.Exception ex) { Log.Error("BarCommands.ManualSegmentLength", ex); }
             }
             return segLen;
+        }
+
+        /// <summary>
+        /// Rozkład Manual na strzemieniu 51 / 63: wskazany odcinek obrysu → A (wysokość) albo B (szerokość). Różnica długości
+        /// wskazanego odcinka i najdłuższego odcinka prostopadłego (|cos| &lt; 0,05) ≈ A − B → A, ≈ B − A → B. Brak odcinka
+        /// prostopadłego / innego kształtu / brak wymiarów → null (jak dotąd).
+        /// </summary>
+        internal static double? LinkSideLength(IReadOnlyList<Point3d> verts, int segIdx, BarData bar)
+        {
+            string code = bar?.ShapeCode ?? "00";
+            if (code != "51" && code != "63") return null;
+            double a = bar.LengthA, b = bar.LengthB;
+            if (a <= 0 || b <= 0 || verts == null || segIdx < 0 || segIdx + 1 >= verts.Count) return null;
+            var u = verts[segIdx + 1] - verts[segIdx];
+            double sClick = u.Length;
+            if (sClick < 1e-6) return null;
+            u = u * (1.0 / sClick);
+            double sPerp = 0;
+            for (int i = 0; i + 1 < verts.Count; i++)
+            {
+                var v = verts[i + 1] - verts[i];
+                double len = v.Length;
+                if (len < 1e-6 || Math.Abs(u.DotProduct(v * (1.0 / len))) >= 0.05) continue;
+                sPerp = Math.Max(sPerp, len);
+            }
+            if (sPerp <= 0) return null;
+            double diff = sClick - sPerp;
+            return Math.Abs(diff - (a - b)) <= Math.Abs(diff - (b - a)) ? a : b;
         }
 
         /// <summary>
@@ -1659,7 +1876,30 @@ namespace BricsCadRc.Commands
 
             // Krok 3–4 (Plan C, etap 3d): logika po dialogu w BarEditApply.Apply — kolejność kroków bez zmian;
             // polilinia jak dotąd, pręt-blok przez SingleBarBlock.Rebuild (copy-on-write).
-            if (!BarEditApply.Apply(db, ed, editId, bar, updated, dlg.ResultPosNr)) return;
+            // Jeden numer = jeden kształt (zgłoszenie Bartka 2026-10-29: H12-11 kształt 21 i H16-11 kształt 00): numer zmieniony
+            // ręcznie na numer pręta o innym kształcie / wymiarach → okno z wolnym numerem (jak RC_BAR). Ten sam numer co
+            // identyczny pręt — dozwolony (dołącza do pozycji). Numer bez zmian — PositionReconciler w BarEditApply (jak dotąd).
+            string posNrStr = dlg.ResultPosNr;
+            int    oldNr    = SingleBarEngine.ExtractPosNr(bar.Mark);
+            for (int guard = 0; guard < 5; guard++)
+            {
+                if (!int.TryParse(posNrStr, out int newNr) || newNr == oldNr) break;
+                var taken = PositionReconciler.ShapeConflicts(db, newNr, updated, editId);
+                if (taken.Count == 0) break;
+                bool topSeries = newNr >= PositionCounter.TopSeriesStart && newNr < PositionCounter.SeparateSeriesStart;
+                int  freeNr    = topSeries ? PositionCounter.NextAutoTop(db) : PositionCounter.NextAuto(db);
+                if (ScriptMode.IsNonInteractive())
+                {
+                    ed.WriteMessage($"\n[RC] Numer {newNr:D2} ma już pręt o innym kształcie ({string.Join(", ", taken)}) — pręt dostaje {freeNr:D2}.\n");
+                    posNrStr = freeNr.ToString("D2");
+                    continue;
+                }
+                var conflictDlg = new BarPositionConflictDialog(newNr, freeNr, string.Join(", ", taken));
+                if (Application.ShowModalWindow(conflictDlg) != true) return;
+                posNrStr = conflictDlg.ResultPosNr.ToString("D2");
+            }
+
+            if (!BarEditApply.Apply(db, ed, editId, bar, updated, posNrStr)) return;
             try { doc.SendStringToExecute("REGEN\n", true, false, false); }
             catch (System.Exception ex) { Log.Error("BarCommands.EditBar.Regen", ex); }
         }
@@ -1694,6 +1934,7 @@ namespace BricsCadRc.Commands
             try
             {
                 entries = BarScheduleEngine.BuildSchedule(db, warnings);
+                warnings.InsertRange(0, PositionReconciler.NumberConflicts(db));   // jeden numer = jeden kształt (2026-10-29)
             }
             catch (System.Exception ex)
             {

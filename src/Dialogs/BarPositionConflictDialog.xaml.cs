@@ -6,10 +6,14 @@ namespace BricsCadRc.Dialogs
     {
         public int ResultPosNr { get; private set; }
 
-        public BarPositionConflictDialog(int requestedNr, int suggestedFreeNr)
+        /// <param name="usedBy">Opcjonalnie: numery prętów, które już mają ten numer (RC_EDIT_BAR, inny kształt / wymiary).</param>
+        public BarPositionConflictDialog(int requestedNr, int suggestedFreeNr, string usedBy = null)
         {
             InitializeComponent();
-            MessageLabel.Text = $"Numer pozycji {requestedNr:D2} jest już zajęty.\nProponowany wolny numer: {suggestedFreeNr:D2}";
+            MessageLabel.Text = string.IsNullOrEmpty(usedBy)
+                ? $"Numer pozycji {requestedNr:D2} jest już zajęty.\nProponowany wolny numer: {suggestedFreeNr:D2}"
+                : $"Numer pozycji {requestedNr:D2} ma już pręt o innym kształcie / wymiarach ({usedBy}).\n" +
+                  $"Jeden numer = jeden kształt.\nProponowany wolny numer: {suggestedFreeNr:D2}";
             PosNrBox.Text     = suggestedFreeNr.ToString("D2");
             ResultPosNr       = suggestedFreeNr;
         }

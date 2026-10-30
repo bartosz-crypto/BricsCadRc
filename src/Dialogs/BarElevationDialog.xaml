@@ -214,9 +214,28 @@
                        Unchecked="OverrideCheck_Changed"/>
         </Grid>
 
-        <!-- W4f: ostrzeżenia BS 8666:2020 (BarShapeValidation) — nie blokują OK -->
-        <TextBlock Grid.Row="25" x:Name="WarningText" Foreground="#B04A00" TextWrapping="Wrap"
-                   VerticalAlignment="Top" Margin="0,8,0,0" FontSize="11" Visibility="Collapsed"/>
+        <StackPanel Grid.Row="25" VerticalAlignment="Top">
+            <!-- Końcówki „do środka” (kreska 45° jak S1 w przekrojach, 2026-10-30) — tylko rysunek pręta -->
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <CheckBox Grid.Column="0" x:Name="TicksCheck" VerticalAlignment="Center"
+                          Content="Końcówki do środka (kreska 45°)"
+                          ToolTip="Na rysunku pręta krótka kreska 45° na obu końcach (ok. 3·d) — jak w przekrojach. Wymiary i BBS bez zmian."
+                          Checked="TicksCheck_Changed" Unchecked="TicksCheck_Changed"/>
+                <ComboBox Grid.Column="1" x:Name="TickSideCombo" Width="110" Margin="8,0,0,0"
+                          ToolTip="Pręt prosty: strona kreski">
+                    <ComboBoxItem Content="w dół"  Tag="-1" IsSelected="True"/>
+                    <ComboBoxItem Content="w górę" Tag="1"/>
+                </ComboBox>
+            </Grid>
+
+            <!-- W4f: ostrzeżenia BS 8666:2020 (BarShapeValidation) — nie blokują OK -->
+            <TextBlock x:Name="WarningText" Foreground="#B04A00" TextWrapping="Wrap"
+                       VerticalAlignment="Top" Margin="0,8,0,0" FontSize="11" Visibility="Collapsed"/>
+        </StackPanel>
 
         <!-- Przyciski -->
         <StackPanel Grid.Row="26" Orientation="Horizontal" HorizontalAlignment="Right"

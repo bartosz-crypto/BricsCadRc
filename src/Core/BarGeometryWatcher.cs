@@ -168,8 +168,8 @@ namespace BricsCadRc.Core
                 if (bar == null) return;
                 _preAxisStart[pl.ObjectId] =
                     SingleBarEngine.GetAxisFirstPointFromOutline(pl, bar.ShapeCode ?? "00");
-                var verts = new List<Point3d>(pl.NumberOfVertices);
-                for (int i = 0; i < pl.NumberOfVertices; i++) verts.Add(pl.GetPoint3dAt(i));
+                // obrys bez końcówek „do środka” (2026-10-30) — porównanie z obrysem po komendzie też bez nich
+                var verts = SingleBarEngine.OutlinePoints(pl);
                 _preOutline[pl.ObjectId] = verts;
                 var ocs = new List<(Point2d pt, double bulge)>(pl.NumberOfVertices);
                 for (int i = 0; i < pl.NumberOfVertices; i++) ocs.Add((pl.GetPoint2dAt(i), pl.GetBulgeAt(i)));
@@ -237,13 +237,14 @@ namespace BricsCadRc.Core
         {
             result = null; newAxisStart = Point3d.Origin; why = null; tooShort = false;
             string shapeCode = bar.ShapeCode ?? "00";
-            int total = pl.NumberOfVertices;
+            var cur = SingleBarEngine.OutlinePoints(pl);   // bez końcówek „do środka” (jak pre)
+            int total = cur.Count;
             if (BarFrameRules.IsRingShape(shapeCode) || total < 4 || total % 2 != 0 || pre == null || pre.Count != total) return false;
             int n = total / 2;
 
             var moved = new List<int>();
             for (int i = 0; i < total; i++)
-                if (pl.GetPoint3dAt(i).DistanceTo(pre[i]) > 0.01) moved.Add(i);
+                if (cur[i].DistanceTo(pre[i]) > 0.01) moved.Add(i);
             if (moved.Count == 0 || moved.Count == total) return false;   // brak zmiany / MOVE
 
             var startSet = new HashSet<int> { 0, total - 1 };
@@ -260,7 +261,7 @@ namespace BricsCadRc.Core
             if (outward.Length < 1e-6) return false;
             outward = outward.GetNormal();
 
-            double delta = moved.Average(i => (pl.GetPoint3dAt(i) - pre[i]).DotProduct(outward));
+            double delta = moved.Average(i => (cur[i] - pre[i]).DotProduct(outward));
             if (Math.Abs(delta) < 0.5) return false;
 
             var shape = ShapeCodeLibrary.Get(shapeCode) ?? ShapeCodeLibrary.Get("00");
@@ -298,6 +299,22 @@ namespace BricsCadRc.Core
             }
             newAxisStart = atStart ? axis[0] + outward * delta : axis[0];
             return true;
+        }
+
+        /// <summary>Te same punkty (± 0,01 mm).</summary>
+        private static bool SameOutline(List<Point3d> a, List<Point3d> b)
+        {
+            if (a == null || b == null || a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++) if (a[i].DistanceTo(b[i]) > 0.01) return false;
+            return true;
+        }
+
+        /// <summary>Wierzchołki polilinii (OCS) inne niż przed komendą.</summary>
+        private static bool RawChanged(Polyline pl, List<(Point2d pt, double bulge)> pre)
+        {
+            if (pre == null || pre.Count != pl.NumberOfVertices) return true;
+            for (int i = 0; i < pre.Count; i++) if (pl.GetPoint2dAt(i).GetDistanceTo(pre[i].pt) > 0.01) return true;
+            return false;
         }
 
         /// <summary>Parametr, którego zmiana o delta wydłuża tylko dany koniec (reszta kształtu bez zmian).</summary>
@@ -425,13 +442,14 @@ namespace BricsCadRc.Core
         /// </summary>
         private static bool IsValidStraightBarOutline(Polyline pl, double diameter)
         {
-            int total = pl.NumberOfVertices;
+            var sv = SingleBarEngine.OutlinePoints(pl);   // bez końcówek „do środka”
+            int total = sv.Count;
             if (total != 4) return false; // shape 00/99 outline ma dokładnie 4 wierzchołki
 
-            var p0 = pl.GetPoint3dAt(0);  // left[0]
-            var p1 = pl.GetPoint3dAt(1);  // left[1]
-            var p2 = pl.GetPoint3dAt(2);  // right[1]
-            var p3 = pl.GetPoint3dAt(3);  // right[0]
+            var p0 = sv[0];  // left[0]
+            var p1 = sv[1];  // left[1]
+            var p2 = sv[2];  // right[1]
+            var p3 = sv[3];  // right[0]
 
             // Oś bar-a
             var axisStart = new Teigha.Geometry.Point3d((p0.X + p3.X) / 2.0, (p0.Y + p3.Y) / 2.0, 0);
@@ -580,6 +598,23 @@ namespace BricsCadRc.Core
                             continue;
                         }
                         if (why != null) doc.Editor?.WriteMessage($"\n[RC AUTO] {why}\n");
+
+                        // Końcówki „do środka” (2026-10-30): ruszony tylko koniec kreski (obrys bez końcówek bez zmian) —
+                        // końcówka odtworzona z danych pręta
+                        if (!tooShort && pre != null && (BarTicks.AppliedMask(pline) & 3) != 0
+                            && SameOutline(SingleBarEngine.OutlinePoints(pline), pre)
+                            && preOutlineOcs.TryGetValue(oid, out var preRaw) && RawChanged(pline, preRaw))
+                        {
+                            tr.Commit();
+                            try
+                            {
+                                _rebuildDepth++;
+                                SingleBarEngine.RebuildCompanions(db, oid, bar, null, preFrame);
+                            }
+                            catch (System.Exception ex) { Log.Error("BarGeometryWatcher.RebuildCompanions(ticks)", ex); }
+                            finally { _rebuildDepth--; }
+                            continue;
+                        }
 
                         // #12 (D4): odrzucona zmiana gripem / STRETCH (za krótki odcinek) — pręt sprzed przeciągnięcia:
                         // wierzchołki i wybrzuszenia w OCS z początku komendy; bez przesuwania etykiety i bez przyjmowania

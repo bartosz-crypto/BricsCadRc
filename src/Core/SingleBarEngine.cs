@@ -103,6 +103,14 @@ namespace BricsCadRc.Core
             tr.AddNewlyCreatedDBObject(entities[0], true);
             WriteXData(entities[0], bar);
             BarXData.MarkW4dGeometry(entities[0]);   // W4d (runda 2): obrys zbudowany geometrią W4d
+            // końcówki „do środka” (2026-10-30): pręt poziomy nieodbity — „w górę” = +Y
+            if (bar.EndTicks && entities[0] is Polyline plT && BarTicks.Supports(bar.ShapeCode))
+            {
+                var pts = new List<Point2d>();
+                for (int i = 0; i < plT.NumberOfVertices; i++) pts.Add(plT.GetPoint2dAt(i));
+                int mask = BarTicks.Apply(pts, IsStraightShape(bar.ShapeCode), bar.EndTickSide, new Vector2d(0, 1), bar.Diameter);
+                if (mask != 0) { SetVertices(plT, pts); BarTicks.SetApplied(plT, mask); }
+            }
             ObjectId barId = entities[0].ObjectId;
 
             string primaryHandle = entities[0].Handle.ToString();
@@ -126,8 +134,10 @@ namespace BricsCadRc.Core
         public static double GetBarAngle(Polyline pline)
         {
             if (pline == null || pline.NumberOfVertices < 2) return 0.0;
-            var p0 = pline.GetPoint3dAt(0);
-            var p1 = pline.GetPoint3dAt(1);
+            var sv = BarTicks.StandardVertices(pline);   // bez końcówek „do środka” (pierwszy odcinek = brzeg pręta)
+            if (sv.Count < 2) return 0.0;
+            var p0 = sv[0];
+            var p1 = sv[1];
             double dx = p1.X - p0.X;
             double dy = p1.Y - p0.Y;
             if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6) return 0.0;
@@ -617,8 +627,8 @@ namespace BricsCadRc.Core
         /// <summary>Wierzchołki polilinii (WCS, 3D z Z = elewacja).</summary>
         public static List<Point3d> OutlinePoints(Polyline pl)
         {
-            var r = new List<Point3d>(pl.NumberOfVertices);
-            for (int i = 0; i < pl.NumberOfVertices; i++) r.Add(pl.GetPoint3dAt(i));
+            // bez końcówek „do środka” (2026-10-30) — rama, oś i długość jak dla obrysu standardowego
+            var r = BarTicks.StandardVertices(pl);
             return r;
         }
 
@@ -754,12 +764,24 @@ namespace BricsCadRc.Core
             var outlinePts = ComputeOutlineVertices(shape, bar.ParamValues, bar.Diameter, startPoint, direction, fr.Mirrored);
             if (outlinePts == null || outlinePts.Count < 4) { tr.Commit(); return; }
 
+            // końcówki „do środka” (2026-10-30): wybór z RC_BAR_TICKS na polilinii; „w górę” = lokalne +Y w ramie pręta
+            int tickMask = 0;
+            var tk = BarTicks.Read(pline);
+            if (tk.Enabled && BarTicks.Supports(shape.Code))
+            {
+                double dl = Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y);
+                double ax = dl > 1e-9 ? direction.X / dl : 1.0, ay = dl > 1e-9 ? direction.Y / dl : 0.0;
+                var up = fr.Mirrored ? new Vector2d(ay, -ax) : new Vector2d(-ay, ax);
+                tickMask = BarTicks.Apply(outlinePts, IsStraightShape(shape.Code), tk.Side, up, bar.Diameter);
+            }
+
             pline.UpgradeOpen();
             int oldCount = pline.NumberOfVertices;
             for (int i = 0; i < outlinePts.Count; i++)
                 pline.AddVertexAt(oldCount + i, outlinePts[i], 0, 0, 0);
             for (int i = 0; i < oldCount; i++)
                 pline.RemoveVertexAt(0);
+            BarTicks.SetApplied(pline, tickMask);
 
             pline.ConstantWidth = 0.0;
             pline.Closed = true;
@@ -854,6 +876,17 @@ namespace BricsCadRc.Core
             {
                 foreach (var e in ents) if (e.ObjectId.IsNull) e.Dispose();
             }
+        }
+
+        /// <summary>Kształt prosty (00 / 99) — końcówki „do środka” wg strony w górę / w dół.</summary>
+        internal static bool IsStraightShape(string code) => (code ?? "00") == "00" || code == "99";
+
+        /// <summary>Wierzchołki polilinii := pts (dopisanie nowych, potem usunięcie starych).</summary>
+        private static void SetVertices(Polyline pl, List<Point2d> pts)
+        {
+            int oldCount = pl.NumberOfVertices;
+            for (int i = 0; i < pts.Count; i++) pl.AddVertexAt(oldCount + i, pts[i], 0, 0, 0);
+            for (int i = 0; i < oldCount; i++) pl.RemoveVertexAt(0);
         }
 
         /// <summary>Wierzchołki target := wierzchołki source (dopisanie nowych, potem usunięcie starych — jak RebuildCompanions).</summary>
@@ -966,6 +999,10 @@ namespace BricsCadRc.Core
             bd.GeometryW4d = BarRecordRules.IsW4dGeometry(v.Length, t15.TypeCode, t15.Value);
             // Fallback dla starych XData bez TotalLength
             if (bd.TotalLength <= 0) bd.TotalLength = bd.LengthA;
+            // końcówki „do środka” (2026-10-30) — osobna aplikacja XData
+            var tk = BarTicks.Read(entity);
+            bd.EndTicks    = tk.Enabled;
+            bd.EndTickSide = tk.Side;
             return bd;
         }
 
@@ -976,7 +1013,9 @@ namespace BricsCadRc.Core
         public static int ExtractPosNr(string mark)
         {
             if (string.IsNullOrEmpty(mark)) return 0;
-            var parts = mark.Split('-');
+            // tylko część przed spacją (2026-10-29): „H12-11 UB SIDE” (opis bez rozstawu, sufiks) dawało 0 — numer 11
+            // nie był liczony jako zajęty (PositionCounter) i przydzielany drugi raz
+            var parts = mark.Trim().Split(' ')[0].Split('-');
             if (parts.Length >= 2 && int.TryParse(parts[1], out int nr))
                 return nr;
             return 0;
@@ -996,12 +1035,13 @@ namespace BricsCadRc.Core
             if (BarFrameRules.IsRingShape(shapeCode))   // W4c: pierścień = 75
                 return pl.GetPoint3dAt(0); // TODO: ring axis recovery — osobny case do zaimplementowania
 
-            int total = pl.NumberOfVertices;
+            var sv = BarTicks.StandardVertices(pl);   // bez końcówek „do środka”
+            int total = sv.Count;
             if (total < 4 || total % 2 != 0)
                 return pl.GetPoint3dAt(0); // defensive fallback
 
-            var left0     = pl.GetPoint3dAt(0);
-            var rightLast = pl.GetPoint3dAt(total - 1);
+            var left0     = sv[0];
+            var rightLast = sv[total - 1];
             return new Point3d(
                 (left0.X + rightLast.X) / 2.0,
                 (left0.Y + rightLast.Y) / 2.0,
@@ -1015,14 +1055,15 @@ namespace BricsCadRc.Core
         /// </summary>
         public static double GetStraightBarAxisLength(Polyline pl)
         {
-            int total = pl.NumberOfVertices;
+            var sv = BarTicks.StandardVertices(pl);   // bez końcówek „do środka”
+            int total = sv.Count;
             if (total < 4 || total % 2 != 0) return 0.0;
             int n = total / 2;
 
-            var left0      = pl.GetPoint3dAt(0);
-            var rightLast  = pl.GetPoint3dAt(total - 1);
-            var leftLast   = pl.GetPoint3dAt(n - 1);
-            var rightFirst = pl.GetPoint3dAt(n);
+            var left0      = sv[0];
+            var rightLast  = sv[total - 1];
+            var leftLast   = sv[n - 1];
+            var rightFirst = sv[n];
 
             var axisStart = new Point3d((left0.X + rightLast.X) / 2.0, (left0.Y + rightLast.Y) / 2.0, 0);
             var axisEnd   = new Point3d((leftLast.X + rightFirst.X) / 2.0, (leftLast.Y + rightFirst.Y) / 2.0, 0);
@@ -1052,11 +1093,14 @@ namespace BricsCadRc.Core
                     result.Add(pl.GetPoint3dAt(i));
                 return result;
             }
+            var sv = BarTicks.StandardVertices(pl);   // bez końcówek „do środka”
+            total = sv.Count;
+            if (total % 2 != 0) return sv;
             int n = total / 2;
             for (int i = 0; i < n; i++)
             {
-                Point3d left  = pl.GetPoint3dAt(i);
-                Point3d right = pl.GetPoint3dAt(total - 1 - i);
+                Point3d left  = sv[i];
+                Point3d right = sv[total - 1 - i];
                 result.Add(new Point3d((left.X + right.X) * 0.5, (left.Y + right.Y) * 0.5, 0));
             }
             return result;

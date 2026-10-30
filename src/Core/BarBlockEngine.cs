@@ -228,16 +228,29 @@ namespace BricsCadRc.Core
         }
 
         /// <summary>
+        /// Indeks pręta, na którym rysowane jest drugie strzemię pary (o jeden rozstaw za pierwszym widocznym; na końcu — przed nim);
+        /// −1, gdy brak miejsca (1 pręt, brak widocznych, sąsiad widoczny). Wspólne dla <see cref="AddPairBar"/>, kropki na linii
+        /// rozkładu (AnnotationEngine) i wyboru strony (BarCommands.PickLinkPairSide).
+        /// </summary>
+        public static int PairBarIndex(int count, HashSet<int> visibleSet)
+        {
+            if (count < 2 || visibleSet == null || visibleSet.Count == 0) return -1;
+            int j = visibleSet.Min() + 1;
+            if (j >= count) j = visibleSet.Min() - 1;
+            if (j < 0 || visibleSet.Contains(j)) return -1;
+            return j;
+        }
+
+        /// <summary>
         /// Strzemiona 4-cięte (decyzja użytkownika 2026-10-14): drugie (zachodzące) strzemię — pręt o jeden rozstaw dalej od pierwszego
         /// widocznego, przesunięty wzdłuż osi o <see cref="BarData.PairShift"/> (od drugiego lica belki), z symbolami końców jak widoczny.
         /// </summary>
         private static void AddPairBar(Transaction tr, BlockTableRecord btr, BarData bar, string barLayer, LineWeight lw,
                                        BarSymbolCategory cat, HashSet<int> visibleSet, int count, double length, bool alongX)
         {
-            if (Math.Abs(bar.PairShift) < 1.0 || count < 2 || visibleSet.Count == 0) return;
-            int j = visibleSet.Min() + 1;
-            if (j >= count) j = visibleSet.Min() - 1;
-            if (j < 0 || visibleSet.Contains(j)) return;
+            if (Math.Abs(bar.PairShift) < 1.0) return;
+            int j = PairBarIndex(count, visibleSet);
+            if (j < 0) return;
             double t = j * bar.Spacing;
             double a0 = bar.PairShift, a1 = bar.PairShift + length;
             Point3d P(double along) => alongX ? new Point3d(along, t, 0) : new Point3d(t, along, 0);
@@ -783,6 +796,38 @@ namespace BricsCadRc.Core
         // RebuildVisibility — zmienia VisibilityMode/VisibleIndices i przebudowuje BTR.
         // Wywoływane przez RC_EDIT_LABEL po zmianie bar visibility.
         // ----------------------------------------------------------------
+        /// <summary>
+        /// Strzemiona (kształt 51 / 63) opisane „2xn” (EffectiveCount = 2 · Count — także wpis ręczny, prośba Bartka 2026-10-29): dwa
+        /// zachodzące strzemiona w rzucie jak przy Generate — PairShift (brak → 0,4 · A w dół do 5, np. 350 → 140); inaczej PairShift = 0.
+        /// Zwraca true, gdy PairShift się zmienił (trzeba przebudować blok).
+        /// </summary>
+        public static bool ApplyLinkPair(BarData b)
+        {
+            if (b == null) return false;
+            string sc = b.ShapeCode ?? "00";
+            if (sc != "51" && sc != "63") return false;
+            double old = b.PairShift;
+            bool pair = b.Count >= 1 && b.CountDisplay.HasValue && b.CountDisplay.Value == 2 * b.Count;
+            if (pair && Math.Abs(b.PairShift) < 1.0)
+                b.PairShift = Math.Max(5.0, Math.Floor(0.4 * Math.Abs(b.LengthA) / 5.0 + 1e-9) * 5.0);
+            else if (!pair) b.PairShift = 0;
+            return Math.Abs(old - b.PairShift) > 1e-6;
+        }
+
+        /// <summary>Przebudowa bloku rozkładu z bieżących XData (ta sama widoczność).</summary>
+        public static void RebuildBars(Database db, ObjectId blockRefId)
+        {
+            BarVisibilityMode mode; string idx;
+            using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                var b = tr.GetObject(blockRefId, OpenMode.ForRead) is BlockReference br ? ReadXData(br) : null;
+                tr.Commit();
+                if (b == null) return;
+                mode = b.VisibilityMode; idx = b.VisibleIndices;
+            }
+            RebuildVisibility(db, blockRefId, mode, idx);
+        }
+
         public static void RebuildVisibility(
             Database db, ObjectId blockRefId,
             BarVisibilityMode mode, string visibleIndices)

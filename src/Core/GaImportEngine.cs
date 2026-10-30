@@ -156,7 +156,8 @@ namespace BricsCadRc.Core
                         {
                             var ms = (BlockTableRecord)trW.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(src.Db), OpenMode.ForWrite);
                             var first = (Entity)trW.GetObject(pieces[0].id, OpenMode.ForRead);
-                            var npl = new Polyline { Layer = first.Layer, Color = first.Color, LinetypeId = first.LinetypeId, LineWeight = first.LineWeight };
+                            // rysunek źródłowy (side DB): warstwa przez Id — nazwa szukana w bieżącym rysunku dawała eKeyNotFound (2026-10-29)
+                            var npl = new Polyline { LayerId = first.LayerId, Color = first.Color, LinetypeId = first.LinetypeId, LineWeight = first.LineWeight };
                             for (int i = 0; i < loop.Count; i++) npl.AddVertexAt(i, new Point2d(loop[i].X, loop[i].Y), 0, 0, 0);
                             npl.Closed = true;
                             var nid = ms.AppendEntity(npl);

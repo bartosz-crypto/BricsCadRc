@@ -1744,6 +1744,63 @@ pręty; kody BL / BU / BM — seria dolna, BBS jak belki). Geometria: oś = kier
   linii i otwartych polilinii SD-PILED-RAFT wokół opisu (`OutlineFromPieces.OuterBoundary`: podział w przecięciach i stykach „na T”, graf
   bez zwisających końców, największa granica zewnętrzna wokół punktu) → zamknięta polilinia w rysunku źródłowym (tylko w pamięci); kawałki
   leżące w całości na niej usunięte; komunikat. Testy `OutlineFromPiecesTests`.
+  (fix120) nowa polilinia w rysunku źródłowym — warstwa przez `LayerId` (nazwa warstwy szukana w bieżącym rysunku: eKeyNotFound).
+- **Rozkład i opis — poprawki 2026-10-29 (fix121):**
+  - RC_DISTRIBUTION: pierwszy pręt (otulina z promptu) zawsze od PIERWSZEGO klikniętego punktu krawędzi, także po flipie S (dawniej zawsze
+    od mniejszej współrzędnej); od strony większej współrzędnej zakres = (n − 1) · rozstaw od otuliny przy pt1; podglądy (jig, flip, rozstaw)
+    od pt1 (`BarCommands.PreviewPositions`). Dane bloku jak dotąd (Pt1 = mniejsza współrzędna).
+  - Opis rozkładu (`DistributionDescDialog`): liczba „kxn” już przy pierwszym opisie (jak RC_EDIT_LABEL, `ParseCountInput`) → CountMult.
+  - Strzemiona 51 / 63 opisane „2xn” (EffectiveCount = 2 · Count, także wpis ręczny): dwa zachodzące strzemiona w rzucie jak przy Generate —
+    `BarBlockEngine.ApplyLinkPair` (brak PairShift → 0,4 · A w dół do 5; inaczej 0), przebudowa bloku (`RebuildBars`).
+  - Etykieta pręta (`UpdateBarLabelCount`): bez sufiksu rozkładu — rozkład 1 pręta „H12-102 T2” (bez rozstawu) dawał „1 H12-102 T2”.
+- **Opis rozkładu — puste pole rozstawu, opis istniejącego Any (fix122, 2026-10-29):**
+  - `DistributionDescDialog`: puste pole rozstawu (lub 0) dozwolone → opis bez rozstawu (`BarSpacing = 0`, `ShowSpacing = false`
+    w RC_BAR_BLOCK [29], jak RC_EDIT_LABEL bez „Show spacing”); rozkład w rzucie bez zmian. Liczba „kxn” w oknie z zapisanego CountMult.
+  - RC_EDIT_DISTRIBUTION na rozkładzie Any bez opisu (usunięty, przerwany przy tworzeniu, [11] wskazuje opis innego rozkładu) →
+    pełny flow opisu (`EditCommands.AddAnyAnnotation` → `BarCommands.RunAnnotationFlow`), jak przy RC_DISTRIBUTION Any.
+  - Odnośnik zdegenerowany (rozkład Any / 1 pręt: kierunek z ETAP 2 wzdłuż prętów leży w środku linii rozkładu, Enter w ETAP 3 —
+    wszystkie punkty w promieniu 2 · DotRadius) → domyślne ramię ArmLength w kierunku z ETAP 2 (wcześniej sama kropka, bez tekstu).
+    Nowy opis zaczyna bez LeaderPoints po starym opisie.
+- **Jeden numer = jeden kształt — dziury w numeracji (fix123, zgłoszenie 2026-10-29: H12-11 kształt 21 i H16-11 kształt 00):**
+  - `SingleBarEngine.ExtractPosNr`: numer z części przed spacją — „H12-11 UB SIDE” (opis bez rozstawu z sufiksem) dawało 0, więc
+    `PositionCounter.GetUsedPositionNumbers` nie widział numeru 11 jako zajętego. To samo w `BarScheduleEngine.ExtractPosNrStr`.
+  - RC_EDIT_BAR: numer zmieniony ręcznie na numer pręta o innym kształcie / wymiarach (`PositionReconciler.ShapeConflicts`) →
+    `BarPositionConflictDialog` z wolnym numerem (NextAuto / NextAutoTop); numer identycznego pręta dozwolony. Tryb skryptowy —
+    wolny numer bez okna.
+  - RC_SCHEDULE: uwagi z `PositionReconciler.NumberConflicts` (wszystkie pręty w rysunku, także bez rozkładów). RC_BBS ostrzegał
+    już wcześniej (pozycje z rozkładami, „różne pręty pod jednym numerem”).
+- **Opis rozkładu Any — numer i kliknięcia (fix124, 2026-10-29):**
+  - Numer pozycji w opisie rozkładu z pręta źródłowego (`BarCommands.DistPosNr`: [SourceBarHandle] → Mark pręta; brak — Mark
+    rozkładu). Opis Any „H12-11 UB SIDE” po MIRROR i ponownym opisie dawał „H12-00” (numer czytany z Mark z sufiksem — fix123).
+  - Any: bez ETAP 2 (kierunek / załamanie na linii rozkładu zerowej długości) — klik położenia kropki (ETAP 1), klik(i) odnośnika,
+    Enter; kierunek z pierwszego odcinka odnośnika (4 kierunki). Kropka widoczna w ETAP 3 (`ShowDistLineOnly`).
+- **Strzemiona 51 / 63 w rzucie (fix125, zgłoszenie 2026-10-29: kopia linka 07 370 → 500 jako 15):**
+  - Auto (`BarCommands.GetViewLength`, `PositionReconciler.PlanLengthOf`): każde strzemię 51 / 63 — bok B (szerokość; P9: A =
+    wysokość), dawniej tylko kod BL; inne — A.
+  - Manual (`BarCommands.LinkSideLength` w `ManualSegmentLength`): wskazany bok → A albo B (różnica długości z najdłuższym odcinkiem
+    prostopadłym ≈ A − B / B − A) zamiast prostego odcinka obrysu bez łuków narożników (500 → 450).
+  - `PropagateToDistributions`: rozkład Manual — długość bez zmian; Any — A i kształt z pręta, przebudowa `RebuildBars` (dawniej
+    LengthA = długość w rzucie); opis bez rozstawu (ShowSpacing = false) zostaje bez rozstawu; Any — rozstaw w opisie (n ≥ 2).
+- **Strzemiona „2xn” — strona drugiego strzemienia i kropka (fix126, 2026-10-29):**
+  - `BarCommands.PickLinkPairSide`: przy każdej parze (opis rozkładu, RC_EDIT_LABEL; fix127 — także istniejącej) — czerwony podgląd drugiego strzemienia po
+    stronie kursora wzdłuż prętów, klik albo [Lewo/Prawo] / [Gora/Dol] (wg kierunku prętów w rysunku) → znak PairShift, przebudowa;
+    Enter / Esc — bez zmian. RC_LINK_PAIR_SIDE — to samo dla istniejącego rozkładu (rozkład albo opis).
+  - Kropka na linii rozkładu przy drugim strzemieniu (`BarBlockEngine.PairBarIndex`, `AnnotationEngine.BuildDistLineAndDots`),
+    także Generate; nie dubluje kropki / strzałki (≤ 3 pręty, skrajne pręty przy strzałkach).
+- **Końcówki „do środka” na pręcie RC_BAR (fix128, 2026-10-30; jak S1 w przekrojach):**
+  - `Core/BarTicks.cs`: kreska 45° na obu końcach pręta, długość 3·d (min. 30); pręt gięty — do środka obwiedni osi, prosty —
+    w górę / w dół w układzie pręta. Tylko grafika (wymiary, długość, BBS bez zmian); bez pierścieni, 51 / 63, prętów-bloków.
+  - Dane: osobna aplikacja XData `RC_BAR_TICKS` na polilinii ([1] włączone, [2] strona, [3] maska końcówek narysowanych w obrysie);
+    `BarData.EndTicks` / `EndTickSide` (odczyt `ReadBarXData`, zapis wyboru `BarXData.Write`, maska — tylko budowa obrysu).
+  - Obrys: standardowy 2n + wierzchołki końca kreski [Lt0, L0…Ln−1, Ltn, Rtn, Rn−1…R0, Rt0] (`PlaceBar`, `RebuildCompanions`).
+    Odczyt geometrii bez końcówek (`BarTicks.Strip`): `OutlinePoints`, `GetBarAngle`, `GetAxisFirstPointFromOutline`,
+    `GetStraightBarAxisLength`, `GetAxisPointsFromOutline`, `BarEntity.OutlineVertices` / `FirstOutlineVertex`, BarGeometryWatcher
+    (obrys przed komendą, grip końca, walidacja prostego); ruszony tylko koniec kreski → obrys odtworzony.
+  - Okno RC_BAR / RC_EDIT_BAR: „Końcówki do środka (kreska 45°)” + strona dla prostego; RC_BAR_TICKS — wiele prętów naraz.
+  - (fix129, uwaga Bartka: „krzywo i wydłuża pręt”) geometria jak S1: ramię skrócone o s = L / √2, kreska od skróconego końca
+    do P + s · n (zasięg pręta bez zmian), stała szerokość d, narożniki skosu na dwusiecznej (ML / MR zamiast rogów końca).
+    Maska bit 2 (4) = ta geometria; `Strip` odtwarza rogi końca (środek skosu + s · t, d = szerokość końca kreski). Obrys z
+    fix128 (bez bitu 4) — tylko usunięcie rogów kreski.
 
 ## 5. Proces pracy
 1. `planista-recenzent`: plan (pliki, podejście, ryzyka, testy w BricsCAD). Przy większych zmianach

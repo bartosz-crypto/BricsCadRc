@@ -74,6 +74,12 @@ namespace BricsCadRc.Dialogs
                 TotalLengthBox.Text       = bar.TotalLength.ToString("F0", CultureInfo.InvariantCulture);
             }
 
+            // Końcówki „do środka” (2026-10-30)
+            TicksCheck.IsChecked = bar.EndTicks;
+            foreach (ComboBoxItem item in TickSideCombo.Items)
+                if (item.Tag?.ToString() == (bar.EndTickSide >= 0 ? "1" : "-1")) { TickSideCombo.SelectedItem = item; break; }
+            UpdateTickControls();
+
             // Ustaw warstwę
             foreach (ComboBoxItem item in LayerCombo.Items)
             {
@@ -112,6 +118,7 @@ namespace BricsCadRc.Dialogs
 
             UpdateParamRows(shape);
             UpdateAngleRow(shape);
+            UpdateTickControls();
 
             // Pre-wypełnij pola jeśli mamy wartości (np. z ShapePickerDialog). W4d: wiersz r ↔ pole Slot(r) (alfabetycznie)
             if (paramValues != null)
@@ -361,6 +368,21 @@ namespace BricsCadRc.Dialogs
             _isAutoUpdating = false;
         }
 
+        // ── Końcówki „do środka” (2026-10-30) ───────────────────────────────
+
+        private void TicksCheck_Changed(object sender, RoutedEventArgs e) => UpdateTickControls();
+
+        /// <summary>Pierścień / strzemię zamknięte — bez końcówek; strona tylko dla pręta prostego z włączonymi końcówkami.</summary>
+        private void UpdateTickControls()
+        {
+            if (TicksCheck == null || TickSideCombo == null) return;
+            string code = _selectedShape?.Code ?? "00";
+            bool supported = BarTicks.Supports(code);
+            TicksCheck.IsEnabled = supported;
+            TickSideCombo.Visibility = SingleBarEngine.IsStraightShape(code) ? Visibility.Visible : Visibility.Collapsed;
+            TickSideCombo.IsEnabled = supported && TicksCheck.IsChecked == true;
+        }
+
         // ── OK / Cancel ──────────────────────────────────────────────────────
 
         private void OK_Click(object sender, RoutedEventArgs e)
@@ -429,7 +451,10 @@ namespace BricsCadRc.Dialogs
                 LengthOverridden = _lengthOverridden,
                 LayerCode        = layerCode,
                 Position         = layerCode == "BOT" ? "BOT" : "TOP",
-                Direction        = "X"
+                Direction        = "X",
+                // końcówki „do środka” (2026-10-30)
+                EndTicks         = TicksCheck.IsChecked == true && BarTicks.Supports(_selectedShape.Code),
+                EndTickSide      = (TickSideCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "1" ? 1 : -1
             };
 
             DialogResult = true;

@@ -131,7 +131,7 @@ namespace BricsCadRc.Core
         {
             string myHandle = barId.Handle.Value.ToString("X8");
             int    newPosNr = SingleBarEngine.ExtractPosNr(bar.Mark);
-            var    toRebuild = new List<(ObjectId id, BarData bar)>();
+            var    toRebuild = new List<(ObjectId id, BarData bar, double len)>();
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -157,21 +157,33 @@ namespace BricsCadRc.Core
                     string sfx = mp.Length > 1 ? " " + string.Join(" ", mp, 1, mp.Length - 1) : "";
                     int distSp = cp.Length >= 3 && int.TryParse(cp[2], out int spParsed)
                         ? spParsed : (int)barDist.Spacing;
+                    // 2026-10-29: opis bez rozstawu (ShowSpacing = false, fix122) zostaje bez rozstawu; Any — rozstaw w opisie
+                    // mimo jednego pręta w bloku (jak RunAnnotationFlow)
+                    if (!barDist.ShowSpacing) distSp = 0;
+                    int markCount = BarBlockEngine.IsAny(barDist) ? Math.Max(2, barDist.EffectiveCount) : barDist.Count;
 
                     brDist.UpgradeOpen();
-                    barDist.Mark     = BarData.FormatMark(bar.Diameter, newPosNr, distSp, barDist.Count) + sfx;
+                    barDist.Mark     = BarData.FormatMark(bar.Diameter, newPosNr, distSp, markCount) + sfx;
                     barDist.Diameter = bar.Diameter;
-                    // długość w rzucie (2026-10-28): strzemię belki / wspornika — bok B (szerokość), inaczej A (jak dotąd)
-                    barDist.LengthA  = PlanLengthOf(bar);
+                    // długość w rzucie: strzemię 51 / 63 — bok B (szerokość), inaczej A. Kierunek widoku Manual (bok wskazany
+                    // przez użytkownika, 2026-10-29) — długość bez zmian
+                    // Any — LengthA to wymiar A kształtu (nie długość w rzucie): A i kształt z pręta, przebudowa z wymiarów pręta
+                    bool anyDist = BarBlockEngine.IsAny(barDist);
+                    double len = anyDist ? bar.LengthA
+                               : barDist.ViewingDirection == "Manual" && barDist.LengthA > 0 ? barDist.LengthA
+                               : PlanLengthOf(bar);
+                    if (anyDist) barDist.ShapeCode = bar.ShapeCode;
+                    barDist.LengthA  = len;
                     BarBlockEngine.WriteXData(brDist, barDist);
-                    toRebuild.Add((oid, barDist));
+                    toRebuild.Add((oid, barDist, len));
                 }
                 tr.Commit();
             }
 
-            foreach (var (id, bd) in toRebuild)
+            foreach (var (id, bd, len) in toRebuild)
             {
-                BarBlockEngine.UpdateBarLength(db, id, PlanLengthOf(bar));
+                if (BarBlockEngine.IsAny(bd)) BarBlockEngine.RebuildBars(db, id);   // Any: kształt z wymiarów pręta (BuildAny)
+                else BarBlockEngine.UpdateBarLength(db, id, len);
                 AnnotationEngine.SyncAnnotation(db, bd);
             }
             return toRebuild.Count;
@@ -184,8 +196,78 @@ namespace BricsCadRc.Core
         public static double PlanLengthOf(BarData bar)
         {
             string code = bar?.ShapeCode ?? "00";
-            if ((code == "51" || code == "63") && bar.LayerCode == BeamGeometry.CodeLinks && bar.LengthB > 0) return bar.LengthB;
+            // 2026-10-29: każde strzemię 51 / 63 (P9: B = szerokość), nie tylko kod BL — jak BarCommands.GetViewLength
+            if ((code == "51" || code == "63") && bar.LengthB > 0) return bar.LengthB;
             return bar?.LengthA ?? 0;
+        }
+
+        /// <summary>
+        /// Numery (Mark) innych prętów (polilinie i pręty-bloki, poza <paramref name="exceptId"/>) z numerem pozycji
+        /// <paramref name="nr"/>, ale o INNYM kształcie / wymiarach niż <paramref name="candidate"/> (zasada: jeden numer = jeden
+        /// kształt; 2026-10-29: RC_EDIT_BAR z ręcznie zmienionym numerem nie sprawdzał tego). Pusta lista — numer wolny albo
+        /// zajęty przez identyczne pręty. Tylko odczyt.
+        /// </summary>
+        public static List<string> ShapeConflicts(Database db, int nr, BarData candidate, ObjectId exceptId)
+        {
+            var res = new List<string>();
+            if (db == null || nr <= 0 || candidate == null) return res;
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+                    {
+                        if (be.Entity.ObjectId == exceptId) continue;
+                        var ob = be.Read();
+                        if (ob == null || SingleBarEngine.ExtractPosNr(ob.Mark) != nr) continue;
+                        if (!SameShape(candidate, ob) && !res.Contains(ob.Mark)) res.Add(ob.Mark);
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex) { Log.Error("PositionReconciler.ShapeConflicts", ex); }
+            return res;
+        }
+
+        /// <summary>
+        /// Kontrola całego rysunku (2026-10-29, zgłoszenie Bartka: H12-11 kształt 21 i H16-11 kształt 00): numery pozycji, pod
+        /// którymi są pręty o różnych kształtach / wymiarach — komunikat na każdy taki numer (RC_BBS, RC_SCHEDULE). Tylko odczyt.
+        /// </summary>
+        public static List<string> NumberConflicts(Database db)
+        {
+            var res = new List<string>();
+            if (db == null) return res;
+            try
+            {
+                var byNr = new SortedDictionary<int, List<BarData>>();
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    foreach (var be in BarEntity.ScanModelSpace(tr, db, BarKinds.Polyline | BarKinds.Block))
+                    {
+                        var ob = be.Read();
+                        int nr = ob != null ? SingleBarEngine.ExtractPosNr(ob.Mark) : 0;
+                        if (nr <= 0) continue;
+                        if (!byNr.TryGetValue(nr, out var list)) byNr[nr] = list = new List<BarData>();
+                        list.Add(ob);
+                    }
+                    tr.Commit();
+                }
+                foreach (var kv in byNr)
+                {
+                    // różne kształty pod tym numerem (reprezentant każdej grupy identycznych prętów)
+                    var kinds = new List<BarData>();
+                    foreach (var b in kv.Value)
+                        if (!kinds.Exists(k => SameShape(k, b))) kinds.Add(b);
+                    if (kinds.Count < 2) continue;
+                    var parts = new List<string>();
+                    foreach (var k in kinds)
+                        parts.Add($"{k.Mark} (kształt {k.ShapeCode ?? "00"}, A={k.LengthA:F0})");
+                    res.Add($"Pozycja {kv.Key:D2}: różne pręty pod jednym numerem — {string.Join(", ", parts)}. " +
+                            "Zmień numer jednego z nich (RC_EDIT_BAR).");
+                }
+            }
+            catch (System.Exception ex) { Log.Error("PositionReconciler.NumberConflicts", ex); }
+            return res;
         }
 
         /// <summary>Te same wymiary pręta (średnica, kształt, A–E) z tolerancją 1 mm.</summary>

@@ -80,6 +80,15 @@ namespace BricsCadRc.Core
         /// </summary>
         public bool GeometryW4d { get; set; }
 
+        /// <summary>
+        /// Końcówki „do środka” na rysunku pręta (kreska 45°, 2026-10-30) — osobna aplikacja XData RC_BAR_TICKS (BarTicks), nie
+        /// nagłówek RC_SINGLE_BAR. Odczyt: SingleBarEngine.ReadBarXData; zapis: BarXData.Write (wybór), budowa obrysu (maska).
+        /// </summary>
+        public bool EndTicks { get; set; }
+
+        /// <summary>Strona końcówek pręta prostego w układzie pręta: +1 w górę, −1 w dół (domyślnie).</summary>
+        public int EndTickSide { get; set; } = -1;
+
         /// <summary>Pozycja: "BOT" lub "TOP"</summary>
         public string Position { get; set; } = "BOT";
 

@@ -20,27 +20,39 @@ namespace BricsCadRc.Commands
 
         /// <summary>
         /// RC_EDIT_DISTRIBUTION dla rozkładu Any (decyzja 2026-10-14): okno opisu (liczba, rozstaw, sufiks) — w bloku zostaje jeden pręt
-        /// (Count = 1), liczba w CountDisplay (opis, zestawienie), rozstaw w Spacing i w opisie.
+        /// (Count = 1), liczba w CountDisplay (opis, zestawienie), rozstaw w Spacing i w opisie (puste pole — opis bez rozstawu).
+        /// Rozkład Any BEZ opisu (usunięty / przerwany przy tworzeniu) → pełny flow opisu jak w RC_DISTRIBUTION (2026-10-29).
         /// </summary>
         private static void EditAnyDistribution(Database db, Editor ed, ObjectId blockRefId, BarData bar)
         {
-            int posNr = SingleBarEngine.ExtractPosNr(bar.Mark);
+            int posNr = BarCommands.DistPosNr(db, bar);   // z pręta źródłowego (2026-10-29: „H12-00” po MIRROR)
+            double spacing0 = bar.ShowSpacing ? (bar.Spacing > 0 ? bar.Spacing : 200) : 0;
+
+            if (AnyAnnotMissing(db, blockRefId, bar))
+            {
+                AddAnyAnnotation(db, ed, blockRefId, bar, posNr, spacing0);
+                return;
+            }
+
             string mark0 = (bar.Mark ?? "").Trim();
             int sp = mark0.IndexOf(' ');
             string suffix0 = sp > 0 ? mark0.Substring(sp + 1).Trim() : "";
-            string baseMark = BarData.FormatMark(bar.Diameter, posNr, bar.Spacing, bar.EffectiveCount);
-            var dlg = new DistributionDescDialog(bar, bar.EffectiveCount, bar.Spacing > 0 ? bar.Spacing : 200, baseMark, suffix0);
+            string baseMark = BarData.FormatMark(bar.Diameter, posNr, spacing0, bar.EffectiveCount);
+            var dlg = new DistributionDescDialog(bar, bar.EffectiveCount, spacing0, baseMark, suffix0);
             if (Application.ShowModalWindow(dlg) != true) return;
 
-            string newBase = BarData.FormatMark(bar.Diameter, posNr, dlg.BarSpacing, 2);   // Any: rozstaw zawsze w opisie
+            // Any: rozstaw zawsze w opisie — chyba że pole rozstawu puste (BarSpacing = 0 → sam prefiks)
+            string newBase = BarData.FormatMark(bar.Diameter, posNr, dlg.BarSpacing, 2);
             string mark = string.IsNullOrEmpty(dlg.Suffix) ? newBase : $"{newBase} {dlg.Suffix}";
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 if (tr.GetObject(blockRefId, OpenMode.ForWrite) is BlockReference br && BarBlockEngine.ReadXData(br) is BarData b)
                 {
                     b.Mark = mark;
-                    b.Spacing = dlg.BarSpacing;
+                    b.ShowSpacing = dlg.ShowSpacing;
+                    if (dlg.ShowSpacing) b.Spacing = dlg.BarSpacing;
                     b.CountDisplay = dlg.BarCount != b.Count ? (int?)dlg.BarCount : null;
+                    b.CountMult = dlg.BarMult;
                     BarBlockEngine.WriteXData(br, b);
                     bar = b;
                 }
@@ -48,9 +60,75 @@ namespace BricsCadRc.Commands
             }
             AnnotationEngine.SyncAnnotation(db, bar);
             AnnotationEngine.UpdateBarLabelCount(db, bar.SourceBarHandle ?? "", markOverride: mark);
-            ed.WriteMessage($"\n[RC] Rozkład Any: {bar.EffectiveCount} prętów, rozstaw {bar.Spacing:F0} — {mark}\n");
+            ed.WriteMessage($"\n[RC] Rozkład Any: {bar.EffectiveCount} prętów — {mark}\n");
             try { Application.DocumentManager.MdiActiveDocument?.SendStringToExecute("REGEN\n", false, false, false); }
             catch (System.Exception logEx) { Log.Error("EditCommands.EditAnyDistribution", logEx); }
+        }
+
+        /// <summary>
+        /// Rozkład Any bez opisu: brak [11] AnnotHandle, opis usunięty, albo [11] wskazuje opis innego rozkładu (kopia) —
+        /// wtedy [11] czyszczone, jak w zwykłym RC_EDIT_DISTRIBUTION.
+        /// </summary>
+        private static bool AnyAnnotMissing(Database db, ObjectId blockRefId, BarData bar)
+        {
+            if (string.IsNullOrEmpty(bar.AnnotHandle)) return true;
+            if (!long.TryParse(bar.AnnotHandle, System.Globalization.NumberStyles.HexNumber, null, out long h)) return true;
+            if (!db.TryGetObjectId(new Handle(h), out ObjectId aId) || aId.IsNull || aId.IsErased) return true;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                bool missing = false;
+                if (tr.GetObject(blockRefId, OpenMode.ForWrite) is BlockReference br
+                    && !BarEraseCascade.AnnotBelongsTo(tr, aId, br.Handle.Value.ToString("X8")))
+                {
+                    missing = true;
+                    bar.AnnotHandle = "";
+                    var xd = BarBlockEngine.ReadXData(br);
+                    if (xd != null) { xd.AnnotHandle = ""; BarBlockEngine.WriteXData(br, xd); }
+                }
+                tr.Commit();
+                return missing;
+            }
+            catch (System.Exception ex) { Log.Error("EditCommands.AnyAnnotMissing", ex); return false; }
+        }
+
+        /// <summary>
+        /// Opis dla istniejącego rozkładu Any (prośba Bartka 2026-10-29): okno opisu + jigi + CreateLeader
+        /// (BarCommands.RunAnnotationFlow, jak przy RC_DISTRIBUTION Any) — kropka na jedynym pręcie w bloku.
+        /// </summary>
+        private static void AddAnyAnnotation(Database db, Editor ed, ObjectId blockRefId, BarData bar, int posNr, double spacing0)
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            BarBlockEngine.BarBlockResult barResult;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (!(tr.GetObject(blockRefId, OpenMode.ForRead) is BlockReference br)) { tr.Commit(); return; }
+                bar.Angle = br.Rotation;
+                Extents3d ext;
+                try { ext = br.GeometricExtents; }
+                catch (System.Exception ex)
+                {
+                    Log.Error("EditCommands.AddAnyAnnotation", ex);
+                    ext = new Extents3d(br.Position, br.Position);
+                }
+                barResult = new BarBlockEngine.BarBlockResult
+                {
+                    BlockRefId = blockRefId,
+                    BarOrigin  = br.Position,
+                    MinPoint   = ext.MinPoint,
+                    MaxPoint   = ext.MaxPoint
+                };
+                tr.Commit();
+            }
+
+            string baseMark = BarData.FormatMark(bar.Diameter, posNr, spacing0, 2);
+            bool ok = BarCommands.RunAnnotationFlow(doc, db, bar, barResult, bar.Direction == "X",
+                spacing0, bar.EffectiveCount, baseMark, blockRefId);
+            if (!ok) return;
+            AnnotationEngine.UpdateBarLabelCount(db, bar.SourceBarHandle ?? "", markOverride: bar.Mark);
+            ed.WriteMessage($"\n[RC] Rozkład Any — dodano opis: {bar.EffectiveCount} prętów  {bar.Mark}\n");
+            try { doc?.SendStringToExecute("REGEN\n", false, false, false); }
+            catch (System.Exception logEx) { Log.Error("EditCommands.AddAnyAnnotation", logEx); }
         }
 
         /// <summary>
@@ -532,6 +610,46 @@ namespace BricsCadRc.Commands
         //   2. Użytkownik kliknął Line/Circle wewnątrz BTR RC_SLAB_BARS_* — szukamy
         //      BlockReference przez GetBlockReferenceIds na rodzicu BTR
         // ----------------------------------------------------------------
+        /// <summary>
+        /// RC_LINK_PAIR_SIDE (2026-10-29): zmiana strony drugiego strzemienia pary „2xn” na istniejącym rozkładzie — wskaż rozkład
+        /// albo jego opis, potem stronę (podgląd jak przy opisie rozkładu).
+        /// </summary>
+        [CommandMethod("RC_LINK_PAIR_SIDE", CommandFlags.Modal)]
+        public void LinkPairSide()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+            var sel = ed.GetEntity(new PromptEntityOptions("\nWybierz rozkład strzemion 2x (albo jego opis): "));
+            if (sel.Status != PromptStatus.OK) return;
+            ObjectId blockId = ObjectId.Null;
+            double shift = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (tr.GetObject(sel.ObjectId, OpenMode.ForRead) is Entity ent)
+                {
+                    blockId = ResolveBarBlock(ent, tr);
+                    if (blockId.IsNull && ent is BlockReference annBr && AnnotationEngine.ReadAnnotXData(annBr) is BarData ann
+                        && XLink.TryParse(ann.SourceBlockHandle, out long h) && h != 0
+                        && db.TryGetObjectId(new Handle(h), out ObjectId bid) && !bid.IsErased)
+                        blockId = bid;
+                    if (!blockId.IsNull && tr.GetObject(blockId, OpenMode.ForRead) is BlockReference br
+                        && BarBlockEngine.ReadXData(br) is BarData b)
+                        shift = b.PairShift;
+                }
+                tr.Commit();
+            }
+            if (blockId.IsNull) { ed.WriteMessage("\n[RC] To nie jest rozkład RC.\n"); return; }
+            if (Math.Abs(shift) < 1.0)
+            {
+                ed.WriteMessage("\n[RC] Rozkład bez pary strzemion — wpisz liczbę „2xn” (RC_EDIT_LABEL) dla strzemion 51 / 63.\n");
+                return;
+            }
+            BarCommands.PickLinkPairSide(doc, db, blockId);
+            try { doc.SendStringToExecute("REGEN\n", false, false, false); }
+            catch (System.Exception ex) { Log.Error("EditCommands.LinkPairSide", ex); }
+        }
+
         private static ObjectId ResolveBarBlock(Entity selectedEnt, Transaction tr)
         {
             // Przypadek 1: bezpośrednio BlockReference z RC_BAR_BLOCK XData
@@ -555,6 +673,73 @@ namespace BricsCadRc.Commands
             }
 
             return ObjectId.Null;
+        }
+
+        /// <summary>
+        /// RC_BAR_TICKS (prośba Bartka 2026-10-30): końcówki „do środka” (kreska 45° jak S1 w przekrojach) na wielu prętach naraz —
+        /// wskaż pręty (polilinie RC_BAR), potem Włącz / Wyłącz i stronę dla prętów prostych. Obrys przebudowany z danych pręta.
+        /// Pojedynczy pręt — także opcja w oknie RC_BAR / RC_EDIT_BAR. Pręty-bloki, pierścienie i strzemiona zamknięte pomijane.
+        /// </summary>
+        [CommandMethod("RC_BAR_TICKS", CommandFlags.Modal | CommandFlags.UsePickSet)]
+        public void BarTicksCommand()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db  = doc.Database;
+            var ed  = doc.Editor;
+
+            var sel = ed.GetSelection(new PromptSelectionOptions { MessageForAdding = "\nWskaż pręty (RC_BAR): " });
+            if (sel.Status != PromptStatus.OK) return;
+
+            var kOn = new PromptKeywordOptions("\nKońcówki do środka [Wlacz/Wylacz] <Wlacz>: ") { AllowNone = true };
+            kOn.Keywords.Add("Wlacz");
+            kOn.Keywords.Add("Wylacz");
+            var rOn = ed.GetKeywords(kOn);
+            if (rOn.Status != PromptStatus.OK && rOn.Status != PromptStatus.None) return;
+            bool on = rOn.Status == PromptStatus.None || rOn.StringResult == "Wlacz";
+
+            int side = -1;
+            if (on)
+            {
+                var kSide = new PromptKeywordOptions("\nPręty proste — kreska [Dol/Gora] <Dol>: ") { AllowNone = true };
+                kSide.Keywords.Add("Dol");
+                kSide.Keywords.Add("Gora");
+                var rSide = ed.GetKeywords(kSide);
+                if (rSide.Status != PromptStatus.OK && rSide.Status != PromptStatus.None) return;
+                side = rSide.Status == PromptStatus.OK && rSide.StringResult == "Gora" ? 1 : -1;
+            }
+
+            int done = 0, skipped = 0;
+            foreach (ObjectId id in sel.Value.GetObjectIds())
+            {
+                try
+                {
+                    BarData bar = null;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        if (tr.GetObject(id, OpenMode.ForRead) is Polyline pl && BarEntity.KindOf(pl) == BarKind.Polyline)
+                        {
+                            bar = SingleBarEngine.ReadBarXData(pl);
+                            if (bar != null && BarTicks.Supports(bar.ShapeCode))
+                            {
+                                pl.UpgradeOpen();
+                                bar.EndTicks    = on;
+                                bar.EndTickSide = side;
+                                BarTicks.WriteRequest(pl, on, side);
+                            }
+                            else bar = null;
+                        }
+                        tr.Commit();
+                    }
+                    if (bar == null) { skipped++; continue; }
+                    BarGeometryWatcher.IgnoreThisCommand(id);
+                    using (BarGeometryWatcher.Suppress())
+                        SingleBarEngine.RebuildCompanions(db, id, bar);
+                    done++;
+                }
+                catch (System.Exception ex) { Log.Error("EditCommands.BarTicks", ex); skipped++; }
+            }
+            ed.WriteMessage($"\n[RC] Końcówki do środka: {(on ? "włączone" : "wyłączone")} na {done} prętach" +
+                            (skipped > 0 ? $", pominięto {skipped} (inne obiekty, pręty-bloki, pierścienie, strzemiona zamknięte)" : "") + ".\n");
         }
 
         /// <summary>
@@ -708,6 +893,7 @@ namespace BricsCadRc.Commands
             }
 
             // Krok 4 — zaktualizuj XData i DBText w BTR
+            ObjectId pairBlockId = ObjectId.Null;   // nowa para strzemion „2xn” — wybór strony po przebudowie (2026-10-29)
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 var br = tr.GetObject(selRes.ObjectId, OpenMode.ForWrite) as BlockReference;
@@ -744,6 +930,10 @@ namespace BricsCadRc.Commands
                                     barBlock.Mark          = bar.Mark;
                                     barBlock.CountDisplay  = bar.CountDisplay;
                                     barBlock.CountMult     = bar.CountMult;
+                                    // strzemiona „2xn” — dwa w rzucie (2026-10-29); przebudowa niżej, potem wybór strony —
+                                    // przy każdym RC_EDIT_LABEL pary, nie tylko nowej (uwaga Bartka: brak pytania na istniejącej parze)
+                                    BarBlockEngine.ApplyLinkPair(barBlock);
+                                    if (Math.Abs(barBlock.PairShift) >= 1.0) pairBlockId = sbId2;
                                     barBlock.ShowSpacing   = dlg.ResultShowSpacing;
                                     barBlock.IsLabelManual = true;  // p334: manual override sync
                                     BarBlockEngine.WriteXData(brBlock, barBlock);
@@ -810,6 +1000,7 @@ namespace BricsCadRc.Commands
                 }
                 catch (System.Exception logEx) { Log.Error("EditCommands.EditLabel", logEx); }
             }
+            if (!pairBlockId.IsNull) BarCommands.PickLinkPairSide(doc, db, pairBlockId);
 
             // Przebuduj annotację (kółka na dist line) z nową widocznością
             using (var trSync = db.TransactionManager.StartTransaction())

@@ -53,6 +53,8 @@ namespace BricsCadRc.Core
                     new TypedValue((int)DxfCode.ExtendedDataInteger16, BarRecordRules.ShapeStd2020),
                     BarRecordRules.ShapeStd2020, Std);
             e.XData = new ResultBuffer(merged.ToArray());
+            // końcówki „do środka” (2026-10-30): wybór użytkownika w RC_BAR_TICKS; maska obrysu bez zmian
+            BarTicks.WriteRequest(e, bar.EndTicks, bar.EndTickSide);
         }
 
         private static int Std(TypedValue t) => BarRecordRules.ShapeStdOf(BarRecordRules.ShapeStdIndex + 1, t.TypeCode, t.Value);
@@ -182,7 +184,10 @@ namespace BricsCadRc.Core
         public Point3d? FirstOutlineVertex(Transaction tr)
         {
             if (Kind == BarKind.Polyline && Entity is Polyline pl)
-                return pl.NumberOfVertices > 0 ? pl.GetPoint3dAt(0) : (Point3d?)null;
+            {
+                var sv = BarTicks.StandardVertices(pl);   // bez końcówek „do środka”
+                return sv.Count > 0 ? sv[0] : (Point3d?)null;
+            }
             if (Kind == BarKind.Block && Entity is BlockReference br)
             {
                 var bpl = FirstBtrPolyline(tr);
@@ -241,6 +246,7 @@ namespace BricsCadRc.Core
                     var p = pl.GetPoint2dAt(i);
                     result.Add(new Point3d(p.X, p.Y, 0));
                 }
+                return BarTicks.Strip(result, BarTicks.AppliedMask(pl));   // obrys bez końcówek „do środka” (2026-10-30)
             }
             else if (Kind == BarKind.Block && Entity is BlockReference br)
             {

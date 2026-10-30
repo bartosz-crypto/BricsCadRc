@@ -104,14 +104,11 @@ namespace BricsCadRc.Commands
                 double x1Bound = Math.Max(_pt1.X, _pt2.X) - PreviewCover;
                 // Jig zawsze rysuje na "górę" — flip obsługiwany osobno po jigu
                 if (x0 >= x1Bound) return;
-                for (double x = x0; x <= x1Bound + 0.5; x += PreviewSpacing)
-                {
-                    double xc = Math.Min(x, x1Bound);
+                // od pierwszego punktu (2026-10-29)
+                foreach (double xc in BarCommands.PreviewPositions(x0, x1Bound, PreviewSpacing, _pt1.X > _pt2.X))
                     AddTransientLine(tm, vpIds,
                         new Point3d(xc, edgeY, 0),
                         new Point3d(xc, edgeY + _barLength, 0));
-                    if (xc >= x1Bound) break;
-                }
             }
             else
             {
@@ -119,14 +116,10 @@ namespace BricsCadRc.Commands
                 double y0      = Math.Min(_pt1.Y, _pt2.Y) + PreviewCover;
                 double y1Bound = Math.Max(_pt1.Y, _pt2.Y) - PreviewCover;
                 if (y0 >= y1Bound) return;
-                for (double y = y0; y <= y1Bound + 0.5; y += PreviewSpacing)
-                {
-                    double yc = Math.Min(y, y1Bound);
+                foreach (double yc in BarCommands.PreviewPositions(y0, y1Bound, PreviewSpacing, _pt1.Y > _pt2.Y))
                     AddTransientLine(tm, vpIds,
                         new Point3d(edgeX, yc, 0),
                         new Point3d(edgeX + _barLength, yc, 0));
-                    if (yc >= y1Bound) break;
-                }
             }
 
             try { Application.UpdateScreen(); } catch (System.Exception logEx) { Log.Error("DistributionJig.RefreshTransients", logEx); }

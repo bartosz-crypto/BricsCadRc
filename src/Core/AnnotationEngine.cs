@@ -774,6 +774,24 @@ namespace BricsCadRc.Core
                 }
             }
 
+            // Strzemiona „2xn” (PairShift): kropka także przy drugim strzemieniu pary (prośba Bartka 2026-10-29; Generate i ręczne
+            // „2x”) — na pręcie BarBlockEngine.PairBarIndex, gdy nie ma tam już kropki ani strzałki
+            if (Math.Abs(bar.PairShift) >= 1.0)
+            {
+                int jp = BarBlockEngine.PairBarIndex(bar.Count, visSet);
+                bool taken = jp < 0 || (bar.Count <= 3)
+                          || (bar.Count > 3 && (jp == 0 || jp == bar.Count - 1));
+                if (!taken)
+                {
+                    double fracP = bar.Count > 1 ? (double)jp / (bar.Count - 1) : 0.0;
+                    double skewP = bar.SkewStart + fracP * (bar.SkewEnd - bar.SkewStart);
+                    Point3d centerP = horizontal
+                        ? new Point3d(skewP + ox,            jp * bar.Spacing + oy, 0)
+                        : new Point3d(jp * bar.Spacing + ox, skewP + oy,            0);
+                    AddDot(tr, btr, centerP, Scaled(DotRadius, bar));
+                }
+            }
+
             if (bar.Count > 3)
             {
                 double   tickLen  = Scaled(DotRadius, bar) * 3;
@@ -2117,7 +2135,8 @@ namespace BricsCadRc.Core
                         string rawMark = !string.IsNullOrEmpty(markOverride)
                             ? markOverride
                             : srcBar.Mark;
-                        var parts = rawMark.Split('-');
+                        // bez sufiksu (2026-10-29: rozkład 1 pręta „H12-102 T2” — bez rozstawu sufiks „T2” trafiał na etykietę pręta)
+                        var parts = rawMark.Trim().Split(' ')[0].Split('-');
                         string markForLabel = parts.Length >= 2
                             ? $"{parts[0]}-{parts[1]}"
                             : rawMark;

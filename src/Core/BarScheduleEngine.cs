@@ -148,7 +148,7 @@ namespace BricsCadRc.Core
         private static string ExtractPosNrStr(string mark)
         {
             if (string.IsNullOrEmpty(mark)) return "00";
-            var parts = mark.Split('-');
+            var parts = mark.Trim().Split(' ')[0].Split('-');   // bez sufiksu po spacji (jak SingleBarEngine.ExtractPosNr)
             return parts.Length >= 2 ? parts[1] : "00";
         }
 
